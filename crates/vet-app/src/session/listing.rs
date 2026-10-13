@@ -57,6 +57,8 @@ pub struct ChangesetRow {
     pub open_threads: u32,
     /// `None` for the working tree, and for a branch when the repository has no default branch.
     pub divergence: Option<Divergence>,
+    /// For the default branch: its commits that its upstream on the remote does not have.
+    pub unpushed: Option<u32>,
     /// Unix seconds of the branch's tip commit.
     pub last_commit: Option<i64>,
     /// Who made the branch's tip commit; `None` for the working tree.
@@ -99,20 +101,39 @@ impl<G: GitRepo + Sync, S: LiveStore + Sync> LiveSession<G, S> {
             checked_out: false,
             branch: all.iter().find(|b| b.current).map(|b| b.name.clone()),
             divergence: None,
+            unpushed: None,
             last_commit: None,
             author: None,
         }];
         let now = (self.clock)();
         let (mut local, mut remote) = (Vec::new(), Vec::new());
+        // Where the default branch is on the remote it came from: the commits it has beyond that
+        // are the ones to review on it.
+        let upstream = default_branch.as_ref().and_then(|name| {
+            let upstream = format!("origin/{name}");
+            all.iter()
+                .find(|b| b.remote && b.name == upstream)
+                .map(|b| b.commit.clone())
+        });
         for branch in all {
-            // The default branch holds what the others are compared with: it has nothing to review.
-            if default_branch.as_deref() == Some(branch.name.as_str()) {
-                continue;
-            }
             let source = Source::Branch {
                 name: branch.name.clone(),
             };
             let (review, open_threads) = self.row_state(&source).await?;
+            let keep = source == on_view || matches!(review, RowReview::Open { .. });
+            // The default branch holds what the others are compared with: it has something to
+            // review only while it has commits that are not pushed yet.
+            let unpushed = if !branch.remote && default_branch.as_deref() == Some(branch.name.as_str()) {
+                Some(match &upstream {
+                    Some(upstream) => git.commits_behind(&branch.commit, upstream, MAX_COUNT).await? as u32,
+                    None => 0,
+                })
+            } else {
+                None
+            };
+            if unpushed == Some(0) && !keep {
+                continue;
+            }
             let divergence = match &default {
                 Some(default) => Some(self.divergence(&branch, default).await?),
                 None => None,
@@ -120,7 +141,6 @@ impl<G: GitRepo + Sync, S: LiveStore + Sync> LiveSession<G, S> {
             let tip = git.commit_info(&branch.commit).await?;
             let last_commit = tip.time;
             let age_days = now.saturating_sub(last_commit) / (24 * 60 * 60);
-            let keep = source == on_view || matches!(review, RowReview::Open { .. });
             if branch.remote && !offered_remote(divergence, age_days, keep) {
                 continue;
             }
@@ -132,6 +152,7 @@ impl<G: GitRepo + Sync, S: LiveStore + Sync> LiveSession<G, S> {
                 open_threads,
                 source,
                 divergence,
+                unpushed,
                 last_commit: Some(last_commit),
                 author: Some(tip.author),
                 review,

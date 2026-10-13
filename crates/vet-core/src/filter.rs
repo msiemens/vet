@@ -1,5 +1,6 @@
 //! The review filter: a view over a changeset, never part of snapshot identity (SPEC §3).
 
+use std::cell::OnceCell;
 use std::collections::BTreeSet;
 
 use globset::{GlobBuilder, GlobSet, GlobSetBuilder};
@@ -54,7 +55,9 @@ impl ReviewFilter {
             roots: &self.roots,
             include: (!self.include.is_empty()).then(|| GlobList::new(self.include.iter().map(String::as_str))),
             exclude: GlobList::new(self.exclude.iter().map(String::as_str).chain(built_in.iter().copied())),
+            apart: OnceCell::new(),
             patterns: &self.exclude,
+            review_generated: self.review_generated,
             hide_binary: self.hide_binary,
             generated: (!self.review_generated).then_some(generated),
         }
@@ -84,12 +87,21 @@ pub struct CompiledFilter<'a> {
     roots: &'a [RepoPath],
     /// `None` includes everything.
     include: Option<GlobList>,
+    /// The filter's exclude globs and the built-in ones, as one set.
     exclude: GlobList,
-    /// The filter's own exclude globs, to name the one that matched.
+    /// The filter's own exclude globs and the built-in ones, each apart, to name the rules that leave
+    /// a path out. Compiled when the rules of a path are first asked for, which `passes` never does.
+    apart: OnceCell<Apart<'a>>,
     patterns: &'a [String],
+    review_generated: bool,
     hide_binary: bool,
     /// The paths that are generated, if they are excluded.
     generated: Option<&'a BTreeSet<RepoPath>>,
+}
+
+struct Apart<'a> {
+    patterns: Vec<(&'a str, GlobList)>,
+    built_in: GlobList,
 }
 
 impl CompiledFilter<'_> {
@@ -99,37 +111,68 @@ impl CompiledFilter<'_> {
     }
 
     pub fn passes(&self, path: &RepoPath) -> bool {
-        self.exclusion(path).is_none()
-    }
-
-    /// The rule that leaves a non-text change out, if one does.
-    pub fn exclusion_of(&self, change: &NonTextChange) -> Option<Exclusion> {
-        self.exclusion(&change.path)
-            .or((self.hide_binary && change.kind == NonTextKind::Binary).then_some(Exclusion::Binary))
-    }
-
-    /// The first rule that leaves `path` out: the roots, then the include globs, the exclude globs
-    /// and last the generated files.
-    pub fn exclusion(&self, path: &RepoPath) -> Option<Exclusion> {
         let p = path.0.as_slice();
         let under = |root: &RepoPath| p.starts_with(&root.0) && (p.len() == root.0.len() || p[root.0.len()] == b'/');
         let text = String::from_utf8_lossy(p);
+        (self.roots.is_empty() || self.roots.iter().any(under))
+            && self.include.as_ref().is_none_or(|g| g.is_match(&text))
+            && !self.exclude.is_match(&text)
+            && !self.generated.is_some_and(|g| g.contains(path))
+    }
+
+    /// Every rule that leaves a non-text change out; none if it is shown.
+    pub fn exclusions_of(&self, change: &NonTextChange) -> Vec<Exclusion> {
+        let mut rules = self.exclusions(&change.path);
+        if self.hide_binary && change.kind == NonTextKind::Binary {
+            rules.push(Exclusion::Binary);
+        }
+        rules
+    }
+
+    /// Every rule that leaves `path` out, in the order of [`Exclusion`]; none exactly when `passes`.
+    pub fn exclusions(&self, path: &RepoPath) -> Vec<Exclusion> {
+        let p = path.0.as_slice();
+        let under = |root: &RepoPath| p.starts_with(&root.0) && (p.len() == root.0.len() || p[root.0.len()] == b'/');
+        let text = String::from_utf8_lossy(p);
+        let mut rules = Vec::new();
         if !(self.roots.is_empty() || self.roots.iter().any(under)) {
-            return Some(Exclusion::OutsideRoots);
+            rules.push(Exclusion::OutsideRoots);
         }
         if !self.include.as_ref().is_none_or(|g| g.is_match(&text)) {
-            return Some(Exclusion::NotIncluded);
+            rules.push(Exclusion::NotIncluded);
         }
         if self.exclude.is_match(&text) {
-            let own = self
-                .patterns
-                .iter()
-                .find(|pattern| GlobList::new(std::iter::once(pattern.as_str())).is_match(&text));
-            return Some(own.map_or(Exclusion::Generated, |pattern| Exclusion::Pattern(pattern.clone())));
+            let apart = self.apart.get_or_init(|| Apart {
+                patterns: self
+                    .patterns
+                    .iter()
+                    .map(|p| (p.as_str(), GlobList::new(std::iter::once(p.as_str()))))
+                    .collect(),
+                built_in: GlobList::new(
+                    if self.review_generated {
+                        &[][..]
+                    } else {
+                        GENERATED_NAMES
+                    }
+                    .iter()
+                    .copied(),
+                ),
+            });
+            for (pattern, list) in &apart.patterns {
+                let named = Exclusion::Pattern((*pattern).to_owned());
+                if list.is_match(&text) && !rules.contains(&named) {
+                    rules.push(named);
+                }
+            }
+            if apart.built_in.is_match(&text) {
+                rules.push(Exclusion::Generated);
+            }
         }
-        self.generated
-            .is_some_and(|g| g.contains(path))
-            .then_some(Exclusion::Generated)
+        if self.generated.is_some_and(|g| g.contains(path)) && !rules.contains(&Exclusion::Generated) {
+            rules.push(Exclusion::Generated);
+        }
+        rules.sort();
+        rules
     }
 }
 
@@ -280,26 +323,41 @@ mod tests {
     }
 
     #[test]
-    fn the_rule_that_leaves_a_path_out_is_named() {
+    fn every_rule_that_leaves_a_path_out_is_named_and_none_exactly_when_it_passes() {
         let path = |p: &str| RepoPath::from(p);
         let generated = BTreeSet::from([path("src/api.rs")]);
         let filter = ReviewFilter {
             roots: vec![path("src")],
             include: vec!["*.rs".into(), "*.lock".into()],
-            exclude: vec!["**/*.snap.rs".into()],
+            exclude: vec!["**/*.snap.rs".into(), "t/**".into(), "**/x.*".into()],
             ..Default::default()
         };
         let compiled = filter.compile(&generated);
-        let named = |p: &str| compiled.exclusion(&path(p));
-        assert_eq!(named("docs/a.rs"), Some(Exclusion::OutsideRoots));
-        assert_eq!(named("src/a.md"), Some(Exclusion::NotIncluded));
+        let named = |p: &str| compiled.exclusions(&path(p));
+        let pattern = |p: &str| Exclusion::Pattern(p.into());
+        assert_eq!(named("docs/a.rs"), [Exclusion::OutsideRoots]);
+        assert_eq!(named("src/a.md"), [Exclusion::NotIncluded]);
         assert_eq!(
             named("src/t/x.snap.rs"),
-            Some(Exclusion::Pattern("**/*.snap.rs".into()))
+            [pattern("**/*.snap.rs"), pattern("**/x.*")],
+            "two globs leave it out, and `t/**` is anchored at the root"
         );
-        assert_eq!(named("src/Cargo.lock"), Some(Exclusion::Generated));
-        assert_eq!(named("src/api.rs"), Some(Exclusion::Generated));
-        assert_eq!(named("src/lib.rs"), None);
+        assert_eq!(
+            named("docs/Cargo.lock"),
+            [Exclusion::OutsideRoots, Exclusion::Generated]
+        );
+        assert_eq!(named("src/api.rs"), [Exclusion::Generated]);
+        assert_eq!(named("src/lib.rs"), []);
+        for p in [
+            "docs/a.rs",
+            "src/a.md",
+            "src/t/x.snap.rs",
+            "src/Cargo.lock",
+            "src/api.rs",
+            "src/lib.rs",
+        ] {
+            assert_eq!(compiled.passes(&path(p)), named(p).is_empty(), "{p}");
+        }
     }
 
     #[test]

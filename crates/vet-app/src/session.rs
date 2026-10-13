@@ -209,12 +209,18 @@ pub struct LiveSession<G, S: LiveStore> {
     derived: Arc<Derived>,
     /// What git said of the commits the manifests name, which it does not change.
     commit_infos: std::sync::Mutex<HashMap<CommitId, CommitInfo>>,
+    /// How a branch came to hold a tip, by the tip and the branch's commit, which git does not change.
+    merges: std::sync::Mutex<HashMap<(CommitId, CommitId), Option<MergedAs>>>,
     /// The copies of the working tree's content into the store under way.
     ahead: Engine<Retained>,
     /// What a copy ahead of a review reads and writes through: the session's acquisition over
     /// handles of their own, so that it draws on what nobody waits for.
     copying: Arc<Acquisition<G, S>>,
 }
+
+/// The commit that merged a tip into a branch, how many commits the merge brought in and how many
+/// the branch has since.
+type MergedAs = (CommitInfo, Option<u32>, Option<u32>);
 
 /// How many line deltas the list of changesets keeps.
 const KEPT_LINE_DELTAS: usize = 4096;
@@ -360,6 +366,7 @@ impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> L
             author: author_of(&acquisition.git).await,
             derived: Arc::new(Derived::new(&acquisition.tasks)),
             commit_infos: std::sync::Mutex::default(),
+            merges: std::sync::Mutex::default(),
             ahead: ahead::copies(&acquisition.tasks),
             copying: acquisition.clone(),
             acquisition,
@@ -580,7 +587,7 @@ impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> L
         let (Some(id), Some(changeset)) = (st.review.as_ref().map(|r| r.id), st.changeset) else {
             return Err(SessionError::Invalid("no review is open".into()));
         };
-        let complete = st.changes().remapped.completion.is_complete();
+        let complete = manifest::stored_completion(&st).is_complete();
         // What the open threads are anchored in must outlive the refs.
         let open = |t: &&Thread| t.status == ThreadStatus::Open;
         let anchors = st.threads.iter().filter(open).filter_map(|t| match &t.target {
@@ -640,7 +647,7 @@ impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> L
         Ok(BaseView {
             commit: self.commit_info(&st.base_commit).await?,
             contained_in: match contained {
-                Some(reference) => Some(self.contained(st, &reference).await?),
+                Some(reference) => Some(self.contained(st, &reference).await),
                 None => None,
             },
             into: self.merged_into(st).await?,
@@ -648,33 +655,89 @@ impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> L
         })
     }
 
-    /// What there is to say of a changeset whose tip `reference` already holds.
-    async fn contained(&self, st: &State, reference: &str) -> Result<Contained> {
+    /// What there is to say of a changeset whose tip `reference` already holds. What git cannot
+    /// say is left out: the changeset is empty either way.
+    async fn contained(&self, st: &State, reference: &str) -> Contained {
         let git = &self.acquisition.git;
-        let named = match &st.source {
-            Source::PullRequest { .. } => self.pull_request_head(&st.source).await?.map(|head| head.target_branch),
-            _ => git.default_branch().await?,
+        let default = git
+            .default_branch()
+            .await
+            .map_err(|e| tracing::warn!(error = %e.0, "the default branch is not found"))
+            .ok()
+            .flatten();
+        let target = match &st.source {
+            Source::PullRequest { .. } => self
+                .pull_request_head(&st.source)
+                .await
+                .ok()
+                .flatten()
+                .map(|head| head.target_branch),
+            _ => None,
         };
-        let branch = named.unwrap_or_else(|| base::short_reference(reference));
-        let reference_tip = git.resolve_commit(reference).await?;
-        let same_tip = reference_tip == st.head;
-        let merged_by = if same_tip {
-            None
-        } else {
-            match base::merging_commit(git, &st.head, &reference_tip).await {
-                Ok(Some(merge)) => Some(self.commit_info(&merge).await?),
-                Ok(None) => None,
-                Err(e) => {
-                    tracing::warn!(error = e, "the commit that merged the changeset is not found");
-                    None
-                }
-            }
+        let branch = target.unwrap_or_else(|| base::reference_name(reference, default.as_deref()));
+        let reference_tip = git
+            .resolve_commit(reference)
+            .await
+            .map_err(|e| tracing::warn!(error = %e.0, reference, "the branch holding the changeset is not found"))
+            .ok();
+        let same_tip = reference_tip.as_ref() == Some(&st.head);
+        let merged = match &reference_tip {
+            Some(tip) if !same_tip => self.merged_into_branch(&st.head, tip).await,
+            _ => None,
         };
-        Ok(Contained {
+        let (merged_by, commits, since) = match merged {
+            Some((info, commits, since)) => (Some(info), commits, since),
+            None => (None, None, None),
+        };
+        Contained {
             branch,
             same_tip,
             merged_by,
-        })
+            commits,
+            since,
+        }
+    }
+
+    /// How the branch at `into` came to hold `tip`: the commit that merged it, how many commits
+    /// the merge brought in and how many the branch has since. Asked once for the same two commits.
+    async fn merged_into_branch(&self, tip: &CommitId, into: &CommitId) -> Option<MergedAs> {
+        const COUNTED: usize = 10_000;
+        let key = (tip.clone(), into.clone());
+        let kept = self
+            .merges
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .get(&key)
+            .cloned();
+        if let Some(merged) = kept {
+            return merged;
+        }
+        let git = &self.acquisition.git;
+        let merged = match base::merging_commit(git, tip, into).await {
+            Ok(None) => None,
+            Ok(Some(merging)) => {
+                let counted = |n: std::result::Result<usize, GitError>| n.ok().map(|n| n as u32);
+                let commits = match &merging.before {
+                    Some(before) => counted(git.commits_behind(tip, before, COUNTED).await),
+                    None => None,
+                };
+                let since = counted(git.commits_behind(into, &merging.commit, COUNTED).await);
+                self.commit_info(&merging.commit)
+                    .await
+                    .ok()
+                    .map(|info| (info, commits, since))
+            }
+            Err(e) => {
+                tracing::warn!(error = e, "the commit that merged the changeset is not found");
+                return None;
+            }
+        };
+        let mut merges = self.merges.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        if merges.len() >= 16 {
+            merges.clear();
+        }
+        merges.insert(key, merged.clone());
+        merged
     }
 
     /// The branch a pull request is merged into, when that is not the repository's default branch.
@@ -724,7 +787,7 @@ impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> L
     async fn replace_filter(&self, st: &mut Held<'_, S::Writes>, filter: ReviewFilter) -> Result<u32> {
         let filter = filter.normalized();
         filter.validate().map_err(SessionError::Invalid)?;
-        if *st.project_filter() == filter && st.project.is_none() {
+        if *st.project_filter() == filter {
             return Ok(st.revision);
         }
         let writes = st.writes();
@@ -736,9 +799,13 @@ impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> L
 
     /// Narrows the review on view to `filter`, which replaces the project's filter until the
     /// narrowing is reset (`None`), the project's filter is edited or another changeset comes
-    /// on view. Nothing is stored. Returns the revision.
-    pub async fn narrow(&self, filter: Option<ReviewFilter>) -> Result<u32> {
+    /// on view. Nothing is stored. Does nothing when `source` is not the changeset on view, which
+    /// the viewer left meanwhile. Returns the new revision, or none when nothing changed.
+    pub async fn narrow(&self, source: &Source, filter: Option<ReviewFilter>) -> Result<Option<u32>> {
         let mut st = self.hold().await;
+        if st.source != *source {
+            return Ok(None);
+        }
         let project = st.project_filter().clone();
         let (filter, narrowed) = match filter {
             Some(narrowing) => (narrowing.normalized(), true),
@@ -746,11 +813,11 @@ impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> L
         };
         filter.validate().map_err(SessionError::Invalid)?;
         if st.filter == filter {
-            return Ok(st.revision);
+            return Ok(None);
         }
         st.filter = filter;
         st.project = narrowed.then_some(project);
-        self.refilter(&mut st).await
+        self.refilter(&mut st).await.map(Some)
     }
 
     /// Counts the review again under `st.filter` as a new revision.

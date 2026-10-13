@@ -64,6 +64,14 @@ pub struct Contained {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub merged_by: Option<CommitInfo>,
+    /// How many commits the merge brought into the branch; absent when `merged_by` is.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub commits: Option<u32>,
+    /// How many commits the branch has since the merge; absent when `merged_by` is.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub since: Option<u32>,
 }
 
 /// Why the review leaves a file out.
@@ -94,16 +102,30 @@ pub struct ExcludedFile {
     pub delta: LineDelta,
 }
 
-/// The files left out of the review for one reason.
+/// The files of an excluded group under one folder, or one file at the repository root.
+#[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct ExcludedFolder {
+    pub path: String,
+    /// A folder; otherwise `path` is a file at the repository root.
+    pub dir: bool,
+    pub files: u32,
+    pub delta: LineDelta,
+}
+
+/// The files left out of the review by the same rules: lifting all of `by` brings them back.
 #[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
 #[ts(export)]
 pub struct ExcludedGroup {
-    pub by: ExcludedBy,
+    pub by: Vec<ExcludedBy>,
     /// How many files, of which `files` lists the first ones.
     pub count: u32,
     pub delta: LineDelta,
     pub files: Vec<ExcludedFile>,
+    /// All the group's files by folder, the largest first, at the depth of the narrowing.
+    pub folders: Vec<ExcludedFolder>,
 }
 
 /// What the changes lead to: the live working tree, or a branch's tip.

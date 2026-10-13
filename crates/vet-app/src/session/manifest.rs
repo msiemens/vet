@@ -11,8 +11,8 @@ use vet_core::filter::{CompiledFilter, Exclusion, ReviewFilter};
 use super::derived::Diffed;
 use super::state::{Remapped, Shown, State, View, acknowledged, find_diff, lifecycle_of, shown_items};
 use super::views::{
-    ExcludedBy, ExcludedFile, ExcludedGroup, FileStatus, FileView, ManifestView, ReviewUpdateView, ReviewView,
-    TargetView,
+    ExcludedBy, ExcludedFile, ExcludedFolder, ExcludedGroup, FileStatus, FileView, ManifestView, ReviewUpdateView,
+    ReviewView, TargetView,
 };
 use super::{LiveSession, Result, SessionError};
 use crate::changeset::{CommitId, Source};
@@ -69,10 +69,10 @@ impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> L
     /// changesets shows it without remapping the marks of every review. Does nothing while the
     /// changes are not computed: the next remap measures.
     pub(super) async fn note_progress(&self, writes: &S::Writes, st: &mut State) -> Result<()> {
-        let (Some(review), Some(changes)) = (&st.review, &st.changes) else {
+        let (Some(review), Some(_)) = (&st.review, &st.changes) else {
             return Ok(());
         };
-        let summary = ReviewSummary::of(&changes.remapped.completion);
+        let summary = ReviewSummary::of(&stored_completion(st));
         if review.summary == Some(summary) {
             return Ok(());
         }
@@ -113,40 +113,59 @@ pub(super) fn target_view(source: &Source, tip: &CommitId, branches: &[BranchInf
 /// How many files of a group the manifest lists; the rest are counted.
 const EXCLUDED_LISTED: usize = 500;
 
-/// The files of `changes` that the review leaves out, by the reason, with the lines each changes.
+/// How many folders of a group the manifest lists.
+const EXCLUDED_FOLDERS: usize = 200;
+
+/// The files of `changes` that the review leaves out, grouped by every rule that does so (a file two
+/// rules leave out is in one group with both, so a group's rules are what to lift to bring it back),
+/// the largest group first.
 pub(super) fn excluded_groups(changes: &Diffed, st: &State) -> Vec<ExcludedGroup> {
     let narrowed = st.filter.compile(&changes.diff.generated);
     let project = st.project.as_ref().map(|p| p.compile(&changes.diff.generated));
-    // Why the review leaves a file out, given the rules that the filter in force and the project's
-    // name for it: the project's own rule wins over the narrowing.
-    let why = |named: Option<Exclusion>, project_named: Option<Exclusion>| {
-        let named = named?;
-        Some(if project.is_none() {
-            ExcludedBy::Rule(named)
-        } else {
-            project_named.map_or(ExcludedBy::Narrowing, ExcludedBy::Rule)
-        })
+    // What leaves a file out, given the rules of the filter in force and of the project's: the
+    // project's own rules, else the narrowing; nothing if the review shows the file.
+    let why = |named: Vec<Exclusion>, project_named: Vec<Exclusion>| match project {
+        None => named.into_iter().map(ExcludedBy::Rule).collect(),
+        Some(_) if project_named.is_empty() => vec![ExcludedBy::Narrowing],
+        Some(_) => project_named.into_iter().map(ExcludedBy::Rule).collect(),
     };
-    let mut by_path: BTreeMap<&RepoPath, (ExcludedBy, LineDelta)> = BTreeMap::new();
+    let mut by_path: BTreeMap<&RepoPath, (Vec<ExcludedBy>, LineDelta)> = BTreeMap::new();
     for d in &changes.diff.files {
-        let project_named = project.as_ref().and_then(|p| p.exclusion(d.path()));
-        if let Some(by) = why(narrowed.exclusion(d.path()), project_named) {
-            by_path.insert(d.path(), (by, LineDelta::of(&d.hunks)));
+        if narrowed.passes(d.path()) {
+            continue;
         }
+        let project_named = project.as_ref().map_or_else(Vec::new, |p| p.exclusions(d.path()));
+        let by = why(narrowed.exclusions(d.path()), project_named);
+        by_path.insert(d.path(), (by, LineDelta::of(&d.hunks)));
     }
     for n in &changes.diff.non_text {
-        let project_named = project.as_ref().and_then(|p| p.exclusion_of(n));
-        if let Some(by) = why(narrowed.exclusion_of(n), project_named) {
+        if narrowed.passes(&n.path) && narrowed.shows(n) {
+            continue;
+        }
+        let project_named = project.as_ref().map_or_else(Vec::new, |p| p.exclusions_of(n));
+        let by = why(narrowed.exclusions_of(n), project_named);
+        if !by.is_empty() {
             by_path.entry(&n.path).or_insert((by, LineDelta::default()));
         }
     }
-    let mut groups: BTreeMap<ExcludedBy, ExcludedGroup> = BTreeMap::new();
+    // The folders at the depth of the narrowing, where it is the narrowing that leaves files out.
+    let depth = (st
+        .narrowing()
+        .and_then(|n| n.roots.first().map(|r| r.0.split(|&b| b == b'/').count())))
+    .unwrap_or(1);
+    let mut groups: BTreeMap<Vec<ExcludedBy>, (ExcludedGroup, BTreeMap<String, ExcludedFolder>)> = BTreeMap::new();
     for (path, (by, delta)) in by_path {
-        let group = groups.entry(by.clone()).or_insert_with(|| ExcludedGroup {
-            by,
-            count: 0,
-            delta: LineDelta::default(),
-            files: Vec::new(),
+        let (group, folders) = groups.entry(by.clone()).or_insert_with(|| {
+            (
+                ExcludedGroup {
+                    by,
+                    count: 0,
+                    delta: LineDelta::default(),
+                    files: Vec::new(),
+                    folders: Vec::new(),
+                },
+                BTreeMap::new(),
+            )
         });
         group.count += 1;
         group.delta = [group.delta, delta].into_iter().sum();
@@ -156,8 +175,56 @@ pub(super) fn excluded_groups(changes: &Diffed, st: &State) -> Vec<ExcludedGroup
                 delta,
             });
         }
+        let text = path.to_string_lossy();
+        let segments = text.split('/').count();
+        let (key, dir) = if segments == 1 {
+            (text.clone(), false)
+        } else {
+            (
+                text.split('/')
+                    .take(depth.min(segments - 1))
+                    .collect::<Vec<_>>()
+                    .join("/"),
+                true,
+            )
+        };
+        let folder = folders.entry(key.clone()).or_insert_with(|| ExcludedFolder {
+            path: key,
+            dir,
+            files: 0,
+            delta: LineDelta::default(),
+        });
+        folder.files += 1;
+        folder.delta = [folder.delta, delta].into_iter().sum();
     }
-    groups.into_values().collect()
+    let mut groups: Vec<ExcludedGroup> = groups
+        .into_values()
+        .map(|(mut group, folders)| {
+            let mut folders: Vec<ExcludedFolder> = folders.into_values().collect();
+            folders.sort_by(|a, b| b.files.cmp(&a.files).then_with(|| a.path.cmp(&b.path)));
+            folders.truncate(EXCLUDED_FOLDERS);
+            group.folders = folders;
+            group
+        })
+        .collect();
+    groups.sort_by_key(|g| std::cmp::Reverse(g.count));
+    groups
+}
+
+/// How far the changeset is under the project's filter, which is what is stored of it: a
+/// narrowing of the review does not change that.
+pub(super) fn stored_completion(st: &State) -> Completion {
+    let changes = st.changes();
+    if st.project.is_none() {
+        return changes.remapped.completion;
+    }
+    let diff = &changes.diffed.diff;
+    changeset_completion(
+        &changes.remapped.coverage(),
+        st.project_filter(),
+        diff,
+        &acknowledged(st, &diff.non_text),
+    )
 }
 
 /// The files of `changes` the filter shows. `state` gives a file's review state and completion

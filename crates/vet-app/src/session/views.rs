@@ -91,6 +91,10 @@ pub struct Contained {
     /// The commit that brought the tip into the branch; none when the branch only advanced past
     /// the tip, or git cannot say.
     pub merged_by: Option<CommitInfo>,
+    /// How many commits the branch had that the branch now holds; none when git cannot say.
+    pub commits: Option<u32>,
+    /// How many commits the branch has since the tip came into it; none when git cannot say.
+    pub since: Option<u32>,
 }
 
 /// A file the review filter leaves out of a view that shows no file.
@@ -109,14 +113,26 @@ pub enum ExcludedBy {
     Rule(Exclusion),
 }
 
-/// The files left out for one reason.
+/// The files of a group under one folder, or one file at the root.
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub struct ExcludedFolder {
+    pub path: String,
+    /// A folder; otherwise `path` is a file at the repository root.
+    pub dir: bool,
+    pub files: u32,
+    pub delta: LineDelta,
+}
+
+/// The files that the same rules leave out: lifting all of them brings the files back.
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub struct ExcludedGroup {
-    pub by: ExcludedBy,
-    /// How many files the rule leaves out, of which `files` lists the first ones.
+    pub by: Vec<ExcludedBy>,
+    /// How many files the rules leave out, of which `files` lists the first ones.
     pub count: u32,
     pub delta: LineDelta,
     pub files: Vec<ExcludedFile>,
+    /// All the group's files by folder at the depth of the narrowing, the largest folder first.
+    pub folders: Vec<ExcludedFolder>,
 }
 
 /// What a view is compared against, with what to say of it.

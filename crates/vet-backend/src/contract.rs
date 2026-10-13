@@ -492,7 +492,11 @@ mod tests {
                 project,
                 filter: ReviewFilter::default(),
             },
-            Request::NarrowReview { project, filter: None },
+            Request::NarrowReview {
+                project,
+                changeset: ChangesetKey::WorkingTree,
+                filter: None,
+            },
             Request::SetProjectTrusted { project, trusted: true },
             Request::TrustPullRequest { project },
             Request::ExcludePath {
@@ -937,6 +941,7 @@ mod tests {
         world
             .drive(Request::NarrowReview {
                 project,
+                changeset: ChangesetKey::WorkingTree,
                 filter: Some(narrowing),
             })
             .await;

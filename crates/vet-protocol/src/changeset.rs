@@ -107,6 +107,11 @@ pub struct ChangesetRow {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub divergence: Option<Divergence>,
+    /// Only for the default branch, which is listed while it has commits its upstream on the
+    /// remote lacks (or is on view or reviewed): how many.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub unpushed: Option<u32>,
     /// Unix seconds of the branch's tip commit; absent for the working tree.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]

@@ -1963,6 +1963,108 @@ async fn a_pull_request_into_a_branch_other_than_the_default_says_so() {
     assert_eq!(into(fx.session.manifest(View::Changeset).await.unwrap()), None);
 }
 
+#[tokio::test]
+async fn a_pull_request_its_target_branch_holds_is_empty_even_when_git_cannot_say_more() {
+    let fx = Fixture::open(&[("a.txt", "one\n")], &[("a.txt", "one\n")]).await;
+    // The head is the commit it left the target branch at, and the fake cannot resolve the
+    // target branch itself.
+    fetch_pull_request_7(&fx.git, &[("a.txt", "one\n")], "m1", &[("a.txt", "one\n")]);
+    fx.store.0.lock().unwrap().heads.insert(
+        pull_request_7(),
+        PullRequestHead {
+            title: "Fix".into(),
+            draft: false,
+            fork: false,
+            target_branch: "release/2.1".into(),
+        },
+    );
+    fx.session.open_changeset(pull_request_7()).await.unwrap();
+
+    let m = fx.session.manifest(View::Changeset).await.unwrap();
+
+    assert!(m.files.is_empty());
+    let contained = m.base.contained_in.expect("the target branch holds the head");
+    assert_eq!(
+        (contained.branch.as_str(), contained.same_tip, contained.merged_by),
+        ("release/2.1", false, None)
+    );
+}
+
+#[tokio::test]
+async fn the_folders_of_what_is_left_out_count_every_file_not_only_the_listed_ones() {
+    let names: Vec<String> = (0..600).map(|i| format!("big/dir{}/f{i}.txt", i % 3)).collect();
+    let base: Vec<(&str, &str)> = [("small/x.txt", "1\n")]
+        .into_iter()
+        .chain(names.iter().map(|n| (n.as_str(), "1\n")))
+        .collect();
+    let dirty: Vec<(&str, &str)> = base.iter().map(|(n, _)| (*n, "2\n")).collect();
+    let fx = Fixture::open(&base, &dirty).await;
+    let filter = ReviewFilter {
+        roots: vec!["small".into()],
+        ..Default::default()
+    };
+    fx.session.set_filter(filter).await.unwrap();
+
+    let m = fx.session.manifest(View::Changeset).await.unwrap();
+
+    let group = &m.excluded[0];
+    assert_eq!((group.count, group.files.len()), (600, 500));
+    let folders: Vec<_> = group
+        .folders
+        .iter()
+        .map(|f| (f.path.as_str(), f.dir, f.files))
+        .collect();
+    assert_eq!(folders, [("big", true, 600)]);
+}
+
+#[tokio::test]
+async fn a_renamed_file_the_filter_leaves_out_can_still_be_read() {
+    let text = "one\ntwo\nthree\n";
+    let fx = Fixture::open(&[("old/a.txt", text)], &[("new/a.txt", text)]).await;
+    let filter = ReviewFilter {
+        roots: vec!["elsewhere".into()],
+        ..Default::default()
+    };
+    fx.session.set_filter(filter).await.unwrap();
+    let m = fx.session.manifest(View::Changeset).await.unwrap();
+    assert!(m.files.is_empty());
+    assert_eq!(m.excluded[0].files[0].path.to_string_lossy(), "new/a.txt");
+
+    let read = fx.session.target_text(View::Changeset, "new/a.txt").await;
+
+    assert_eq!(read.unwrap().content, Ok(text.to_owned()));
+}
+
+#[tokio::test]
+async fn a_narrowing_lists_what_it_leaves_out_by_folders_as_deep_as_it_goes_and_root_files_alone() {
+    let files = [
+        ("lib/a/x.txt", "1\n"),
+        ("lib/b/y.txt", "1\n"),
+        ("lib/b/deep/z.txt", "1\n"),
+        ("lib/c/w.txt", "1\n"),
+        ("root.txt", "1\n"),
+    ];
+    let dirty: Vec<(&str, &str)> = files.iter().map(|(n, _)| (*n, "2\n")).collect();
+    let fx = Fixture::open(&files, &dirty).await;
+    let narrowing = ReviewFilter {
+        roots: vec!["lib/a".into()],
+        ..Default::default()
+    };
+    fx.session.narrow(&Source::WorkingTree, Some(narrowing)).await.unwrap();
+
+    let m = fx.session.manifest(View::Changeset).await.unwrap();
+
+    let folders: Vec<_> = m.excluded[0]
+        .folders
+        .iter()
+        .map(|f| (f.path.as_str(), f.dir, f.files))
+        .collect();
+    assert_eq!(
+        folders,
+        [("lib/b", true, 2), ("lib/c", true, 1), ("root.txt", false, 1)]
+    );
+}
+
 /// A hunk of `a.txt` marked seen in pull request 7, then the author rebased it onto a target
 /// branch that lacks "line 4"; `b.txt` changes too and is not marked.
 async fn seen_then_base_changed() -> Fixture {
@@ -3363,6 +3465,49 @@ async fn the_list_has_the_working_tree_first_then_every_branch_the_most_recent_f
         (list.rows[0].author.as_deref(), feature.author.as_deref()),
         (None, Some("Ann")),
         "a branch has its tip's author, the working tree none"
+    );
+}
+
+#[tokio::test]
+async fn the_default_branch_is_listed_while_it_has_commits_its_upstream_lacks() {
+    let fx = Fixture::open(&[("a.txt", "one\n")], &[("a.txt", "one\n")]).await;
+    fx.git.feature(&[("a.txt", "one\n")], &[("a.txt", "two\n")]);
+    let upstream_at = |tip: &str, history: &[&str]| {
+        fx.git.add_branch("origin/main", false, tip, history);
+        for b in fx
+            .git
+            .branches
+            .lock()
+            .unwrap()
+            .iter_mut()
+            .filter(|b| b.name == "origin/main")
+        {
+            b.remote = true;
+        }
+    };
+    let main = |list: ChangesetList| list.rows.into_iter().find(|r| r.title == "main").map(|r| r.unpushed);
+
+    assert_eq!(
+        main(fx.session.changesets().await.unwrap()),
+        None,
+        "no upstream: nothing to push"
+    );
+
+    upstream_at("o1", &["m1"]);
+    assert_eq!(main(fx.session.changesets().await.unwrap()), Some(Some(1)));
+
+    upstream_at("m2", &["m1"]);
+    assert_eq!(main(fx.session.changesets().await.unwrap()), None, "all pushed");
+
+    fx.git.add_commit("refs/heads/main", "m2", &[("a.txt", "one\n")]);
+    fx.session
+        .open_changeset(Source::Branch { name: "main".into() })
+        .await
+        .unwrap();
+    assert_eq!(
+        main(fx.session.changesets().await.unwrap()),
+        Some(Some(0)),
+        "kept while on view"
     );
 }
 

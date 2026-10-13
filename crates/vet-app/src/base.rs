@@ -79,10 +79,29 @@ pub fn short_reference(reference: &str) -> String {
     name.to_owned()
 }
 
+/// What a reference is called as a branch: a local one by its name, a remote-tracking one with its
+/// remote, and `origin/HEAD` as the `default_branch` it points at.
+pub fn reference_name(reference: &str, default_branch: Option<&str>) -> String {
+    match (reference.strip_prefix("refs/remotes/"), default_branch) {
+        (Some(remote), Some(branch)) if remote.ends_with("/HEAD") => {
+            format!("{}/{branch}", remote.trim_end_matches("/HEAD"))
+        }
+        _ => short_reference(reference),
+    }
+}
+
+/// The commit that brought a tip into a branch, and where the branch was before.
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub struct Merging {
+    pub commit: CommitId,
+    /// The branch just before the commit: its first parent.
+    pub before: Option<CommitId>,
+}
+
 /// The commit that brought `tip` into the first-parent history of `into`: the oldest commit of it
 /// that has `tip` among its ancestors. `None` when `into` merely advanced past `tip` (the commit
 /// after `tip` is its child, a fast-forward) or when `into` does not contain `tip`.
-pub async fn merging_commit<G: History>(git: &G, tip: &CommitId, into: &CommitId) -> Result<Option<CommitId>, String> {
+pub async fn merging_commit<G: History>(git: &G, tip: &CommitId, into: &CommitId) -> Result<Option<Merging>, String> {
     // Along the history, `tip` is reachable from a commit exactly when it is not older than the merge.
     let history = git.first_parent_range(tip, into).await.map_err(|e| e.0)?;
     let (mut low, mut high) = (0, history.len());
@@ -99,7 +118,10 @@ pub async fn merging_commit<G: History>(git: &G, tip: &CommitId, into: &CommitId
         return Ok(None);
     };
     let detail = git.commit_detail(merge).await.map_err(|e| e.0)?;
-    Ok((detail.parents.first() != Some(tip)).then(|| merge.clone()))
+    Ok((detail.parents.first() != Some(tip)).then(|| Merging {
+        commit: merge.clone(),
+        before: detail.parents.first().cloned(),
+    }))
 }
 
 /// Whether `HEAD` no longer builds on `base`: `base` is neither `HEAD` nor one of its ancestors.
@@ -112,4 +134,20 @@ pub async fn head_left<G: History>(git: &G, base: &CommitId) -> bool {
     git.commits_behind(base, &head, 1)
         .await
         .is_ok_and(|only_in_base| only_in_base > 0)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_reference_is_named_as_the_branch_it_stands_for() {
+        assert_eq!(reference_name("refs/heads/main", Some("main")), "main");
+        assert_eq!(reference_name("refs/remotes/origin/main", Some("main")), "origin/main");
+        assert_eq!(
+            reference_name("refs/remotes/origin/HEAD", Some("trunk")),
+            "origin/trunk"
+        );
+        assert_eq!(reference_name("refs/remotes/origin/HEAD", None), "origin/HEAD");
+    }
 }

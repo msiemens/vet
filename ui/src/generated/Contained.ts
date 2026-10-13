@@ -17,4 +17,12 @@ sameTip: boolean,
  * The commit that brought the tip into the branch; absent when the branch only advanced past
  * the tip, or git cannot say.
  */
-mergedBy?: CommitInfo, };
+mergedBy?: CommitInfo, 
+/**
+ * How many commits the merge brought into the branch; absent when `merged_by` is.
+ */
+commits?: number, 
+/**
+ * How many commits the branch has since the merge; absent when `merged_by` is.
+ */
+since?: number, };

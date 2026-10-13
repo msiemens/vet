@@ -455,6 +455,8 @@ pub enum Request {
     /// changes nothing. Answers with `Response::Done`.
     NarrowReview {
         project: ProjectId,
+        /// The changeset the viewer narrows; a request made after another came on view is ignored.
+        changeset: ChangesetKey,
         filter: Option<ReviewFilter>,
     },
     /// Marks the repository `project` has open as trusted, or not (§7.5): a project setting, as

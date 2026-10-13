@@ -292,15 +292,19 @@ impl Orchestrator {
     pub(crate) async fn narrow_review(
         &self,
         project: ProjectId,
+        changeset: vet_protocol::ChangesetKey,
         filter: Option<vet_protocol::ReviewFilter>,
     ) -> Result<Response, String> {
+        let source = mapping::core_changeset_key(changeset)?;
         let open = self.ready(project).await?;
         let revision = open
             .session
-            .narrow(filter.map(mapping::core_filter))
+            .narrow(&source, filter.map(mapping::core_filter))
             .await
             .map_err(message)?;
-        settled(&open.subscribers, project, revision);
+        if let Some(revision) = revision {
+            settled(&open.subscribers, project, revision);
+        }
         Ok(Response::Done)
     }
 

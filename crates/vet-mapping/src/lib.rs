@@ -299,6 +299,8 @@ pub fn base(b: &BaseView) -> p::Base {
             branch: c.branch.clone(),
             same_tip: c.same_tip,
             merged_by: c.merged_by.as_ref().map(commit_info),
+            commits: c.commits,
+            since: c.since,
         }),
         into: b.into.clone(),
         head_off_base: b.head_off_base,
@@ -394,6 +396,7 @@ pub fn changesets(list: &ChangesetList) -> p::Response {
                     ahead: d.ahead,
                     behind: d.behind,
                 }),
+                unpushed: r.unpushed,
                 last_commit: r.last_commit.map(unix_secs),
                 author: r.author.clone(),
                 review: row_review(r.review),
@@ -557,16 +560,30 @@ pub fn analysis_trust(trust: &Trust, head: &CommitId) -> p::AnalysisTrust {
 
 fn excluded_group(g: &ExcludedGroup) -> p::ExcludedGroup {
     p::ExcludedGroup {
-        by: match &g.by {
-            ExcludedBy::Narrowing => p::ExcludedBy::Narrowing,
-            ExcludedBy::Rule(Exclusion::OutsideRoots) => p::ExcludedBy::OutsideRoots,
-            ExcludedBy::Rule(Exclusion::NotIncluded) => p::ExcludedBy::NotIncluded,
-            ExcludedBy::Rule(Exclusion::Pattern(pattern)) => p::ExcludedBy::Pattern {
-                pattern: pattern.clone(),
-            },
-            ExcludedBy::Rule(Exclusion::Generated) => p::ExcludedBy::Generated,
-            ExcludedBy::Rule(Exclusion::Binary) => p::ExcludedBy::Binary,
-        },
+        by: g
+            .by
+            .iter()
+            .map(|by| match by {
+                ExcludedBy::Narrowing => p::ExcludedBy::Narrowing,
+                ExcludedBy::Rule(Exclusion::OutsideRoots) => p::ExcludedBy::OutsideRoots,
+                ExcludedBy::Rule(Exclusion::NotIncluded) => p::ExcludedBy::NotIncluded,
+                ExcludedBy::Rule(Exclusion::Pattern(pattern)) => p::ExcludedBy::Pattern {
+                    pattern: pattern.clone(),
+                },
+                ExcludedBy::Rule(Exclusion::Generated) => p::ExcludedBy::Generated,
+                ExcludedBy::Rule(Exclusion::Binary) => p::ExcludedBy::Binary,
+            })
+            .collect(),
+        folders: g
+            .folders
+            .iter()
+            .map(|f| p::ExcludedFolder {
+                path: f.path.clone(),
+                dir: f.dir,
+                files: f.files,
+                delta: line_delta(f.delta),
+            })
+            .collect(),
         count: g.count,
         delta: line_delta(g.delta),
         files: g

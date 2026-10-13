@@ -21,7 +21,17 @@ use vet_protocol::{
 use vet_transport::{Events, Handler};
 
 fn git(dir: &Path, args: &[&str]) -> String {
+    git_at(dir, args, None)
+}
+
+/// Like [`git`], a commit made at `time` (unix seconds) if given.
+fn git_at(dir: &Path, args: &[&str], time: Option<u32>) -> String {
+    let date = time.map(|t| format!("{t} +0000"));
     let output = Command::new("git")
+        .envs(
+            date.iter()
+                .flat_map(|d| [("GIT_AUTHOR_DATE", d), ("GIT_COMMITTER_DATE", d)]),
+        )
         .current_dir(dir)
         .env("GIT_CONFIG_GLOBAL", "/dev/null")
         .env("GIT_CONFIG_SYSTEM", "/dev/null")
@@ -1815,7 +1825,7 @@ async fn lockfiles_and_generated_files_are_excluded_until_the_filter_reviews_the
     assert_eq!((m.files.len(), m.excluded_lines), (13, 0));
 }
 
-fn excluded(m: &Manifest) -> Vec<(ExcludedBy, u32, Vec<&str>)> {
+fn excluded(m: &Manifest) -> Vec<(Vec<ExcludedBy>, u32, Vec<&str>)> {
     (m.excluded.iter())
         .map(|g| (g.by.clone(), g.count, g.files.iter().map(|f| f.path.as_str()).collect()))
         .collect()
@@ -1855,19 +1865,21 @@ async fn the_files_the_filter_leaves_out_are_listed_by_the_rule_that_does() {
     assert_eq!(
         excluded(&m),
         [
+            (vec![ExcludedBy::OutsideRoots], 2, vec!["docs/b.md", "other/c.rs"]),
             (
-                ExcludedBy::OutsideRoots,
-                3,
-                vec!["Cargo.lock", "docs/b.md", "other/c.rs"]
+                vec![ExcludedBy::OutsideRoots, ExcludedBy::Generated],
+                1,
+                vec!["Cargo.lock"]
             ),
             (
-                ExcludedBy::Pattern {
+                vec![ExcludedBy::Pattern {
                     pattern: "**/*.snap".into()
-                },
+                }],
                 1,
                 vec!["tests/snap/x.snap"]
             ),
-        ]
+        ],
+        "a file two rules leave out is under both, and lifting one would not bring it back"
     );
     let docs = m.excluded[0].files.iter().find(|f| f.path == "docs/b.md").unwrap();
     assert_eq!(docs.delta, LineDelta { added: 2, removed: 1 });
@@ -1896,6 +1908,7 @@ async fn a_review_narrowed_to_something_else_lists_the_rest_as_left_out_by_the_n
     };
     let call = Request::NarrowReview {
         project,
+        changeset: ChangesetKey::WorkingTree,
         filter: Some(narrowing.clone()),
     };
     assert!(matches!(client.call(call).await.unwrap(), Response::Done));
@@ -1906,11 +1919,11 @@ async fn a_review_narrowed_to_something_else_lists_the_rest_as_left_out_by_the_n
     assert_eq!(
         excluded(&m),
         [
-            (ExcludedBy::Narrowing, 1, vec!["lib/b.rs"]),
+            (vec![ExcludedBy::Narrowing], 1, vec!["lib/b.rs"]),
             (
-                ExcludedBy::Pattern {
+                vec![ExcludedBy::Pattern {
                     pattern: "docs/**".into()
-                },
+                }],
                 1,
                 vec!["docs/c.md"]
             ),
@@ -1919,7 +1932,11 @@ async fn a_review_narrowed_to_something_else_lists_the_rest_as_left_out_by_the_n
     );
 
     client
-        .call(Request::NarrowReview { project, filter: None })
+        .call(Request::NarrowReview {
+            project,
+            changeset: ChangesetKey::WorkingTree,
+            filter: None,
+        })
         .await
         .unwrap();
     client.settled().await;
@@ -1930,6 +1947,7 @@ async fn a_review_narrowed_to_something_else_lists_the_rest_as_left_out_by_the_n
     client
         .call(Request::NarrowReview {
             project,
+            changeset: ChangesetKey::WorkingTree,
             filter: Some(narrowing),
         })
         .await
@@ -1958,7 +1976,7 @@ async fn a_narrowing_that_brings_back_what_the_project_hides_lists_none_of_it_as
     client.set_filter(project, &filter).await.unwrap();
     client.settled().await;
     let m = client.manifest(project).await;
-    assert_eq!(excluded(&m), [(ExcludedBy::OutsideRoots, 1, vec!["docs/b.md"])]);
+    assert_eq!(excluded(&m), [(vec![ExcludedBy::OutsideRoots], 1, vec!["docs/b.md"])]);
 
     let lifted = ReviewFilter {
         roots: vec![],
@@ -1967,6 +1985,7 @@ async fn a_narrowing_that_brings_back_what_the_project_hides_lists_none_of_it_as
     client
         .call(Request::NarrowReview {
             project,
+            changeset: ChangesetKey::WorkingTree,
             filter: Some(lifted),
         })
         .await
@@ -1993,6 +2012,7 @@ async fn excluding_a_path_while_narrowed_keeps_the_narrowing_out_of_the_project_
     client
         .call(Request::NarrowReview {
             project,
+            changeset: ChangesetKey::WorkingTree,
             filter: Some(narrowing),
         })
         .await
@@ -2011,6 +2031,117 @@ async fn excluding_a_path_while_narrowed_keeps_the_narrowing_out_of_the_project_
     let m = client.manifest(project).await;
     assert_eq!(m.filter.roots, Vec::<String>::new());
     assert_eq!(m.filter.exclude, ["/lib/b.rs"]);
+    assert_eq!(m.narrowing, None, "editing the project's filter ends the narrowing");
+}
+
+async fn narrow(client: &Client, project: ProjectId, changeset: ChangesetKey, roots: &[&str]) {
+    let filter = ReviewFilter {
+        roots: roots.iter().map(|r| (*r).into()).collect(),
+        ..Default::default()
+    };
+    client
+        .call(Request::NarrowReview {
+            project,
+            changeset,
+            filter: Some(filter),
+        })
+        .await
+        .unwrap();
+}
+
+#[tokio::test]
+async fn a_narrowing_ends_when_another_changeset_comes_on_view() {
+    let fx = fixture(
+        &[("a.txt", "1\n"), ("b.txt", "1\n")],
+        &[("a.txt", "2\n"), ("b.txt", "2\n")],
+    )
+    .await;
+    git(fx.repo.path(), &["branch", "feature"]);
+    let mut client = Client::new(&fx.handler);
+    let project = open(&client, fx.repo.path()).await;
+    narrow(&client, project, ChangesetKey::WorkingTree, &["a.txt"]).await;
+    client.settled().await;
+    assert!(client.manifest(project).await.narrowing.is_some());
+
+    client.open_branch(project, "feature").await;
+    assert_eq!(client.manifest(project).await.narrowing, None);
+    client
+        .call(Request::OpenChangeset {
+            project,
+            changeset: ChangesetKey::WorkingTree,
+        })
+        .await
+        .unwrap();
+    let m = client.manifest(project).await;
+    assert_eq!(
+        (m.narrowing, m.files.len()),
+        (None, 2),
+        "nor is it there on the way back"
+    );
+}
+
+#[tokio::test]
+async fn a_narrowing_asked_for_a_changeset_that_is_not_on_view_is_ignored() {
+    let fx = fixture(
+        &[("a.txt", "1\n"), ("b.txt", "1\n")],
+        &[("a.txt", "2\n"), ("b.txt", "2\n")],
+    )
+    .await;
+    git(fx.repo.path(), &["branch", "feature"]);
+    let client = Client::new(&fx.handler);
+    let project = open(&client, fx.repo.path()).await;
+
+    narrow(
+        &client,
+        project,
+        ChangesetKey::Branch { name: "feature".into() },
+        &["a.txt"],
+    )
+    .await;
+
+    let m = client.manifest(project).await;
+    assert_eq!((m.narrowing, m.files.len()), (None, 2));
+}
+
+#[tokio::test]
+async fn finishing_a_narrowed_review_counts_everything_the_project_filter_shows() {
+    let fx = fixture(
+        &[("a.txt", "1\n"), ("b.txt", "1\n")],
+        &[("a.txt", "2\n"), ("b.txt", "2\n")],
+    )
+    .await;
+    let client = Client::new(&fx.handler);
+    let project = open(&client, fx.repo.path()).await;
+    let revision = client.manifest(project).await.revision;
+    client.toggle_hunk(project, revision, 0).await;
+    narrow(&client, project, ChangesetKey::WorkingTree, &["a.txt"]).await;
+    let m = client.manifest(project).await;
+    assert_eq!(
+        m.completion.seen_lines, m.completion.lines,
+        "all the narrowing shows is seen"
+    );
+
+    let Response::ReviewFinished { complete } = client.call(Request::FinishReview { project }).await.unwrap() else {
+        panic!("not finished");
+    };
+
+    assert!(!complete, "b.txt is unseen, and the project's filter shows it");
+}
+
+#[tokio::test]
+async fn setting_the_filter_the_project_has_keeps_the_narrowing() {
+    let fx = fixture(
+        &[("a.txt", "1\n"), ("b.txt", "1\n")],
+        &[("a.txt", "2\n"), ("b.txt", "2\n")],
+    )
+    .await;
+    let client = Client::new(&fx.handler);
+    let project = open(&client, fx.repo.path()).await;
+    narrow(&client, project, ChangesetKey::WorkingTree, &["a.txt"]).await;
+
+    client.set_filter(project, &ReviewFilter::default()).await.unwrap();
+
+    assert!(client.manifest(project).await.narrowing.is_some());
 }
 
 #[tokio::test]
@@ -2052,6 +2183,48 @@ async fn a_branch_the_default_branch_holds_says_which_merge_brought_it_in() {
     assert_eq!(
         (by.id, by.subject),
         (merge, "Merge pull request #7 from feature".to_owned())
+    );
+}
+
+#[tokio::test]
+async fn a_branch_merged_both_ways_names_the_merge_that_brought_its_tip_in() {
+    let fx = fixture(&[("a.txt", "1\n")], &[]).await;
+    let p = fx.repo.path();
+    // Every commit a second later than the one before, as git orders history by time.
+    let clock = std::cell::Cell::new(2_000_000_000);
+    let at = |args: &[&str]| {
+        clock.set(clock.get() + 1);
+        git_at(p, args, Some(clock.get()))
+    };
+    let commit = |file: &str, message: &str| {
+        write(p, file, "x\n");
+        at(&["add", file]);
+        at(&["commit", "-q", "-m", message]);
+    };
+    at(&["checkout", "-q", "-b", "feature"]);
+    commit("b.txt", "feature one");
+    at(&["checkout", "-q", "main"]);
+    commit("c.txt", "main two");
+    at(&["merge", "-q", "--no-ff", "feature", "-m", "first merge"]);
+    at(&["checkout", "-q", "feature"]);
+    at(&["merge", "-q", "--no-ff", "main", "-m", "main into feature"]);
+    commit("d.txt", "feature three");
+    at(&["checkout", "-q", "main"]);
+    at(&["merge", "-q", "--no-ff", "feature", "-m", "second merge"]);
+    let second = at(&["rev-parse", "HEAD"]);
+    commit("e.txt", "after");
+    let mut client = Client::new(&fx.handler);
+    let project = open(&client, p).await;
+    client.open_branch(project, "feature").await;
+
+    let contained = client.manifest(project).await.base.contained_in.unwrap();
+
+    let by = contained.merged_by.expect("a merge brought the tip in");
+    assert_eq!((by.id, by.subject.as_str()), (second, "second merge"));
+    assert_eq!(
+        (contained.commits, contained.since),
+        (Some(2), Some(1)),
+        "the merge brought in main-into-feature and the commit after it; one commit came after"
     );
 }
 

@@ -407,7 +407,11 @@ impl Orchestrator {
                 side,
             } => reply(async move { self.item_blob(project, view, revision, &path, kind, side).await }),
             Request::SetProjectFilter { project, filter } => reply(self.set_project_filter(project, filter)),
-            Request::NarrowReview { project, filter } => reply(self.narrow_review(project, filter)),
+            Request::NarrowReview {
+                project,
+                changeset,
+                filter,
+            } => reply(self.narrow_review(project, changeset, filter)),
             Request::SetProjectTrusted { project, trusted } => reply(self.set_project_trusted(project, trusted)),
             Request::TrustPullRequest { project } => reply(self.trust_pull_request(project)),
             Request::ExcludePath {
