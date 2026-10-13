@@ -8,6 +8,7 @@
   import IconButton from "../../lib/ui/IconButton.svelte";
   import KeyHint from "../../lib/ui/KeyHint.svelte";
   import KeyHints from "../../lib/ui/KeyHints.svelte";
+  import PopupHeader from "../../lib/ui/PopupHeader.svelte";
   import TextToggle from "../../lib/ui/TextToggle.svelte";
   import VirtualRows from "../../lib/ui/VirtualRows.svelte";
   import { structure } from "../../state/structure.svelte";
@@ -132,23 +133,26 @@
   {onkeydown}
   {...{ [LIST]: "" }}
 >
-  <div class="head">
-    <span class="title">Structure of <code>{fileName}</code></span>
-    {#if outline && !outline.unavailable}<span class="mono n">{symbols.length}</span>{/if}
-    <span class="grow"></span>
-    <TextToggle on={structure.sort} title="Sort alphabetically" onclick={() => structure.setSort(!structure.sort)}
-      >A–Z</TextToggle
-    >
-    <IconButton
-      icon="filter"
-      label={marked ? "Changed only" : "Changed only (nothing is changed in this file)"}
-      active={structure.changedOnly && marked}
-      disabled={!marked}
-      size={22}
-      iconSize={14}
-      onclick={() => structure.setChangedOnly(!structure.changedOnly)}
-    />
-  </div>
+  <PopupHeader>
+    Structure of <code>{fileName}</code>
+    {#snippet meta()}
+      {#if outline && !outline.unavailable}<span class="n">{symbols.length}</span>{/if}
+    {/snippet}
+    {#snippet controls()}
+      <TextToggle on={structure.sort} title="Sort alphabetically" onclick={() => structure.setSort(!structure.sort)}
+        >A–Z</TextToggle
+      >
+      <IconButton
+        icon="filter"
+        label={marked ? "Changed only" : "Changed only (nothing is changed in this file)"}
+        active={structure.changedOnly && marked}
+        disabled={!marked}
+        size={22}
+        iconSize={14}
+        onclick={() => structure.setChangedOnly(!structure.changedOnly)}
+      />
+    {/snippet}
+  </PopupHeader>
   <div class="search">
     <Icon name="search" size={12} />
     <input
@@ -199,20 +203,6 @@
     background: var(--bg-editor);
     font-size: var(--fs-ctl);
     color: var(--text);
-  }
-  .head {
-    flex: none;
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    box-sizing: border-box;
-    height: 33px;
-    padding: 0 6px 0 12px;
-    border-bottom: 1px solid var(--line-soft);
-  }
-  .title code {
-    font-family: var(--font-mono);
-    font-size: var(--fs-mono);
   }
   .search {
     flex: none;

@@ -72,7 +72,4 @@
     display: flex;
     gap: 6px;
   }
-  .small {
-    height: 22px;
-  }
 </style>

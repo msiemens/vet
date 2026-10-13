@@ -152,21 +152,21 @@
 {/snippet}
 
 <aside aria-label="Comments">
+  <div class="sh sh-bar">
+    <span>Comments</span>
+    <span class="grow"></span>
+    <IconButton
+      icon="comments"
+      label={commands.label("review.commentOnChangeset")}
+      title={commands.hint("review.commentOnChangeset")}
+      disabled={!commands.isEnabled("review.commentOnChangeset")}
+      size={22}
+      iconSize={13}
+      onclick={() => commands.run("review.commentOnChangeset")}
+    />
+  </div>
   <ScrollArea>
     <div class="content">
-      <div class="sh sh-bar">
-        <span>Comments</span>
-        <span class="grow"></span>
-        <IconButton
-          icon="comments"
-          label={commands.label("review.commentOnChangeset")}
-          title={commands.hint("review.commentOnChangeset")}
-          disabled={!commands.isEnabled("review.commentOnChangeset")}
-          size={22}
-          iconSize={13}
-          onclick={() => commands.run("review.commentOnChangeset")}
-        />
-      </div>
       {#if info}
         <PullRequestBlock {info} />
         <SubmitReview {info} />
@@ -361,11 +361,6 @@
     align-items: center;
     gap: 6px;
     padding: 0 10px 3px 26px;
-  }
-  .small {
-    height: 20px;
-    padding: 0 8px;
-    font-size: var(--fs-mono-s);
   }
   .reason {
     min-width: 0;

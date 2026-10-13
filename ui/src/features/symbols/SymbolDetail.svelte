@@ -6,6 +6,7 @@
   import { codeBlock } from "../../lib/codeBlock";
   import { splitPath } from "../../lib/paths";
   import { nameOf } from "../../lib/symbolLabel";
+  import EmptyState from "../../lib/ui/EmptyState.svelte";
   import Icon from "../../lib/ui/Icon.svelte";
   import { findSets } from "../../state/findSets.svelte";
   import type { Shown } from "../../state/symbolLoad";
@@ -88,7 +89,7 @@
         <code class="mono selectable" use:codeBlock={signature.signature}></code>
       </div>
     {:else}
-      <p class="note">{signature.unavailable?.message ?? "The language server has no text for it"}</p>
+      <EmptyState align="start" text={signature.unavailable?.message ?? "The language server has no text for it"} />
     {/if}
   {/snippet}
 </SymbolRoot>

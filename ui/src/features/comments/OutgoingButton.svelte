@@ -246,11 +246,6 @@
     min-width: 0;
     color: var(--severity-error);
   }
-  .small {
-    height: 20px;
-    padding: 0 8px;
-    font-size: var(--fs-mono-s);
-  }
   .post {
     display: flex;
     flex-direction: column;

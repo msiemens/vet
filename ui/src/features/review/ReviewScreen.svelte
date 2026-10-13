@@ -3,6 +3,7 @@
   import { onMount, untrack } from "svelte";
   import type { MenuSpec } from "../../lib/commandMenu";
   import { repoName } from "../../lib/paths";
+  import Banner from "../../lib/ui/Banner.svelte";
   import SideBar from "../../lib/ui/SideBar.svelte";
   import type { SoftWrap } from "../../lib/softWrap";
   import type { Backend } from "../../state/backend";
@@ -378,7 +379,7 @@
     {/if}
   </div>
   {#if range && readOnly}
-    <p class="note" role="status">Read-only: marks and comments are made on the latest push or All changes.</p>
+    <Banner message="Read-only: marks and comments are made on the latest push or All changes." />
   {/if}
   {#if pinned !== undefined}<CommitStrip id={pinned} commit={controller.commitUnit(tabs.active)} />{/if}
   {#if commit && tabs.active === CHANGES}<CommitHeader {commit} />{/if}
@@ -459,15 +460,6 @@
   }
   .grow {
     flex: 1;
-  }
-  .note {
-    flex: none;
-    margin: 0;
-    padding: 4px 12px;
-    background: color-mix(in srgb, var(--old-base) 14%, var(--bg-panel));
-    border-bottom: 1px solid var(--line);
-    font-size: var(--fs-ctl);
-    color: var(--text-2);
   }
   /* The editors stack their layers up to z-index 1000; isolated, those stay inside the panes and
      the header's popovers (z-index 20) lie above them. */

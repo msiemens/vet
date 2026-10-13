@@ -15,6 +15,7 @@
   import IconButton from "../../lib/ui/IconButton.svelte";
   import OpenInFindButton from "../../lib/ui/OpenInFindButton.svelte";
   import PathText from "../../lib/ui/PathText.svelte";
+  import PopupHeader from "../../lib/ui/PopupHeader.svelte";
   import QualifiedName from "../../lib/ui/QualifiedName.svelte";
   import { SpeedSearch } from "../../lib/ui/speedSearch.svelte";
   import SpeedSearchField from "../../lib/ui/SpeedSearchField.svelte";
@@ -207,27 +208,30 @@
   style:width="{geometry.width}px"
   style:max-height="{geometry.maxHeight}px"
 >
-  <div class="head">
-    <span class="title">{view.kind === "usages" ? "Usages of" : "Implementations of"} <code>{view.symbol}</code></span>
-    {#if count}
-      <span class="n">{count.count}</span>
-      {#if count.cut}<span class="n">{count.cut}</span>{/if}
-    {/if}
-    <span class="grow"></span>
-    {#if view.onkeep && results?.rows.length}
-      <OpenInFindButton keys="{isMac ? '⌘' : 'Ctrl+'}↵" title="Keep this list in the Find window" onclick={keep} />
-    {/if}
-    {#if view.body.phase !== "stopped"}
-      <IconButton
-        icon="filter"
-        label="Only Changeset Hits"
-        size={24}
-        iconSize={14}
-        active={onlyChangeset}
-        onclick={() => (onlyChangeset = !onlyChangeset)}
-      />
-    {/if}
-  </div>
+  <PopupHeader>
+    {view.kind === "usages" ? "Usages of" : "Implementations of"} <code>{view.symbol}</code>
+    {#snippet meta()}
+      {#if count}
+        <span class="n">{count.count}</span>
+        {#if count.cut}<span class="n">{count.cut}</span>{/if}
+      {/if}
+    {/snippet}
+    {#snippet controls()}
+      {#if view.onkeep && results?.rows.length}
+        <OpenInFindButton keys="{isMac ? '⌘' : 'Ctrl+'}↵" title="Keep this list in the Find window" onclick={keep} />
+      {/if}
+      {#if view.body.phase !== "stopped"}
+        <IconButton
+          icon="filter"
+          label="Only Changeset Hits"
+          size={24}
+          iconSize={14}
+          active={onlyChangeset}
+          onclick={() => (onlyChangeset = !onlyChangeset)}
+        />
+      {/if}
+    {/snippet}
+  </PopupHeader>
   {#if search.active}<SpeedSearchField query={search.query} found={hits.length > 0} />{/if}
 
   {#if view.body.phase === "searching"}
@@ -325,24 +329,6 @@
     font-size: var(--fs-ctl);
     background: var(--bg-editor);
     overflow: hidden;
-  }
-  .head {
-    flex: none;
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    box-sizing: border-box;
-    height: 33px;
-    padding: 0 8px 0 12px;
-    border-bottom: 1px solid var(--line-soft);
-    color: var(--text);
-  }
-  .title code {
-    font-family: var(--font-mono);
-    font-size: var(--fs-mono);
-  }
-  .grow {
-    flex: 1;
   }
   .list {
     flex: 1;

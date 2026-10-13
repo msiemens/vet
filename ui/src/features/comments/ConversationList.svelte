@@ -214,9 +214,4 @@
     justify-content: flex-end;
     gap: 6px;
   }
-  .small {
-    height: 20px;
-    padding: 0 8px;
-    font-size: var(--fs-mono-s);
-  }
 </style>
