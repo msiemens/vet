@@ -10,6 +10,7 @@
   import { basename, dirname } from "../../lib/paths";
   import { NO_HIGHLIGHTS } from "../../lib/highlights";
   import ChangeLetter from "../../lib/ui/ChangeLetter.svelte";
+  import EmptyState from "../../lib/ui/EmptyState.svelte";
   import FileIcon from "../../lib/ui/FileIcon.svelte";
   import Icon from "../../lib/ui/Icon.svelte";
   import KeyHint from "../../lib/ui/KeyHint.svelte";
@@ -449,7 +450,7 @@
     </div>
     <div class="results">
       {#if hint}
-        <p class="hint" class:bad={hint.bad}>{hint.text}</p>
+        <EmptyState text={hint.text} error={hint.bad} />
       {:else}
         <VirtualRows bind:this={list} count={rows.length} key={(i) => rowKey(rows[i])}>
           {#snippet row(i)}
@@ -627,16 +628,6 @@
   .results > :global(*) {
     flex: 1;
     min-height: 0;
-  }
-  .hint {
-    margin: 0;
-    padding: 14px 12px;
-    color: var(--text-3);
-    font-size: 12px;
-    flex: none;
-  }
-  .hint.bad {
-    color: var(--del-text);
   }
   .head {
     width: 100%;

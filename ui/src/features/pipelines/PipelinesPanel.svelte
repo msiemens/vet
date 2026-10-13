@@ -11,6 +11,7 @@
   import Banner from "../../lib/ui/Banner.svelte";
   import BottomToolHeader from "../../lib/ui/BottomToolHeader.svelte";
   import CiStatus from "../../lib/ui/CiStatus.svelte";
+  import EmptyState from "../../lib/ui/EmptyState.svelte";
   import Icon from "../../lib/ui/Icon.svelte";
   import IconButton from "../../lib/ui/IconButton.svelte";
   import Table from "../../lib/ui/Table.svelte";
@@ -215,10 +216,12 @@
   <div class="body">
     {#if !checks}
       {#if signedOut && status}
-        <p class="note">Nothing loaded. Sign in to {status.host} and the runs of this pull request appear here.</p>
+        <div class="whole">
+          <EmptyState text="Nothing loaded. Sign in to {status.host} and the runs of this pull request appear here." />
+        </div>
       {/if}
     {:else if !checks.runs.length}
-      <p class="note">This commit has no checks.</p>
+      <div class="whole"><EmptyState text="This commit has no checks." /></div>
     {:else}
       <div class="runs" bind:this={tree} {...nav.attributes} role="tree" aria-label="Runs and jobs" {onkeydown}>
         <Table
@@ -317,12 +320,13 @@
             >
           </div>
           {#if chosen.phase === "queued"}
-            <p class="note">
-              <b>Queued.</b> Waiting for the platform to start it. The {words?.step ?? "step"}s appear when the {words?.group ??
-                "job"} starts.
-            </p>
+            <EmptyState
+              title="Queued."
+              text="Waiting for the platform to start it. The {words?.step ?? 'step'}s appear when the {words?.group ??
+                'job'} starts."
+            />
           {:else if pipelines.stepsError !== undefined}
-            <p class="note err">{pipelines.stepsError}</p>
+            <EmptyState text={pipelines.stepsError} error />
           {:else if pipelines.steps?.job === chosen.id}
             <Table
               name="pipeline-steps"
@@ -352,7 +356,7 @@
             </Table>
           {/if}
         {:else}
-          <p class="note">Choose a {words?.group ?? "job"} to see its {words?.step ?? "step"}s.</p>
+          <EmptyState text="Choose a {words?.group ?? 'job'} to see its {words?.step ?? 'step'}s." />
         {/if}
       </div>
     {/if}
@@ -476,9 +480,8 @@
     text-overflow: ellipsis;
     white-space: nowrap;
   }
-  .note {
-    margin: 0;
-    padding: 14px 16px;
-    max-width: 52ch;
+  .whole {
+    flex: 1;
+    min-width: 0;
   }
 </style>

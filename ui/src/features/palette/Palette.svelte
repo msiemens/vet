@@ -9,6 +9,7 @@
   import { highlightRuns, sliceRanges, type Range } from "../../lib/speedSearch";
   import ChangeLetter from "../../lib/ui/ChangeLetter.svelte";
   import DiffBar from "../../lib/ui/DiffBar.svelte";
+  import EmptyState from "../../lib/ui/EmptyState.svelte";
   import FileIcon from "../../lib/ui/FileIcon.svelte";
   import Icon from "../../lib/ui/Icon.svelte";
   import KeyHint from "../../lib/ui/KeyHint.svelte";
@@ -537,13 +538,14 @@
     {/each}
     {#each indexing as text (text)}<div class="note"><span class="msg">{text}</span></div>{/each}
     {#if !entries.length && !built.groups.some((g) => g.loading)}
-      <div class="empty">
-        {#if palette.query.trim()}
-          <span class="big">No results for “{palette.query.trim()}”</span>
-          {#if hidden}<span
-              >{hidden} unchanged {hidden === 1 ? "file matches" : "files match"}, and are not searched.</span
-            >{/if}
-          <div class="acts">
+      {#if palette.query.trim()}
+        <EmptyState
+          title="No results for “{palette.query.trim()}”"
+          text={hidden
+            ? `${hidden} unchanged ${hidden === 1 ? "file matches" : "files match"}, and are not searched.`
+            : undefined}
+        >
+          {#snippet actions()}
             {#if hidden}
               <button class="ctl" type="button" tabindex="-1" onclick={() => palette.setUnchanged(true)}
                 >Include unchanged files</button
@@ -559,11 +561,11 @@
               >Find “{palette.query.trim()}” in files…
               <Kbd keys={commands.binding(FIND_IN_FILES)?.label ?? ""} /></button
             >
-          </div>
-        {:else}
-          <span class="big">Nothing to list here yet.</span>
-        {/if}
-      </div>
+          {/snippet}
+        </EmptyState>
+      {:else}
+        <EmptyState title="Nothing to list here yet." />
+      {/if}
     {/if}
   </div>
   {#snippet foot()}
@@ -756,24 +758,6 @@
     background: transparent;
     color: var(--accent);
     font-weight: 650;
-  }
-  .empty {
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    gap: 8px;
-    padding: 22px 16px 20px;
-    color: var(--text-2);
-    text-align: center;
-  }
-  .empty .big {
-    color: var(--text);
-  }
-  .acts {
-    display: flex;
-    gap: 8px;
-    flex-wrap: wrap;
-    justify-content: center;
   }
   .where {
     display: inline-flex;

@@ -9,15 +9,14 @@
   import { LIST } from "../../lib/listKeys";
   import { fullName } from "../../lib/symbolLabel";
   import ChangeLetter from "../../lib/ui/ChangeLetter.svelte";
+  import EmptyState from "../../lib/ui/EmptyState.svelte";
   import Icon from "../../lib/ui/Icon.svelte";
   import IconButton from "../../lib/ui/IconButton.svelte";
-  import SeverityIcon from "../../lib/ui/SeverityIcon.svelte";
   import OpenInFindButton from "../../lib/ui/OpenInFindButton.svelte";
   import PathText from "../../lib/ui/PathText.svelte";
   import QualifiedName from "../../lib/ui/QualifiedName.svelte";
   import { SpeedSearch } from "../../lib/ui/speedSearch.svelte";
   import SpeedSearchField from "../../lib/ui/SpeedSearchField.svelte";
-  import Spinner from "../../lib/ui/Spinner.svelte";
   import StatusDot from "../../lib/ui/StatusDot.svelte";
   import { isMac } from "../../state/host";
   import type { PickerView } from "../../state/pickerTypes";
@@ -231,24 +230,23 @@
   {#if search.active}<SpeedSearchField query={search.query} found={hits.length > 0} />{/if}
 
   {#if view.body.phase === "searching"}
-    <div class="state"><Spinner />Searching…</div>
+    <EmptyState busy title="Searching…" />
   {:else if view.body.phase === "stopped"}
-    <div class="state stopped">
-      <SeverityIcon severity="warning" />
-      <span class="message selectable">{view.body.message}</span>
-      <span class="grow"></span>
-      <button class="ctl" type="button" onclick={() => view.onretry()}>Restart</button>
-      <button
-        class="ctl"
-        type="button"
-        onclick={() => {
-          view.onclose();
-          onsettings();
-        }}>Settings…</button
-      >
-    </div>
+    <EmptyState icon="warning" tone="warn" text={view.body.message}>
+      {#snippet actions()}
+        <button class="ctl" type="button" onclick={() => view.onretry()}>Restart</button>
+        <button
+          class="ctl"
+          type="button"
+          onclick={() => {
+            view.onclose();
+            onsettings();
+          }}>Settings…</button
+        >
+      {/snippet}
+    </EmptyState>
   {:else if !hits.length}
-    <div class="state">{results?.rows.length ? "No matches" : `No ${nouns}`}</div>
+    <EmptyState title={results?.rows.length ? "No matches" : `No ${nouns}`} />
   {:else}
     <div class="list" bind:this={list}>
       {#if flat}
@@ -351,19 +349,6 @@
   }
   .grow {
     flex: 1;
-  }
-  .state {
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    gap: 8px;
-    height: 64px;
-    padding: 0 12px;
-    color: var(--text-2);
-  }
-  .stopped {
-    justify-content: flex-start;
-    color: var(--text);
   }
   .list {
     flex: 1;

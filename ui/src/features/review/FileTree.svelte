@@ -15,6 +15,7 @@
   import IconButton from "../../lib/ui/IconButton.svelte";
   import SeverityIcon from "../../lib/ui/SeverityIcon.svelte";
   import DiffBar from "../../lib/ui/DiffBar.svelte";
+  import EmptyState from "../../lib/ui/EmptyState.svelte";
   import { deltaText } from "../../lib/ui/lineDelta";
   import { ListNav } from "../../lib/ui/listNav";
   import Marked from "../../lib/ui/Marked.svelte";
@@ -600,7 +601,7 @@
       {#if commits.length}
         <CommitList {commits} selected={commit} onselect={oncommit} />
       {:else}
-        <p class="note">Loading the commits…</p>
+        <EmptyState align="start" text="Loading the commits…" />
       {/if}
     </div>
     <!-- A focusable separator is a widget (WAI-ARIA window splitter). -->
@@ -619,7 +620,7 @@
   <div class="body" role="presentation" bind:this={body} {onkeydown} {...rowNav.attributes} {...search.attributes}>
     {#if search.active}<SpeedSearchField query={search.query} found={!!hits?.size} />{/if}
     {#if scope === "changes"}
-      {#if !paths.length && !search.active}<p class="note">{none}</p>{/if}
+      {#if !paths.length && !search.active}<EmptyState align="start" text={none} />{/if}
       <!-- The excluded group is one more row after the files, and the files it holds follow it while it is open. -->
       <VirtualRows
         bind:this={changesList}
@@ -724,11 +725,6 @@
   /* Text at the end of the bar keeps the inset of the title, which the bar's padding sets for a button. */
   .end {
     margin-right: 4px;
-  }
-  .note {
-    margin: 0;
-    padding: 8px 10px;
-    color: var(--text-3);
   }
   .divider {
     flex: none;

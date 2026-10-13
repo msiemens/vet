@@ -9,6 +9,7 @@
   import FileIcon from "../../lib/ui/FileIcon.svelte";
   import Icon from "../../lib/ui/Icon.svelte";
   import BottomToolHeader from "../../lib/ui/BottomToolHeader.svelte";
+  import EmptyState from "../../lib/ui/EmptyState.svelte";
   import FilterField from "../../lib/ui/FilterField.svelte";
   import Banner from "../../lib/ui/Banner.svelte";
   import Chip from "../../lib/ui/Chip.svelte";
@@ -272,39 +273,41 @@
       <!-- The list takes the keys of its rows, which are not in the tab order. -->
       <div class="list" role="presentation" bind:this={body} {onkeydown} {...nav.attributes}>
         {#if set.phase === "running" && !set.hasRun}
-          <div class="empty">
-            <Spinner />
-            <b>{set.spec.type === "usages" ? `Finding usages of ${set.title}` : `Searching for ${set.title}`}</b>
-            <button class="ctl" type="button" onclick={() => findSets.stop(set)}>Stop</button>
-          </div>
+          <EmptyState
+            busy
+            title={set.spec.type === "usages" ? `Finding usages of ${set.title}` : `Searching for ${set.title}`}
+          >
+            {#snippet actions()}
+              <button class="ctl" type="button" onclick={() => findSets.stop(set)}>Stop</button>
+            {/snippet}
+          </EmptyState>
         {:else if set.phase === "failed" || set.phase === "stopped"}
-          <div class="empty">
-            <span class="warn-icon"><Icon name="warning" size={18} /></span>
-            <b>{set.phase === "failed" ? "The search failed" : "No result"}</b>
-            <span class="sub selectable">{set.message}</span>
-            <button class="ctl" type="button" onclick={() => findSets.rerun(set)}>Rerun</button>
-          </div>
+          <EmptyState
+            icon="warning"
+            tone="warn"
+            title={set.phase === "failed" ? "The search failed" : "No result"}
+            text={set.message}
+          >
+            {#snippet actions()}
+              <button class="ctl" type="button" onclick={() => findSets.rerun(set)}>Rerun</button>
+            {/snippet}
+          </EmptyState>
         {:else if !set.places.length}
-          <div class="empty">
-            <b>{set.spec.type === "usages" ? "No usages" : "No matches"}</b>
-            <span class="sub"
-              >{set.spec.type === "usages"
-                ? `Nothing refers to ${set.title} in the code the language servers know.`
-                : `${set.title} does not occur where it was searched.`}</span
-            >
-          </div>
+          <EmptyState
+            title={set.spec.type === "usages" ? "No usages" : "No matches"}
+            text={set.spec.type === "usages"
+              ? `Nothing refers to ${set.title} in the code the language servers know.`
+              : `${set.title} does not occur where it was searched.`}
+          />
         {:else if !items.length}
-          <div class="empty">
-            <b>No results match</b>
-            <span class="sub"
-              >{set.filters.query.trim()
-                ? `No result contains "${set.filters.query.trim()}".`
-                : "The filters hide every result."}
-              {set.places.length} kept
-              {set.places.length === 1 ? "result is" : "results are"} hidden.
-              <button class="ctl" type="button" onclick={clearFilters}>Remove filters</button></span
-            >
-          </div>
+          <EmptyState title="No results match">
+            {set.filters.query.trim()
+              ? `No result contains "${set.filters.query.trim()}".`
+              : "The filters hide every result."}
+            {set.places.length} kept
+            {set.places.length === 1 ? "result is" : "results are"} hidden.
+            <button class="ctl" type="button" onclick={clearFilters}>Remove filters</button>
+          </EmptyState>
         {:else}
           <VirtualRows bind:this={list} count={items.length} key={(i) => items.at(i)?.key ?? ""}>
             {#snippet row(i)}
@@ -436,10 +439,8 @@
       {/if}
     </div>
   {:else}
-    <div class="empty nothing">
-      <span class="big"><Icon name="find" size={24} stroke={1.4} /></span>
-      <b>Nothing kept yet</b>
-      <span class="sub">Results of Find in Files and Find Usages stay here.</span>
+    <div class="nothing">
+      <EmptyState icon="find" title="Nothing kept yet" text="Results of Find in Files and Find Usages stay here." />
     </div>
   {/if}
 </section>
@@ -520,37 +521,12 @@
   .pvn :global(svg) {
     color: var(--old-base);
   }
-  .empty {
+  .nothing {
+    flex: 1;
     display: flex;
     flex-direction: column;
-    align-items: center;
     justify-content: center;
-    gap: 6px;
-    padding: 22px 24px;
-    text-align: center;
-    color: var(--text-2);
-    font-size: var(--fs-ctl);
-  }
-  .empty.nothing {
-    flex: 1;
     background: var(--bg-editor);
-  }
-  .empty b {
-    color: var(--text);
-    font-size: 13px;
-    font-weight: 600;
-  }
-  .empty .sub {
-    color: var(--text-3);
-    max-width: 58ch;
-  }
-  .big {
-    color: var(--text-3);
-    display: inline-flex;
-  }
-  .warn-icon {
-    color: var(--warn);
-    display: inline-flex;
   }
   .line {
     display: flex;

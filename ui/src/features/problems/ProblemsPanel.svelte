@@ -7,6 +7,7 @@
   import type { Unavailable } from "../../generated/Unavailable";
   import { limitedMessage, onlyStoodIn } from "../chrome";
   import BottomToolHeader from "../../lib/ui/BottomToolHeader.svelte";
+  import EmptyState from "../../lib/ui/EmptyState.svelte";
   import FilterField from "../../lib/ui/FilterField.svelte";
   import Icon from "../../lib/ui/Icon.svelte";
   import IconButton from "../../lib/ui/IconButton.svelte";
@@ -440,47 +441,38 @@
   <!-- The list takes the keys of its rows, which are not in the tab order. -->
   <div class="body" class:stale role="presentation" bind:this={body} {onkeydown} {...nav.attributes}>
     {#if waiting && !items.length}
-      <div class="empty">
-        <Spinner />
-        <b>{serverOf ? `${serverOf.server} is starting` : "The language server is starting"}</b>
-        <span class="sub">Problems appear as soon as it answers. This takes a moment after opening a project.</span>
-      </div>
+      <EmptyState
+        busy
+        title={serverOf ? `${serverOf.server} is starting` : "The language server is starting"}
+        text="Problems appear as soon as it answers. This takes a moment after opening a project."
+      />
     {:else if everyFileUnserved && !missing.length}
-      <div class="empty"><b>Nothing to analyse here</b></div>
+      <EmptyState title="Nothing to analyse here" />
     {:else if empty?.kind === "none"}
-      <div class="empty">
-        <span class="ok"><Icon name="check" size={22} stroke={1.8} /></span>
-        <b>No problems in {scopeName}</b>
-        {#if reach.answered}
-          <span class="sub">{reach.answered} analysed {reach.answered === 1 ? "file" : "files"} checked.</span>
-        {/if}
-      </div>
+      <EmptyState
+        icon="check"
+        tone="ok"
+        title="No problems in {scopeName}"
+        text={reach.answered
+          ? `${reach.answered} analysed ${reach.answered === 1 ? "file" : "files"} checked.`
+          : undefined}
+      />
     {:else if empty?.kind === "partial"}
-      <div class="empty">
-        <b>No problems so far in {scopeName}</b>
-        <span class="sub">{reach.answered} of {reach.total} files analysed.</span>
-      </div>
+      <EmptyState title="No problems so far in {scopeName}" text="{reach.answered} of {reach.total} files analysed." />
     {:else if empty?.kind === "onlyExisting"}
-      <div class="empty">
-        <b>No new problems in {scopeName}</b>
-        <span class="sub"
-          >{empty.existing} existing ·
-          <button class="link" type="button" onclick={() => (problems.origin = "all")}>Show all</button></span
-        >
-      </div>
+      <EmptyState title="No new problems in {scopeName}">
+        {empty.existing} existing ·
+        <button class="link" type="button" onclick={() => (problems.origin = "all")}>Show all</button>
+      </EmptyState>
     {:else if empty?.kind === "hidden"}
-      <div class="empty">
-        <b>{empty.hidden} {empty.hidden === 1 ? "problem" : "problems"} hidden by the filters</b>
-        <span class="sub"><button class="link" type="button" onclick={clearFilters}>Clear filters</button></span>
-      </div>
+      <EmptyState title="{empty.hidden} {empty.hidden === 1 ? 'problem' : 'problems'} hidden by the filters">
+        <button class="link" type="button" onclick={clearFilters}>Clear filters</button>
+      </EmptyState>
     {:else if everyFileUnserved}
-      <div class="empty">
-        <b>No language support for these files</b>
-        <span class="sub"
-          >Vet shows problems that a language server reports. None is available for {missing.length} of the changed files,
-          so none is analysed.</span
-        >
-      </div>
+      <EmptyState
+        title="No language support for these files"
+        text="Vet shows problems that a language server reports. None is available for {missing.length} of the changed files, so none is analysed."
+      />
     {/if}
     {#if items.length}
       <VirtualRows bind:this={list} count={items.length} key={(i) => (items[i] ? keyOf(items[i]) : "")}>
@@ -658,30 +650,6 @@
   }
   .body.stale {
     opacity: 0.55;
-  }
-  .empty {
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    justify-content: center;
-    gap: 6px;
-    padding: 22px 24px;
-    text-align: center;
-    color: var(--text-2);
-    font-size: var(--fs-ctl);
-  }
-  .empty b {
-    color: var(--text);
-    font-size: 13px;
-    font-weight: 600;
-  }
-  .empty .sub {
-    color: var(--text-3);
-    max-width: 46ch;
-  }
-  .ok {
-    color: var(--ok);
-    display: inline-flex;
   }
   .line {
     display: flex;

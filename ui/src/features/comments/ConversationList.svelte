@@ -2,6 +2,7 @@
   import type { ConversationEntry } from "../../generated/ConversationEntry";
   import { canSubmit, isSubmitKey } from "../../lib/composer";
   import { shortTime } from "../../lib/shortTime";
+  import EmptyState from "../../lib/ui/EmptyState.svelte";
   import IconButton from "../../lib/ui/IconButton.svelte";
   import { platform } from "../../state/platform.svelte";
   import { threads } from "../../state/threads.svelte";
@@ -55,7 +56,7 @@
 {/snippet}
 
 {#if entries.length === 0 && drafts.length === 0}
-  <p class="empty">Nothing was said on the pull request as a whole.</p>
+  <EmptyState align="start" text="Nothing was said on the pull request as a whole." />
 {:else}
   <ul>
     {#each entries as entry (entry.id)}
@@ -129,10 +130,6 @@
 {/if}
 
 <style>
-  .empty {
-    margin: 12px 10px;
-    color: var(--text-3);
-  }
   ul {
     margin: 0;
     padding: 0;

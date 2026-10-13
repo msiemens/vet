@@ -5,6 +5,7 @@
   import { readStored, writeStored } from "../../lib/storage";
   import Avatar from "../../lib/ui/Avatar.svelte";
   import CiStatus from "../../lib/ui/CiStatus.svelte";
+  import EmptyState from "../../lib/ui/EmptyState.svelte";
   import Icon from "../../lib/ui/Icon.svelte";
   import { ListNav } from "../../lib/ui/listNav";
   import PanelTabs from "../../lib/ui/PanelTabs.svelte";
@@ -230,9 +231,7 @@
         </button>
       {:else}
         {#if !unlisted.length}
-          <p class="empty">
-            {queue.loading ? "Loading…" : rows.length ? "No matching changesets" : "No changesets"}
-          </p>
+          <EmptyState text={queue.loading ? "Loading…" : rows.length ? "No matching changesets" : "No changesets"} />
         {/if}
       {/each}
       {#if shown.length && queue.listingPullRequests && (tab === "all" || tab === "prs")}
@@ -348,9 +347,5 @@
     margin: 8px 16px;
     color: var(--text-3);
     font-size: var(--fs-ctl);
-  }
-  .empty {
-    margin: 12px 16px;
-    color: var(--text-3);
   }
 </style>

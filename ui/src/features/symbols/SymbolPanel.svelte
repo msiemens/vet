@@ -1,5 +1,6 @@
 <script lang="ts">
   // The Symbol tool window: the details of the symbol on show.
+  import EmptyState from "../../lib/ui/EmptyState.svelte";
   import ScrollArea from "../../lib/ui/ScrollArea.svelte";
   import { keyOf } from "../../state/symbolKey";
   import { symbols } from "../../state/symbols.svelte";
@@ -21,18 +22,13 @@
         <SymbolDetail shown={symbols.selected} {onopen} />
       {/key}
     {:else if symbols.unavailable}
-      <div class="empty">
-        <b>{symbols.unavailable.label}</b>
-        <span class="selectable">{symbols.unavailable.message}</span>
-      </div>
+      <EmptyState align="start" title={symbols.unavailable.label} text={symbols.unavailable.message} />
     {:else}
-      <div class="empty">
-        <b>No symbol selected</b>
-        <span>
-          Changed symbols are listed under their files in Changes. Select one there, or put the cursor in a symbol in an
-          editor.
-        </span>
-      </div>
+      <EmptyState
+        align="start"
+        title="No symbol selected"
+        text="Changed symbols are listed under their files in Changes. Select one there, or put the cursor in a symbol in an editor."
+      />
     {/if}
   </ScrollArea>
 </aside>
@@ -46,18 +42,5 @@
     flex-direction: column;
     overflow: hidden;
     container-type: inline-size;
-  }
-  .empty {
-    display: flex;
-    flex-direction: column;
-    gap: 6px;
-    padding: 14px 12px;
-    color: var(--text-3);
-    font-size: var(--fs-ctl);
-    line-height: 1.5;
-  }
-  .empty b {
-    color: var(--text-2);
-    font-weight: 600;
   }
 </style>

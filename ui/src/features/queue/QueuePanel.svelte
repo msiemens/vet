@@ -10,6 +10,7 @@
   import { platformName } from "../../lib/platformName";
   import Avatar from "../../lib/ui/Avatar.svelte";
   import CiStatus from "../../lib/ui/CiStatus.svelte";
+  import EmptyState from "../../lib/ui/EmptyState.svelte";
   import Icon from "../../lib/ui/Icon.svelte";
   import IconButton from "../../lib/ui/IconButton.svelte";
   import ScrollArea from "../../lib/ui/ScrollArea.svelte";
@@ -253,7 +254,7 @@
             <div class="sh"><span>Open</span><span class="mono n">{openThreads.length}</span></div>
             <div class="cards"><ThreadCards list={openThreads} {card} /></div>
           {:else}
-            <p class="empty">{groups.resolved.length ? "No open threads." : "No comments yet."}</p>
+            <EmptyState align="start" text={groups.resolved.length ? "No open threads." : "No comments yet."} />
           {/if}
           {#if groups.resolved.length}
             <div class="sh"><span>Resolved</span><span class="mono n">{groups.resolved.length}</span></div>
@@ -292,10 +293,7 @@
       </div>
     </ScrollArea>
   {:else}
-    <div class="none">
-      <b>Select a changeset</b>
-      <span>Its status, your progress and its comments show here.</span>
-    </div>
+    <EmptyState title="Select a changeset" text="Its status, your progress and its comments show here." />
   {/if}
 </aside>
 
@@ -423,12 +421,6 @@
     gap: 6px;
     padding: 2px 10px 10px;
   }
-  .empty {
-    margin: 0;
-    padding: 4px 12px 10px 26px;
-    color: var(--text-3);
-    font-size: var(--fs-ctl);
-  }
   .kv {
     display: grid;
     grid-template-columns: auto minmax(0, 1fr) auto;
@@ -451,21 +443,5 @@
   }
   .state.changesRequested {
     color: var(--warn);
-  }
-  .none {
-    flex: 1;
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    justify-content: center;
-    gap: 6px;
-    padding: 40px 24px;
-    text-align: center;
-    color: var(--text-3);
-    font-size: var(--fs-ctl);
-  }
-  .none b {
-    font-weight: 400;
-    font-size: var(--fs);
   }
 </style>

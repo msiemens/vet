@@ -3,6 +3,7 @@
   import type { VersionInfo } from "../../generated/VersionInfo";
   import BottomToolHeader from "../../lib/ui/BottomToolHeader.svelte";
   import CiStatus from "../../lib/ui/CiStatus.svelte";
+  import EmptyState from "../../lib/ui/EmptyState.svelte";
   import Icon from "../../lib/ui/Icon.svelte";
   import LineDelta from "../../lib/ui/LineDelta.svelte";
   import PathText from "../../lib/ui/PathText.svelte";
@@ -128,7 +129,9 @@
               </button>
             </li>
           {:else}
-            <li class="empty">Versions start when you first mark something seen, acknowledge a change or comment.</li>
+            <li>
+              <EmptyState text="Versions start when you first mark something seen, acknowledge a change or comment." />
+            </li>
           {/each}
           {#if base}
             <li>
@@ -255,10 +258,6 @@
     color: var(--accent);
   }
   .none {
-    color: var(--text-3);
-  }
-  .empty {
-    padding: 12px 14px;
     color: var(--text-3);
   }
   .files {

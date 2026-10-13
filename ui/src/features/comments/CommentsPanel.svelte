@@ -2,6 +2,7 @@
   import type { Thread } from "../../generated/Thread";
   import { canSubmit, isSubmitKey } from "../../lib/composer";
   import { movedLabel, movedTitle } from "../../lib/movedTitle";
+  import EmptyState from "../../lib/ui/EmptyState.svelte";
   import Icon from "../../lib/ui/Icon.svelte";
   import IconButton from "../../lib/ui/IconButton.svelte";
   import ScrollArea from "../../lib/ui/ScrollArea.svelte";
@@ -186,16 +187,17 @@
         {:else if onWhole.length}
           <ThreadCards list={onWhole} {card} />
         {:else if !composeHere}
-          <p class="empty">Nothing was said on the pull request as a whole.</p>
+          <EmptyState align="start" text="Nothing was said on the pull request as a whole." />
         {/if}
       {:else}
         <!-- Without a pull request there is no Conversation tab: the changeset's own threads come first here. -->
         {#if !info && onWhole.length}<ThreadCards list={onWhole} {card} />{/if}
         {#if empty && (info !== undefined || !onWhole.length) && !composeHere}
-          <p class="empty">
-            No comments yet. Select lines and press {commands.binding("review.comment")?.label}, or use a hunk's comment
-            button.
-          </p>
+          <EmptyState
+            align="start"
+            text="No comments yet. Select lines and press {commands.binding('review.comment')
+              ?.label}, or use a hunk's comment button."
+          />
         {/if}
         {#if groups.conflicts.length}{@render group("Conflicts", groups.conflicts, "conflicts")}{/if}
         {#if groups.open.length}{@render group("Open", groups.open, "open")}{/if}
@@ -249,10 +251,6 @@
   .content {
     display: flex;
     flex-direction: column;
-  }
-  .empty {
-    margin: 12px 10px;
-    color: var(--text-3);
   }
   .compose {
     display: flex;
