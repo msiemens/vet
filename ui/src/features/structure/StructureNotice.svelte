@@ -7,15 +7,12 @@
     load,
     file,
     matches,
-    onsettings,
   }: {
     load: OutlineLoad;
     /** The name of the file; none when the active tab shows no file. */
     file?: string;
     /** How many rows the filters left. */
     matches: number;
-    /** Opens Settings at the language servers; none offers no way there. */
-    onsettings?: () => void;
   } = $props();
 
   const outline = $derived(load.state === "done" ? load.outline : undefined);
@@ -32,7 +29,6 @@
   <div class="empty">
     <b>{outline.unavailable.label}</b>
     <span>{outline.unavailable.message}</span>
-    {#if onsettings}<button class="ctl" type="button" onclick={onsettings}>Language servers…</button>{/if}
   </div>
 {:else if !total}
   <div class="empty"><b>No symbols</b><span>{file} declares none.</span></div>

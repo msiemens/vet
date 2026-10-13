@@ -48,7 +48,6 @@
     side,
     bottom,
     softWrap,
-    onservers,
     scope,
     onready,
     onclose,
@@ -58,8 +57,6 @@
     changeset: Changeset;
     /** Which files wrap their long lines; the owner applies a change to the controller. */
     softWrap: SoftWrap;
-    /** Opens Settings at the language servers. */
-    onservers: () => void;
     /** What the changes shown are of, which names the first tab. */
     scope: string;
     /** The left tool window and whether its sidebar is shown. */
@@ -304,7 +301,6 @@
     <StructurePopup
       onjump={(symbol, removed) => void controller.jumpToOutlineSymbol(symbol, removed)}
       oneditor={() => controller.focusEditor()}
-      {onservers}
     />
   {/if}
 </main>

@@ -22,14 +22,11 @@
   let {
     onjump,
     oneditor,
-    onsettings,
   }: {
     /** Shows the symbol in the file's tab, at the base side's text for a removed one. */
     onjump: (symbol: SymbolInfo, removed: boolean) => void;
     /** Gives the keyboard focus back to the editor. */
     oneditor: () => void;
-    /** Opens Settings at the language servers. */
-    onsettings: () => void;
   } = $props();
 
   const search = new SpeedSearch();
@@ -253,7 +250,7 @@
     {#if rows.length}
       <StructureList bind:list {rows} selected={structure.selected} cursor={focused ? cursor : -1} onclick={click} />
     {:else}
-      <StructureNotice load={structure.load} file={fileName} matches={rows.length} {onsettings} />
+      <StructureNotice load={structure.load} file={fileName} matches={rows.length} />
     {/if}
   </div>
 </aside>

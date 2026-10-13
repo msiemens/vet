@@ -581,7 +581,6 @@
         rightTool={right.tool}
         rightOpen={right.open}
         {softWrap}
-        onservers={() => showDialog("settings", "servers")}
         scope={scope?.label ?? "All changes"}
         onready={(c) => void (controller = c)}
         onclose={() => (controller = undefined)}
@@ -593,7 +592,6 @@
             <StructurePanel
               onjump={(symbol, removed) => void controller?.jumpToOutlineSymbol(symbol, removed)}
               oneditor={() => controller?.focusEditor()}
-              onsettings={() => showDialog("settings", "servers")}
             />
           {/if}
         {/snippet}

@@ -16,14 +16,11 @@
   let {
     onjump,
     oneditor,
-    onservers,
   }: {
     /** Shows the symbol in the file's tab, at the base side's text for a removed one. */
     onjump: (symbol: SymbolInfo, removed: boolean) => void;
     /** Gives the keyboard focus back to the editor. */
     oneditor: () => void;
-    /** Opens Settings at the language servers. */
-    onservers: () => void;
   } = $props();
 
   /** How far the Page keys move. */
@@ -70,11 +67,6 @@
     if (!row) return;
     close();
     onjump(row.symbol, row.change === "removed");
-  }
-
-  function servers() {
-    close();
-    onservers();
   }
 
   async function move(to: number) {
@@ -181,7 +173,7 @@
         onhover={hover}
       />
     {:else}
-      <StructureNotice load={structure.load} file={fileName} matches={rows.length} onsettings={servers} />
+      <StructureNotice load={structure.load} file={fileName} matches={rows.length} />
     {/if}
   </div>
   <div class="foot">
