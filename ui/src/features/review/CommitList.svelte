@@ -2,6 +2,7 @@
   import type { CommitUnit } from "../../generated/CommitUnit";
   import CiStatus from "../../lib/ui/CiStatus.svelte";
   import Icon from "../../lib/ui/Icon.svelte";
+  import LineDelta from "../../lib/ui/LineDelta.svelte";
   import ScrollArea from "../../lib/ui/ScrollArea.svelte";
   import SeenMeter from "../../lib/ui/SeenMeter.svelte";
   import { checks } from "../../state/checks.svelte";
@@ -61,7 +62,7 @@
             {#if row.clean}
               <span>clean merge</span>
             {:else}
-              <span class="mono add">+{row.added}</span><span class="mono del">−{row.removed}</span>
+              <LineDelta added={row.added} removed={row.removed} />
             {/if}
             <span class="grow"></span>
             <CiStatus state={checks.of(commits[index].commit.id)?.state} size={12} />
@@ -136,12 +137,6 @@
   }
   .hash {
     color: var(--text-2);
-  }
-  .add {
-    color: var(--add-text);
-  }
-  .del {
-    color: var(--del-text);
   }
   .clean .subject,
   .clean .mark {

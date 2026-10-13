@@ -1,10 +1,10 @@
 <script lang="ts">
   import type { CommitInfo } from "../../generated/CommitInfo";
-  import type { LineDelta } from "../../generated/LineDelta";
   import type { VersionInfo } from "../../generated/VersionInfo";
   import BottomToolHeader from "../../lib/ui/BottomToolHeader.svelte";
   import CiStatus from "../../lib/ui/CiStatus.svelte";
   import Icon from "../../lib/ui/Icon.svelte";
+  import LineDelta from "../../lib/ui/LineDelta.svelte";
   import PathText from "../../lib/ui/PathText.svelte";
   import ScrollArea from "../../lib/ui/ScrollArea.svelte";
   import Table from "../../lib/ui/Table.svelte";
@@ -69,10 +69,6 @@
   }
 </script>
 
-{#snippet counts({ added, removed }: LineDelta)}
-  <span class="mono delta"><span class="add">+{added}</span> <span class="del">−{removed}</span></span>
-{/snippet}
-
 <section aria-label="Timeline" tabindex="-1" data-escapes-scope>
   <BottomToolHeader
     title="Timeline"
@@ -127,7 +123,7 @@
                 </span>
                 <span class="ci"><CiStatus state={checks.of(row.commit)?.state} size={12} /></span>
                 <span class="right">
-                  {#if row.lines}{@render counts(row.lines)}{:else}<span class="none">–</span>{/if}
+                  {#if row.lines}<LineDelta {...row.lines} />{:else}<span class="none">–</span>{/if}
                 </span>
               </button>
             </li>
@@ -169,7 +165,7 @@
               >
                 <span class="path"><PathText path={file.path} /></span>
                 {#if file.mode}<span class="mono mode">{file.mode}</span>{/if}
-                {@render counts(file.delta)}
+                <LineDelta {...file.delta} />
               </button>
             </li>
           {/each}
@@ -299,14 +295,5 @@
   .mode {
     color: var(--text-3);
     font-size: var(--fs-mono-s);
-  }
-  .delta {
-    font-size: 11.5px;
-  }
-  .add {
-    color: var(--add-text);
-  }
-  .del {
-    color: var(--del-text);
   }
 </style>

@@ -15,6 +15,7 @@
   import IconButton from "../../lib/ui/IconButton.svelte";
   import SeverityIcon from "../../lib/ui/SeverityIcon.svelte";
   import DiffBar from "../../lib/ui/DiffBar.svelte";
+  import { deltaText } from "../../lib/ui/lineDelta";
   import { ListNav } from "../../lib/ui/listNav";
   import Marked from "../../lib/ui/Marked.svelte";
   import PathText from "../../lib/ui/PathText.svelte";
@@ -526,7 +527,7 @@
         {removed}
         seen={s.seenPercent}
         old={s.oldBasePercent}
-        title="+{added} −{removed}, {Math.round(s.seenPercent)}% seen"
+        title="{deltaText(added, removed)}, {Math.round(s.seenPercent)}% seen"
       />
     {/if}
     <ChangeLetter letter={s?.status} />
