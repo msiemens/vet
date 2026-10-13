@@ -4,6 +4,7 @@
     value,
     onchange,
     label,
+    focusable = true,
   }: {
     /** `count` is shown after the label, muted. */
     tabs: { id: T; label: string; count?: number }[];
@@ -11,6 +12,8 @@
     onchange: (id: T) => void;
     /** Names the group for assistive technology. */
     label: string;
+    /** Out of the tab order where the keys belong to a field beside the tabs. */
+    focusable?: boolean;
   } = $props();
 </script>
 
@@ -22,6 +25,7 @@
       class:selected={tab.id === value}
       type="button"
       role="tab"
+      tabindex={focusable ? undefined : -1}
       aria-selected={tab.id === value}
       onclick={() => onchange(tab.id)}
     >

@@ -16,6 +16,7 @@
   import Icon from "../../lib/ui/Icon.svelte";
   import KeyHint from "../../lib/ui/KeyHint.svelte";
   import Kbd from "../../lib/ui/Kbd.svelte";
+  import PanelTabs from "../../lib/ui/PanelTabs.svelte";
   import PopupShell from "../../lib/ui/PopupShell.svelte";
   import SeenMeter from "../../lib/ui/SeenMeter.svelte";
   import Spinner from "../../lib/ui/Spinner.svelte";
@@ -470,23 +471,17 @@
   {onkeydown}
 >
   {#snippet head()}
-    <div class="tabs" role="tablist" aria-label="Search in">
-      {#each TABS as tab (tab.id)}
-        <button
-          class="tab"
-          type="button"
-          role="tab"
-          tabindex="-1"
-          aria-selected={palette.tab === tab.id}
-          onclick={() => {
-            palette.tab = tab.id;
-            input?.focus();
-          }}
-        >
-          {tab.label}{#if built.counts}
-            <span class="count">{built.counts[tab.id]}</span>{/if}
-        </button>
-      {/each}
+    <div class="tabs">
+      <PanelTabs
+        label="Search in"
+        focusable={false}
+        tabs={TABS.map((t) => ({ id: t.id, label: t.label, count: built.counts?.[t.id] }))}
+        value={palette.tab}
+        onchange={(id) => {
+          palette.tab = id;
+          input?.focus();
+        }}
+      />
       <span class="grow"></span>
       <FilterChip
         focusable={false}
@@ -587,29 +582,8 @@
 <style>
   .tabs {
     display: flex;
-    align-items: stretch;
-    gap: 2px;
-    height: var(--h-panel-tabs);
-    padding: 0 8px 0 6px;
-  }
-  .tab {
-    display: inline-flex;
     align-items: center;
-    gap: 4px;
-    padding: 0 9px;
-    border: 0;
-    border-bottom: 2px solid transparent;
-    background: transparent;
-    color: var(--text-2);
-    font: inherit;
-    font-size: var(--fs-ctl);
-  }
-  .tab:hover,
-  .tab[aria-selected="true"] {
-    color: var(--text);
-  }
-  .tab[aria-selected="true"] {
-    border-bottom-color: var(--accent);
+    padding: 0 8px 0 0;
   }
   .wait {
     font-weight: 400;
@@ -633,10 +607,6 @@
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
-  }
-  .count {
-    color: var(--text-3);
-    font: var(--fs-mono-s) var(--font-mono);
   }
   .r {
     display: flex;
