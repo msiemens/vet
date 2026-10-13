@@ -23,6 +23,7 @@ import type { Lens } from "../generated/Lens";
 import type { LineDelta } from "../generated/LineDelta";
 import type { LocationRows } from "../generated/LocationRows";
 import type { Manifest } from "../generated/Manifest";
+import type { MappedLine } from "../generated/MappedLine";
 import type { NonTextKind } from "../generated/NonTextKind";
 import type { PipelineAction } from "../generated/PipelineAction";
 import type { PipelineOutcome } from "../generated/PipelineOutcome";
@@ -726,6 +727,15 @@ export class Backend {
   async targetLine(revision: number, side: Side, path: string, line: number, view: View): Promise<number> {
     const request = { type: "targetLine", project: this.pid, view, revision, side, path, line } as const;
     return expect(await this.conn.request(request), "targetLine").line;
+  }
+
+  /**
+   * Where the lines (0-based) of the target text of `path` in version `from` of the open review are in
+   * the target text now; fails when the version or the file's text is not there.
+   */
+  async mapLines(from: number, path: string, lines: number[]): Promise<MappedLine[]> {
+    const request = { type: "mapLines", project: this.pid, from, path, lines } as const;
+    return expect(await this.conn.request(request), "mappedLines").lines;
   }
 
   /**

@@ -41,6 +41,21 @@ export function changedSince(
   return new Set(versions.filter((v) => v.n > since).flatMap((v) => v.files.map((f) => f.path)));
 }
 
+/**
+ * The place as it is opened once the lines of its file may have moved: at the line `moved` says. Only
+ * a target line of a changed file is looked up; a line an edit replaced has no match to select.
+ */
+export function relocated(place: Place, moved: { line: number; kept: boolean } | undefined): Place {
+  if (!moved) return place;
+  return moved.kept ? { ...place, line: moved.line } : { ...place, line: moved.line, col: 0, width: 0 };
+}
+
+/** The lines of a file's target-side places to ask for, each once, in order. */
+export function linesToLocate(places: readonly Place[], path: string): number[] {
+  const lines = places.filter((p) => p.file.path === path && p.side === "target").map((p) => p.line);
+  return [...new Set(lines)].sort((a, b) => a - b);
+}
+
 /** A set run on another revision than the one on show may list places that moved. A set of a commit's text never does. */
 export function isStale(
   set: { done: boolean; commit: boolean; revision?: number },

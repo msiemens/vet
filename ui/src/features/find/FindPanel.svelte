@@ -17,6 +17,7 @@
   import type { Backend } from "../../state/backend";
   import { type FindSet, findSets } from "../../state/findSets.svelte";
   import { type Item, narrowing, itemsOf, visible } from "../../state/findRows";
+  import { relocated } from "../../state/findRuns";
   import { type Place, letterOf } from "../../state/foundPlace";
   import { basename, dirname } from "../../lib/paths";
   import { ResultPreview } from "../search";
@@ -97,7 +98,7 @@
   function open(item: Item, ownTab = false) {
     if (item.kind === "place" && set) {
       select(item);
-      onopen(set, item.place, ownTab);
+      onopen(set, relocated(item.place, set.moves.get(item.place.id)), ownTab);
     } else single(item);
   }
 
@@ -175,6 +176,13 @@
     if (e.relatedTarget instanceof Node && root?.contains(e.relatedTarget)) return;
     focused = false;
   }
+
+  // The places of a set that went stale are asked for where they are now.
+  $effect(() => {
+    const current = set;
+    const revision = findSets.revision;
+    if (current && stale && revision !== undefined) untrack(() => void findSets.locate(current));
+  });
 
   // A set's chosen place is revealed when the tab is shown again.
   $effect(() => {
@@ -354,7 +362,8 @@
                 </button>
               {:else if item?.kind === "place"}
                 {@const p = item.place}
-                {@const old = moved.has(p.file.path)}
+                {@const move = set.moves.get(p.id)}
+                {@const old = moved.has(p.file.path) && !move?.kept}
                 <button
                   class="flat line place"
                   class:sel={i === cursor}
@@ -363,13 +372,15 @@
                   class:fresh={set.fresh.has(p.id)}
                   type="button"
                   tabindex="-1"
-                  title="{p.file.path}:{p.line + 1}&#10;{p.text}{old
-                    ? '&#10;This file changed since the run; the row opens at the line it had.'
-                    : ''}"
+                  title="{p.file.path}:{(move?.line ?? p.line) + 1}&#10;{p.text}{move && !move.kept
+                    ? '&#10;This line was changed since the run; the row opens at the nearest line.'
+                    : old
+                      ? '&#10;This file changed since the run; the row opens at the line it had.'
+                      : ''}"
                   onclick={(e) => nav.click(e, i)}
                 >
                   <span class="rv {p.review}" title={REVIEWED[p.review]}><i></i></span>
-                  <span class="ln mono">{p.line + 1}</span>
+                  <span class="ln mono">{(move?.line ?? p.line) + 1}</span>
                   <span class="within" class:none={!p.within} title={p.withinTitle}
                     >{p.within ?? basename(p.file.path)}</span
                   >
@@ -380,6 +391,8 @@
                   >
                   {#if p.side === "base"}<span class="tag" title="In the old code: opens on the diff's old side"
                       >base</span
+                    >{/if}
+                  {#if move && !move.kept}<span class="tag" title="This line was changed since the run">edited</span
                     >{/if}
                   {#if p.changed && p.side === "target"}<span class="chg" title="Changed line">+</span>{/if}
                 </button>
@@ -392,7 +405,11 @@
         <div class="preview">
           {#if moved.has(chosen.file.path)}
             <div class="pvn">
-              <Icon name="warning" size={12} />The file changed since the run. This is the current text.
+              <Icon name="warning" size={12} />The file changed since the run. This is the current text{set.moves.has(
+                chosen.id,
+              )
+                ? ", at the line the row is now."
+                : "."}
             </div>
           {/if}
           <ResultPreview
@@ -405,9 +422,15 @@
               states: chosen.file.states,
               lines: set.places
                 .filter((p) => p.file === chosen.file)
-                .map((p) => ({ kind: p.kind, line: p.line, text: p.text, textStart: 0, hits: [...p.hits] })),
+                .map((p) => ({
+                  kind: p.kind,
+                  line: set.moves.get(p.id)?.line ?? p.line,
+                  text: p.text,
+                  textStart: 0,
+                  hits: [...p.hits],
+                })),
             }}
-            line={chosen}
+            line={relocated(chosen, set.moves.get(chosen.id))}
             view={set.spec.type === "search" && set.spec.request.scope.type === "view"
               ? set.spec.request.scope.view
               : { type: "changeset" }}

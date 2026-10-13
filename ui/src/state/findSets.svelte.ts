@@ -2,7 +2,8 @@
 // goes to the tab that is not pinned, replacing what it held; a pinned tab is never replaced, and the
 // same query asked again reruns its tab. Sets live for the session of a changeset.
 
-import { SvelteSet } from "svelte/reactivity";
+import { SvelteMap, SvelteSet } from "svelte/reactivity";
+import type { MappedLine } from "../generated/MappedLine";
 import type { LocationRows } from "../generated/LocationRows";
 import type { Side } from "../generated/Side";
 import { isAbort } from "../lib/abort";
@@ -11,7 +12,7 @@ import type { SearchQuery, SearchResults } from "./backend";
 import { changeset } from "./changeset.svelte";
 import { type ChangedFile, type Place, placesFromRows, placesFromSearch } from "./foundPlace";
 import { type Filters, NO_FILTERS } from "./findRows";
-import { changedSince, diffRuns, isStale, slotFor } from "./findRuns";
+import { changedSince, diffRuns, isStale, linesToLocate, slotFor } from "./findRuns";
 import { session } from "./session.svelte";
 import { versions } from "./versions.svelte";
 
@@ -86,6 +87,10 @@ export class FindSet {
   limit?: number;
   abort?: AbortController;
   hasRun = false;
+  /** Where the places of the files changed since the run are now, by place id. */
+  moves = $state.raw<ReadonlyMap<string, MappedLine>>(new SvelteMap());
+  /** The revision `moves` was asked for. */
+  located?: number;
 
   constructor(
     readonly id: string,
@@ -135,6 +140,35 @@ class FindSets {
 
   stale(set: FindSet): boolean {
     return isStale({ done: set.phase === "done", commit: set.commit, revision: set.ran.revision }, this.revision);
+  }
+
+  /**
+   * Asks where the places of the files changed since `set` ran are now, once for each revision, so
+   * a row opens at its line as it is and the list can say which lines an edit replaced.
+   */
+  async locate(set: FindSet) {
+    const backend = session.backend;
+    const from = set.ran.version;
+    const revision = this.revision;
+    if (!backend || from === undefined || revision === undefined || set.located === revision || !this.stale(set))
+      return;
+    set.located = revision;
+    const moves = new SvelteMap<string, MappedLine>();
+    for (const path of this.changedFiles(set)) {
+      const lines = linesToLocate(set.places, path);
+      if (!lines.length) continue;
+      try {
+        const mapped = await backend.mapLines(from, path, lines);
+        if (set.located !== revision) return;
+        for (const p of set.places) {
+          const found = p.file.path === path && p.side === "target" ? mapped[lines.indexOf(p.line)] : undefined;
+          if (found) moves.set(p.id, found);
+        }
+      } catch {
+        // A file with no text then or now keeps the lines it had.
+      }
+    }
+    if (set.located === revision) set.moves = moves;
   }
 
   /** Finds the usages at a position, into the tool. */
@@ -195,6 +229,8 @@ class FindSets {
     set.ran = { revision: this.revision, version: this.version };
     const { fresh, gone } = before ? diffRuns(before, set.places) : { fresh: new SvelteSet<string>(), gone: 0 };
     set.fresh = fresh;
+    set.moves = new SvelteMap();
+    set.located = undefined;
     set.rerun = before ? { fresh: fresh.size, gone } : undefined;
     if (!set.places.some((p) => p.id === set.selected)) set.selected = undefined;
     if (set.folded.size) set.folded = new SvelteSet();

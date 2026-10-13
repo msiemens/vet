@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import type { Place } from "./foundPlace.ts";
-import { changedSince, diffRuns, isStale, slotFor } from "./findRuns.ts";
+import { changedSince, diffRuns, isStale, linesToLocate, relocated, slotFor } from "./findRuns.ts";
 
 void test("a result replaces the first tab that is not pinned, opens a new one when all are pinned, and reruns the same query", () => {
   const sets = [
@@ -25,6 +25,26 @@ void test("a rerun counts what is new and what is gone, a place that only change
   const { fresh, gone } = diffRuns(before, after);
   assert.deepEqual([...fresh], ["c.rs:f(4)"]);
   assert.equal(gone, 1);
+});
+
+void test("a row opens at the line its text is at now, and at no match when an edit replaced the line", () => {
+  const place = { ...at("a.rs", "f(1)", 4), line: 10, width: 1 };
+  assert.equal(relocated(place, undefined), place);
+  assert.deepEqual(
+    [relocated(place, { line: 13, kept: true })].map((p) => [p.line, p.col, p.width]),
+    [[13, 4, 1]],
+  );
+  assert.deepEqual(
+    [relocated(place, { line: 12, kept: false })].map((p) => [p.line, p.col, p.width]),
+    [[12, 0, 0]],
+  );
+});
+
+void test("only the target lines of the file are looked up, each once and in order", () => {
+  const p = (path: string, line: number, side: "base" | "target" = "target") =>
+    ({ ...at(path, "x"), file: { path }, line, side }) as Place;
+  const places = [p("a.rs", 9), p("a.rs", 2), p("a.rs", 9), p("a.rs", 4, "base"), p("b.rs", 1)];
+  assert.deepEqual(linesToLocate(places, "a.rs"), [2, 9]);
 });
 
 void test("the files changed since a set ran are those of the versions after it", () => {
