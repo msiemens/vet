@@ -18,6 +18,7 @@ import type { EditChoice } from "../generated/EditChoice";
 import type { Event as ServerEvent } from "../generated/Event";
 import type { FileOutline } from "../generated/FileOutline";
 import type { FileSymbols } from "../generated/FileSymbols";
+import type { LanguageSymbols } from "../generated/LanguageSymbols";
 import type { Lens } from "../generated/Lens";
 import type { LineDelta } from "../generated/LineDelta";
 import type { LocationRows } from "../generated/LocationRows";
@@ -555,6 +556,16 @@ export class Backend {
     const request = { type: "diagnostics", project: this.pid, revision, path } as const;
     const r = expect(await this.semantic(revision, request, signal), "diagnostics");
     return { diagnostics: r.diagnostics, count: r.count, unavailable: r.unavailable ?? undefined };
+  }
+
+  /**
+   * The symbols named like `query` in the changeset's target at `revision`, as the servers of the
+   * project's languages find them; a language whose server could not answer says why. Slow on a
+   * cold start, so it is meant to be aborted by the next keystroke.
+   */
+  async workspaceSymbols(revision: number, query: string, signal?: AbortSignal): Promise<LanguageSymbols[]> {
+    const request = { type: "workspaceSymbols", project: this.pid, revision, query } as const;
+    return expect(await this.semantic(revision, request, signal), "workspaceSymbols").languages;
   }
 
   /** Each language's server as it resolves for the open repository. */

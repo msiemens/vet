@@ -3,9 +3,14 @@
 // The inputs are plain data, so the stores that hold it are read where the popup is drawn.
 
 import type { ChangedSymbol } from "../../generated/ChangedSymbol";
+import type { LanguageSymbols } from "../../generated/LanguageSymbols";
+import type { ServerInfo } from "../../generated/ServerInfo";
+import type { SymbolInfo } from "../../generated/SymbolInfo";
+import type { Task } from "../../generated/Task";
 import type { Thread } from "../../generated/Thread";
 import { splitQualified } from "../../lib/qualified.ts";
 import { shortLabel } from "../../lib/symbolLabel.ts";
+import { fractionOf } from "../../state/taskHeadline.ts";
 import type {
   ActionCandidate,
   ChangesetCandidate,
@@ -58,6 +63,74 @@ export function symbolCandidates(
     }
   }
   return out;
+}
+
+const symbolKey = (symbol: SymbolInfo) => `${symbol.id.path}#${symbol.id.name.join("\0")}`;
+
+/**
+ * The symbols the language servers found by name that the changeset did not change. One the changed
+ * symbols already hold is theirs, listed once and as changed.
+ */
+export function serverSymbolCandidates(
+  languages: readonly LanguageSymbols[],
+  changed: readonly SymbolCandidate[],
+): SymbolCandidate[] {
+  const taken = new Set(changed.map((c) => symbolKey(c.info)));
+  const out: SymbolCandidate[] = [];
+  for (const { symbols } of languages) {
+    for (const symbol of symbols) {
+      const key = symbolKey(symbol);
+      if (taken.has(key)) continue;
+      taken.add(key);
+      const label = shortLabel(symbol);
+      out.push({
+        kind: "symbol",
+        key,
+        info: symbol,
+        symbolKind: symbol.kind,
+        label,
+        lead: splitQualified(label).qualifier.length,
+        seen: 0,
+        fromServer: true,
+      });
+    }
+  }
+  return out;
+}
+
+/** The languages whose server could not answer, with the server's name and why. */
+export function failedServers(
+  languages: readonly LanguageSymbols[],
+  servers: readonly ServerInfo[],
+): { language: string; server: string; failure: string }[] {
+  return languages.flatMap((l) =>
+    l.failure === null
+      ? []
+      : [
+          {
+            language: l.language,
+            server: servers.find((s) => s.language === l.language)?.server ?? l.language,
+            failure: l.failure,
+          },
+        ],
+  );
+}
+
+/** A line for each answering language whose server is still indexing, which makes its answer incomplete. */
+export function indexingNotes(
+  languages: readonly LanguageSymbols[],
+  servers: readonly ServerInfo[],
+  tasks: readonly Task[],
+): string[] {
+  return languages.flatMap((l) => {
+    const server = servers.find((s) => s.language === l.language);
+    const indexing =
+      server && l.failure === null && tasks.find((t) => t.kind === "serverIndex" && t.title.includes(server.server));
+    if (!indexing) return [];
+    const fraction = fractionOf(indexing);
+    const how = fraction === undefined ? "" : ` (${Math.round(fraction * 100)}%)`;
+    return [`${server.server} is still indexing${how}. Symbols of unchanged files may be incomplete.`];
+  });
 }
 
 /** A changeset as the switcher lists it. */

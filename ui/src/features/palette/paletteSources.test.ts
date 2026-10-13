@@ -1,8 +1,19 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import type { ChangedSymbol } from "../../generated/ChangedSymbol";
+import type { LanguageSymbols } from "../../generated/LanguageSymbols";
+import type { ServerInfo } from "../../generated/ServerInfo";
+import type { Task } from "../../generated/Task";
 import type { Thread } from "../../generated/Thread";
-import { actionCandidates, symbolCandidates, threadCandidates, unchangedCandidates } from "./paletteSources.ts";
+import {
+  actionCandidates,
+  failedServers,
+  indexingNotes,
+  serverSymbolCandidates,
+  symbolCandidates,
+  threadCandidates,
+  unchangedCandidates,
+} from "./paletteSources.ts";
 
 const symbol = (path: string, name: string[], change: ChangedSymbol["change"] = "modified"): ChangedSymbol => ({
   change,
@@ -51,6 +62,43 @@ void test("two symbols of one name that changed differently are two candidates",
     { symbols: [symbol("a.rs", ["f"], "removed"), symbol("a.rs", ["f"], "added")], seen: 0 },
   ]);
   assert.equal(new Set(found.map((s) => s.key)).size, 2);
+});
+
+const answer = (language: string, symbols: ChangedSymbol[], failure: string | null = null): LanguageSymbols => ({
+  language,
+  symbols: symbols.map((s) => s.symbol),
+  failure,
+});
+
+void test("a symbol both the changeset and a server hold is listed once, as the changed one", () => {
+  const changed = symbolCandidates([{ symbols: [symbol("a.rs", ["f"], "added")], seen: 0 }]);
+  const found = serverSymbolCandidates(
+    [answer("rust", [symbol("a.rs", ["f"]), symbol("b.rs", ["g"]), symbol("b.rs", ["g"])])],
+    changed,
+  );
+  assert.deepEqual(
+    found.map((s) => [s.info.id.path, s.label, s.change, s.fromServer]),
+    [["b.rs", "g", undefined, true]],
+  );
+});
+
+void test("a language whose server failed is named by its server, with why", () => {
+  const servers = [{ language: "python", server: "Pyright" }] as ServerInfo[];
+  const found = failedServers([answer("rust", []), answer("python", [], "not installed")], servers);
+  assert.deepEqual(found, [{ language: "python", server: "Pyright", failure: "not installed" }]);
+});
+
+const server = { language: "rust", server: "rust-analyzer" } as ServerInfo;
+const indexing = (title: string, done?: number): Task =>
+  ({ kind: "serverIndex", title, done: done ?? null, total: done === undefined ? null : 100 }) as Task;
+
+void test("a server still indexing is said to make the symbols incomplete, a failed or idle one is not", () => {
+  const ok = [answer("rust", [])];
+  assert.deepEqual(indexingNotes(ok, [server], [indexing("Indexing rust-analyzer", 62)]), [
+    "rust-analyzer is still indexing (62%). Symbols of unchanged files may be incomplete.",
+  ]);
+  assert.deepEqual(indexingNotes(ok, [server], [indexing("Indexing Pyright")]), []);
+  assert.deepEqual(indexingNotes([answer("rust", [], "boom")], [server], [indexing("Indexing rust-analyzer")]), []);
 });
 
 const thread = (over: Partial<Thread>): Thread =>

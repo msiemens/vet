@@ -29,7 +29,9 @@
   import { changeset } from "../../state/changeset.svelte";
   import { keyId } from "../../state/changesetKey";
   import { commands } from "../../state/commands";
+  import { progress } from "../../state/progress.svelte";
   import { queue } from "../../state/queue.svelte";
+  import { serverList } from "../../state/serverList.svelte";
   import { threads } from "../../state/threads.svelte";
   import { symbols } from "../../state/symbols.svelte";
   import { queueRows, labelOf, reviewedOf, sourceText } from "../queue";
@@ -52,19 +54,25 @@
   import {
     actionCandidates,
     changesetCandidates,
+    failedServers,
     fileCandidates,
+    indexingNotes,
+    serverSymbolCandidates,
     symbolCandidates,
     threadCandidates,
     unchangedCandidates,
   } from "./paletteSources";
 
-  let { onchoose }: { onchoose: (choice: Choice) => void } = $props();
+  let { onchoose, onsettings }: { onchoose: (choice: Choice) => void; onsettings: () => void } = $props();
 
   /** How far the Page keys move. */
   const PAGE = 8;
+  /** How long the query rests before the language servers are asked. */
+  const SERVER_PAUSE_MS = 120;
   const LETTER_COLORS = { M: "var(--old-base)", A: "var(--add-text)", D: "var(--del-text)", R: "var(--text-2)" };
   /** The tabs the Unchanged files toggle applies to. */
   const TOGGLES: readonly PaletteTab[] = ["all", "file", "symbol"];
+  const SYMBOL_TABS: readonly PaletteTab[] = ["all", "symbol"];
   const SYMBOL_LETTERS = { modified: "M", added: "A", removed: "D" } as const;
 
   let cursor = $state(0);
@@ -137,24 +145,30 @@
   );
   /** The files the changeset does not change, once the list of all of them is here. */
   const others = $derived(palette.files ? unchangedCandidates(palette.files.paths, new Set(changeset.paths)) : []);
+  const typed = $derived(palette.query.trim());
+  const revision = $derived(changeset.layout?.shown.revision);
+  /** The servers are asked for symbols by name when unchanged files are searched and symbols are listed. */
+  const asksServers = $derived(
+    palette.unchanged && typed !== "" && revision !== undefined && SYMBOL_TABS.includes(palette.tab),
+  );
+  /** What the servers found for the query as it stands. */
+  const found = $derived(palette.served?.query === typed ? palette.served.languages : []);
   const candidates: Candidates = $derived({
     file: palette.unchanged ? [...files, ...others] : files,
-    symbol: symbolList,
+    symbol: [...symbolList, ...serverSymbolCandidates(found, symbolList)],
     changeset: changesets,
     thread: threadCandidates(threads.items),
     action: actions,
   });
 
-  const typed = $derived(palette.query.trim());
   const built = $derived(
-    build(
-      palette.tab,
-      palette.query,
-      candidates,
-      palette.recent,
-      palette.unchanged && palette.listing && !palette.files,
-    ),
+    build(palette.tab, palette.query, candidates, palette.recent, {
+      files: palette.unchanged && palette.listing && !palette.files,
+      symbols: asksServers && palette.served?.query !== typed,
+    }),
   );
+  const failed = $derived(failedServers(found, serverList.servers));
+  const indexing = $derived(indexingNotes(found, serverList.servers, progress.tasks));
   const entries = $derived(entriesOf(built.groups));
   const at = $derived(Math.min(cursor, entries.length - 1));
   const current = $derived<Entry | undefined>(entries[at]);
@@ -179,6 +193,17 @@
     untrack(() => {
       if (!palette.listing) void palette.listFiles();
     });
+  });
+  // A pause in typing asks the servers; what is typed next cancels the ask.
+  $effect(() => {
+    if (!asksServers || revision === undefined) {
+      untrack(() => palette.forgetSymbols());
+      return;
+    }
+    const query = typed;
+    const at = revision;
+    const timer = setTimeout(() => void palette.searchSymbols(query, at), SERVER_PAUSE_MS);
+    return () => clearTimeout(timer);
   });
   const findOff = $derived(commands.disabledReason(FIND_IN_FILES) ?? "");
   const hint = $derived(
@@ -531,12 +556,22 @@
       {#if group.label}
         <div class="group">
           {group.label}{#if group.count !== undefined && palette.tab !== "all"}<span class="gn">{group.count}</span
-            >{/if}{#if group.loading}<Spinner label="Listing the files" /><span class="wait">{group.loading}</span>{/if}
+            >{/if}{#if group.loading}<Spinner label={group.loading} /><span class="wait">{group.loading}</span>{/if}
         </div>
       {/if}
       {#each group.entries as e, ei (ei)}{@render entry(e, starts[gi] + ei)}{/each}
       {#if group.cut}<div class="cut">{group.cut} more, keep typing to narrow them</div>{/if}
     {/each}
+    {#each failed as f (f.language)}
+      <div class="note">
+        <span class="msg" title={f.failure}>{f.server} could not search: {f.failure}</span>
+        <button class="ctl" type="button" tabindex="-1" onclick={() => void serverList.restart(f.language)}
+          >Restart</button
+        >
+        <button class="ctl" type="button" tabindex="-1" onclick={() => finish(onsettings)}>Settings</button>
+      </div>
+    {/each}
+    {#each indexing as text (text)}<div class="note"><span class="msg">{text}</span></div>{/each}
     {#if !entries.length && !built.groups.some((g) => g.loading)}
       <div class="empty">
         {#if palette.query.trim()}
@@ -667,6 +702,21 @@
     padding: 4px 18px;
     color: var(--text-3);
     font-size: var(--fs-ctl);
+  }
+  .note {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 4px 18px;
+    color: var(--text-3);
+    font-size: var(--fs-ctl);
+  }
+  .note .msg {
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
   .count,
   .gn {

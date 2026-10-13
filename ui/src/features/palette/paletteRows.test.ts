@@ -6,6 +6,7 @@ import {
   type ChangesetCandidate,
   type Entry,
   type FileCandidate,
+  type SymbolCandidate,
   type ThreadCandidate,
   RECENT_KEPT,
   build,
@@ -233,16 +234,57 @@ void test("a tab draws the best two hundred of a long list and says how many it 
 void test("while the project's files are listed the others' place says so, before the way on", () => {
   const candidates: Candidates = { ...none, file: [file("src/retry.rs")] };
   for (const tab of ["all", "file"] as const) {
-    const labels = build(tab, "retry", candidates, [], true).groups.map((g) => [g.label, g.loading !== undefined]);
+    const labels = build(tab, "retry", candidates, [], { files: true }).groups.map((g) => [
+      g.label,
+      g.loading !== undefined,
+    ]);
     assert.deepEqual(labels.slice(-2), [
       ["Other files", true],
       ["", false],
     ]);
   }
   assert.equal(
-    build("file", "retry", candidates, [], false).groups.some((g) => g.loading),
+    build("file", "retry", candidates, [], { files: false }).groups.some((g) => g.loading),
     false,
   );
+});
+
+const symbol = (key: string, over: Partial<SymbolCandidate> = {}): SymbolCandidate => ({
+  kind: "symbol",
+  key,
+  info: {} as SymbolCandidate["info"],
+  symbolKind: "function",
+  label: key,
+  lead: 0,
+  seen: 0,
+  ...over,
+});
+
+void test("a symbol a server found stays listed below those that match, without a highlight", () => {
+  const found = rank(
+    [
+      symbol("zzz", { fromServer: true }),
+      symbol("retry_all", { fromServer: true }),
+      symbol("retry_one", { change: "added" }),
+    ],
+    "retry",
+    [],
+  );
+  assert.deepEqual(keys(found), ["retry_one", "retry_all", "zzz"]);
+  assert.deepEqual(found[2].ranges, []);
+  assert.deepEqual(keys(rank([symbol("zzz")], "retry", [])), []);
+});
+
+void test("while the servers are asked the symbols' place says so, with or without symbols to show", () => {
+  const loading = (tab: "all" | "symbol", symbols: SymbolCandidate[]) =>
+    build(tab, "retry", { ...none, symbol: symbols }, [], { symbols: true }).groups.map((g) => [
+      g.label,
+      g.loading !== undefined,
+    ]);
+  for (const tab of ["all", "symbol"] as const) {
+    assert.deepEqual(loading(tab, []).slice(0, 1), [["Symbols", true]]);
+    assert.deepEqual(loading(tab, [symbol("retry")]).slice(0, 1), [["Symbols", true]]);
+  }
 });
 
 void test("remembering moves a result to the front and keeps the last thirty", () => {

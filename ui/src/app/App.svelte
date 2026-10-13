@@ -733,7 +733,7 @@
 {/if}
 
 {#if palette.open}
-  <Palette onchoose={(choice) => void openChoice(choice)} />
+  <Palette onchoose={(choice) => void openChoice(choice)} onsettings={() => showDialog("settings", "servers")} />
 {/if}
 
 <LocationPicker

@@ -1,6 +1,8 @@
 // Search Everywhere's state: whether the popup is up, its tab and query, what was chosen lately in
 // the open project, and the viewer's two settings. The popup (`Palette.svelte`) draws it.
 
+import type { LanguageSymbols } from "../../generated/LanguageSymbols";
+import { isAbort } from "../../lib/abort";
 import { errorText } from "../../lib/errorText";
 import { readStored, writeStored } from "../../lib/storage";
 import { type CommandContext, commands } from "../../state/commands";
@@ -40,13 +42,48 @@ class PaletteState {
   listing = $state(false);
   /** Only the latest request for the file list counts. */
   private asked = 0;
+  /** What the language servers found for `query`; none until they answer. */
+  served = $state.raw<{ query: string; languages: LanguageSymbols[] }>();
+  /** The servers are being asked. */
+  serving = $state(false);
+  private serverAsk?: AbortController;
 
   constructor() {
     session.onClose(() => {
       this.asked++;
       this.files = undefined;
       this.listing = false;
+      this.forgetSymbols();
     });
+  }
+
+  /** Asks the language servers for the symbols named like `query`; the previous ask is cancelled. */
+  async searchSymbols(query: string, revision: number) {
+    const backend = session.backend;
+    if (!backend) return;
+    this.serverAsk?.abort();
+    const ask = new AbortController();
+    this.serverAsk = ask;
+    this.serving = true;
+    try {
+      const languages = await backend.workspaceSymbols(revision, query, ask.signal);
+      if (this.serverAsk === ask) this.served = { query, languages };
+    } catch (error) {
+      if (this.serverAsk === ask && !isAbort(error)) {
+        this.served = { query, languages: [] };
+        session.notice = `Could not search the symbols: ${errorText(error)}`;
+      }
+    } finally {
+      if (this.serverAsk === ask) this.serving = false;
+    }
+  }
+
+  /** Drops what the servers found and stops asking them. */
+  forgetSymbols() {
+    this.serverAsk?.abort();
+    this.serverAsk = undefined;
+    this.served = undefined;
+    this.serving = false;
   }
 
   setUnchanged(on: boolean) {
@@ -85,6 +122,7 @@ class PaletteState {
 
   close() {
     this.open = false;
+    this.forgetSymbols();
   }
 
   /** Remembers the result chosen, so it breaks ties from now on. */

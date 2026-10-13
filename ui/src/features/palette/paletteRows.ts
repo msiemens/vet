@@ -69,6 +69,8 @@ export interface SymbolCandidate {
   change?: SymbolChange;
   /** How much of its file is seen, in percent. */
   seen: number;
+  /** A language server found it by name, so it is listed even where Vet's own match rejects it. */
+  fromServer?: boolean;
 }
 
 export interface ChangesetCandidate {
@@ -154,6 +156,8 @@ const RECENT_BONUS = 6;
 const RECENT_FALLOFF = 0.9;
 const ON_VIEW = -50;
 const DISABLED = -100;
+/** Below every score a match can reach. */
+const UNMATCHED = -1000;
 
 const collator = new Intl.Collator();
 
@@ -243,12 +247,15 @@ const labelOf = (item: Candidate): string => (item.kind === "action" ? item.labe
  * does; what the match is worth is raised by what the review needs first (changed, not yet seen,
  * open) and a little by what was chosen recently, which only decides between close matches. Nothing
  * typed lists everything, in the order the sources gave except for files, which come least seen first.
+ * A symbol a language server found stays listed without a match, below all that match.
  */
 export function rank(items: readonly Candidate[], query: string, recent: readonly string[]): Row[] {
   const rows: Row[] = [];
   const typed = items[0]?.kind === "file" ? splitLine(query.trim()) : { query: query.trim(), line: undefined };
   for (const item of items) {
-    const found = typed.query ? matchOf(item, typed.query) : { score: 0, ranges: [] };
+    const matched = typed.query ? matchOf(item, typed.query) : { score: 0, ranges: [] };
+    const unmatched = !matched && item.kind === "symbol" && item.fromServer;
+    const found = matched ?? (unmatched ? { score: UNMATCHED, ranges: [] } : undefined);
     if (!found) continue;
     const base = typed.query ? weight(item) : emptyWeight(item);
     rows.push({ item, score: found.score + base + recentBonus(recent, item), ranges: found.ranges, line: typed.line });
@@ -288,18 +295,28 @@ const listed = (label: string, rows: readonly Row[]): Group => ({
 /** The place of the files that are still being listed. */
 const LISTING: Group = { label: "Other files", loading: "Listing the project’s files…", entries: [] };
 
+const ASKING = "Asking the language servers…";
+
+/** What is still being waited for. */
+export interface Waiting {
+  /** The list of all files. */
+  files?: boolean;
+  /** The language servers' answer to the query. */
+  symbols?: boolean;
+}
+
 /**
  * What a tab lists for `query`. All shows each kind's best few, the kinds ordered by their best
  * result, each ending in the way to its tab; nothing typed shows the recent results and the changed
  * files least seen. A kind's own tab lists all its results, grouped where that says something. With a
- * query the lists end in the way on to Find in Files.
+ * query the lists end in the way on to Find in Files. A group still waiting for an answer says so.
  */
 export function build(
   tab: PaletteTab,
   query: string,
   candidates: Candidates,
   recent: readonly string[],
-  listing = false,
+  waiting: Waiting = {},
 ): Built {
   const q = query.trim();
   const ranked = Object.fromEntries(KINDS.map((k) => [k, rank(candidates[k], q, recent)])) as Record<Kind, Row[]>;
@@ -320,11 +337,17 @@ export function build(
       if (!rows.length) return [];
       const entries = rowsOf(rows.slice(0, CAPS[kind]));
       if (rows.length > CAPS[kind]) entries.push({ type: "more", kind, count: rows.length });
-      return [{ order, best: rows[0].score, group: { label: TITLES[kind], entries } }];
+      const group: Group = {
+        label: TITLES[kind],
+        entries,
+        loading: kind === "symbol" && waiting.symbols ? ASKING : undefined,
+      };
+      return [{ order, best: rows[0].score, group }];
     });
     kinds.sort((a, b) => b.best - a.best || a.order - b.order);
     groups.push(...kinds.map((k) => k.group));
-    if (listing) groups.push(LISTING);
+    if (waiting.symbols && !ranked.symbol.length) groups.push({ label: TITLES.symbol, loading: ASKING, entries: [] });
+    if (waiting.files) groups.push(LISTING);
     if (groups.length) groups.push(find);
     return { groups, counts: counts(ranked) };
   }
@@ -362,12 +385,18 @@ export function build(
       { label: "Resolved", count: resolved.length, entries: rowsOf(resolved) },
     );
   } else if (tab === "symbol") {
-    groups.push({ label: q ? "Symbols" : "Changed symbols", count: rows.length, entries: rowsOf(rows) });
+    groups.push({
+      label: q ? "Symbols" : "Changed symbols",
+      count: rows.length,
+      entries: rowsOf(rows.slice(0, LIST_CAP)),
+      cut: Math.max(0, rows.length - LIST_CAP),
+      loading: waiting.symbols ? ASKING : undefined,
+    });
   } else {
     groups.push({ label: TITLES[tab], count: rows.length, entries: rowsOf(rows) });
   }
-  const shown = groups.filter((g) => g.entries.length);
-  if (listing && tab === "file") shown.push(LISTING);
+  const shown = groups.filter((g) => g.entries.length || g.loading);
+  if (waiting.files && tab === "file") shown.push(LISTING);
   if (q && tab !== "action" && shown.length) shown.push(find);
   return { groups: shown, counts: q ? counts(ranked) : undefined };
 }
