@@ -6,6 +6,8 @@
   import { LIST } from "../../lib/listKeys";
   import Icon from "../../lib/ui/Icon.svelte";
   import IconButton from "../../lib/ui/IconButton.svelte";
+  import KeyHint from "../../lib/ui/KeyHint.svelte";
+  import KeyHints from "../../lib/ui/KeyHints.svelte";
   import VirtualRows from "../../lib/ui/VirtualRows.svelte";
   import { structure } from "../../state/structure.svelte";
   import { structureRows, type StructureRow } from "../../state/structureRows";
@@ -176,11 +178,11 @@
       <StructureNotice load={structure.load} file={fileName} matches={rows.length} />
     {/if}
   </div>
-  <div class="foot">
-    <span><kbd>↑</kbd><kbd>↓</kbd> move</span>
-    <span><kbd>Enter</kbd> jump</span>
-    <span><kbd>Esc</kbd> close</span>
-  </div>
+  <KeyHints>
+    <KeyHint keys="↑↓">move</KeyHint>
+    <KeyHint keys="↵">jump</KeyHint>
+    <KeyHint keys="esc">close</KeyHint>
+  </KeyHints>
 </div>
 
 <style>
@@ -253,29 +255,5 @@
     min-height: 0;
     display: flex;
     flex-direction: column;
-  }
-  .foot {
-    flex: none;
-    display: flex;
-    align-items: center;
-    gap: 10px;
-    padding: 5px 12px;
-    border-top: 1px solid var(--line-soft);
-    color: var(--text-3);
-    font-size: 11.5px;
-  }
-  .foot span {
-    display: inline-flex;
-    align-items: center;
-    gap: 4px;
-  }
-  kbd {
-    font: 11px var(--font-mono);
-    padding: 1px 5px;
-    border: 1px solid var(--line);
-    border-bottom-width: 2px;
-    border-radius: 4px;
-    background: var(--bg-control);
-    color: var(--text);
   }
 </style>

@@ -12,6 +12,7 @@
   import Icon from "../../lib/ui/Icon.svelte";
   import IconButton from "../../lib/ui/IconButton.svelte";
   import SeverityIcon from "../../lib/ui/SeverityIcon.svelte";
+  import OpenInFindButton from "../../lib/ui/OpenInFindButton.svelte";
   import PathText from "../../lib/ui/PathText.svelte";
   import QualifiedName from "../../lib/ui/QualifiedName.svelte";
   import { SpeedSearch } from "../../lib/ui/speedSearch.svelte";
@@ -212,9 +213,7 @@
     {/if}
     <span class="grow"></span>
     {#if view.onkeep && results?.rows.length}
-      <button class="ctl keep" type="button" title="Keep this list in the Find window" onclick={keep}>
-        Open in Find window <kbd>{isMac ? "⌘" : "Ctrl+"}↵</kbd>
-      </button>
+      <OpenInFindButton keys="{isMac ? '⌘' : 'Ctrl+'}↵" title="Keep this list in the Find window" onclick={keep} />
     {/if}
     {#if view.body.phase !== "stopped"}
       <IconButton
@@ -350,17 +349,6 @@
   }
   .grow {
     flex: 1;
-  }
-  .keep {
-    display: inline-flex;
-    align-items: center;
-    gap: 6px;
-    height: 24px;
-    padding: 0 8px;
-  }
-  .keep kbd {
-    color: var(--text-3);
-    font: var(--fs-mono-s) var(--font-mono);
   }
   .state {
     display: flex;

@@ -4,6 +4,7 @@
   // and gives it back when it closes, unless a click went elsewhere; Escape and a click outside close it.
   import { onDestroy, onMount, type Snippet } from "svelte";
   import Icon from "./Icon.svelte";
+  import KeyHints from "./KeyHints.svelte";
 
   let {
     label,
@@ -97,7 +98,7 @@
     {@render trailing?.()}
   </div>
   <div class="body" class:scroll bind:this={body}>{@render children()}</div>
-  <div class="foot">{@render foot()}</div>
+  <KeyHints>{@render foot()}</KeyHints>
 </div>
 
 <style>
@@ -160,19 +161,5 @@
     display: block;
     overflow-y: auto;
     padding-bottom: 6px;
-  }
-  .foot {
-    display: flex;
-    align-items: center;
-    gap: 14px;
-    height: var(--h-palette-foot);
-    padding: 0 12px;
-    border-top: 1px solid var(--line-soft);
-    background: var(--bg-panel);
-    font-size: 11.5px;
-    color: var(--text-3);
-    white-space: nowrap;
-    overflow: hidden;
-    flex: none;
   }
 </style>

@@ -12,6 +12,7 @@
   import FileIcon from "../../lib/ui/FileIcon.svelte";
   import Icon from "../../lib/ui/Icon.svelte";
   import KeyHint from "../../lib/ui/KeyHint.svelte";
+  import Kbd from "../../lib/ui/Kbd.svelte";
   import PopupShell from "../../lib/ui/PopupShell.svelte";
   import SeenMeter from "../../lib/ui/SeenMeter.svelte";
   import Spinner from "../../lib/ui/Spinner.svelte";
@@ -407,7 +408,7 @@
         {#if item.off}
           {#if item.disabled}<span class="prose">{item.disabled}</span>{/if}
         {:else if item.binding}
-          <span class="keys">{item.binding}</span>
+          <Kbd keys={item.binding} />
         {/if}
       </span>
     {/if}
@@ -432,7 +433,7 @@
       <span class="gl"></span>
       <span class="lab">Show all {e.count} {TITLES[e.kind].toLowerCase()}</span>
       <span class="sp"></span>
-      <span class="keys">↵</span>
+      <Kbd keys="↵" />
     </button>
   {:else}
     <button
@@ -450,7 +451,7 @@
       <span class="gl"><Icon name="search" size={14} /></span>
       <span class="lab">Find “{e.query}” in files…</span>
       <span class="sp"></span>
-      <span class="keys">{commands.binding(FIND_IN_FILES)?.label}</span>
+      <Kbd keys={commands.binding(FIND_IN_FILES)?.label ?? ""} />
     </button>
   {/if}
 {/snippet}
@@ -556,7 +557,7 @@
               title={findOff}
               onclick={() => choose({ type: "find", query: palette.query.trim() }, false)}
               >Find “{palette.query.trim()}” in files…
-              <span class="keys">{commands.binding(FIND_IN_FILES)?.label}</span></button
+              <Kbd keys={commands.binding(FIND_IN_FILES)?.label ?? ""} /></button
             >
           </div>
         {:else}
@@ -749,12 +750,6 @@
   }
   .meta .prose {
     font-family: var(--font-ui);
-  }
-  .keys {
-    flex: none;
-    color: var(--text-3);
-    font: var(--fs-mono-s) var(--font-mono);
-    letter-spacing: 0.02em;
   }
   .r.more {
     height: 24px;

@@ -15,6 +15,7 @@
   import KeyHint from "../../lib/ui/KeyHint.svelte";
   import Menu from "../../lib/ui/Menu.svelte";
   import type { MenuItem } from "../../lib/ui/menuItem";
+  import OpenInFindButton from "../../lib/ui/OpenInFindButton.svelte";
   import SeenMeter from "../../lib/ui/SeenMeter.svelte";
   import Popover from "../../lib/ui/Popover.svelte";
   import PopupShell from "../../lib/ui/PopupShell.svelte";
@@ -439,13 +440,12 @@
         title="Only changed lines in hunks you have not marked seen"
         onclick={() => (find.notSeen = !find.notSeen)}>Not seen</button
       >
-      <button
-        class="ctl keep"
-        type="button"
+      <OpenInFindButton
+        keys="{isMac ? '⌘' : 'Ctrl+'}↵"
         title="Keep these results in the Find window"
         disabled={!keepable}
-        onclick={keep}>Open in Find window <kbd>{isMac ? "⌘" : "Ctrl+"}↵</kbd></button
-      >
+        onclick={keep}
+      />
     </div>
     <div class="results">
       {#if hint}
@@ -617,18 +617,6 @@
     padding: 0 9px;
     border-radius: 11px;
     font-size: 11.5px;
-  }
-  .keep {
-    display: inline-flex;
-    align-items: center;
-    gap: 6px;
-    height: 22px;
-    padding: 0 9px;
-    font-size: 11.5px;
-  }
-  .keep kbd {
-    color: var(--text-3);
-    font: 11px var(--font-mono);
   }
   .results {
     flex: 1;
