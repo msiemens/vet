@@ -1,12 +1,14 @@
 // Search Everywhere's state: whether the popup is up, its tab and query, what was chosen lately in
 // the open project, and the viewer's two settings. The popup (`Palette.svelte`) draws it.
 
+import { errorText } from "../../lib/errorText";
 import { readStored, writeStored } from "../../lib/storage";
 import { type CommandContext, commands } from "../../state/commands";
 import { session } from "../../state/session.svelte";
 import { type PaletteTab, remember } from "./paletteRows";
 
 const DOUBLE_SHIFT_KEY = "vet.palette.doubleShift";
+const UNCHANGED_KEY = "vet.palette.unchanged";
 const recentKey = (repo: string) => `vet.palette.recent:${repo}`;
 
 /** The results chosen last in a project, newest first, as kept in the browser storage. */
@@ -33,6 +35,43 @@ class PaletteState {
    * the popup itself has the focus, which some commands read.
    */
   context = $state.raw<CommandContext>(commands.context());
+  /** Files of the changeset's target that the changeset does not change are searched too. */
+  unchanged = $state(readStored(UNCHANGED_KEY) === "1");
+  /** The paths of every file of the project, as of the snapshot `revision`; none until asked for. */
+  files = $state.raw<{ revision: number; paths: string[] }>();
+  /** The file list is being asked for. */
+  listing = $state(false);
+  /** Only the latest request for the file list counts. */
+  private asked = 0;
+
+  constructor() {
+    session.onClose(() => {
+      this.asked++;
+      this.files = undefined;
+      this.listing = false;
+    });
+  }
+
+  setUnchanged(on: boolean) {
+    this.unchanged = on;
+    writeStored(UNCHANGED_KEY, on ? "1" : undefined);
+  }
+
+  /** Asks for the list of all files; an answer that an newer ask overtook is dropped. */
+  async listFiles() {
+    const backend = session.backend;
+    if (!backend) return;
+    const ask = ++this.asked;
+    this.listing = true;
+    try {
+      const listing = await backend.listFiles();
+      if (ask === this.asked) this.files = listing;
+    } catch (error) {
+      if (ask === this.asked) session.notice = `Could not list the files: ${errorText(error)}`;
+    } finally {
+      if (ask === this.asked) this.listing = false;
+    }
+  }
 
   /** Opens the popup at `tab`; one that is up moves to the tab and keeps the query. */
   show(tab: PaletteTab) {

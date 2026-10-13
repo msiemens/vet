@@ -27,6 +27,16 @@ export interface ChangedFile {
 export const fileCandidates = (files: readonly ChangedFile[]): FileCandidate[] =>
   files.map((f) => ({ kind: "file", key: f.path, changed: true, ...f }));
 
+/** The files of the project the changeset does not change, from the list of all of them. */
+export function unchangedCandidates(paths: readonly string[], changed: ReadonlySet<string>): FileCandidate[] {
+  const out: FileCandidate[] = [];
+  for (const path of paths) {
+    if (!changed.has(path))
+      out.push({ kind: "file", key: path, path, changed: false, added: 0, removed: 0, seen: 0, oldBase: 0 });
+  }
+  return out;
+}
+
 /** The changed symbols of each file, as a symbol is chosen by the Changes tree, with how much of its file is seen. */
 export function symbolCandidates(
   files: Iterable<{ symbols: readonly ChangedSymbol[]; seen: number }>,

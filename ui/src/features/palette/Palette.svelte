@@ -17,7 +17,7 @@
   // Search Everywhere: one popup under the header for names (files, symbols, changesets, comment
   // threads, actions), with a tab for each kind. Arrow keys move, Tab changes the tab, Enter chooses,
   // Shift+Enter shows a changed file or symbol in All changes, Escape closes.
-  import { onDestroy, onMount, tick } from "svelte";
+  import { onDestroy, onMount, tick, untrack } from "svelte";
   import { matches } from "../../lib/keymap";
   import { splitPath } from "../../lib/paths";
   import { highlightRuns, sliceRanges, type Range } from "../../lib/speedSearch";
@@ -25,6 +25,7 @@
   import FileIcon from "../../lib/ui/FileIcon.svelte";
   import Icon from "../../lib/ui/Icon.svelte";
   import Meter from "../../lib/ui/Meter.svelte";
+  import Spinner from "../../lib/ui/Spinner.svelte";
   import { changeset } from "../../state/changeset.svelte";
   import { keyId } from "../../state/changesetKey";
   import { commands } from "../../state/commands";
@@ -36,13 +37,25 @@
   import { SymbolGlyph } from "../symbols";
   import { FIND_IN_FILES, PALETTE_COMMANDS } from "./paletteCommands";
   import { palette } from "./paletteState.svelte";
-  import { type Candidates, type Entry, type Row, TABS, TITLES, build, entriesOf, recentId } from "./paletteRows";
+  import {
+    type Candidates,
+    type Entry,
+    type PaletteTab,
+    type Row,
+    TABS,
+    TITLES,
+    build,
+    entriesOf,
+    rank,
+    recentId,
+  } from "./paletteRows";
   import {
     actionCandidates,
     changesetCandidates,
     fileCandidates,
     symbolCandidates,
     threadCandidates,
+    unchangedCandidates,
   } from "./paletteSources";
 
   let { onchoose }: { onchoose: (choice: Choice) => void } = $props();
@@ -50,6 +63,8 @@
   /** How far the Page keys move. */
   const PAGE = 8;
   const LETTER_COLORS = { M: "var(--old-base)", A: "var(--add-text)", D: "var(--del-text)", R: "var(--text-2)" };
+  /** The tabs the Unchanged files toggle applies to. */
+  const TOGGLES: readonly PaletteTab[] = ["all", "file", "symbol"];
   const SYMBOL_LETTERS = { modified: "M", added: "A", removed: "D" } as const;
 
   let cursor = $state(0);
@@ -120,15 +135,26 @@
       (id) => (PALETTE_COMMANDS as readonly string[]).includes(id),
     ),
   );
+  /** The files the changeset does not change, once the list of all of them is here. */
+  const others = $derived(palette.files ? unchangedCandidates(palette.files.paths, new Set(changeset.paths)) : []);
   const candidates: Candidates = $derived({
-    file: files,
+    file: palette.unchanged ? [...files, ...others] : files,
     symbol: symbolList,
     changeset: changesets,
     thread: threadCandidates(threads.items),
     action: actions,
   });
 
-  const built = $derived(build(palette.tab, palette.query, candidates, palette.recent));
+  const typed = $derived(palette.query.trim());
+  const built = $derived(
+    build(
+      palette.tab,
+      palette.query,
+      candidates,
+      palette.recent,
+      palette.unchanged && palette.listing && !palette.files,
+    ),
+  );
   const entries = $derived(entriesOf(built.groups));
   const at = $derived(Math.min(cursor, entries.length - 1));
   const current = $derived<Entry | undefined>(entries[at]);
@@ -140,6 +166,20 @@
   const pinned = $derived(
     changeset.shownCommit === undefined ? undefined : changeset.commits[changeset.shownCommit]?.commit.shortId,
   );
+  /** How many unchanged files match what was typed, when nothing else does and they are not searched. */
+  const hidden = $derived(
+    !palette.unchanged && typed && !entries.length && TOGGLES.includes(palette.tab)
+      ? rank(others, typed, []).length
+      : 0,
+  );
+  // The list of all files is asked for when they are searched, or when it can say what a search found nothing of.
+  $effect(() => {
+    const wanted = palette.unchanged || (typed !== "" && !entries.length);
+    if (!wanted || palette.files?.revision === changeset.layout?.shown.revision) return;
+    untrack(() => {
+      if (!palette.listing) void palette.listFiles();
+    });
+  });
   const findOff = $derived(commands.disabledReason(FIND_IN_FILES) ?? "");
   const hint = $derived(
     current?.type === "row" && current.row.item.kind === "action" && current.row.item.off
@@ -449,6 +489,25 @@
           <span class="count">{built.counts[tab.id]}</span>{/if}
       </button>
     {/each}
+    <span class="grow"></span>
+    <button
+      class="flat tog"
+      type="button"
+      tabindex="-1"
+      aria-pressed={palette.unchanged}
+      disabled={!TOGGLES.includes(palette.tab)}
+      title={TOGGLES.includes(palette.tab)
+        ? "Also search the files the changeset does not change"
+        : "Applies to All, Files and Symbols"}
+      onclick={() => {
+        palette.setUnchanged(!palette.unchanged);
+        input?.focus();
+      }}
+    >
+      <span class="cb"
+        >{#if palette.unchanged}<Icon name="check" size={9} stroke={3.2} />{/if}</span
+      >Unchanged files
+    </button>
   </div>
   <div class="field">
     <Icon name="search" size={14} stroke={1.7} />
@@ -472,16 +531,25 @@
       {#if group.label}
         <div class="group">
           {group.label}{#if group.count !== undefined && palette.tab !== "all"}<span class="gn">{group.count}</span
-            >{/if}
+            >{/if}{#if group.loading}<Spinner label="Listing the files" /><span class="wait">{group.loading}</span>{/if}
         </div>
       {/if}
       {#each group.entries as e, ei (ei)}{@render entry(e, starts[gi] + ei)}{/each}
+      {#if group.cut}<div class="cut">{group.cut} more, keep typing to narrow them</div>{/if}
     {/each}
-    {#if !entries.length}
+    {#if !entries.length && !built.groups.some((g) => g.loading)}
       <div class="empty">
         {#if palette.query.trim()}
           <span class="big">No results for “{palette.query.trim()}”</span>
+          {#if hidden}<span
+              >{hidden} unchanged {hidden === 1 ? "file matches" : "files match"}, and are not searched.</span
+            >{/if}
           <div class="acts">
+            {#if hidden}
+              <button class="ctl" type="button" tabindex="-1" onclick={() => palette.setUnchanged(true)}
+                >Include unchanged files</button
+              >
+            {/if}
             <button
               class="ctl"
               type="button"
@@ -561,6 +629,44 @@
   }
   .tab[aria-selected="true"] {
     border-bottom-color: var(--accent);
+  }
+  .tog {
+    align-self: center;
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    height: 22px;
+    padding: 0 8px;
+    border-radius: var(--radius);
+    font-size: var(--fs-ctl);
+    color: var(--text-2);
+  }
+  .tog:disabled {
+    opacity: 0.5;
+  }
+  .tog .cb {
+    width: 12px;
+    height: 12px;
+    box-sizing: border-box;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    border: 1px solid var(--line);
+    border-radius: 3px;
+    background: var(--bg-control);
+  }
+  .tog[aria-pressed="true"] .cb {
+    background: var(--accent);
+    border-color: var(--accent);
+    color: var(--bg-editor);
+  }
+  .wait {
+    font-weight: 400;
+  }
+  .cut {
+    padding: 4px 18px;
+    color: var(--text-3);
+    font-size: var(--fs-ctl);
   }
   .count,
   .gn {

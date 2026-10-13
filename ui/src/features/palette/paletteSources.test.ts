@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import type { ChangedSymbol } from "../../generated/ChangedSymbol";
 import type { Thread } from "../../generated/Thread";
-import { actionCandidates, symbolCandidates, threadCandidates } from "./paletteSources.ts";
+import { actionCandidates, symbolCandidates, threadCandidates, unchangedCandidates } from "./paletteSources.ts";
 
 const symbol = (path: string, name: string[], change: ChangedSymbol["change"] = "modified"): ChangedSymbol => ({
   change,
@@ -33,6 +33,17 @@ void test("a member symbol is named after its container in its language's way, a
   );
   assert.equal(found[0].seen, 20);
   assert.equal(found[0].change, "modified");
+});
+
+void test("the unchanged files are those of the project the changeset does not change", () => {
+  const found = unchangedCandidates(["a.rs", "b.rs", "c.rs"], new Set(["b.rs"]));
+  assert.deepEqual(
+    found.map((f) => [f.path, f.changed]),
+    [
+      ["a.rs", false],
+      ["c.rs", false],
+    ],
+  );
 });
 
 void test("two symbols of one name that changed differently are two candidates", () => {

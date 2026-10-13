@@ -6,7 +6,7 @@ import type { SymbolChange } from "../../generated/SymbolChange";
 import type { SymbolInfo } from "../../generated/SymbolInfo";
 import type { SymbolKind } from "../../generated/SymbolKind";
 import { basename } from "../../lib/paths.ts";
-import { match, type Range } from "../../lib/speedSearch.ts";
+import { match, type Match, type Range } from "../../lib/speedSearch.ts";
 
 export type Kind = "file" | "symbol" | "changeset" | "thread" | "action";
 export type PaletteTab = "all" | Kind;
@@ -39,6 +39,8 @@ export const RECENT_KEPT = 30;
 const RECENT_SHOWN = 6;
 /** How many of the least reviewed files an empty All lists. */
 const LEAST_REVIEWED = 4;
+/** How many results a group of a kind's own tab draws. */
+const LIST_CAP = 200;
 
 export interface FileCandidate {
   kind: "file";
@@ -130,7 +132,11 @@ export interface Group {
   label: string;
   /** How many results the group has in all, shown beside its label in a tab of its own. */
   count?: number;
+  /** What is being waited for: a spinner and these words stand in the group. */
+  loading?: string;
   entries: Entry[];
+  /** How many more results the group has than it lists. */
+  cut?: number;
 }
 
 export interface Built {
@@ -173,25 +179,39 @@ export function splitLine(query: string): { query: string; line?: number } {
 
 const unreviewed = (seen: number) => (seen < 100 ? UNREVIEWED : 0);
 
+/**
+ * `match`, after a cheap look at whether the query's characters are in the text in order, which
+ * every match needs: most of a project's files are rejected there, so tens of thousands cost little.
+ */
+function fuzzy(query: string, text: string): Match | undefined {
+  const lower = text.toLowerCase();
+  let at = 0;
+  for (const c of query.toLowerCase()) {
+    at = lower.indexOf(c, at) + 1;
+    if (at === 0) return undefined;
+  }
+  return match(query, text);
+}
+
 /** How `item` matches `query`; `undefined` when it does not. */
-function matchOf(item: Candidate, query: string): { score: number; ranges: Range[] } | undefined {
+function matchOf(item: Candidate, query: string): Match | undefined {
   switch (item.kind) {
     case "file": {
       const name = basename(item.path);
       const cut = item.path.length - name.length;
-      const byName = match(query, name);
+      const byName = fuzzy(query, name);
       if (byName)
         return { score: byName.score + NAME_OVER_PATH, ranges: byName.ranges.map(([a, b]) => [a + cut, b + cut]) };
-      return match(query, item.path);
+      return fuzzy(query, item.path);
     }
     case "symbol":
-      return match(query, item.label);
+      return fuzzy(query, item.label);
     case "changeset":
-      return match(query, item.number ? `${item.number} ${item.title}` : item.title);
+      return fuzzy(query, item.number ? `${item.number} ${item.title}` : item.title);
     case "thread":
-      return match(query, item.text);
+      return fuzzy(query, item.text);
     case "action":
-      return match(query, item.label);
+      return fuzzy(query, item.label);
   }
 }
 
@@ -257,13 +277,30 @@ function recentRows(recent: readonly string[], candidates: Candidates, kinds: re
 
 const rowsOf = (rows: readonly Row[]): Entry[] => rows.map((row) => ({ type: "row", row }));
 
+/** A group of a kind's own tab: a project can have tens of thousands of files, so only the best are drawn. */
+const listed = (label: string, rows: readonly Row[]): Group => ({
+  label,
+  count: rows.length,
+  entries: rowsOf(rows.slice(0, LIST_CAP)),
+  cut: Math.max(0, rows.length - LIST_CAP),
+});
+
+/** The place of the files that are still being listed. */
+const LISTING: Group = { label: "Other files", loading: "Listing the project’s files…", entries: [] };
+
 /**
  * What a tab lists for `query`. All shows each kind's best few, the kinds ordered by their best
  * result, each ending in the way to its tab; nothing typed shows the recent results and the changed
  * files least seen. A kind's own tab lists all its results, grouped where that says something. With a
  * query the lists end in the way on to Find in Files.
  */
-export function build(tab: PaletteTab, query: string, candidates: Candidates, recent: readonly string[]): Built {
+export function build(
+  tab: PaletteTab,
+  query: string,
+  candidates: Candidates,
+  recent: readonly string[],
+  listing = false,
+): Built {
   const q = query.trim();
   const ranked = Object.fromEntries(KINDS.map((k) => [k, rank(candidates[k], q, recent)])) as Record<Kind, Row[]>;
   const groups: Group[] = [];
@@ -287,17 +324,27 @@ export function build(tab: PaletteTab, query: string, candidates: Candidates, re
     });
     kinds.sort((a, b) => b.best - a.best || a.order - b.order);
     groups.push(...kinds.map((k) => k.group));
+    if (listing) groups.push(LISTING);
     if (groups.length) groups.push(find);
     return { groups, counts: counts(ranked) };
   }
 
   const rows = ranked[tab];
-  if (!q && tab === "file") {
-    const latest = recentRows(recent, candidates, ["file"]);
+  if (tab === "file") {
+    const latest = q ? [] : recentRows(recent, candidates, ["file"]);
     const taken = new Set(latest.map((r) => r.item.key));
-    const rest = rows.filter((r) => !taken.has(r.item.key));
+    const fresh = rows.filter((r) => !taken.has(r.item.key));
     if (latest.length) groups.push({ label: "Recent", entries: rowsOf(latest) });
-    groups.push({ label: "Changed files", count: rows.length, entries: rowsOf(rest) });
+    groups.push(
+      listed(
+        "Changed files",
+        fresh.filter((r) => r.item.kind === "file" && r.item.changed),
+      ),
+      listed(
+        "Other files",
+        fresh.filter((r) => r.item.kind === "file" && !r.item.changed),
+      ),
+    );
   } else if (!q && tab === "action") {
     const latest = recentRows(recent, candidates, ["action"]);
     const taken = new Set(latest.map((r) => r.item.key));
@@ -320,6 +367,7 @@ export function build(tab: PaletteTab, query: string, candidates: Candidates, re
     groups.push({ label: TITLES[tab], count: rows.length, entries: rowsOf(rows) });
   }
   const shown = groups.filter((g) => g.entries.length);
+  if (listing && tab === "file") shown.push(LISTING);
   if (q && tab !== "action" && shown.length) shown.push(find);
   return { groups: shown, counts: q ? counts(ranked) : undefined };
 }

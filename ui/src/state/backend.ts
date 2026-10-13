@@ -319,6 +319,12 @@ export class Backend {
     return { revision, entries };
   }
 
+  /** The path of every file of the target snapshot, as of `revision`. */
+  async listFiles(): Promise<{ revision: number; paths: string[] }> {
+    const { revision, paths } = expect(await this.conn.request({ type: "listFiles", project: this.pid }), "files");
+    return { revision, paths };
+  }
+
   /** The text of any path on the target side of `view`, changed or not: for a commit, the file as the commit leaves it. */
   async fileText(path: string, view: View): Promise<{ revision: number; content: TextContent }> {
     const { revision, content } = expect(

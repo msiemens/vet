@@ -202,6 +202,49 @@ void test("a query in a kind's tab ends in the way on to Find in Files, except f
   assert.equal(entriesOf(build("action", "retry", candidates, []).groups).at(-1)?.type, "row");
 });
 
+void test("the files tab lists the changed files and the others apart, with how many there are", () => {
+  const candidates: Candidates = {
+    ...none,
+    file: [
+      file("src/retry.rs"),
+      file("benches/retry.rs", { changed: false }),
+      file("docs/retry.md", { changed: false }),
+    ],
+  };
+  const { groups } = build("file", "retry", candidates, []);
+  assert.deepEqual(
+    groups.map((g) => [g.label, g.count, rowKeys(g.entries)]),
+    [
+      ["Changed files", 1, ["src/retry.rs"]],
+      ["Other files", 2, ["benches/retry.rs", "docs/retry.md"]],
+      ["", undefined, []],
+    ],
+  );
+});
+
+void test("a tab draws the best two hundred of a long list and says how many it left out", () => {
+  const many = Array.from({ length: 450 }, (_, i) => file(`vendor/pkg${i}/mod.rs`, { changed: false }));
+  const group = build("file", "mod", { ...none, file: many }, []).groups[0];
+  assert.equal(group.count, 450);
+  assert.equal(group.entries.length, 200);
+  assert.equal(group.cut, 250);
+});
+
+void test("while the project's files are listed the others' place says so, before the way on", () => {
+  const candidates: Candidates = { ...none, file: [file("src/retry.rs")] };
+  for (const tab of ["all", "file"] as const) {
+    const labels = build(tab, "retry", candidates, [], true).groups.map((g) => [g.label, g.loading !== undefined]);
+    assert.deepEqual(labels.slice(-2), [
+      ["Other files", true],
+      ["", false],
+    ]);
+  }
+  assert.equal(
+    build("file", "retry", candidates, [], false).groups.some((g) => g.loading),
+    false,
+  );
+});
+
 void test("remembering moves a result to the front and keeps the last thirty", () => {
   assert.deepEqual(remember(["a", "b", "c"], "b"), ["b", "a", "c"]);
   const many = Array.from({ length: RECENT_KEPT }, (_, i) => `f${i}`);
