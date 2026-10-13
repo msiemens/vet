@@ -33,6 +33,12 @@ export interface ViewActions {
   toggleStructure(): boolean;
   /** Shows the active tab in the view mode: a diff drawn that way, or the file's text. */
   setViewMode(mode: ViewMode): void;
+  /** Opens the find bar in the active tab and puts the cursor in its field; answers whether the tab can be searched. */
+  openFind(): boolean;
+  /** Goes to the next (1) or previous (-1) match of the active tab's find. */
+  stepFind(delta: 1 | -1): void;
+  closeFind(): void;
+  toggleFindOption(option: "matchCase" | "wholeWord" | "regex"): void;
 }
 
 /** The ways a tab shows its file, with the key that shows each. */
@@ -53,6 +59,17 @@ const VIEW_MODES: readonly { id: ViewMode; label: string; binding: string; unava
 ];
 
 const NO_FILE = "Open a file first";
+
+/** The options of a find, with their keys: Option types letters on macOS, so Command takes it there. */
+const FIND_OPTIONS = [
+  { option: "matchCase", label: "Match Case", binding: "Alt-c", macBinding: "Meta-Alt-c" },
+  { option: "wholeWord", label: "Whole Word", binding: "Alt-w", macBinding: "Meta-Alt-w" },
+  { option: "regex", label: "Regular Expression", binding: "Alt-r", macBinding: "Meta-Alt-r" },
+] as const;
+
+const NO_FIND = "Open the find bar first";
+const findOpen = (c: CommandContext) => !!c.findOpen;
+
 const NO_DIFF = "Open the Changes tab or a changed file";
 const NOT_BY_COMMIT = "The changeset is not reviewed by commit";
 const QUEUE_SHOWN = "Open the Review screen first";
@@ -206,6 +223,44 @@ export function viewCommands(a: ViewActions): Command<CommandContext>[] {
       disabledReason: () => "Open a file or the Changes tab",
       run: () => a.toggleStructure(),
     },
+    {
+      id: "find.open",
+      label: "Find…",
+      binding: "Mod-f",
+      inFields: true,
+      enabled: (c) => c.tab !== undefined && kindOf(c.tab) === "file",
+      disabledReason: () => "Open a file",
+      run: () => a.openFind(),
+    },
+    {
+      id: "find.next",
+      label: "Find Next",
+      binding: "F3",
+      macBinding: "Meta-g",
+      inFields: true,
+      enabled: findOpen,
+      disabledReason: () => NO_FIND,
+      run: () => a.stepFind(1),
+    },
+    {
+      id: "find.previous",
+      label: "Find Previous",
+      binding: "Shift-F3",
+      macBinding: "Meta-Shift-g",
+      inFields: true,
+      enabled: findOpen,
+      disabledReason: () => NO_FIND,
+      run: () => a.stepFind(-1),
+    },
+    ...FIND_OPTIONS.map(({ option, label, binding, macBinding }): Command<CommandContext> => ({
+      id: `find.${option}`,
+      label,
+      binding,
+      macBinding,
+      enabled: findOpen,
+      disabledReason: () => NO_FIND,
+      run: () => a.toggleFindOption(option),
+    })),
     ...VIEW_MODES.map(({ id, label, binding, unavailable }): Command<CommandContext> => ({
       id: modeCommand(id),
       label,

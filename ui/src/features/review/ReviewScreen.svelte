@@ -22,6 +22,7 @@
   import "./editor/hunkBar.css";
   import "./editor/fileChanges.css";
   import "./editor/scrollMarks.css";
+  import "./editor/find.css";
   import "./editor/changeCard.css";
   import "./editor/highlights.css";
   import "./editor/hover.css";
@@ -34,6 +35,8 @@
   import { exposeRendered } from "./devHook";
   import type { SymbolRow } from "./symbolRows";
   import CommitStrip from "./CommitStrip.svelte";
+  import FindBar from "./FindBar.svelte";
+  import Toast from "../../lib/ui/Toast.svelte";
   import { CHANGES, ON_SCREEN, commitOf, kindOf, pathOf } from "./tabModel";
   import TabStrip from "./TabStrip.svelte";
   import ViewControls from "./ViewControls.svelte";
@@ -178,6 +181,7 @@
     untrack(() => {
       controller.scheduleSave();
       controller.pruneScopes();
+      controller.syncFind();
     });
   });
 
@@ -270,6 +274,25 @@
   {/if}
   {#if pinned !== undefined}<CommitStrip id={pinned} commit={controller.commitUnit(tabs.active)} />{/if}
   {#if commit && tabs.active === CHANGES}<CommitHeader {commit} />{/if}
+  {#if controller.find.open.has(tabs.active)}
+    <FindBar
+      find={controller.find}
+      fileView={tabs.modes.get(tabs.active) === "file"}
+      unchanged={kindOf(tabs.active) === "file" && !controller.fileChanged(tabs.active)}
+      onoption={(patch) => controller.setFindOptions(patch)}
+      onstep={(delta) => void controller.stepFind(delta)}
+      onclose={() => controller.closeFind()}
+    />
+  {/if}
+  {#if controller.find.wrapped}
+    {#key controller.find.wrapped.n}
+      <Toast
+        message={controller.find.wrapped.text}
+        duration={2500}
+        onclose={() => (controller.find.wrapped = undefined)}
+      />
+    {/key}
+  {/if}
   <!-- The handler only replaces the webview's menu inside an editor. -->
   <!-- svelte-ignore a11y_no_static_element_interactions -->
   <div class="panes" class:readonly={readOnly} class:loading={changeset.loading} oncontextmenu={paneMenu}>

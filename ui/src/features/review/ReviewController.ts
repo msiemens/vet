@@ -38,6 +38,9 @@ import { SUBMIT_KEY } from "../../lib/composer";
 import { errorText } from "../../lib/errorText";
 import { ChangesetView, type Listeners, type PanePosition, type ViewHooks } from "./editor/ChangesetView";
 import { fileSource } from "./editor/fileSource";
+import type { FindOptions, FindPos } from "./editor/findMatches";
+import { type Finder, NO_SUMMARY, type FindSummary } from "./editor/findView";
+import { FindState } from "./FindState.svelte";
 import type { Rendered } from "./editor/rendered";
 import { LogView } from "./editor/LogView";
 import { type ThreadActions, buildCard } from "./editor/threadCard";
@@ -108,6 +111,11 @@ export const READ_ONLY_NOTE = "This range does not end at the latest version: ma
 
 export class ReviewController {
   readonly tabs = new Tabs("unified");
+  /** The find bar: the window's query, the tabs it is open in, and what the active tab's view found. */
+  readonly find = new FindState();
+  /** Where the current match is in each tab, which a rebuilt view starts from. */
+  private findAt = new Map<TabId, FindPos>();
+  private wraps = 0;
   /** The diff view of each attached tab; a file tab has none while its file is not in the changeset. */
   private views = new Map<TabId, ChangesetView>();
   /** The text view of each file tab that showed its text; built when the tab first shows it. */
@@ -503,6 +511,7 @@ export class ReviewController {
       noComments: commitOf(id) !== undefined,
       byCommit: this.changeset.shownCommit !== undefined,
       hunk: view?.current ?? text?.current ?? -1,
+      findOpen: this.find.open.has(id),
       editor,
       noImplementations: editor && withoutFeature(editor.path, serverList.servers, "implementations"),
       serverLanguage: file === undefined ? undefined : languageOf(file, serverList.servers),
@@ -546,7 +555,87 @@ export class ReviewController {
         return true;
       },
       setViewMode: (mode) => void this.setViewMode(mode),
+      openFind: () => this.openFind(),
+      stepFind: (delta) => void this.stepFind(delta),
+      closeFind: () => this.closeFind(),
+      toggleFindOption: (option) => this.setFindOptions({ [option]: !this.find.options[option] }),
     };
+  }
+
+  /** The tab's pane that shows its file: the text, or the diff. */
+  private findPane(id: TabId): "text" | "diff" {
+    return this.tabs.modes.get(id) === "file" ? "text" : "diff";
+  }
+
+  private finder(id: TabId, pane: "text" | "diff"): Finder | undefined {
+    return pane === "text" ? this.texts.get(id) : this.views.get(id);
+  }
+
+  /** Runs the find in the pane the tab shows, and ends it in the other. */
+  private applyFind(id: TabId) {
+    const shown = this.findPane(id);
+    this.finder(id, shown === "text" ? "diff" : "text")?.find(undefined);
+    const finder = this.finder(id, shown);
+    if (!finder || !this.find.open.has(id)) return;
+    finder.onFind((summary) => this.found(id, shown, summary));
+    finder.find(this.find.options, this.findAt.get(id));
+  }
+
+  /** A pane found something: the bar shows it if it is the active tab's shown pane. */
+  private found(id: TabId, pane: "text" | "diff", summary: FindSummary) {
+    if (pane !== this.findPane(id) || !this.find.open.has(id)) return;
+    if (summary.at) this.findAt.set(id, summary.at);
+    if (id === this.tabs.active) this.find.summary = summary;
+  }
+
+  /** The tabs, the active one or a view mode changed: the find follows to the pane the active tab shows. */
+  syncFind() {
+    for (const id of [...this.find.open]) {
+      if (this.tabs.open.includes(id)) continue;
+      this.find.open.delete(id);
+      this.findAt.delete(id);
+    }
+    const id = this.tabs.active;
+    if (this.find.open.has(id)) this.applyFind(id);
+    else this.find.summary = NO_SUMMARY;
+  }
+
+  /**
+   * Opens the find bar in the active tab and puts the cursor in its field; a selection of one line in
+   * the focused editor is what it looks for. Answers whether the tab can be searched.
+   */
+  openFind(): boolean {
+    const id = this.tabs.active;
+    if (kindOf(id) !== "file") return false;
+    const selected = focusedEditor(document.activeElement)?.selectedText();
+    if (selected && !/[\r\n]/.test(selected)) this.find.options.text = selected;
+    this.find.open.add(id);
+    this.find.focusRequests++;
+    this.applyFind(id);
+    return true;
+  }
+
+  /** Closes the bar: the current match stays selected in the editor, which gets the focus. */
+  closeFind() {
+    const id = this.tabs.active;
+    this.finder(id, this.findPane(id))?.selectFound();
+    this.find.open.delete(id);
+    this.finder(id, "diff")?.find(undefined);
+    this.finder(id, "text")?.find(undefined);
+    this.find.summary = NO_SUMMARY;
+  }
+
+  /** Goes to the next or previous match of the active tab, and says when that wrapped round the end. */
+  async stepFind(delta: 1 | -1) {
+    const id = this.tabs.active;
+    const stepped = await this.finder(id, this.findPane(id))?.findStep(delta);
+    if (stepped?.wrapped)
+      this.find.wrapped = { text: delta > 0 ? "Wrapped to the start" : "Wrapped to the end", n: ++this.wraps };
+  }
+
+  setFindOptions(patch: Partial<FindOptions>) {
+    Object.assign(this.find.options, patch);
+    this.applyFind(this.tabs.active);
   }
 
   /**
@@ -930,6 +1019,7 @@ export class ReviewController {
       file && { file, review: source, actions: this.textActions(source, file, shown) },
     );
     this.texts.set(id, text);
+    if (this.find.open.has(id)) this.applyFind(id);
     const at = this.takePending(id, "text") ?? place;
     if (at) text.showLines(at);
     if (this.threadsFit(layout)) text.setThreads(this.shownThreads(id), shown.revision);
@@ -988,6 +1078,7 @@ export class ReviewController {
     view.scrollTo(top);
     view.keepCurrent(anchor);
     view.sync();
+    if (this.find.open.has(id)) this.applyFind(id);
     // A file tab shows its one file at once; the Changes tab loads sections as they come near.
     // A stale revision is replaced by the next build.
     if (path === undefined) return;

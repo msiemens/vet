@@ -75,6 +75,8 @@ export interface CommandContext {
   hunk: number;
   /** The review view shows one commit of a changeset that is reviewed by commit. */
   byCommit?: boolean;
+  /** The find bar is open in the active tab. */
+  findOpen?: boolean;
   /** The editor with the focus, if one has it. */
   editor?: FocusedEditor;
   /** The name of the focused editor's language server when it has said it offers no implementations. */
