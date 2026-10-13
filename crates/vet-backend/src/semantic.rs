@@ -117,6 +117,14 @@ impl Booted {
         Ok(Response::Definition(self.locations(answer, side, &at)))
     }
 
+    pub async fn workspace_symbols(&self, revision: u32, query: &str) -> Result<Response, String> {
+        let found = (self.semantics)
+            .workspace_symbols(&self.view, revision, query)
+            .await
+            .map_err(message)?;
+        Ok(Response::WorkspaceSymbols(map::workspace_symbols(&found)))
+    }
+
     pub async fn references(
         &self,
         highlighter: &Highlighter,

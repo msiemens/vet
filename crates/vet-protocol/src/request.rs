@@ -337,6 +337,17 @@ pub enum Request {
         revision: u32,
         path: String,
     },
+    /// The symbols of the target side whose names match `query`, from the language server of each
+    /// language that has a file in the project (`workspace/symbol`; a server matches and caps its
+    /// answer in its own way, rust-analyzer at 128). A language whose server cannot answer is
+    /// reported with its reason and the others still answer. Cancellable, like every semantic
+    /// request: a new query overtakes the one before. Fails if `revision` is no longer current.
+    /// Answers with `Response::WorkspaceSymbols`.
+    WorkspaceSymbols {
+        project: ProjectId,
+        revision: u32,
+        query: String,
+    },
     /// The innermost symbol (a function, type, module, field or constant) that holds a position of
     /// one side of the changeset, and what became of it (derived). The position is in the text of that side,
     /// 0-based lines and UTF-16 columns. A language without a usable server answers with

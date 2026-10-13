@@ -93,6 +93,19 @@ pub struct FileSymbols {
     pub gap: Option<String>,
 }
 
+/// What one language's server answered to a search of the project's symbols by name.
+pub struct LanguageSymbols {
+    pub language: BackendId,
+    /// A server that cannot serve is reported, not left out.
+    pub result: Result<Vec<SymbolInfo>, SemanticError>,
+}
+
+/// The symbols of the target side that match a name, per language of the project.
+pub struct WorkspaceSymbols {
+    pub revision: u32,
+    pub languages: Vec<LanguageSymbols>,
+}
+
 /// A symbol found by its identity, with the side it exists on.
 struct Resolved {
     /// The target side's symbol, or the base side's if it exists there only.
@@ -469,6 +482,37 @@ where
             Box::pin(async move {
                 let pair = self.pair(view, revision).await?;
                 Ok(Answer::of(revision, pair.diagnostics(Side::Target, file).await))
+            }),
+        )
+        .await
+    }
+
+    /// The symbols of the target side whose names match `query`, from the server of each language
+    /// that has a file in the project: one that cannot answer says so and the others still do.
+    pub async fn workspace_symbols(
+        &self,
+        view: &RevisionView<G, S>,
+        revision: u32,
+        query: &str,
+    ) -> Fallible<WorkspaceSymbols> {
+        self.current(
+            revision,
+            Box::pin(async move {
+                let pair = self.pair(view, revision).await?;
+                let languages: Vec<BackendId> = view
+                    .target_file_per_key(revision, POOL_CAPACITY, |path| self.language_of(path).cloned())
+                    .await?
+                    .into_iter()
+                    .map(|(language, _)| language)
+                    .collect();
+                let found = self.semantic.workspace_symbols(&pair.target, &languages, query).await;
+                Ok(WorkspaceSymbols {
+                    revision,
+                    languages: found
+                        .into_iter()
+                        .map(|(language, result)| LanguageSymbols { language, result })
+                        .collect(),
+                })
             }),
         )
         .await
@@ -973,6 +1017,8 @@ mod tests {
         unrecorded: std::sync::atomic::AtomicBool,
         /// Identities worked out: each stands for a `--version` probe, a settings read and more.
         identified: AtomicUsize,
+        /// The language whose server is not installed.
+        missing: Mutex<Option<String>>,
     }
 
     /// Counts a hover as given up on when its request is dropped.
@@ -1000,6 +1046,10 @@ mod tests {
             policy: AnalysisPolicy,
         ) -> Result<Started<FakeServer>, LaunchError> {
             let c = &self.0;
+            let language = &backend.config().backend.0;
+            if c.missing.lock().unwrap().as_ref() == Some(language) {
+                return Err(LaunchError::NotInstalled(format!("no server for {language} was found")));
+            }
             if tree == Tree::Immutable && c.live_started.load(Ordering::SeqCst) < 2 {
                 c.snapshot_started_early.fetch_add(1, Ordering::SeqCst);
             }
@@ -1100,8 +1150,10 @@ mod tests {
         async fn outgoing_calls(&self, _: &At) -> Result<Vec<SymbolInfo>, QueryError> {
             Ok(vec![])
         }
-        async fn workspace_symbols(&self, _: &str) -> Result<Vec<SymbolInfo>, QueryError> {
-            Ok(vec![])
+        async fn workspace_symbols(&self, query: &str) -> Result<Vec<SymbolInfo>, QueryError> {
+            let mut found = symbol(&RepoPath(b"a.rs".to_vec()));
+            found.sym.name = vec![query.to_owned()];
+            Ok(vec![found])
         }
         async fn diagnostics(&self, _: &RepoPath) -> Result<Vec<Diagnostic>, QueryError> {
             Ok(vec![])
@@ -1252,6 +1304,53 @@ mod tests {
                 "document_symbols(target:a.rs) [fake rust]",
             ]
         );
+    }
+
+    #[tokio::test]
+    async fn symbols_by_name_come_from_the_servers_of_the_projects_languages_only() {
+        // Rust and Python are in the project; a Go server is configured, but no Go file is there.
+        let (fx, semantics, counters) = semantics().await;
+        let found = semantics.workspace_symbols(&fx.view, 0, "retry").await.unwrap();
+        let answers: Vec<_> = found
+            .languages
+            .iter()
+            .map(|l| {
+                (
+                    l.language.0.as_str(),
+                    l.result.as_ref().map(|s| s[0].sym.name.clone()).ok(),
+                )
+            })
+            .collect();
+        assert_eq!(
+            answers,
+            [
+                ("rust", Some(vec!["retry".to_string()])),
+                ("python", Some(vec!["retry".to_string()]))
+            ]
+        );
+        assert_eq!(found.revision, 0);
+        assert_eq!(counters.started.load(Ordering::SeqCst), 2, "no Go server was started");
+    }
+
+    #[tokio::test]
+    async fn a_language_whose_server_cannot_start_is_reported_and_the_others_still_answer() {
+        let (fx, semantics, counters) = semantics().await;
+        *counters.missing.lock().unwrap() = Some("python".into());
+        let found = semantics.workspace_symbols(&fx.view, 0, "retry").await.unwrap();
+        let [rust, python] = &found.languages[..] else {
+            panic!("{} languages", found.languages.len())
+        };
+        assert_eq!(rust.result.as_ref().map(Vec::len).ok(), Some(1));
+        assert_eq!(
+            python.result.as_ref().err().map(ToString::to_string),
+            Some("no server for python was found".to_string())
+        );
+    }
+
+    #[tokio::test]
+    async fn symbols_by_name_for_a_revision_that_is_not_current_are_refused() {
+        let (fx, semantics, _) = semantics().await;
+        assert!(semantics.workspace_symbols(&fx.view, 9, "retry").await.is_err());
     }
 
     /// What happens to the session that moves its revision on.

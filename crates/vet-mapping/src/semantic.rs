@@ -2,6 +2,7 @@
 
 use p::UnavailableKind as Kind;
 use vet_app::ports::{FoundServer, ServerOrigin, ServerState, Tsserver};
+use vet_app::semantics::WorkspaceSymbols;
 use vet_app::servers::ServerStatus;
 use vet_core::content::{FileDiff, LineRange, RepoPath};
 use vet_core::review::Side;
@@ -306,6 +307,28 @@ fn changed(c: &ChangedSymbol) -> p::ChangedSymbol {
     p::ChangedSymbol {
         symbol: symbol(&c.symbol),
         change: change(c.change),
+    }
+}
+
+/// The most symbols of one language an answer lists.
+const MAX_WORKSPACE_SYMBOLS: usize = 200;
+
+pub fn workspace_symbols(found: &WorkspaceSymbols) -> p::WorkspaceSymbols {
+    p::WorkspaceSymbols {
+        revision: found.revision,
+        languages: found
+            .languages
+            .iter()
+            .map(|l| p::LanguageSymbols {
+                language: l.language.0.clone(),
+                symbols: l
+                    .result
+                    .as_ref()
+                    .map(|symbols| symbols.iter().take(MAX_WORKSPACE_SYMBOLS).map(symbol).collect())
+                    .unwrap_or_default(),
+                failure: l.result.as_ref().err().map(ToString::to_string),
+            })
+            .collect(),
     }
 }
 

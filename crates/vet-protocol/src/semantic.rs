@@ -304,6 +304,28 @@ pub struct FileOutline {
     pub unavailable: Option<Unavailable>,
 }
 
+/// What one language's server found for a search of symbols by name.
+#[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct LanguageSymbols {
+    /// `rust`, `typescript`, `python` or `csharp`, as in `ServerInfo`.
+    pub language: String,
+    /// In the order the server gave them, which has its own idea of a match.
+    pub symbols: Vec<SymbolInfo>,
+    /// Set when the language's server could not answer: why, fit to show.
+    pub failure: Option<String>,
+}
+
+/// The symbols of the target side that match a name, per language of the project.
+#[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct WorkspaceSymbols {
+    pub revision: u32,
+    pub languages: Vec<LanguageSymbols>,
+}
+
 /// The symbol a position is in, if any.
 #[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]

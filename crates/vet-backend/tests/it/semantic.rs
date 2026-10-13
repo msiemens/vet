@@ -308,6 +308,31 @@ async fn rust_semantics_through_the_protocol() {
         [("steady", None)]
     );
 
+    // The symbols of the project by name: the Rust server answers, and no other language is asked.
+    let Response::WorkspaceSymbols(found) = client
+        .call(Request::WorkspaceSymbols {
+            project,
+            revision,
+            query: "fresh".into(),
+        })
+        .await
+        .unwrap()
+    else {
+        panic!("not workspace symbols");
+    };
+    assert_eq!(found.revision, revision);
+    let [rust] = &found.languages[..] else {
+        panic!("{:?}", found.languages)
+    };
+    assert_eq!((rust.language.as_str(), rust.failure.as_deref()), ("rust", None));
+    assert!(
+        rust.symbols
+            .iter()
+            .any(|s| s.id.path == path && s.id.name == name(&["fresh"])),
+        "{:?}",
+        rust.symbols
+    );
+
     // The symbol under the cursor: changed or not, on either side.
     let symbol_at = |side, (line, col): (u32, u32)| {
         let client = &client;

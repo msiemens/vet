@@ -8,7 +8,7 @@ use crate::{
     CommitUnit, Diagnostic, DirEntry, FileOutline, FileSymbols, Highlights, Lens, LineDelta, LocationRows, Locations,
     Manifest, ProjectId, PullRequestInfo, PullRequestRow, PullRequestSource, Reachability, RecentProject,
     RemovalImpact, ReviewSubmitted, ReviewUpdate, ServerInfo, Side, SymbolAt, SymbolSignature, Task, TextChange,
-    TextContent, Thread, ThreadTarget, Unavailable, Usages, VersionInfo,
+    TextContent, Thread, ThreadTarget, Unavailable, Usages, VersionInfo, WorkspaceSymbols,
 };
 
 #[derive(Clone, PartialEq, Debug, Serialize, Deserialize, TS)]
@@ -136,6 +136,7 @@ pub enum Response {
     },
     FileSymbols(FileSymbols),
     FileOutline(FileOutline),
+    WorkspaceSymbols(WorkspaceSymbols),
     SymbolAt(SymbolAt),
     /// `None` with `unavailable` unset means the server has nothing to say.
     Signature {

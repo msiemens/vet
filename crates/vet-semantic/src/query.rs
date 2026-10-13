@@ -107,17 +107,21 @@ impl<M: Materializer, L: ServerLauncher> Semantic<M, L> {
         }
     }
 
-    /// Search Everywhere: `workspace/symbol` on `served`, per backend, because
+    /// Search Everywhere: `workspace/symbol` on `served`, per backend of `languages`, because
     /// each language has its own server. A backend that cannot serve is
     /// reported, not skipped.
     pub async fn workspace_symbols(
         &self,
         served: &Served,
+        languages: &[BackendId],
         query: &str,
     ) -> Vec<(BackendId, Result<Vec<SymbolInfo>, SemanticError>)> {
         let mut results = Vec::new();
         for backend in &self.backends {
             let id = backend.config().backend.clone();
+            if !languages.contains(&id) {
+                continue;
+            }
             let result = match self.lease(served, backend).await {
                 Ok(lease) => {
                     let r = lease.workspace_symbols(query).await;

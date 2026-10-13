@@ -119,6 +119,7 @@ pub fn effect(request: &Request) -> Effect {
         | Request::Diagnostics { .. }
         | Request::FileSymbols { .. }
         | Request::FileOutline { .. }
+        | Request::WorkspaceSymbols { .. }
         | Request::SymbolAt { .. }
         | Request::Signature { .. }
         | Request::Calls { .. }
@@ -429,6 +430,11 @@ mod tests {
                 view: View::Changeset,
                 revision: 0,
                 path: path(),
+            },
+            Request::WorkspaceSymbols {
+                project,
+                revision: 0,
+                query: String::new(),
             },
             Request::SymbolAt {
                 project,

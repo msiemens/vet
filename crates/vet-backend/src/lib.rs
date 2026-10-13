@@ -539,6 +539,11 @@ impl Orchestrator {
                 revision,
                 path,
             } => reply(async move { self.ready(project).await?.file_outline(view, revision, &path).await }),
+            Request::WorkspaceSymbols {
+                project,
+                revision,
+                query,
+            } => reply(async move { self.ready(project).await?.workspace_symbols(revision, &query).await }),
             Request::SymbolAt {
                 project,
                 revision,
