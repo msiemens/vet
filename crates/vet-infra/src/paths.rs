@@ -6,7 +6,7 @@
 use std::path::{Component, Path, PathBuf, Prefix};
 use std::{fmt, io};
 
-use vet_core::content::RepoPath;
+use vet_core::content::{Hash, RepoPath};
 
 #[derive(Debug, PartialEq, Eq)]
 pub struct PathError(String);
@@ -34,6 +34,18 @@ pub fn to_path(path: &[u8]) -> Result<&Path, PathError> {
 /// Whether `path` is a file in the checkout at `root`.
 pub fn is_file_in(root: &Path, path: &RepoPath) -> bool {
     to_path(&path.0).is_ok_and(|relative| root.join(relative).is_file())
+}
+
+/// Whether `path` ends in one of `extensions`, in any case.
+pub(crate) fn has_extension(path: &Path, extensions: &[&str]) -> bool {
+    path.extension()
+        .and_then(|e| e.to_str())
+        .is_some_and(|e| extensions.iter().any(|x| e.eq_ignore_ascii_case(x)))
+}
+
+/// The hash of the content of the file at `path`, if it can be read.
+pub(crate) fn hash_of_file(path: &Path) -> Option<Hash> {
+    std::fs::read(path).ok().map(|bytes| Hash::of(&bytes))
 }
 
 /// The `RepoPath` of `relative`, a path below the root.

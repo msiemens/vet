@@ -31,6 +31,7 @@ use super::setup;
 use crate::budget::{Budget, Budgets, PROBES, SEMANTIC_IO};
 use crate::exec::{Host, is_file};
 use crate::language::{self, Install, Language, SchemaClient, UserFile};
+use crate::paths::hash_of_file;
 use crate::restore::record::Digest;
 use crate::schemas::{self, SchemaSource};
 use crate::servers::{capture, probe_version};
@@ -427,10 +428,6 @@ fn session() -> String {
     )
 }
 
-fn hash_of_file(path: &Path) -> Option<Hash> {
-    std::fs::read(path).ok().map(|bytes| Hash::of(&bytes))
-}
-
 /// The files of `labelled` that exist, with the hash of their content.
 fn hashed(labelled: impl IntoIterator<Item = (String, PathBuf)>) -> Vec<(String, Hash)> {
     labelled
@@ -442,20 +439,23 @@ fn hashed(labelled: impl IntoIterator<Item = (String, PathBuf)>) -> Vec<(String,
 /// The `package.json` of the npm package `path` is in, or is a link into: what says which
 /// version of a script's package runs, for a server whose script is the same few lines in all.
 fn package_manifest(path: &Path) -> String {
-    let real = std::fs::canonicalize(path).unwrap_or_else(|_| path.to_owned());
-    real.ancestors()
-        .skip(1)
-        .find_map(|dir| hash_of_file(&dir.join("package.json")))
-        .map_or_else(|| "none".to_owned(), |hash| hash.to_hex())
+    manifest_hash(path, |_| true, Path::new("package.json"))
 }
 
 /// The `package.json` of `package` in the `node_modules` that `path` is in, or `none`.
 fn companion_manifest(path: &Path, package: &str) -> String {
+    let is_modules = |dir: &Path| dir.file_name().is_some_and(|name| name == "node_modules");
+    manifest_hash(path, is_modules, &Path::new(package).join("package.json"))
+}
+
+/// The hash of `manifest` in the nearest directory above `path` (links resolved) that `within`
+/// accepts and that has one, or `none`.
+fn manifest_hash(path: &Path, within: impl Fn(&Path) -> bool, manifest: &Path) -> String {
     let real = std::fs::canonicalize(path).unwrap_or_else(|_| path.to_owned());
     real.ancestors()
         .skip(1)
-        .filter(|dir| dir.file_name().is_some_and(|name| name == "node_modules"))
-        .find_map(|dir| hash_of_file(&dir.join(package).join("package.json")))
+        .filter(|dir| within(dir))
+        .find_map(|dir| hash_of_file(&dir.join(manifest)))
         .map_or_else(|| "none".to_owned(), |hash| hash.to_hex())
 }
 

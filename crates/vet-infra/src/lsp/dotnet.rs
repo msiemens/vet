@@ -7,6 +7,7 @@ use std::path::{Path, PathBuf};
 
 use crate::budget::Budget;
 use crate::git::list_files;
+use crate::paths::has_extension;
 
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub enum Load {
@@ -14,12 +15,6 @@ pub enum Load {
     Solution(PathBuf),
     /// Every project, when there is no single solution in the root to load.
     Projects(Vec<PathBuf>),
-}
-
-fn has_extension(path: &Path, extensions: &[&str]) -> bool {
-    path.extension()
-        .and_then(|e| e.to_str())
-        .is_some_and(|e| extensions.iter().any(|x| e.eq_ignore_ascii_case(x)))
 }
 
 /// The solution (`.sln` or `.slnx`) directly in `root` if there is exactly one,

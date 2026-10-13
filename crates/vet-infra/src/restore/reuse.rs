@@ -16,6 +16,7 @@ use super::Step;
 use super::record::Digest;
 use crate::budget::Budget;
 use crate::git::list_files;
+use crate::paths::{has_extension, hash_of_file};
 use vet_core::content::Hash;
 
 /// How a step was done by the donor's restore.
@@ -98,7 +99,7 @@ pub(super) fn linked_inputs(donor: &Path, step: &Step) -> Hash {
     let mut digest = Digest::default();
     let project = donor.join(&step.project);
     for name in NODE_LOCKFILES.iter().chain(NODE_SETTINGS) {
-        let content = read(project.join(name)).map_or_else(|| "-".to_owned(), |c| Hash::of(&c).to_hex());
+        let content = hash_of_file(&project.join(name)).map_or_else(|| "-".to_owned(), |hash| hash.to_hex());
         digest.field(name).field(&content);
     }
     for dir in node_dirs(step) {
@@ -209,12 +210,6 @@ fn link_dir(target: &Path, link: &Path) -> io::Result<()> {
     } else {
         Err(io::Error::other(String::from_utf8_lossy(&out.stdout).into_owned()))
     }
-}
-
-fn has_extension(path: &Path, extensions: &[&str]) -> bool {
-    path.extension()
-        .and_then(|e| e.to_str())
-        .is_some_and(|e| extensions.iter().any(|x| e.eq_ignore_ascii_case(x)))
 }
 
 fn is_project(path: &Path) -> bool {

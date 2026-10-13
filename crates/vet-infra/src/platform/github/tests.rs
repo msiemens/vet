@@ -9,7 +9,6 @@ use vet_app::platform::{
 };
 
 use super::*;
-use crate::http::client_builder;
 use crate::platform::fake::{Canned, Fake, Seen, Signed};
 
 mod discussion;
@@ -58,11 +57,9 @@ fn client(fake: &Fake) -> GitHubClient<Signed> {
 }
 
 fn client_with<C: CredentialProvider + Sync>(fake: &Fake, credentials: C) -> GitHubClient<C> {
-    let _ = rustls::crypto::ring::default_provider().install_default();
-    let http = client_builder(TIMEOUT).no_proxy().build().unwrap();
     GitHubClient {
         credentials,
-        http: LazyClient::ready(TIMEOUT, http),
+        http: LazyClient::for_tests(TIMEOUT),
         endpoints: Some(Endpoints {
             graphql: fake.base(),
             rest: fake.base(),

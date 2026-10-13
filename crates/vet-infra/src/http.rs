@@ -15,9 +15,14 @@ pub(crate) fn client_builder(timeout: Duration) -> ClientBuilder {
         .redirect(redirect::Policy::none())
 }
 
-pub(crate) fn http_client(timeout: Duration) -> Result<reqwest::Client, String> {
-    // Already installed by something else is as good as installing it now.
+/// The TLS provider that `reqwest` and `gix` need. Already installed by something else is as good
+/// as installing it now.
+pub(crate) fn install_tls_provider() {
     let _ = rustls::crypto::ring::default_provider().install_default();
+}
+
+pub(crate) fn http_client(timeout: Duration) -> Result<reqwest::Client, String> {
+    install_tls_provider();
     client_builder(timeout)
         .build()
         .map_err(|e| format!("cannot set up the HTTP client: {e}"))
@@ -46,11 +51,13 @@ impl LazyClient {
         Ok(self.client.get_or_init(|| client))
     }
 
+    /// A client that is already set up and ignores the system's proxy settings, for a fake server.
     #[cfg(test)]
-    pub(crate) fn ready(timeout: Duration, client: reqwest::Client) -> Self {
+    pub(crate) fn for_tests(timeout: Duration) -> Self {
+        install_tls_provider();
         Self {
             timeout,
-            client: OnceLock::from(client),
+            client: OnceLock::from(client_builder(timeout).no_proxy().build().unwrap()),
         }
     }
 }

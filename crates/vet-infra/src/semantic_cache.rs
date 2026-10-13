@@ -25,6 +25,7 @@ use tokio::sync::{mpsc, oneshot};
 use vet_semantic::reuse::{Key, SemanticCache, Value};
 
 use crate::clock::unix_now;
+use crate::store::remove_database;
 use codec::{Address, address, decode, encode};
 
 const FILE: &str = "semantic-cache.sqlite";
@@ -142,12 +143,7 @@ impl SqliteSemanticCache {
             Err(Unusable::Failed(why)) => return Err(why),
             Err(Unusable::Foreign) => {
                 tracing::warn!(file = %path.display(), "the semantic cache was written by another version of Vet; creating it anew");
-                for suffix in ["", "-wal", "-shm"] {
-                    match std::fs::remove_file(dir.join(format!("{FILE}{suffix}"))) {
-                        Err(e) if e.kind() != std::io::ErrorKind::NotFound => return Err(message(e)),
-                        _ => {}
-                    }
-                }
+                remove_database(dir, FILE).map_err(message)?;
                 match connect(&path).await {
                     Ok(pool) => pool,
                     Err(Unusable::Foreign) => return Err("the semantic cache cannot be created".into()),

@@ -19,7 +19,7 @@
 //!
 //! A pull request's threads, votes and checks are in `discussion` and `checks`.
 
-use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
+use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::Duration;
 
 use azure_devops_rust_api::git::models::{GitPullRequest, PullRequestStatus};
@@ -36,6 +36,7 @@ use crate::clock::unix_now;
 use crate::http::LazyClient;
 use crate::platform::cache::Cache;
 use crate::platform::limits::Gate;
+use crate::sync::lock;
 use access::{API_ENDPOINT, Access, failure};
 use limits::Watch;
 use wire::Me;
@@ -207,7 +208,7 @@ impl<C: CredentialProvider + Sync> AzureDevOpsClient<C> {
     }
 
     fn state(&self) -> MutexGuard<'_, State> {
-        self.state.lock().unwrap_or_else(PoisonError::into_inner)
+        lock(&self.state)
     }
 
     fn endpoints(&self) -> Endpoints {

@@ -15,13 +15,15 @@ use std::collections::{BTreeSet, HashSet};
 use std::fs::{self, File};
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
+use std::sync::Mutex;
 #[cfg(test)]
 use std::sync::atomic::AtomicUsize;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Mutex, PoisonError};
 use std::time::{Duration, SystemTime};
 
 use vet_core::content::{BlobId, Hash};
+
+use crate::sync::lock;
 
 static TMP_COUNTER: AtomicU64 = AtomicU64::new(0);
 
@@ -74,7 +76,7 @@ impl ContentStore {
     }
 
     fn unsynced(&self) -> std::sync::MutexGuard<'_, HashSet<BlobId>> {
-        self.unsynced.lock().unwrap_or_else(PoisonError::into_inner)
+        lock(&self.unsynced)
     }
 
     /// Whether `id` is in place and survives a crash.

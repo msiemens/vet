@@ -5,7 +5,9 @@
 use std::collections::HashMap;
 use std::fmt;
 use std::hash::Hash;
-use std::sync::{Mutex, PoisonError};
+use std::sync::Mutex;
+
+use crate::sync::lock;
 
 /// Until when each limited thing (a host and bucket, an account) is used up.
 pub(super) struct Gate<K> {
@@ -23,14 +25,14 @@ impl<K> Default for Gate<K> {
 impl<K: Hash + Eq + Clone> Gate<K> {
     /// When the limit of `key` ends, if it is used up at `now`.
     pub(super) fn blocked_until(&self, key: &K, now: i64) -> Option<i64> {
-        let until = self.until.lock().unwrap_or_else(PoisonError::into_inner);
+        let until = lock(&self.until);
         until.get(key).copied().filter(|&at| at > now)
     }
 
     /// `key` is used up until `until`. Whether this report begins a window: the first report of a
     /// limit does, the ones for the same window do not.
     pub(super) fn block(&self, key: &K, until: i64, now: i64) -> bool {
-        let mut windows = self.until.lock().unwrap_or_else(PoisonError::into_inner);
+        let mut windows = lock(&self.until);
         let current = windows.entry(key.clone()).or_insert(0);
         let begins = *current <= now;
         *current = (*current).max(until);

@@ -145,10 +145,8 @@ mod tests {
     }
 
     fn validator(fake: &Fake) -> HttpValidator {
-        let _ = rustls::crypto::ring::default_provider().install_default();
-        let http = crate::http::client_builder(TIMEOUT).no_proxy().build().unwrap();
         HttpValidator {
-            http: LazyClient::ready(TIMEOUT, http),
+            http: LazyClient::for_tests(TIMEOUT),
             endpoint: Some(fake.base()),
         }
     }

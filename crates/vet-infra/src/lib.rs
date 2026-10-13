@@ -26,6 +26,8 @@ pub mod platform;
 
 pub(crate) mod http;
 
+pub(crate) mod sync;
+
 /// `vet_semantic::ports::Materializer`.
 pub mod materialize;
 

@@ -34,6 +34,7 @@ use vet_core::content::SnapshotId;
 use vet_semantic::policy::AnalysisPolicy;
 
 use crate::budget::{Budget, SEMANTIC_IO};
+use crate::sync::lock;
 
 /// How often a restore waits for the lock of its tree to be free.
 const LOCK_POLL: Duration = Duration::from_millis(100);
@@ -214,7 +215,7 @@ impl KeptTrees {
     }
 
     fn gate(&self, name: &str) -> Arc<tokio::sync::Mutex<()>> {
-        let mut gates = self.gates.lock().unwrap_or_else(|p| p.into_inner());
+        let mut gates = lock(&self.gates);
         gates.entry(name.to_owned()).or_default().clone()
     }
 

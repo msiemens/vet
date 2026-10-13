@@ -13,7 +13,7 @@
 
 use std::backtrace::Backtrace;
 use std::collections::HashMap;
-use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
+use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::Duration;
 
 use http::HeaderValue;
@@ -41,6 +41,7 @@ use crate::http::LazyClient;
 use crate::platform::cache::Cache;
 use crate::platform::limits::Blocked;
 use crate::platform::message::{rate_limited, reason};
+use crate::sync::lock;
 use limits::{Limits, SECONDARY_WAIT, Watch, WatchLayer};
 use tower::Layer;
 use tower::retry::RetryLayer;
@@ -240,7 +241,7 @@ impl<C: CredentialProvider + Sync> GitHubClient<C> {
     }
 
     fn state(&self) -> MutexGuard<'_, State> {
-        self.state.lock().unwrap_or_else(PoisonError::into_inner)
+        lock(&self.state)
     }
 
     fn endpoints(&self, host: &str) -> Endpoints {

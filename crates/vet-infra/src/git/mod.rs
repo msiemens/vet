@@ -121,50 +121,37 @@ struct Inner {
 const FALLBACK_NAME: &str = "Vet";
 const FALLBACK_EMAIL: &str = "vet@localhost";
 
+impl Inner {
+    /// A repository with caches of its own.
+    fn new(root: PathBuf, cap: u64, isolated: bool) -> Self {
+        Self {
+            root,
+            cap,
+            blobs: BlobCache::default(),
+            stats: StatCache::default(),
+            opened: OnceLock::new(),
+            isolated,
+        }
+    }
+}
+
 impl GixRepo {
     /// A repository with a budget of its own.
     pub fn new(root: impl Into<PathBuf>) -> Self {
         Self(
-            Arc::new(Inner {
-                root: root.into(),
-                cap: DEFAULT_CAP,
-                blobs: BlobCache::default(),
-                stats: StatCache::default(),
-                opened: OnceLock::new(),
-                isolated: false,
-            }),
+            Arc::new(Inner::new(root.into(), DEFAULT_CAP, false)),
             Budget::new(REVIEW_IO),
         )
     }
 
     pub fn with_cap(self, cap: u64) -> Self {
-        Self(
-            Arc::new(Inner {
-                root: self.0.root.clone(),
-                cap,
-                blobs: BlobCache::default(),
-                stats: StatCache::default(),
-                opened: OnceLock::new(),
-                isolated: self.0.isolated,
-            }),
-            self.1,
-        )
+        Self(Arc::new(Inner::new(self.0.root.clone(), cap, self.0.isolated)), self.1)
     }
 
     /// The same repository read without the user's and the system's git configuration and
     /// without git's environment variables: only the repository's own configuration counts.
     pub fn isolated(self) -> Self {
-        Self(
-            Arc::new(Inner {
-                root: self.0.root.clone(),
-                cap: self.0.cap,
-                blobs: BlobCache::default(),
-                stats: StatCache::default(),
-                opened: OnceLock::new(),
-                isolated: true,
-            }),
-            self.1,
-        )
+        Self(Arc::new(Inner::new(self.0.root.clone(), self.0.cap, true)), self.1)
     }
 
     /// The same repository, with its caches, drawing on `io`.

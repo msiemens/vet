@@ -196,6 +196,17 @@ async fn write_filter(db: &impl ConnectionTrait, repo: &str, filter: &ReviewFilt
     insert_chunked(db, filter_rows(repo, filter)).await
 }
 
+/// Deletes the SQLite database `file` in `dir` with its write-ahead log and shared memory.
+pub(crate) fn remove_database(dir: &Path, file: &str) -> io::Result<()> {
+    for suffix in ["", "-wal", "-shm"] {
+        match std::fs::remove_file(dir.join(format!("{file}{suffix}"))) {
+            Err(e) if e.kind() != io::ErrorKind::NotFound => return Err(e),
+            _ => {}
+        }
+    }
+    Ok(())
+}
+
 impl SqliteStore {
     /// The per-platform data directory; in WSL the Linux home, never `/mnt/*`.
     pub fn default_dir() -> Option<PathBuf> {
@@ -210,12 +221,7 @@ impl SqliteStore {
         if migration::is_foreign(&writer.db).await? {
             tracing::warn!(dir = %dir.display(), "the database was written by another version of Vet; creating it anew");
             writer.db.close().await?;
-            for suffix in ["", "-wal", "-shm"] {
-                match std::fs::remove_file(dir.join(format!("{DATABASE}{suffix}"))) {
-                    Err(e) if e.kind() != io::ErrorKind::NotFound => return Err(e.into()),
-                    _ => {}
-                }
-            }
+            remove_database(dir, DATABASE)?;
             writer = ReviewWriter::connect(dir).await?;
         }
         migration::Migrator::up(&writer.db, None).await?;

@@ -22,6 +22,7 @@ use vet_app::platform::{CredentialSource, PlatformKind};
 use vet_app::ports::{FetchAuth, GitError, RefTip, RefUpdate, RemoteInfo};
 
 use super::err;
+use crate::http::install_tls_provider;
 
 /// A user name the platforms accept in front of a token.
 fn token_user(kind: PlatformKind) -> &'static str {
@@ -188,8 +189,7 @@ pub(super) fn delete_refs(repo: &gix::Repository, names: &[String]) -> Result<()
 }
 
 fn run(repo: gix::Repository, name: &str, auth: Option<FetchAuth>, specs: Specs) -> Result<usize, GitError> {
-    // The provider reqwest's TLS needs; installed once, later calls find it in place.
-    let _ = rustls::crypto::ring::default_provider().install_default();
+    install_tls_provider();
 
     let mut repo = headless(repo)?;
     // Azure DevOps takes the Entra token of the `az` CLI as a bearer token, not as a password.
