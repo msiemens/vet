@@ -11,6 +11,7 @@ import type { CommitChecks } from "./CommitChecks";
 import type { CommitUnit } from "./CommitUnit";
 import type { Diagnostic } from "./Diagnostic";
 import type { DirEntry } from "./DirEntry";
+import type { FileOutline } from "./FileOutline";
 import type { FileSymbols } from "./FileSymbols";
 import type { Lens } from "./Lens";
 import type { LineDelta } from "./LineDelta";
@@ -64,4 +65,4 @@ targetHighlights: Array<number>, } | { "type": "review" } & ReviewUpdate | { "ty
 /**
  * How many of `diagnostics` to tell the viewer about: hints are not counted.
  */
-count: number, unavailable: Unavailable | null, } | { "type": "fileSymbols" } & FileSymbols | { "type": "symbolAt" } & SymbolAt | { "type": "signature", revision: number, signature: SymbolSignature | null, unavailable: Unavailable | null, } | { "type": "calls" } & Calls | { "type": "usages" } & Usages | { "type": "removalImpact" } & RemovalImpact | { "type": "reachability" } & Reachability | { "type": "servers", servers: Array<ServerInfo>, } | { "type": "reviewFinished", complete: boolean, } | { "type": "directory", revision: number, entries: Array<DirEntry>, } | { "type": "fileText", revision: number, content: TextContent, } | { "type": "itemBlob", content: BlobContent, } | { "type": "threads", revision: number, threads: Array<Thread>, } | { "type": "targetLine", revision: number, line: number, } | { "type": "commentTarget", target: ThreadTarget, line: number | null, } | { "type": "thread" } & Thread | { "type": "pullRequestInfo" } & PullRequestInfo | { "type": "reviewSubmitted" } & ReviewSubmitted;
+count: number, unavailable: Unavailable | null, } | { "type": "fileSymbols" } & FileSymbols | { "type": "fileOutline" } & FileOutline | { "type": "symbolAt" } & SymbolAt | { "type": "signature", revision: number, signature: SymbolSignature | null, unavailable: Unavailable | null, } | { "type": "calls" } & Calls | { "type": "usages" } & Usages | { "type": "removalImpact" } & RemovalImpact | { "type": "reachability" } & Reachability | { "type": "servers", servers: Array<ServerInfo>, } | { "type": "reviewFinished", complete: boolean, } | { "type": "directory", revision: number, entries: Array<DirEntry>, } | { "type": "fileText", revision: number, content: TextContent, } | { "type": "itemBlob", content: BlobContent, } | { "type": "threads", revision: number, threads: Array<Thread>, } | { "type": "targetLine", revision: number, line: number, } | { "type": "commentTarget", target: ThreadTarget, line: number | null, } | { "type": "thread" } & Thread | { "type": "pullRequestInfo" } & PullRequestInfo | { "type": "reviewSubmitted" } & ReviewSubmitted;
