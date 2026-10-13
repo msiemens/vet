@@ -4,10 +4,11 @@ import type { CheckRun } from "../../generated/CheckRun.ts";
 import type { CommitChecks } from "../../generated/CommitChecks.ts";
 import { badgeCount, durationText, passed } from "./checkRows.ts";
 
-const run = (state: CheckRun["state"]): CheckRun => ({ id: "1", name: "build", state, log: false });
+const run = (state: CheckRun["state"]): CheckRun => ({ id: "1", name: "build", state, phase: "finished", log: false });
 const commit = (...states: CheckRun["state"][]): CommitChecks => ({
   commit: "abc",
   runs: states.map(run),
+  pipelines: [],
   // The combined state is the backend's; these cases only need the states that can come out of it.
   state: states.includes("pending")
     ? "pending"

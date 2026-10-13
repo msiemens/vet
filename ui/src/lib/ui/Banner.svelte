@@ -7,8 +7,11 @@
     ondismiss,
     details,
     action,
+    tone = "warn",
   }: {
     message: string;
+    /** What it tints with: amber for a caution, red for something that failed. */
+    tone?: "warn" | "bad";
     /** Without it the banner stays while what it says holds. */
     ondismiss?: () => void;
     details?: Snippet;
@@ -19,7 +22,7 @@
   let expanded = $state(false);
 </script>
 
-<div class="banner" role="status">
+<div class="banner" role="status" style:--tone={tone === "bad" ? "var(--del-text)" : undefined}>
   <div class="line">
     <span class="selectable">{message}</span>
     {#if action}

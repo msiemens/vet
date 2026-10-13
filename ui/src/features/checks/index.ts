@@ -1,2 +1,2 @@
 export { default as ChecksButton } from "./ChecksButton.svelte";
-export { passed } from "./checkRows";
+export { badgeCount, durationText, passed } from "./checkRows";

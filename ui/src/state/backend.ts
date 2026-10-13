@@ -24,6 +24,9 @@ import type { LineDelta } from "../generated/LineDelta";
 import type { LocationRows } from "../generated/LocationRows";
 import type { Manifest } from "../generated/Manifest";
 import type { NonTextKind } from "../generated/NonTextKind";
+import type { PipelineAction } from "../generated/PipelineAction";
+import type { PipelineOutcome } from "../generated/PipelineOutcome";
+import type { PipelineStep } from "../generated/PipelineStep";
 import type { PullRequestInfo } from "../generated/PullRequestInfo";
 import type { PullRequestRow } from "../generated/PullRequestRow";
 import type { PullRequestSource } from "../generated/PullRequestSource";
@@ -434,11 +437,26 @@ export class Backend {
 
   /**
    * The checks of the commits on the platform of the pull request on view: none for another changeset.
-   * `error` says why the commits left out of `checks` could not be answered for.
+   * `error` says why the commits left out of `checks` could not be answered for; `limitedUntil` (unix
+   * seconds) that the platform limits requests until then.
    */
-  async checks(commits: string[]): Promise<{ checks: CommitChecks[]; error?: string }> {
-    const { checks, error } = expect(await this.conn.request({ type: "checks", project: this.pid, commits }), "checks");
-    return { checks, error: error ?? undefined };
+  async checks(commits: string[]): Promise<{ checks: CommitChecks[]; error?: string; limitedUntil?: number }> {
+    const { checks, error, limitedUntil } = expect(
+      await this.conn.request({ type: "checks", project: this.pid, commits }),
+      "checks",
+    );
+    return { checks, error: error ?? undefined, limitedUntil: limitedUntil ?? undefined };
+  }
+
+  /** The steps of a job of `checks` that has a pipeline, in the order they run. */
+  async pipelineSteps(check: string): Promise<PipelineStep[]> {
+    return expect(await this.conn.request({ type: "pipelineSteps", project: this.pid, check }), "pipelineSteps").steps;
+  }
+
+  /** Asks the platform to re-run or stop a run; the platform does its work later, so ask for the checks again. */
+  async changePipeline(action: PipelineAction): Promise<PipelineOutcome> {
+    return expect(await this.conn.request({ type: "changePipeline", project: this.pid, action }), "pipelineChanged")
+      .outcome;
   }
 
   /** The log of a run of `checks` that has one. Rejects with the reason it could not be had. */

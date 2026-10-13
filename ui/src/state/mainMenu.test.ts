@@ -177,6 +177,7 @@ void test("the Queue and Review screens are a radio pair, and the tool windows a
       ["view.tool.comments", false],
       ["view.tool.timeline", true],
       ["view.tool.problems", false],
+      ["view.tool.pipelines", false],
       ["view.tool.symbol", false],
       ["view.tool.structure", false],
     ],
@@ -184,7 +185,7 @@ void test("the Queue and Review screens are a radio pair, and the tool windows a
   // The keys count the left tools, then the bottom ones, then the right ones.
   assert.deepEqual(
     (tools(onReview) ?? []).filter((t) => !t.separator).map((t) => t.shortcut),
-    ["Alt+1", "Alt+2", "Alt+3", "Alt+4", "Alt+5", "Alt+6", "Alt+9", "Alt+0"],
+    ["Alt+1", "Alt+2", "Alt+3", "Alt+4", "Alt+5", "Alt+6", "Alt+8", "Alt+9", "Alt+0"],
   );
   const onQueue = menu({ screen: "queue" });
   assert.equal(find(onQueue, "view.queue")?.checked, true);

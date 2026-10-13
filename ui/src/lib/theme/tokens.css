@@ -162,6 +162,7 @@
   /* The bottom dock, which every bottom tool shares, before the viewer resizes it. */
   --h-dock: 300px;
   --w-timeline-files: 360px;
+  --w-pipelines-runs: 470px;
   /* A progress bar, and the footer's one for the newest background task. */
   --h-progress: 3px;
   --w-progress: 96px;

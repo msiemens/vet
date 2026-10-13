@@ -79,7 +79,8 @@ export const TOOL_WINDOWS: readonly {
   { side: "left", id: "comments", label: "Comments", binding: "Alt-4" },
   { side: "bottom", id: "timeline", label: "Timeline", binding: "Alt-5" },
   { side: "bottom", id: "problems", label: "Problems", binding: "Alt-6" },
-  // Alt-7 and Alt-8 are the bottom tools to come (Find and Pipelines).
+  // Alt-7 is the bottom tool to come (Find).
+  { side: "bottom", id: "pipelines", label: "Pipelines", binding: "Alt-8" },
   { side: "right", id: "symbol", label: "Symbol", binding: "Alt-9" },
   { side: "right", id: "structure", label: "Structure", binding: "Alt-0" },
 ];
@@ -280,9 +281,18 @@ export function appCommands(a: AppActions): Command<CommandContext>[] {
       id: toolCommand(id),
       label,
       binding,
-      enabled: id === "commits" ? (c) => c.repoOpen && !!c.manyCommits : repoOpen,
+      enabled:
+        id === "commits"
+          ? (c) => c.repoOpen && !!c.manyCommits
+          : id === "pipelines"
+            ? (c) => c.repoOpen && !!c.pullRequest
+            : repoOpen,
       disabledReason: (c) =>
-        c.repoOpen ? "Only a changeset of several commits can be reviewed by commit" : NO_PROJECT,
+        !c.repoOpen
+          ? NO_PROJECT
+          : id === "pipelines"
+            ? NO_PULL_REQUEST
+            : "Only a changeset of several commits can be reviewed by commit",
       run: () => a.toggleTool(id),
     })),
     {

@@ -10,6 +10,7 @@
     comments: "comments",
     timeline: "timeline",
     problems: "problems",
+    pipelines: "pipelines",
     symbol: "module",
     structure: "structure",
   };
@@ -33,7 +34,7 @@
   }: {
     side?: "left" | "right";
     /** A number on a tool's icon, with what it counts in words for a screen reader ("3 new"). */
-    badges?: Partial<Record<string, { count: number; text: string }>>;
+    badges?: Partial<Record<string, { count: number; text: string; bad?: boolean }>>;
     /** The selected tool; it stays selected while its sidebar is hidden. */
     active?: string;
     /** Whether the selected tool's sidebar is shown. */
@@ -56,7 +57,8 @@
       active={shown}
       onclick={() => commands.run(command)}
     />
-    {#if count > 0}<span class="count mono" aria-hidden="true">{count > 99 ? "99+" : count}</span>{/if}
+    {#if count > 0}<span class="count mono" class:bad={badge?.bad} aria-hidden="true">{count > 99 ? "99+" : count}</span
+      >{/if}
   </span>
 {/snippet}
 
@@ -112,6 +114,9 @@
     line-height: 14px;
     text-align: center;
     pointer-events: none;
+  }
+  .count.bad {
+    background: var(--del-text);
   }
   .left {
     border-right: 1px solid var(--line);

@@ -1275,11 +1275,12 @@ export class ReviewController {
   }
 
   /**
-   * Shows the log of a failed check run in a tab of its own, scrolled to the line where the job
-   * failed. The log is fetched the first time; a log that cannot be had is reported and opens no tab.
+   * Shows the log of a finished check run in a tab of its own (`shown`: the tab's key and title, which
+   * differ per attempt), scrolled to the line where the job failed, else at the top. The log is
+   * fetched the first time; a log that cannot be had is reported and opens no tab.
    */
-  async openLog(run: CheckRun) {
-    const id = logTab(run.id);
+  async openLog(run: CheckRun, shown: { key: string; title: string }) {
+    const id = logTab(shown.key);
     let log = this.logs.get(id);
     if (!log) {
       try {
@@ -1291,8 +1292,8 @@ export class ReviewController {
       this.logs.set(id, log);
     }
     const step = log.failure?.step;
-    this.tabs.showLog(run.id, {
-      title: `${run.name} · log`,
+    this.tabs.showLog(shown.key, {
+      title: shown.title,
       hint: step ? `${run.name}: the step "${step}" failed` : undefined,
     });
     await tick(); // a new tab's pane attaches and builds its view

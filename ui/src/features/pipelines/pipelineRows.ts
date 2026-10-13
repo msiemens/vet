@@ -1,0 +1,124 @@
+// What the Pipelines tool lists and which of its actions are on, from the checks of a commit.
+
+import type { CheckPhase } from "../../generated/CheckPhase";
+import type { CheckRun } from "../../generated/CheckRun";
+import type { CommitChecks } from "../../generated/CommitChecks";
+import type { Pipeline } from "../../generated/Pipeline";
+
+/** A run with its jobs, in the order the platform listed them. */
+export interface RunRows {
+  run: Pipeline;
+  jobs: CheckRun[];
+}
+
+/** The commit's checks as the tool lists them: its runs with their jobs, then what services set. */
+export function runRows(checks: CommitChecks): { runs: RunRows[]; services: CheckRun[] } {
+  const runs: RunRows[] = checks.pipelines.map((run) => ({
+    run,
+    jobs: checks.runs.filter((job) => job.pipeline === run.id),
+  }));
+  return { runs, services: checks.runs.filter((job) => job.pipeline === undefined) };
+}
+
+/** The run a job belongs to. */
+export function runOf(checks: CommitChecks, job: string | undefined): Pipeline | undefined {
+  const pipeline = checks.runs.find((r) => r.id === job)?.pipeline;
+  return checks.pipelines.find((p) => p.id === pipeline);
+}
+
+/** The job the tool opens on: the first that failed, else the first that runs, else the first. */
+export function defaultJob(checks: CommitChecks): string | undefined {
+  const jobs = checks.runs.filter((r) => r.pipeline !== undefined);
+  return (jobs.find((j) => j.state === "failure") ?? jobs.find((j) => j.phase === "running") ?? jobs.at(0))?.id;
+}
+
+export type Look = "success" | "failure" | "running" | "queued" | "cancelled" | "skipped" | "approval";
+
+/** How a job, step or run reads: its phase while it waits, runs or was stopped, else how it ended. */
+export function look(state: CheckRun["state"], phase: CheckPhase): Look {
+  if (phase === "queued") return "queued";
+  if (phase === "running") return "running";
+  if (phase === "cancelled") return "cancelled";
+  switch (state) {
+    case "success":
+      return "success";
+    case "failure":
+      return "failure";
+    case "needsApproval":
+      return "approval";
+    default:
+      return "skipped";
+  }
+}
+
+/** A run or job that is not going to change by itself. */
+export const finished = (phase: CheckPhase) => phase === "finished" || phase === "cancelled";
+
+export type ActionKind = "rerunFailed" | "rerunAll" | "cancel";
+
+/** What stands between the viewer and an action. */
+export interface ActionContext {
+  /** The run the action is on; none when nothing is loaded. */
+  run?: Pipeline;
+  jobs: readonly CheckRun[];
+  /** Why every action waits: the platform limits requests, or the token cannot change runs. */
+  held?: string;
+  /** A request of the viewer is underway. */
+  busy: boolean;
+}
+
+/** Why the action is off, if it is. */
+export function disabledReason(kind: ActionKind, { run, jobs, held, busy }: ActionContext): string | undefined {
+  if (run === undefined) return "Nothing loaded";
+  if (held !== undefined) return held;
+  if (busy) return "Waiting for the platform";
+  const done = finished(run.phase);
+  switch (kind) {
+    case "rerunFailed":
+      if (!jobs.some((j) => j.state === "failure")) return "Nothing failed in this run.";
+      return done ? undefined : "Wait until the run finishes.";
+    case "rerunAll":
+      return done ? undefined : "Wait until the run finishes.";
+    case "cancel":
+      return done ? "Nothing is running." : undefined;
+  }
+}
+
+/** Whether a job can be run again on its own: it failed or was stopped, and its run is over. */
+export function rerunnable(job: CheckRun, run: Pipeline | undefined): boolean {
+  return (job.state === "failure" || job.phase === "cancelled") && run !== undefined && finished(run.phase);
+}
+
+/** The tooltip of the header's button: what the checks say, and that they are old when the platform limits requests. */
+export function headerTitle(checks: CommitChecks, limited?: { until: string; asOf: string; platform: string }): string {
+  const failed = checks.runs.filter((r) => r.state === "failure").map((r) => r.name);
+  const base =
+    checks.state === "failure"
+      ? `Checks failing: ${failed.join(", ")}`
+      : checks.state === "pending"
+        ? "Checks running"
+        : checks.state === "needsApproval"
+          ? "Waiting for approval to run"
+          : "Checks passed";
+  return limited
+    ? `${base}. ${limited.platform} is limiting requests until ${limited.until}; as of ${limited.asOf}.`
+    : base;
+}
+
+/** A time of day as the tool says when it last asked: `14:25`. */
+export function clock(unixSeconds: number): string {
+  return new Date(unixSeconds * 1000).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", hour12: false });
+}
+
+/** A run's line beside its name: the platform's number and why it ran, and the attempt after a re-run. */
+export function runMeta(run: Pipeline): string {
+  return run.attempt > 1 ? `${run.detail} · attempt ${run.attempt}` : run.detail;
+}
+
+/** A log tab's id part and title for a job: a re-run job has the log of another attempt. */
+export function logKey(job: CheckRun, run: Pipeline | undefined): { key: string; title: string } {
+  const attempt = run?.attempt ?? 1;
+  return attempt > 1
+    ? { key: `${job.id}@${attempt}`, title: `${job.name} · log (attempt ${attempt})` }
+    : { key: job.id, title: `${job.name} · log` };
+}

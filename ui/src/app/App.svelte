@@ -19,7 +19,7 @@
     toggleTool,
     toolFor,
   } from "../features/chrome";
-  import { ChecksButton } from "../features/checks";
+  import { ChecksButton, badgeCount } from "../features/checks";
   import { LocationPicker } from "../features/locations";
   import {
     OutgoingButton,
@@ -41,6 +41,7 @@
     watchDoubleShift,
   } from "../features/palette";
   import { NotificationCards, PlatformFooter, copyText } from "../features/platform";
+  import { PipelinesPanel, clock, headerTitle, logKey } from "../features/pipelines";
   import { ProblemsPanel } from "../features/problems";
   import { ChangesetSwitcher, OpenPullRequestDialog, QueueScreen, queueCommands, targetLabel } from "../features/queue";
   import {
@@ -63,6 +64,7 @@
   import type { Thread } from "../generated/Thread";
   import { errorText } from "../lib/errorText";
   import { repoName } from "../lib/paths";
+  import { platformName } from "../lib/platformName";
   import { type SoftWrap, storeSoftWrap, storedSoftWrap } from "../lib/softWrap";
   import { type Theme, applyTheme, storedTheme } from "../lib/theme/theme";
   import ContextMenu from "../lib/ui/ContextMenu.svelte";
@@ -180,6 +182,45 @@
     const wanted = checkedCommits;
     untrack(() => checks.want(wanted));
   });
+  /** The commit whose runs the Pipelines tool shows: the one on view by commit, else the head. */
+  const pipelineCommit = $derived(
+    changeset.shownCommit === undefined ? headId : changeset.commits[changeset.shownCommit]?.commit.id,
+  );
+  const platformSignedOut = $derived(
+    platform.status?.connection.type === "signedOut" || platform.status?.connection.type === "tokenExpired",
+  );
+  const headChecksLook = $derived.by(() => {
+    const head = checks.of(headId);
+    const status = platform.status;
+    if (!head) return undefined;
+    const until = checks.limitedUntil;
+    const limited =
+      until === undefined || !status
+        ? undefined
+        : {
+            until: clock(until),
+            asOf: clock(checks.loadedAt ?? until),
+            platform: platformName(status.kind),
+          };
+    const title = platformSignedOut
+      ? `${status && platformName(status.kind)}: the token for ${status?.host} is not valid. Checks are not loaded.`
+      : headerTitle(head, limited);
+    return { head, title, stale: limited !== undefined };
+  });
+  /** The rail's count for Pipelines: what the head's checks are about, while they are not all passed. */
+  const pipelineBadge = $derived.by(() => {
+    const head = checks.of(headId);
+    if (!head || platformSignedOut || head.state === "success" || head.state === undefined) {
+      return { count: 0, text: "" };
+    }
+    const count = badgeCount(head);
+    const word = head.state === "failure" ? "failing" : head.state === "pending" ? "running" : "waiting";
+    return { count, text: `${count} ${word}`, bad: head.state === "failure" };
+  });
+  // The tool belongs to a pull request.
+  $effect(() => {
+    if (headId === undefined && bottomTool === "pipelines") bottomTool = undefined;
+  });
 
   /** Where the time the pull request's Comments tool window was last open is kept; none for another changeset. */
   const seenUnder = $derived(seenKey(changeset.facts?.target.changeset));
@@ -256,13 +297,7 @@
         switcherOpen = true;
       },
       openPullRequest: () => void openPullRequest(),
-      openInBrowser: (at) => {
-        const url = at ?? platform.info?.url;
-        if (url === undefined) return;
-        void openUrl(url).catch((e: unknown) => {
-          session.notice = `Could not open the browser: ${errorText(e)}`;
-        });
-      },
+      openInBrowser: (at) => browse(at ?? platform.info?.url),
       showDialog: (d) => showDialog(d),
       showKeymap: () => showDialog("settings", "keymap"),
       showAccounts: () => showDialog("settings", "accounts"),
@@ -272,6 +307,7 @@
         if (TOOLS.bottom.some((t) => t.id === id)) {
           bottomTool = toggleBottom(bottomTool, id);
           if (bottomTool === "problems") void focusProblems();
+          if (bottomTool === "pipelines") void focusPipelines();
           return;
         }
         const side = TOOLS.left.some((t) => t.id === id) ? left : right;
@@ -493,6 +529,23 @@
     document.querySelector<HTMLElement>('[aria-label="Timeline"]')?.focus();
   }
 
+  /** Shows a web address in the browser. */
+  function browse(url: string | undefined) {
+    if (url === undefined) return;
+    void openUrl(url).catch((e: unknown) => {
+      session.notice = `Could not open the browser: ${errorText(e)}`;
+    });
+  }
+
+  /** Shows the Pipelines tool, or moves the focus into it where it is shown. */
+  async function focusPipelines() {
+    screen = "review";
+    bottomTool = "pipelines";
+    await tick();
+    const panel = document.querySelector<HTMLElement>('[aria-label="Pipelines"]');
+    (panel?.querySelector<HTMLElement>("[data-list]") ?? panel)?.focus();
+  }
+
   /** Moves the focus into the Problems list once it is up. */
   async function focusProblems() {
     await tick();
@@ -577,9 +630,14 @@
     >
   {/snippet}
   {#snippet headChecks()}
-    {@const head = checks.of(headId)}
-    {#if head && headId}
-      <ChecksButton checks={head} shortId={headId.slice(0, 7)} onlog={(run) => void controller?.openLog(run)} />
+    {#if headChecksLook}
+      <ChecksButton
+        checks={headChecksLook.head}
+        title={headChecksLook.title}
+        stale={headChecksLook.stale}
+        warn={platformSignedOut}
+        onopen={() => void focusPipelines()}
+      />
     {/if}
   {/snippet}
   {#snippet outgoingComments()}
@@ -643,6 +701,7 @@
         badges={{
           comments: { count: unreadComments, text: `${unreadComments} new` },
           problems: { count: problems.summary?.badge ?? 0, text: problems.summary?.badgeText ?? "" },
+          pipelines: pipelineBadge,
         }}
         bottom={bottomTool ?? null}
       />
@@ -693,6 +752,16 @@
               oneditor={() => controller?.focusEditor()}
               oninstall={() => showDialog("settings", "servers")}
               onclose={() => (bottomTool = undefined)}
+            />
+          {:else if bottomTool === "pipelines" && pipelineCommit !== undefined}
+            <PipelinesPanel
+              checks={checks.of(pipelineCommit)}
+              commit={pipelineCommit}
+              shortId={pipelineCommit.slice(0, 7)}
+              onlog={(job, run) => void controller?.openLog(job, logKey(job, run))}
+              onbrowser={browse}
+              onsignin={() => showDialog("settings", "accounts")}
+              oneditor={() => controller?.focusEditor()}
             />
           {/if}
         {/snippet}

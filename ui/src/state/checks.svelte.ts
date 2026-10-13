@@ -5,18 +5,24 @@
 import { SvelteMap } from "svelte/reactivity";
 import type { CommitChecks } from "../generated/CommitChecks";
 import { errorText } from "../lib/errorText";
+import { refreshDelay } from "./checkRefresh";
 import { session } from "./session.svelte";
 
-/** How long a commit with a running check waits before it is asked about again. */
-export const REFRESH_MS = 30_000;
+/** How long after a run was changed it is asked about once more: the platform has not shown it at once. */
+const SETTLE_MS = 3_000;
 
 class CheckStore {
   /** By full commit id; a commit the platform has no checks of has an entry without runs. */
   items = new SvelteMap<string, CommitChecks>();
+  /** Unix seconds: the platform limits requests until then, so what is shown is older than it says. */
+  limitedUntil = $state<number>();
+  /** Unix seconds: when the checks were last answered for. */
+  loadedAt = $state<number>();
   private wanted: readonly string[] = [];
   /** Only the latest load counts. */
   private seq = 0;
   private timer?: ReturnType<typeof setTimeout>;
+  private again?: ReturnType<typeof setTimeout>;
   /** The reason last shown, so the same one does not come again with every load. */
   private lastError?: string;
 
@@ -45,19 +51,34 @@ class CheckStore {
     void this.load();
   }
 
-  private async load() {
+  /**
+   * Asks again for these commits, whatever they said before: a run was changed on the platform,
+   * which takes a moment to show it, so they are asked once more shortly after.
+   */
+  refresh(commits: readonly string[]) {
+    clearTimeout(this.again);
+    void this.load(commits);
+    this.again = setTimeout(() => void this.load(commits), SETTLE_MS);
+  }
+
+  private async load(again: readonly string[] = []) {
     clearTimeout(this.timer);
     const seq = ++this.seq;
     const open = this.wanted.filter((id) => {
       const state = this.items.get(id)?.state;
-      return state === undefined || state === "pending";
+      return state === undefined || state === "pending" || again.includes(id);
     });
     if (!open.length || !session.backend) return;
     try {
-      const { checks, error } = await session.backend.checks(open);
+      const { checks, error, limitedUntil } = await session.backend.checks(open);
       if (seq !== this.seq) return;
       for (const commit of checks) this.items.set(commit.commit, commit);
-      if (error !== this.lastError && error) session.notice = `Could not load the checks: ${error}`;
+      this.limitedUntil = limitedUntil;
+      if (checks.length) this.loadedAt = Math.floor(Date.now() / 1000);
+      // A limit is said by the Pipelines tool and the footer; the toast would only repeat it.
+      if (error !== this.lastError && error && limitedUntil === undefined) {
+        session.notice = `Could not load the checks: ${error}`;
+      }
       this.lastError = error;
     } catch (error) {
       if (seq !== this.seq) return;
@@ -66,7 +87,7 @@ class CheckStore {
       this.lastError = text;
     }
     if (this.wanted.some((id) => this.items.get(id)?.state === "pending")) {
-      this.timer = setTimeout(() => void this.load(), REFRESH_MS);
+      this.timer = setTimeout(() => void this.load(), refreshDelay(this.limitedUntil, Date.now()));
     }
   }
 }

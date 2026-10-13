@@ -73,6 +73,7 @@ export function mainMenuSpec(s: MenuState): MenuSpec {
         "-",
         toolItem(s, "timeline"),
         toolItem(s, "problems"),
+        toolItem(s, "pipelines"),
         "-",
         toolItem(s, "symbol"),
         toolItem(s, "structure"),
