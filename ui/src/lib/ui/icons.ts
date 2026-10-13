@@ -36,7 +36,6 @@ export const ICONS = {
   // Lucide's flag (ISC).
   flag: '<path d="M4 15s1-1 4-1 5 2 8 2 4-1 4-1V3s-1 1-4 1-5-2-8-2-4 1-4 1z"/><line x1="4" x2="4" y1="22" y2="15"/>',
   reconfirm: '<path d="M20 11a8 8 0 10-2.3 5.7M20 5v6h-6"/>',
-  derived: '<circle cx="12" cy="12" r="8" stroke-dasharray="2.5 2.5"/>',
   more: '<circle cx="5" cy="12" r="1.6"/><circle cx="12" cy="12" r="1.6"/><circle cx="19" cy="12" r="1.6"/>',
   expandAll: '<path d="M7 7l5 5 5-5M7 13l5 5 5-5"/>',
   collapseAll: '<path d="M7 11l5-5 5 5M7 17l5-5 5 5"/>',

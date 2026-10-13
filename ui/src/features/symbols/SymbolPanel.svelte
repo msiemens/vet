@@ -1,6 +1,5 @@
 <script lang="ts">
   // The Symbol tool window: the details of the symbol on show.
-  import Icon from "../../lib/ui/Icon.svelte";
   import ScrollArea from "../../lib/ui/ScrollArea.svelte";
   import { keyOf } from "../../state/symbolKey";
   import { symbols } from "../../state/symbols.svelte";
@@ -9,33 +8,12 @@
 
   /** The panel shows what `symbols` holds; the owner says where a location opens. */
   let { onopen }: { onopen: OpenLocation } = $props();
-
-  let legend = $state(false);
 </script>
 
 <aside aria-label="Symbol">
   <div class="sh sh-bar">
     <span>Symbol</span>
-    <span class="grow"></span>
-    {#if symbols.selected}
-      <button
-        class="flat tbtn"
-        type="button"
-        aria-pressed={legend}
-        aria-label="What derived means"
-        title="What derived means"
-        onclick={() => (legend = !legend)}
-      >
-        <Icon name="derived" size={14} />
-      </button>
-    {/if}
   </div>
-  {#if legend && symbols.selected}
-    <p class="legend">
-      <b>Derived.</b> Changed callers, callees, possibly affected, reached from and usages are computed by Vet from the language
-      server's answers, not reported by it. The signature is the server's own.
-    </p>
-  {/if}
   <ScrollArea>
     {#if symbols.selected}
       <!-- A symbol starts with its rows shut as they begin and the lists cut. -->
@@ -68,27 +46,6 @@
     flex-direction: column;
     overflow: hidden;
     container-type: inline-size;
-  }
-  .tbtn {
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    width: 22px;
-    height: 22px;
-    border-radius: var(--radius);
-    color: var(--text-3);
-  }
-  .legend {
-    margin: 0;
-    padding: 8px 12px;
-    background: var(--bg-sheet);
-    border-bottom: 1px solid var(--line-soft);
-    color: var(--text-2);
-    font-size: 12px;
-    line-height: 1.45;
-  }
-  .legend b {
-    font-weight: 600;
   }
   .empty {
     display: flex;
