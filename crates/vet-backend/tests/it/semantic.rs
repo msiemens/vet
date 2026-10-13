@@ -324,7 +324,7 @@ async fn rust_semantics_through_the_protocol() {
     let [rust] = &found.languages[..] else {
         panic!("{:?}", found.languages)
     };
-    assert_eq!((rust.language.as_str(), rust.failure.as_deref()), ("rust", None));
+    assert_eq!((rust.language.as_str(), rust.failure.is_none()), ("rust", true));
     assert!(
         rust.symbols
             .iter()

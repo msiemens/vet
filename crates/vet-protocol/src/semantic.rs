@@ -314,7 +314,7 @@ pub struct LanguageSymbols {
     /// In the order the server gave them, which has its own idea of a match.
     pub symbols: Vec<SymbolInfo>,
     /// Set when the language's server could not answer: why, fit to show.
-    pub failure: Option<String>,
+    pub failure: Option<Unavailable>,
 }
 
 /// The symbols of the target side that match a name, per language of the project.

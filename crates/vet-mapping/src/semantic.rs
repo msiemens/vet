@@ -326,7 +326,11 @@ pub fn workspace_symbols(found: &WorkspaceSymbols) -> p::WorkspaceSymbols {
                     .as_ref()
                     .map(|symbols| symbols.iter().take(MAX_WORKSPACE_SYMBOLS).map(symbol).collect())
                     .unwrap_or_default(),
-                failure: l.result.as_ref().err().map(ToString::to_string),
+                failure: l
+                    .result
+                    .as_ref()
+                    .err()
+                    .map(|e| unavailable(e, Some(l.language.0.clone()))),
             })
             .collect(),
     }
@@ -507,6 +511,7 @@ pub fn servers(all: &[ServerStatus], implementations: impl Fn(&BackendId) -> Opt
 
 #[cfg(test)]
 mod tests {
+    use vet_app::semantics::LanguageSymbols;
     use vet_core::content::Hunk;
 
     use super::*;
@@ -547,6 +552,33 @@ mod tests {
                 })
                 .collect(),
         }
+    }
+
+    #[test]
+    fn a_language_that_could_not_answer_says_why_in_the_kind_the_viewer_acts_on() {
+        let found = WorkspaceSymbols {
+            revision: 3,
+            languages: vec![
+                LanguageSymbols {
+                    language: BackendId("rust".into()),
+                    result: Ok(Vec::new()),
+                },
+                LanguageSymbols {
+                    language: BackendId("go".into()),
+                    result: Err(SemanticError::Pool(PoolError::AnalysisLimited(BackendId("go".into())))),
+                },
+            ],
+        };
+        let mapped = workspace_symbols(&found);
+        let failures: Vec<_> = mapped
+            .languages
+            .iter()
+            .map(|l| l.failure.as_ref().map(|f| (f.kind, f.language.as_deref())))
+            .collect();
+        assert_eq!(
+            failures,
+            [None, Some((p::UnavailableKind::AnalysisLimited, Some("go")))]
+        );
     }
 
     #[test]

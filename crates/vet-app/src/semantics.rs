@@ -6,7 +6,7 @@
 //! snapshot settles, or, when the target is a commit's tree, from a snapshot.
 
 use std::pin::Pin;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
 use vet_core::content::{FileDiff, RepoPath};
@@ -185,6 +185,9 @@ where
     revisions: Arc<Revisions>,
     /// Kept current by the launcher's restorer (`Limiting`).
     limits: RestoreLimits,
+    /// The languages that have a file in the target of a revision, found once per revision: finding
+    /// them walks every file of the snapshot.
+    languages: Mutex<Option<(u32, Vec<BackendId>)>>,
 }
 
 /// The file contents of both sides of a revision, as the acquisition keeps them.
@@ -310,6 +313,7 @@ where
             texts: None,
             revisions: links.revisions,
             limits: links.limits,
+            languages: Mutex::new(None),
         }
     }
 
@@ -499,12 +503,7 @@ where
             revision,
             Box::pin(async move {
                 let pair = self.pair(view, revision).await?;
-                let languages: Vec<BackendId> = view
-                    .target_file_per_key(revision, POOL_CAPACITY, |path| self.language_of(path).cloned())
-                    .await?
-                    .into_iter()
-                    .map(|(language, _)| language)
-                    .collect();
+                let languages = self.project_languages(view, revision).await?;
                 let found = self.semantic.workspace_symbols(&pair.target, &languages, query).await;
                 Ok(WorkspaceSymbols {
                     revision,
@@ -516,6 +515,22 @@ where
             }),
         )
         .await
+    }
+
+    async fn project_languages(&self, view: &RevisionView<G, S>, revision: u32) -> Fallible<Vec<BackendId>> {
+        if let Some((at, languages)) = &*self.languages.lock().expect("not poisoned")
+            && *at == revision
+        {
+            return Ok(languages.clone());
+        }
+        let languages: Vec<BackendId> = view
+            .target_file_per_key(revision, POOL_CAPACITY, |path| self.language_of(path).cloned())
+            .await?
+            .into_iter()
+            .map(|(language, _)| language)
+            .collect();
+        *self.languages.lock().expect("not poisoned") = Some((revision, languages.clone()));
+        Ok(languages)
     }
 
     /// Starts the servers for every language among the revision's changed
@@ -923,7 +938,8 @@ mod tests {
     use vet_semantic::derived::ChangedSymbol;
 
     use super::*;
-    use crate::changeset::{CommitId, Source};
+    use crate::changeset::{CommitId, RemoteKey, Source};
+    use crate::pull_request::PullRequestRefs;
     use crate::session::tests::{FakeGit, Fixture, MemStore};
     use crate::trust::{Origin, PullRequestTrust};
 
@@ -1019,6 +1035,14 @@ mod tests {
         identified: AtomicUsize,
         /// The language whose server is not installed.
         missing: Mutex<Option<String>>,
+        /// A search of symbols by name waits for another server's search to begin, as far as the
+        /// other one is asked at all.
+        await_peer: std::sync::atomic::AtomicBool,
+        workspace_asked: AtomicUsize,
+        /// Two searches of symbols by name were under way together.
+        workspace_together: std::sync::atomic::AtomicBool,
+        /// Starts of a server that may execute project code during analysis.
+        executing_started: AtomicUsize,
     }
 
     /// Counts a hover as given up on when its request is dropped.
@@ -1049,6 +1073,9 @@ mod tests {
             let language = &backend.config().backend.0;
             if c.missing.lock().unwrap().as_ref() == Some(language) {
                 return Err(LaunchError::NotInstalled(format!("no server for {language} was found")));
+            }
+            if backend.config().executes_project_code_during_analysis {
+                c.executing_started.fetch_add(1, Ordering::SeqCst);
             }
             if tree == Tree::Immutable && c.live_started.load(Ordering::SeqCst) < 2 {
                 c.snapshot_started_early.fetch_add(1, Ordering::SeqCst);
@@ -1151,6 +1178,16 @@ mod tests {
             Ok(vec![])
         }
         async fn workspace_symbols(&self, query: &str) -> Result<Vec<SymbolInfo>, QueryError> {
+            if self.0.await_peer.load(Ordering::SeqCst) {
+                let first = self.0.workspace_asked.fetch_add(1, Ordering::SeqCst) == 0;
+                for _ in 0..100 {
+                    if first && self.0.workspace_asked.load(Ordering::SeqCst) >= 2 {
+                        self.0.workspace_together.store(true, Ordering::SeqCst);
+                        break;
+                    }
+                    tokio::task::yield_now().await;
+                }
+            }
             let mut found = symbol(&RepoPath(b"a.rs".to_vec()));
             found.sym.name = vec![query.to_owned()];
             Ok(vec![found])
@@ -1188,7 +1225,7 @@ mod tests {
             args: vec![],
             filetypes: vec![extension.into()],
             root_markers: vec![],
-            executes_project_code_during_analysis: false,
+            executes_project_code_during_analysis: id == "go",
             loads_project_on_open: false,
         })
     }
@@ -1345,6 +1382,49 @@ mod tests {
             python.result.as_ref().err().map(ToString::to_string),
             Some("no server for python was found".to_string())
         );
+    }
+
+    #[tokio::test]
+    async fn the_servers_of_the_languages_are_asked_together() {
+        let (fx, semantics, counters) = semantics().await;
+        counters.await_peer.store(true, Ordering::SeqCst);
+        semantics.workspace_symbols(&fx.view, 0, "retry").await.unwrap();
+        assert!(counters.workspace_together.load(Ordering::SeqCst));
+    }
+
+    #[tokio::test]
+    async fn a_pull_request_that_is_not_trusted_is_not_searched_with_a_server_that_runs_its_code() {
+        let (fx, semantics, counters) = semantics_over(
+            &[("a.rs", "one\n"), ("main.go", "one\n")],
+            &[("a.rs", "one\n"), ("main.go", "one\n")],
+        )
+        .await;
+        let source = Source::PullRequest {
+            remote: RemoteKey {
+                host: "github.com".into(),
+                path: "acme/app".into(),
+            },
+            number: 7,
+        };
+        let Source::PullRequest { remote, number } = &source else {
+            unreachable!()
+        };
+        let refs = PullRequestRefs::of(remote, *number);
+        let files = [("a.rs", "two\n"), ("main.go", "two\n")];
+        fx.git.add_commit(&refs.head, "pr1", &files);
+        fx.git.add_commit(&format!("merge-base {}", refs.target), "m1", &files);
+        let revision = fx.session.open_changeset(source).await.unwrap().unwrap();
+
+        let found = semantics.workspace_symbols(&fx.view, revision, "retry").await.unwrap();
+        let [rust, go] = &found.languages[..] else {
+            panic!("{} languages", found.languages.len())
+        };
+        assert!(rust.result.is_ok());
+        assert!(matches!(
+            go.result,
+            Err(SemanticError::Pool(vet_semantic::pool::PoolError::AnalysisLimited(_)))
+        ));
+        assert_eq!(counters.executing_started.load(Ordering::SeqCst), 0);
     }
 
     #[tokio::test]

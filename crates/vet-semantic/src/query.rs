@@ -8,6 +8,7 @@ use std::sync::Arc;
 use vet_core::content::RepoPath;
 use vet_core::review::Side;
 
+use crate::join::bounded;
 use crate::policy::AnalysisPolicy;
 use crate::pool::{Lease, Pool, PoolError, PoolKey, Supervision, Target};
 use crate::ports::{
@@ -108,20 +109,20 @@ impl<M: Materializer, L: ServerLauncher> Semantic<M, L> {
     }
 
     /// Search Everywhere: `workspace/symbol` on `served`, per backend of `languages`, because
-    /// each language has its own server. A backend that cannot serve is
-    /// reported, not skipped.
+    /// each language has its own server. The servers are asked together, so a cold one does not
+    /// hold the others back. A backend that cannot serve is reported, not skipped.
     pub async fn workspace_symbols(
         &self,
         served: &Served,
         languages: &[BackendId],
         query: &str,
     ) -> Vec<(BackendId, Result<Vec<SymbolInfo>, SemanticError>)> {
-        let mut results = Vec::new();
-        for backend in &self.backends {
-            let id = backend.config().backend.clone();
-            if !languages.contains(&id) {
-                continue;
-            }
+        let asked: Vec<&Backend> = self
+            .backends
+            .iter()
+            .filter(|b| languages.contains(&b.config().backend))
+            .collect();
+        bounded(asked.len().max(1), asked, |backend| async move {
             let result = match self.lease(served, backend).await {
                 Ok(lease) => {
                     let r = lease.workspace_symbols(query).await;
@@ -130,9 +131,9 @@ impl<M: Materializer, L: ServerLauncher> Semantic<M, L> {
                 }
                 Err(e) => Err(e),
             };
-            results.push((id, result));
-        }
-        results
+            (backend.config().backend.clone(), result)
+        })
+        .await
     }
 
     async fn lease(&self, served: &Served, backend: &Backend) -> Result<Lease<M, L>, SemanticError> {

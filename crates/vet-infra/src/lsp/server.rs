@@ -25,6 +25,7 @@ use lsp_types::request::{
     WorkspaceSymbolRequest,
 };
 use vet_core::content::RepoPath;
+use vet_semantic::join::bounded;
 use vet_semantic::ports::{
     At, Diagnostic, Exited, LanguageServer, Location, Pos, QueryError, Readiness, Severity, Span, Sym, SymbolInfo,
     SymbolKind, Tree,
@@ -41,6 +42,8 @@ use crate::paths;
 
 /// Documents kept open at once; the oldest are closed beyond this.
 const MAX_OPEN_DOCS: usize = 64;
+/// How many files a search of symbols by name asks the outline of at once.
+const WORKSPACE_SYMBOL_FILES_IN_FLIGHT: usize = 8;
 const DIAGNOSTICS_TIMEOUT: Duration = Duration::from_secs(20);
 /// How long a newly opened document may keep the server busy before a query goes ahead.
 const OPEN_TIMEOUT: Duration = Duration::from_secs(30);
@@ -875,7 +878,23 @@ impl LanguageServer for LspServer {
                 })
                 .collect(),
         };
-        let mut cache = HashMap::new();
+        // The qualified names come from each file's document symbols; the files are asked together.
+        let mut files: Vec<RepoPath> = Vec::new();
+        for (uri, _, _) in &found {
+            if let Some(file) = self.file_of(uri)
+                && !files.contains(&file)
+            {
+                files.push(file);
+            }
+        }
+        let mut cache: HashMap<RepoPath, Vec<SymbolInfo>> =
+            bounded(WORKSPACE_SYMBOL_FILES_IN_FLIGHT, files, |file| async {
+                let symbols = self.document_symbols(&file).await.unwrap_or_default();
+                (file, symbols)
+            })
+            .await
+            .into_iter()
+            .collect();
         let mut out = Vec::new();
         for (uri, name, range) in found {
             let Some(file) = self.file_of(&uri) else { continue };
