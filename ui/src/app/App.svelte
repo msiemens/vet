@@ -762,6 +762,7 @@
               onbrowser={browse}
               onsignin={() => showDialog("settings", "accounts")}
               oneditor={() => controller?.focusEditor()}
+              onclose={() => (bottomTool = undefined)}
             />
           {/if}
         {/snippet}

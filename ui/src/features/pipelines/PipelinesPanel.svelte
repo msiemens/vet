@@ -8,6 +8,7 @@
   import type { Pipeline } from "../../generated/Pipeline";
   import { platformName } from "../../lib/platformName";
   import Banner from "../../lib/ui/Banner.svelte";
+  import BottomToolHeader from "../../lib/ui/BottomToolHeader.svelte";
   import Icon from "../../lib/ui/Icon.svelte";
   import IconButton from "../../lib/ui/IconButton.svelte";
   import Table from "../../lib/ui/Table.svelte";
@@ -41,6 +42,7 @@
     onbrowser,
     onsignin,
     oneditor,
+    onclose,
   }: {
     /** The checks of the commit on view; none until the platform has answered. */
     checks?: CommitChecks;
@@ -55,6 +57,8 @@
     onsignin: () => void;
     /** Gives the keyboard focus back to the editor. */
     oneditor: () => void;
+    /** Hides the tool. */
+    onclose: () => void;
   } = $props();
 
   type Item =
@@ -174,28 +178,29 @@
 </script>
 
 <section aria-label="Pipelines" tabindex="-1">
-  <!-- The top of the panel, in one place. -->
-  <header class="top">
-    <span class="mono commit" title="The commit these runs belong to">{shortId}</span>
-    <span class="sep"></span>
-    {#if words}
-      {@render action("rerunFailed", words.rerunFailed, "reconfirm")}
-      {@render action("rerunAll", words.rerunAll)}
-      {@render action("cancel", words.cancel, "stop")}
-    {/if}
-    <span class="grow"></span>
-    {#if checkStore.loadedAt !== undefined}
-      <span class="when"
-        >Updated {clock(checkStore.loadedAt)}{anyRunning && limitedUntil === undefined
-          ? " · refreshes every 30 s"
-          : ""}</span
-      >
-    {/if}
-    {#if checks?.url}
-      {@const url = checks.url}
-      <IconButton icon="link" label="Open in browser" size={22} iconSize={13} onclick={() => onbrowser(url)} />
-    {/if}
-  </header>
+  <BottomToolHeader title="Pipelines" count={checks?.pipelines.length} {onclose}>
+    {#snippet controls()}
+      <span class="mono commit" title="The commit these runs belong to">{shortId}</span>
+      <span class="sep"></span>
+      {#if words}
+        {@render action("rerunFailed", words.rerunFailed, "reconfirm")}
+        {@render action("rerunAll", words.rerunAll)}
+        {@render action("cancel", words.cancel, "stop")}
+      {/if}
+      <span class="grow"></span>
+      {#if checkStore.loadedAt !== undefined}
+        <span class="when"
+          >Updated {clock(checkStore.loadedAt)}{anyRunning && limitedUntil === undefined
+            ? " · refreshes every 30 s"
+            : ""}</span
+        >
+      {/if}
+      {#if checks?.url}
+        {@const url = checks.url}
+        <IconButton icon="link" label="Open in browser" size={22} iconSize={13} onclick={() => onbrowser(url)} />
+      {/if}
+    {/snippet}
+  </BottomToolHeader>
   {#if signedOut && status}
     <Banner
       tone="bad"
@@ -373,30 +378,29 @@
     border-top: 1px solid var(--line);
     background: var(--bg-panel);
   }
-  .top {
+  .commit,
+  .sep,
+  section :global(.tool) {
     flex: none;
-    display: flex;
-    align-items: center;
-    gap: 6px;
-    height: 34px;
-    padding: 0 8px;
-    border-bottom: 1px solid var(--line-soft);
+    white-space: nowrap;
   }
   .commit {
-    padding: 0 6px;
     font-size: var(--fs-mono-s);
     color: var(--text-2);
   }
   .sep {
     width: 1px;
     height: 16px;
-    margin: 0 4px;
     background: var(--line);
   }
   .grow {
     flex: 1;
   }
   .when {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
     color: var(--text-3);
     font-size: var(--fs-mono-s);
   }
