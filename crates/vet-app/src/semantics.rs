@@ -879,7 +879,7 @@ mod tests {
     use vet_semantic::derived::ChangedSymbol;
 
     use super::*;
-    use crate::changeset::{BaseChoice, CommitId, Source};
+    use crate::changeset::{CommitId, Source};
     use crate::session::tests::{FakeGit, Fixture, MemStore};
     use crate::trust::{Origin, PullRequestTrust};
 
@@ -1259,7 +1259,6 @@ mod tests {
         Settle,
         Filter,
         FinishReview,
-        SetBase,
         OpenChangeset,
     }
 
@@ -1276,15 +1275,6 @@ mod tests {
                 Self::FinishReview => {
                     fx.session.finish_review().await.unwrap();
                 }
-                Self::SetBase => {
-                    fx.git.add_commit("c1", "c1-full", &[("a.rs", "zero\n")]);
-                    fx.session
-                        .set_base(BaseChoice::Commit {
-                            id: CommitId("c1".into()),
-                        })
-                        .await
-                        .unwrap();
-                }
                 Self::OpenChangeset => {
                     let base = [("a.rs", "one\n"), ("b.py", "one\n"), ("c.md", "one\n")];
                     let tip = [("a.rs", "two\n"), ("b.py", "two\n"), ("c.md", "two\n")];
@@ -1300,13 +1290,7 @@ mod tests {
 
     #[tokio::test]
     async fn every_way_the_session_moves_its_revision_drops_the_work_for_the_older_one_with_its_server_request() {
-        for bump in [
-            Bump::Settle,
-            Bump::Filter,
-            Bump::FinishReview,
-            Bump::SetBase,
-            Bump::OpenChangeset,
-        ] {
+        for bump in [Bump::Settle, Bump::Filter, Bump::FinishReview, Bump::OpenChangeset] {
             let (fx, semantics, counters) = semantics().await;
             fx.begin().await;
             counters.hang_hover.store(true, Ordering::SeqCst);

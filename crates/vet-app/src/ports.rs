@@ -101,8 +101,6 @@ pub struct BranchInfo {
     pub current: bool,
     /// The remote's default branch (`origin/HEAD`), if the repository has one.
     pub default: bool,
-    /// Where the branch's remote-tracking ref points: what the remote had at the last fetch.
-    pub upstream: Option<CommitId>,
 }
 
 #[derive(Clone, PartialEq, Eq, Debug)]
@@ -131,12 +129,6 @@ pub struct Remerged {
     pub snapshot: Snapshot,
     /// The content of the merged files that git does not hold: the snapshot's blobs are of it.
     pub contents: Vec<Vec<u8>>,
-}
-
-#[derive(Clone, PartialEq, Eq, Debug, Default)]
-pub struct BaseCandidates {
-    pub branches: Vec<BranchInfo>,
-    pub commits: Vec<CommitInfo>,
 }
 
 #[derive(Debug)]
@@ -242,6 +234,9 @@ pub trait History {
     /// branch (`origin/HEAD`) as a revision, else the default local branch; `None` if
     /// the repository has neither.
     fn default_reference(&self) -> impl Future<Output = Result<Option<String>, GitError>> + Send;
+    /// The name of the repository's default branch (`main`), as a pull request names its target:
+    /// the one `origin/HEAD` points at, else the local `main` or `master`.
+    fn default_branch(&self) -> impl Future<Output = Result<Option<String>, GitError>> + Send;
     /// The commits reachable from `tip` but not from `base` along first parents only,
     /// oldest first.
     fn first_parent_range(
@@ -254,8 +249,6 @@ pub trait History {
     fn resolve_commit(&self, spec: &str) -> impl Future<Output = Result<CommitId, GitError>> + Send;
     /// The tip of the local branch `name`, else of the remote-tracking branch of that name.
     fn branch_tip(&self, name: &str) -> impl Future<Output = Result<CommitId, GitError>> + Send;
-    /// The branches and up to `max_commits` commits reachable from `HEAD`, newest first.
-    fn base_candidates(&self, max_commits: usize) -> impl Future<Output = Result<BaseCandidates, GitError>> + Send;
     /// The local branches by name, then the remote-tracking ones that no local branch
     /// follows at the same commit, by name.
     fn branches(&self) -> impl Future<Output = Result<Vec<BranchInfo>, GitError>> + Send;
@@ -265,14 +258,6 @@ pub trait History {
     /// it, and `None` unless `merge` has exactly two parents. Parents with no common ancestor
     /// merge as if the ancestor were empty. Writes nothing to the repository.
     fn remerge(&self, merge: &CommitId) -> impl Future<Output = Result<Option<Remerged>, GitError>> + Send;
-    /// How many first-parent steps lead from `tip` back to `commit`; `None` if
-    /// it is not on that history within `max` steps.
-    fn first_parent_distance(
-        &self,
-        tip: &CommitId,
-        commit: &CommitId,
-        max: usize,
-    ) -> impl Future<Output = Result<Option<usize>, GitError>> + Send;
     /// How many commits are reachable from `tip` but not from `base`, counted up to `max`.
     fn commits_behind(
         &self,
@@ -501,9 +486,6 @@ pub trait ReviewStore {
     /// Whether the repository at `repo` is marked trusted (§7.5), a project setting; it is not
     /// unless it was.
     fn project_trusted(&self, repo: String) -> impl Future<Output = Result<bool, StoreError>> + Send;
-    /// The base last chosen for the working tree of the repository at `repo`, which a session
-    /// that is browsing starts out with; none if it was never chosen.
-    fn browsing_base(&self, repo: String) -> impl Future<Output = Result<Option<BaseChoice>, StoreError>> + Send;
 }
 
 /// The threads of a changeset, which outlive any review of it, as a reader has them.
@@ -586,13 +568,6 @@ pub trait ReviewWrites {
         source: Source,
         head: Option<CommitId>,
     ) -> impl Future<Output = Result<(), StoreError>> + Send;
-    fn set_browsing_base(
-        &self,
-        repo: String,
-        choice: BaseChoice,
-    ) -> impl Future<Output = Result<(), StoreError>> + Send;
-    /// Records that the review's base was chosen as `choice`.
-    fn set_base(&self, id: ReviewId, choice: BaseChoice) -> impl Future<Output = Result<(), StoreError>> + Send;
     /// Records the number of the version the viewer last marked something in.
     fn set_last_reviewed(&self, id: ReviewId, version: u32) -> impl Future<Output = Result<(), StoreError>> + Send;
     /// Records how far the review is, for a list of changesets to show without remapping its marks.

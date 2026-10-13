@@ -413,27 +413,6 @@ async fn a_remote_that_cannot_be_reached_fails_with_a_message_and_changes_nothin
     assert!(repo.branches().await.is_ok(), "the repository still works");
 }
 
-#[tokio::test]
-async fn a_branch_knows_where_the_remote_had_it_at_the_last_fetch() {
-    let fx = Fixture::new();
-    let repo = GixRepo::new(&fx.clone);
-    let main = |branches: Vec<vet_app::ports::BranchInfo>| branches.into_iter().find(|b| b.name == "main").unwrap();
-    let at_clone = main(repo.branches().await.unwrap());
-    assert_eq!(at_clone.upstream.as_ref(), Some(&at_clone.commit));
-
-    let new_main = fx.advance_remote("m2");
-    assert_eq!(
-        main(repo.branches().await.unwrap()).upstream,
-        Some(at_clone.commit.clone()),
-        "not fetched yet"
-    );
-    repo.fetch("origin", None).await.unwrap();
-
-    let fetched = main(repo.branches().await.unwrap());
-    assert_eq!(fetched.upstream.map(|c| c.0), Some(new_main));
-    assert_eq!(fetched.commit, at_clone.commit, "the local branch does not move");
-}
-
 impl Fixture {
     /// Who the newest reflog entry of `name` was written as, `name <email>`.
     fn reflog_writer(&self, name: &str) -> String {

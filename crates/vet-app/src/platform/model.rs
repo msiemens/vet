@@ -273,6 +273,8 @@ pub struct PullRequestHead {
     pub draft: bool,
     /// The source branch is in a fork's repository (§7.5).
     pub fork: bool,
+    /// The branch it is merged into.
+    pub target_branch: String,
 }
 
 impl PullRequestHead {
@@ -281,6 +283,7 @@ impl PullRequestHead {
             title: pull_request.title.clone(),
             draft: pull_request.draft,
             fork: pull_request.fork.is_some(),
+            target_branch: pull_request.target_branch.clone(),
         }
     }
 }

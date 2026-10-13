@@ -94,7 +94,6 @@ async fn a_repository_without_a_commit_has_a_tree_to_scan_and_no_history() {
     assert_eq!(scan.snapshot.entries.keys().collect::<Vec<_>>(), [&path("new.txt")]);
 
     assert!(repo.head().await.is_err());
-    assert!(repo.base_candidates(10).await.is_err());
     assert!(repo.branches().await.unwrap().is_empty());
     assert_eq!(repo.default_reference().await.unwrap(), None);
     assert_eq!(repo.resolve_commit("HEAD").await.unwrap_err().0, "unknown commit HEAD");
@@ -119,13 +118,8 @@ async fn a_detached_head_is_no_branch_and_still_has_a_history() {
     let repo = GixRepo::new(p);
 
     assert_eq!(repo.head().await.unwrap(), two);
-    let candidates = repo.base_candidates(10).await.unwrap();
-    assert_eq!(candidates.commits.len(), 2);
-    let branches: Vec<_> = candidates
-        .branches
-        .iter()
-        .map(|b| (b.name.as_str(), b.current))
-        .collect();
+    let branches = repo.branches().await.unwrap();
+    let branches: Vec<_> = branches.iter().map(|b| (b.name.as_str(), b.current)).collect();
     assert_eq!(branches, [("main", false)]);
 }
 
@@ -182,8 +176,6 @@ async fn remote_branches_are_listed_unless_a_local_branch_follows_them_at_the_sa
         "origin/main is main's own; origin/HEAD is not a branch; origin/feature is ahead of feature"
     );
     let local = |name: &str| branches.iter().find(|b| b.name == name && !b.remote).unwrap();
-    assert_eq!(local("feature").upstream, Some(m2.clone()));
-    assert_eq!(local("main").upstream, Some(m2));
     assert!(local("main").default && !local("feature").default);
 }
 

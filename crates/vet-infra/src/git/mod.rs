@@ -23,9 +23,9 @@ use std::sync::{Arc, OnceLock};
 use gix::bstr::ByteSlice;
 use vet_app::changeset::{ChangesetId, CommitId};
 use vet_app::ports::{
-    Attributes, BaseCandidates, BlobRead, BlobReader, BranchInfo, ChangesetRefs, Checkout, CheckoutError, CommitDetail,
-    CommitInfo, Differ, Dirty, FetchAuth, Fetcher, GitError, History, IgnoreRules, RefTip, RefUpdate, Remerged,
-    RemoteInfo, Scan, Scanner, Store, TextDiff,
+    Attributes, BlobRead, BlobReader, BranchInfo, ChangesetRefs, Checkout, CheckoutError, CommitDetail, CommitInfo,
+    Differ, Dirty, FetchAuth, Fetcher, GitError, History, IgnoreRules, RefTip, RefUpdate, Remerged, RemoteInfo, Scan,
+    Scanner, Store, TextDiff,
 };
 use vet_core::classify::{changes, text_blobs};
 use vet_core::content::{BlobId, EntryKind, RepoPath, Snapshot};
@@ -342,6 +342,10 @@ impl History for GixRepo {
         self.blocking(|i| base::default_reference(&i.open()?)).await
     }
 
+    async fn default_branch(&self) -> Result<Option<String>, GitError> {
+        self.blocking(|i| base::default_branch(&i.open()?)).await
+    }
+
     async fn first_parent_range(&self, base: &CommitId, tip: &CommitId) -> Result<Vec<CommitId>, GitError> {
         let (base, tip) = (base.clone(), tip.clone());
         self.blocking(move |i| base::first_parent_range(&i.open()?, &base, &tip))
@@ -356,10 +360,6 @@ impl History for GixRepo {
     async fn branch_tip(&self, name: &str) -> Result<CommitId, GitError> {
         let name = name.to_owned();
         self.blocking(move |i| base::branch_tip(&i.open()?, &name)).await
-    }
-
-    async fn base_candidates(&self, max_commits: usize) -> Result<BaseCandidates, GitError> {
-        self.blocking(move |i| base::candidates(&i.open()?, max_commits)).await
     }
 
     async fn branches(&self) -> Result<Vec<BranchInfo>, GitError> {
@@ -379,17 +379,6 @@ impl History for GixRepo {
     async fn remerge(&self, merge: &CommitId) -> Result<Option<Remerged>, GitError> {
         let merge = merge.clone();
         self.blocking(move |i| i.remerge(&merge)).await
-    }
-
-    async fn first_parent_distance(
-        &self,
-        tip: &CommitId,
-        commit: &CommitId,
-        max: usize,
-    ) -> Result<Option<usize>, GitError> {
-        let (tip, commit) = (tip.clone(), commit.clone());
-        self.blocking(move |i| base::first_parent_distance(&i.open()?, &tip, &commit, max))
-            .await
     }
 
     async fn commits_behind(&self, tip: &CommitId, base: &CommitId, max: usize) -> Result<usize, GitError> {

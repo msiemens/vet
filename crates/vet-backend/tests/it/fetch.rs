@@ -1,6 +1,6 @@
 //! Fetching the remotes of an open project, against local bare repositories
-//! reached over `file://`: on demand, at open and on a timer, with the base's
-//! "behind" following and a remote that fails leaving the review working.
+//! reached over `file://`: on demand, at open and on a timer, with the branches the
+//! subscribers hear of and a remote that fails leaving the review working.
 
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -10,8 +10,7 @@ use crate::common::{Client, config, git, init, write};
 use tempfile::TempDir;
 use vet_backend::{Config, Orchestrator, open_store};
 use vet_protocol::{
-    BaseChoice, ChangesetKey, Event, Manifest, ProjectId, Request, Response, ServerMessage, TaskKind, TaskState,
-    VersionInfo, View,
+    ChangesetKey, Event, Manifest, ProjectId, Request, Response, ServerMessage, TaskKind, TaskState, VersionInfo, View,
 };
 
 /// A project cloned from a bare `origin`, and the working repository that feeds that `origin`.
@@ -159,25 +158,9 @@ async fn until<T>(client: &mut Client, seen: &mut Vec<Event>, wanted: impl Fn(&E
     found.unwrap_or_else(|_| panic!("the event did not arrive; seen: {seen:#?}"))
 }
 
-fn behind(event: &Event) -> Option<Option<u32>> {
-    match event {
-        Event::BaseChanged { base, .. } => Some(base.behind),
-        _ => None,
-    }
-}
-
-async fn base_behind(client: &Client, project: ProjectId) -> Option<u32> {
-    match client
-        .call(Request::Manifest {
-            project,
-            view: View::Changeset,
-        })
-        .await
-        .unwrap()
-    {
-        Response::Manifest(m) => m.base.behind,
-        other => panic!("{other:?}"),
-    }
+/// A fetch brought something: what the subscribers are told.
+fn fetched(event: &Event) -> Option<()> {
+    matches!(event, Event::ChangesetsChanged { .. }).then_some(())
 }
 
 fn fetch_task_states(seen: &[Event]) -> Vec<TaskState> {
@@ -190,31 +173,26 @@ fn fetch_task_states(seen: &[Event]) -> Vec<TaskState> {
 }
 
 #[tokio::test]
-async fn a_fetch_on_demand_brings_the_remote_commits_and_the_base_shows_how_far_behind_it_is() {
+async fn a_fetch_on_demand_brings_the_remote_commits_and_tells_the_subscribers() {
     let remote = Remote::new();
     let (handler, _data) = orchestrator(LONG).await;
     let mut client = Client::new(&handler);
     let project = client.open(&remote.project).await;
     let mut seen = Vec::new();
-    assert_eq!(
-        until(&mut client, &mut seen, behind).await,
-        None,
-        "the fetch at open found nothing new"
-    );
+    until(&mut client, &mut seen, fetched).await;
     let (main, head) = (remote.rev("refs/heads/main"), remote.rev("HEAD"));
 
     remote.push_commit("one");
     remote.push_commit("two");
-    assert_eq!(base_behind(&client, project).await, None, "not fetched yet");
+    assert_ne!(
+        remote.rev("refs/remotes/origin/main"),
+        git(&remote.work, &["rev-parse", "HEAD"]),
+        "not fetched yet"
+    );
     let done = client.call(Request::Fetch { project }).await.unwrap();
 
     assert!(matches!(done, Response::Done));
-    assert_eq!(
-        until(&mut client, &mut seen, behind).await,
-        Some(2),
-        "subscribers are told"
-    );
-    assert_eq!(base_behind(&client, project).await, Some(2));
+    until(&mut client, &mut seen, fetched).await;
     assert_eq!(
         remote.rev("refs/remotes/origin/main"),
         git(&remote.work, &["rev-parse", "HEAD"])
@@ -230,7 +208,7 @@ async fn a_fetch_on_demand_brings_the_remote_commits_and_the_base_shows_how_far_
 }
 
 #[tokio::test]
-async fn a_branch_that_exists_only_on_the_remote_is_a_changeset_and_its_remote_main_a_base() {
+async fn a_branch_that_exists_only_on_the_remote_is_a_changeset_compared_from_where_it_left_main() {
     let remote = Remote::new();
     remote.push_branch_commit("feature/x", "x.txt");
     remote.push_branch_commit("feature/y", "y.txt");
@@ -276,33 +254,10 @@ async fn a_branch_that_exists_only_on_the_remote_is_a_changeset_and_its_remote_m
         "nothing was checked out or changed"
     );
 
-    // The remote's main moves on; once fetched it is a base of its own, apart from the local main.
+    // The remote's main moves on: the branch is still compared from where it left it.
     remote.push_commit("one");
     client.call(Request::Fetch { project }).await.unwrap();
-    let Response::BaseCandidates { branches, .. } = client.call(Request::ListBaseCandidates { project }).await.unwrap()
-    else {
-        panic!("not candidates");
-    };
-    let names: Vec<_> = branches.iter().map(|b| b.name.as_str()).collect();
-    assert_eq!(names, ["feature/y", "main", "mine", "origin/feature/x", "origin/main"]);
-    let base = match client
-        .call(Request::SetBase {
-            project,
-            base: BaseChoice::MergeBase {
-                reference: "origin/main".into(),
-            },
-        })
-        .await
-        .unwrap()
-    {
-        Response::Base(base) => base,
-        other => panic!("{other:?}"),
-    };
-    assert_eq!(
-        base.commit.id, first,
-        "origin/feature/x is compared from where it left origin/main"
-    );
-    assert_eq!(base.behind, Some(1));
+    assert_eq!(manifest(&client, project).await.base.commit.id, first);
 }
 
 #[tokio::test]
@@ -352,11 +307,14 @@ async fn opening_a_project_fetches_its_remotes() {
     let (handler, _data) = orchestrator(LONG).await;
     let mut client = Client::new(&handler);
 
-    let project = client.open(&remote.project).await;
+    client.open(&remote.project).await;
 
     let mut seen = Vec::new();
-    assert_eq!(until(&mut client, &mut seen, behind).await, Some(1));
-    assert_eq!(base_behind(&client, project).await, Some(1));
+    until(&mut client, &mut seen, fetched).await;
+    assert_eq!(
+        remote.rev("refs/remotes/origin/main"),
+        git(&remote.work, &["rev-parse", "HEAD"])
+    );
 }
 
 #[tokio::test]
@@ -384,7 +342,11 @@ async fn a_remote_that_fails_fails_its_task_and_the_review_goes_on() {
         "asking again is not an error: {again:?}"
     );
     client.revision(project).await;
-    assert_eq!(base_behind(&client, project).await, None, "the review still works");
+    assert_eq!(
+        manifest(&client, project).await.files.len(),
+        0,
+        "the review still works"
+    );
 }
 
 #[tokio::test]
@@ -392,17 +354,17 @@ async fn the_periodic_fetch_fires_on_its_interval() {
     let remote = Remote::new();
     let (handler, _data) = orchestrator(Duration::from_millis(200)).await;
     let mut client = Client::new(&handler);
-    let project = client.open(&remote.project).await;
+    client.open(&remote.project).await;
     let mut seen = Vec::new();
-    until(&mut client, &mut seen, behind).await;
+    until(&mut client, &mut seen, fetched).await;
 
     remote.push_commit("one");
 
+    until(&mut client, &mut seen, fetched).await;
     assert_eq!(
-        until(&mut client, &mut seen, |e| behind(e).filter(Option::is_some)).await,
-        Some(1)
+        remote.rev("refs/remotes/origin/main"),
+        git(&remote.work, &["rev-parse", "HEAD"])
     );
-    assert_eq!(base_behind(&client, project).await, Some(1));
     let finished = fetch_task_states(&seen)
         .iter()
         .filter(|s| **s == TaskState::Finished)
@@ -417,7 +379,7 @@ async fn a_closed_project_stops_fetching() {
     let mut client = Client::new(&handler);
     let project = client.open(&remote.project).await;
     let mut seen = Vec::new();
-    until(&mut client, &mut seen, behind).await;
+    until(&mut client, &mut seen, fetched).await;
     client.call(Request::CloseProject { project }).await.unwrap();
 
     remote.push_commit("one");
@@ -440,7 +402,7 @@ async fn open_feature(remote: &Remote, client: &Client, project: ProjectId) {
 }
 
 #[tokio::test]
-async fn a_fetch_shows_a_branch_changeset_behind_the_default_branch_it_left() {
+async fn a_fetch_that_moves_the_default_branch_leaves_a_branch_compared_from_where_it_left_it() {
     for origin_head in [true, false] {
         let remote = Remote::new();
         if !origin_head {
@@ -451,7 +413,6 @@ async fn a_fetch_shows_a_branch_changeset_behind_the_default_branch_it_left() {
         let project = client.open(&remote.project).await;
         open_feature(&remote, &client, project).await;
         let first = manifest(&client, project).await;
-        assert_eq!(first.base.behind, None, "origin/HEAD: {origin_head}");
 
         remote.push_commit("one");
         remote.push_commit("two");
@@ -459,41 +420,10 @@ async fn a_fetch_shows_a_branch_changeset_behind_the_default_branch_it_left() {
 
         let m = manifest(&client, project).await;
         assert_eq!(m.target.name, "feature");
-        assert_eq!(m.base.commit.id, first.base.commit.id, "the base stays where it was");
         assert_eq!(
-            m.base.behind,
-            Some(2),
-            "origin/HEAD: {origin_head}, base: {:?}",
-            m.base.choice
+            m.base.commit.id, first.base.commit.id,
+            "the base stays where it was, origin/HEAD: {origin_head}"
         );
-    }
-}
-
-#[tokio::test]
-async fn behind_follows_a_base_however_the_branch_is_spelled() {
-    let remote = Remote::new();
-    let (handler, _data) = orchestrator(LONG).await;
-    let client = Client::new(&handler);
-    let project = client.open(&remote.project).await;
-    open_feature(&remote, &client, project).await;
-    remote.push_commit("one");
-    client.call(Request::Fetch { project }).await.unwrap();
-
-    for reference in ["main", "refs/heads/main", "origin/main", "refs/remotes/origin/main"] {
-        let base = match client
-            .call(Request::SetBase {
-                project,
-                base: BaseChoice::MergeBase {
-                    reference: reference.into(),
-                },
-            })
-            .await
-            .unwrap()
-        {
-            Response::Base(base) => base,
-            other => panic!("{other:?}"),
-        };
-        assert_eq!(base.behind, Some(1), "{reference}");
-        assert_eq!(base_behind(&client, project).await, Some(1), "{reference}");
+        assert_eq!(m.files.len(), 1, "origin/HEAD: {origin_head}");
     }
 }

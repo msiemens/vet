@@ -1,12 +1,9 @@
-//! Base resolution (§6.5): merge bases, commit lookup, and the branches and
-//! recent commits a base can be picked from.
+//! Base resolution (§6.5): merge bases, commit lookup and the branches.
 
 use gix::bstr::ByteSlice;
 use gix::remote::Direction;
-use gix::revision::walk::Sorting;
-use gix::traverse::commit::simple::CommitTimeOrder;
 use vet_app::changeset::CommitId;
-use vet_app::ports::{BaseCandidates, BranchInfo, CommitInfo, GitError};
+use vet_app::ports::{BranchInfo, CommitInfo, GitError};
 
 use super::{err, object_id};
 
@@ -55,6 +52,32 @@ pub(super) fn default_reference(repo: &gix::Repository) -> Result<Option<String>
     Ok(None)
 }
 
+/// The branch `origin/HEAD` points at if the repository has it and the branch exists, else the
+/// local `main` or `master`.
+pub(super) fn default_branch(repo: &gix::Repository) -> Result<Option<String>, GitError> {
+    if let Some(head) = repo.try_find_reference("refs/remotes/origin/HEAD").map_err(err)?
+        && let Some(target) = head.target().try_name()
+        && let Some(name) = target
+            .as_bstr()
+            .to_str()
+            .ok()
+            .and_then(|t| t.strip_prefix("refs/remotes/origin/"))
+        && repo.try_find_reference(target).map_err(err)?.is_some()
+    {
+        return Ok(Some(name.to_owned()));
+    }
+    for name in ["main", "master"] {
+        if repo
+            .try_find_reference(format!("refs/heads/{name}").as_str())
+            .map_err(err)?
+            .is_some()
+        {
+            return Ok(Some(name.to_owned()));
+        }
+    }
+    Ok(None)
+}
+
 pub(super) fn first_parent_range(
     repo: &gix::Repository,
     base: &CommitId,
@@ -83,25 +106,6 @@ pub(super) fn commit_info(repo: &gix::Repository, commit: &CommitId) -> Result<C
         author: author.name.to_string(),
         time: author.time().map_err(err)?.seconds,
     })
-}
-
-pub(super) fn first_parent_distance(
-    repo: &gix::Repository,
-    tip: &CommitId,
-    commit: &CommitId,
-    max: usize,
-) -> Result<Option<usize>, GitError> {
-    let (mut at, wanted) = (object_id(tip)?, object_id(commit)?);
-    for distance in 0..=max {
-        if at == wanted {
-            return Ok(Some(distance));
-        }
-        match repo.find_commit(at).map_err(err)?.parent_ids().next() {
-            Some(parent) => at = parent.detach(),
-            None => break,
-        }
-    }
-    Ok(None)
 }
 
 pub(super) fn commits_behind(
@@ -135,12 +139,6 @@ fn tracking_ref(repo: &gix::Repository, name: &gix::refs::FullNameRef) -> Option
         })
 }
 
-/// Where the remote had the local branch `name` at the last fetch.
-fn upstream(repo: &gix::Repository, name: &gix::refs::FullNameRef) -> Option<CommitId> {
-    let mut tracked = repo.try_find_reference(tracking_ref(repo, name)?.as_str()).ok()??;
-    Some(CommitId(tracked.peel_to_id().ok()?.to_string()))
-}
-
 /// The local branches, then the remote-tracking branches (`origin/feature`, without the remote's
 /// `HEAD`) that no local branch follows at the same commit, each group by name.
 pub(super) fn branches(repo: &gix::Repository) -> Result<Vec<BranchInfo>, GitError> {
@@ -166,7 +164,6 @@ pub(super) fn branches(repo: &gix::Repository) -> Result<Vec<BranchInfo>, GitErr
         branches.push(BranchInfo {
             current: current.as_ref().is_some_and(|c| c.as_ref() == reference.name()),
             default: default.as_deref() == Some(name.as_str()),
-            upstream: upstream(repo, reference.name()),
             remote: false,
             name,
             commit,
@@ -190,7 +187,6 @@ pub(super) fn branches(repo: &gix::Repository) -> Result<Vec<BranchInfo>, GitErr
         remote.push(BranchInfo {
             current: false,
             default: false,
-            upstream: None,
             remote: true,
             name,
             commit,
@@ -199,21 +195,4 @@ pub(super) fn branches(repo: &gix::Repository) -> Result<Vec<BranchInfo>, GitErr
     remote.sort_by(|a, b| a.name.cmp(&b.name));
     branches.extend(remote);
     Ok(branches)
-}
-
-pub(super) fn candidates(repo: &gix::Repository, max_commits: usize) -> Result<BaseCandidates, GitError> {
-    let mut commits = Vec::new();
-    let head = repo.head_id().map_err(err)?;
-    let walk = repo
-        .rev_walk([head.detach()])
-        .sorting(Sorting::ByCommitTime(CommitTimeOrder::NewestFirst))
-        .all()
-        .map_err(err)?;
-    for info in walk.take(max_commits) {
-        commits.push(commit_info(repo, &CommitId(info.map_err(err)?.id.to_string()))?);
-    }
-    Ok(BaseCandidates {
-        branches: branches(repo)?,
-        commits,
-    })
 }

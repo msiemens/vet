@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
 use crate::{
-    Base, ChangesetKey, Lens, Notification, PlatformStatus, ProjectId, RestoreFailure, ReviewInfo, ReviewUpdate, Task,
+    ChangesetKey, Lens, Notification, PlatformStatus, ProjectId, RestoreFailure, ReviewInfo, ReviewUpdate, Task,
 };
 
 /// Events are invalidations or small state updates; the client re-requests
@@ -32,6 +32,10 @@ pub enum Event {
     /// A snapshot settled and the changeset moved to a new `revision`. The
     /// manifest, with review state remapped onto it, is stale: fetch it again.
     SnapshotSettled { project: ProjectId, revision: u32 },
+    /// Edits of the working tree wait to settle into a snapshot (`pending`), or no longer do: the
+    /// ones that wait are not part of any version yet. Sent whatever changeset is on view; no
+    /// manifest is stale.
+    EditsPending { project: ProjectId, pending: bool },
     /// Another changeset is on view now, at `revision`. The manifest, with the threads, is
     /// stale: fetch it again. The requester gets it too.
     ChangesetOpened {
@@ -82,10 +86,6 @@ pub enum Event {
         project: ProjectId,
         failures: Vec<RestoreFailure>,
     },
-    /// A fetch ended that fetched at least one remote: the base is where it was, and `base`
-    /// says how far its branch has moved on now. Sent to every subscriber, whether the fetch
-    /// was asked for or periodic.
-    BaseChanged { project: ProjectId, base: Base },
     /// Background work of the project started, progressed or ended. Sent to every
     /// subscriber; a task that ended (`Finished` or `Failed`) is not announced again.
     Task(Task),

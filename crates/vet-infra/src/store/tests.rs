@@ -4,7 +4,7 @@ use std::time::Duration;
 use sea_orm::PaginatorTrait;
 use std::collections::HashSet;
 use tempfile::TempDir;
-use vet_app::changeset::{ChangedFile, CommitId, Lens, RemoteKey, VersionChange, VersionOrigin};
+use vet_app::changeset::{BaseChoice, ChangedFile, CommitId, Lens, RemoteKey, VersionChange, VersionOrigin};
 use vet_app::gc::{Retention, collect, open_bases};
 use vet_app::ports::{GcReport, ReviewWrites, Store};
 use vet_app::review::{NonTextAck, SpanOrigin};
@@ -305,6 +305,7 @@ async fn a_pull_requests_title_is_kept_with_its_changeset_across_a_review_starti
         title: title.into(),
         draft,
         fork: false,
+        target_branch: "release/2.1".into(),
     };
     assert_eq!(
         store.pull_request_head("/repo".into(), pull_request(7)).await.unwrap(),
@@ -374,6 +375,7 @@ async fn trust_is_kept_per_project_and_per_pull_request_across_a_restart() {
         title: "Add caching".into(),
         draft: false,
         fork,
+        target_branch: "main".into(),
     };
     let writes = store.writes();
     assert!(!store.project_trusted("/a".into()).await.unwrap());
@@ -524,49 +526,9 @@ async fn the_base_choice_is_stored_with_the_review_and_survives_reopen() {
     };
     assert_eq!(loaded(&store).await, BaseChoice::Commit { id: commit("abc123") });
 
-    let merge_base = BaseChoice::MergeBase {
-        reference: "main".into(),
-    };
-    store.writes().set_base(id, merge_base.clone()).await.unwrap();
-    assert_eq!(loaded(&store).await, merge_base);
-
-    let commit_choice = BaseChoice::Commit { id: commit("abc") };
-    store.writes().set_base(id, commit_choice.clone()).await.unwrap();
     drop(store);
     let store = open(&dir).await;
-    assert_eq!(loaded(&store).await, commit_choice);
-}
-
-#[tokio::test]
-async fn the_browsing_base_is_stored_per_repository_and_replaced() {
-    let dir = tempfile::tempdir().unwrap();
-    let store = open(&dir).await;
-    assert_eq!(store.browsing_base("/a".into()).await.unwrap(), None);
-
-    let first = BaseChoice::MergeBase {
-        reference: "develop".into(),
-    };
-    let merge_base = BaseChoice::MergeBase {
-        reference: "main".into(),
-    };
-    store.writes().set_browsing_base("/a".into(), first).await.unwrap();
-    store
-        .writes()
-        .set_browsing_base("/b".into(), merge_base.clone())
-        .await
-        .unwrap();
-    let commit_choice = BaseChoice::Commit { id: commit("abc") };
-    store
-        .writes()
-        .set_browsing_base("/a".into(), commit_choice.clone())
-        .await
-        .unwrap();
-
-    drop(store);
-    let store = open(&dir).await;
-    assert_eq!(store.browsing_base("/a".into()).await.unwrap(), Some(commit_choice));
-    assert_eq!(store.browsing_base("/b".into()).await.unwrap(), Some(merge_base));
-    assert_eq!(store.browsing_base("/c".into()).await.unwrap(), None);
+    assert_eq!(loaded(&store).await, BaseChoice::Commit { id: commit("abc123") });
 }
 
 #[tokio::test]
@@ -929,7 +891,7 @@ async fn versions_are_numbered_per_changeset_and_a_new_review_starts_over() {
         (changeset, id) = review(&store, SnapshotId(h(1)), SnapshotId(h(2))).await;
         let moved = Version {
             base_commit: commit("def456"),
-            origin: VersionOrigin::BaseMoved,
+            origin: VersionOrigin::Observed,
             ..version(3, SnapshotId(h(4)), SnapshotId(h(3)))
         };
         store
@@ -957,7 +919,7 @@ async fn versions_are_numbered_per_changeset_and_a_new_review_starts_over() {
         [
             (1, SnapshotId(h(1)), SnapshotId(h(2)), VersionOrigin::Settled),
             (2, SnapshotId(h(1)), SnapshotId(h(3)), VersionOrigin::Settled),
-            (3, SnapshotId(h(4)), SnapshotId(h(3)), VersionOrigin::BaseMoved),
+            (3, SnapshotId(h(4)), SnapshotId(h(3)), VersionOrigin::Observed),
         ]
     );
     assert_eq!(

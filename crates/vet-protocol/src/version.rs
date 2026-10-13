@@ -14,7 +14,8 @@ use crate::{CommitInfo, LineDelta};
 #[ts(export)]
 pub enum View {
     Changeset,
-    /// Version `from` against the later version `to`. Fails if the review has no such versions.
+    /// Version `from` against the later version `to`; `from` 0 is the base the review started
+    /// from, so the view shows all of the changes of `to`. Fails if the review has no such versions.
     Interdiff {
         from: u32,
         to: u32,
@@ -34,8 +35,6 @@ pub enum View {
 pub enum VersionOrigin {
     /// The tree settled, or the review started with it.
     Settled,
-    /// A different base was chosen.
-    BaseMoved,
     /// A branch's tip or merge base was seen to have moved.
     Observed,
 }

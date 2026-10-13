@@ -117,10 +117,6 @@ mod tests {
     #[test]
     fn git_state_changes_rescan_and_the_rest_of_git_is_ignored() {
         assert_eq!(
-            translated(event(EventKind::Any, &[".git/HEAD"])),
-            vec![WatchEvent::MustRescan]
-        );
-        assert_eq!(
             translated(event(EventKind::Any, &[".git/index"])),
             vec![WatchEvent::MustRescan]
         );
@@ -138,6 +134,14 @@ mod tests {
         }
         assert_eq!(
             translated(event(EventKind::Any, &[".git/index", ".git/refs/heads/main"])),
+            vec![WatchEvent::MustRescan, WatchEvent::RefsMoved]
+        );
+    }
+
+    #[test]
+    fn a_move_of_head_rescans_and_looks_at_the_branch_on_view_again() {
+        assert_eq!(
+            translated(event(EventKind::Any, &[".git/HEAD"])),
             vec![WatchEvent::MustRescan, WatchEvent::RefsMoved]
         );
     }

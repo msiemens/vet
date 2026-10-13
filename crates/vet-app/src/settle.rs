@@ -65,6 +65,9 @@ pub enum Settled {
     RefsMoved,
     /// The settled tree has stayed as it is for the quiet period of [`Settling::quiet_after`].
     Quiet,
+    /// Whether edits wait for their window to pass, as [`Settling::reporting_edits`] asked to be
+    /// told: `true` when the first touch started one, `false` when it ended.
+    Edits(bool),
 }
 
 enum Wake {
@@ -87,6 +90,10 @@ pub struct Settling<W, C> {
     quiet_ms: Option<u64>,
     /// While the settled tree is owed a [`Settled::Quiet`]: when it was last touched, or settled.
     untouched_since: Option<Millis>,
+    /// Whether to resolve with [`Settled::Edits`] when edits start and stop waiting.
+    reporting_edits: bool,
+    /// What [`Settled::Edits`] last said.
+    edits_reported: bool,
 }
 
 impl<W: Watcher, C: Clock> Settling<W, C> {
@@ -99,7 +106,15 @@ impl<W: Watcher, C: Clock> Settling<W, C> {
             candidate: None,
             quiet_ms: None,
             untouched_since: None,
+            reporting_edits: false,
+            edits_reported: false,
         }
+    }
+
+    /// Also resolves with [`Settled::Edits`] whenever edits start or stop waiting to settle.
+    pub fn reporting_edits(mut self) -> Self {
+        self.reporting_edits = true;
+        self
     }
 
     /// Also resolves with [`Settled::Quiet`] once after each settled tree (and after the one it
@@ -133,6 +148,11 @@ impl<W: Watcher, C: Clock> Settling<W, C> {
     /// as soon as a branch ref is written: refs are looked at as they move, not debounced.
     pub async fn next_settled<G: Scanner, S>(&mut self, acquisition: &Acquisition<G, S>) -> Result<Settled, GitError> {
         loop {
+            let waiting = self.settler.deadline().is_some();
+            if self.reporting_edits && waiting != self.edits_reported {
+                self.edits_reported = waiting;
+                return Ok(Settled::Edits(waiting));
+            }
             match self.wake().await {
                 Wake::Event(WatchEvent::RefsMoved) => return Ok(Settled::RefsMoved),
                 Wake::Event(WatchEvent::Dirty(paths)) => {
@@ -425,6 +445,33 @@ mod tests {
     fn an_edit_that_settles_to_the_same_tree_starts_the_quiet_period_again() {
         let mut h = quiet(vec![(1000, dirty("a.rs"))], vec![id(0)]);
         assert!(matches!(next(&mut h), (Settled::Quiet, 4000)));
+    }
+
+    #[test]
+    fn edits_are_reported_while_they_wait_to_settle() {
+        let h = harness(
+            vec![(1000, dirty("a.rs")), (1500, dirty("b.rs"))],
+            vec![id(1)],
+            Some(id(0)),
+        );
+        let mut h = Harness {
+            settling: h.settling.reporting_edits(),
+            ..h
+        };
+        assert!(matches!(next(&mut h), (Settled::Edits(true), 1000)));
+        assert!(matches!(next(&mut h), (Settled::Tree(_), 3000)));
+        assert!(matches!(next(&mut h), (Settled::Edits(false), 3000)));
+    }
+
+    #[test]
+    fn edits_that_settle_to_the_same_tree_stop_waiting_too() {
+        let h = harness(vec![(1000, dirty("a.rs"))], vec![id(0)], Some(id(0)));
+        let mut h = Harness {
+            settling: h.settling.reporting_edits(),
+            ..h
+        };
+        assert!(matches!(next(&mut h), (Settled::Edits(true), 1000)));
+        assert!(matches!(next(&mut h), (Settled::Edits(false), 2500)));
     }
 
     #[test]

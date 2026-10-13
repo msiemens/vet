@@ -849,7 +849,8 @@ mod tests {
             PullRequestHead {
                 title: "PR 7".to_owned(),
                 draft: false,
-                fork: false
+                fork: false,
+                target_branch: "release".to_owned(),
             }
         );
         assert_eq!(
@@ -857,7 +858,8 @@ mod tests {
             PullRequestHead {
                 title: format!("PR {DRAFT}"),
                 draft: true,
-                fork: false
+                fork: false,
+                target_branch: "release".to_owned(),
             }
         );
     }

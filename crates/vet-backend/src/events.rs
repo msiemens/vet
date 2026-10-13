@@ -29,3 +29,8 @@ impl Subscriber for Connection {
 pub fn settled(subscribers: &Subscribers<Connection>, project: ProjectId, revision: u32) {
     subscribers.broadcast(Event::SnapshotSettled { project, revision });
 }
+
+/// Tells every subscriber whether edits of the working tree wait to settle into a snapshot.
+pub fn edits_pending(subscribers: &Subscribers<Connection>, project: ProjectId, pending: bool) {
+    subscribers.broadcast(Event::EditsPending { project, pending });
+}

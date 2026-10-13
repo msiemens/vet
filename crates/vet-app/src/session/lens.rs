@@ -15,7 +15,7 @@ use super::manifest::{file_completion, file_views, review_of, target_view, updat
 use super::state::{Commits, Remapped, State, View, acknowledged, lifecycle_of};
 use super::views::{BaseView, ManifestView, ReviewUpdateView, ReviewView};
 use super::{LiveSession, Result, SessionError};
-use crate::changeset::{BaseChoice, CommitId, Lens, Source};
+use crate::changeset::{CommitId, Lens, Source};
 use crate::ports::{CommitInfo, GitRepo, LiveStore, ReviewWrites};
 use crate::review::SpanOrigin;
 
@@ -29,6 +29,8 @@ pub(super) struct LensFacts {
     pub(super) files: u32,
     /// The completion of the changeset as a whole.
     pub(super) completion: Completion,
+    /// What the changeset as a whole is compared against.
+    pub(super) base: BaseView,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -114,6 +116,7 @@ impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> L
     /// What every manifest says about the lenses and the changeset as a whole.
     pub(super) async fn lens_facts(&self, st: &State) -> Result<LensFacts> {
         let git = &self.acquisition.git;
+        let base = self.base_view(st, &git.branches().await?).await?;
         let (lens, commits) = match &st.source {
             Source::WorkingTree => (Lens::Squash, 0),
             source => (
@@ -138,6 +141,7 @@ impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> L
             commits,
             files: files.len() as u32,
             completion: changes.remapped.completion,
+            base,
         })
     }
 
@@ -195,13 +199,7 @@ impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> L
         let own = &unit.detail.info.id;
         let parent = unit.detail.parents.first().unwrap_or(own);
         let facts = self.lens_facts(st).await?;
-        let base = BaseView {
-            choice: BaseChoice::Commit { id: parent.clone() },
-            commit: git.commit_info(parent).await?,
-            name: parent.short().to_owned(),
-            behind: None,
-            contained_in: None,
-        };
+        let base = BaseView::of_commit(git.commit_info(parent).await?);
         Ok(ManifestView {
             revision: st.revision,
             seq: st.seq,
@@ -217,6 +215,7 @@ impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> L
             interdiff: None,
             lens: facts.lens,
             commits: facts.commits,
+            changeset_base: facts.base,
             changeset_files: facts.files,
             changeset_completion: facts.completion,
         })

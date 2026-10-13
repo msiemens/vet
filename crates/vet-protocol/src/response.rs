@@ -4,11 +4,11 @@ use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
 use crate::{
-    Account, BackendSettings, Base, BaseDiff, BlobContent, BranchInfo, Calls, ChangesetKey, ChangesetRow, CheckLog,
-    CommitChecks, CommitInfo, CommitUnit, Diagnostic, DirEntry, FileOutline, FileSymbols, Highlights, Lens, LineDelta,
-    LocationRows, Locations, Manifest, ProjectId, PullRequestInfo, PullRequestRow, PullRequestSource, Reachability,
-    RecentProject, RemovalImpact, ReviewSubmitted, ReviewUpdate, ServerInfo, Side, SymbolAt, SymbolSignature, Task,
-    TextChange, TextContent, Thread, ThreadTarget, Unavailable, Usages, VersionInfo,
+    Account, BackendSettings, BaseDiff, BlobContent, Calls, ChangesetKey, ChangesetRow, CheckLog, CommitChecks,
+    CommitUnit, Diagnostic, DirEntry, FileOutline, FileSymbols, Highlights, Lens, LineDelta, LocationRows, Locations,
+    Manifest, ProjectId, PullRequestInfo, PullRequestRow, PullRequestSource, Reachability, RecentProject,
+    RemovalImpact, ReviewSubmitted, ReviewUpdate, ServerInfo, Side, SymbolAt, SymbolSignature, Task, TextChange,
+    TextContent, Thread, ThreadTarget, Unavailable, Usages, VersionInfo,
 };
 
 #[derive(Clone, PartialEq, Debug, Serialize, Deserialize, TS)]
@@ -150,17 +150,9 @@ pub enum Response {
     Servers {
         servers: Vec<ServerInfo>,
     },
-    /// The base after `SetBase`.
-    Base(Base),
     /// After `FinishReview`: whether every change was seen when it ended.
     ReviewFinished {
         complete: bool,
-    },
-    /// Local branches by name, and up to about 200 commits reachable from
-    /// `HEAD`, newest first.
-    BaseCandidates {
-        branches: Vec<BranchInfo>,
-        commits: Vec<CommitInfo>,
     },
     /// Directories first, then the others, each by name in byte order. `revision`
     /// is the one the listing belongs to.

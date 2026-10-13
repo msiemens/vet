@@ -53,7 +53,6 @@ fn statements() -> Vec<String> {
         version::Entity,
         version_file::Entity,
         review::Entity,
-        project_base::Entity,
         project_filter::Entity,
         project_filter_item::Entity,
         project_trust::Entity,

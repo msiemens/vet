@@ -104,7 +104,7 @@ impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> L
 
     /// Puts the changeset of `source` on view, in place of the one that is. What the
     /// other had stays as it was for when it comes back. A branch is read afresh: its review
-    /// is resumed, else it is browsed against the default base, and a branch that moved while
+    /// is resumed, else it is browsed against its base, and a branch that moved while
     /// it was off view gets the version that says so. Returns the new revision, which is
     /// higher than any shown so far, or `None` if `source` was on view already and nothing
     /// moved. Fails, changing nothing, if the branch does not exist.
@@ -138,8 +138,8 @@ impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> L
 
     /// Looks at the branch on view again: its tip and, for a merge base, where it is now. If
     /// either moved (new commits, an amend, a rebase), the target and the base follow, and while
-    /// a review is open that is its next version. Returns the new revision, or `None` if nothing
-    /// moved or the changeset on view is not a branch's.
+    /// a review is open that is its next version. For the working tree it looks at whether `HEAD`
+    /// still builds on the base. Returns the new revision, or `None` if nothing moved.
     pub async fn observe(&self) -> Result<Option<u32>> {
         self.observe_on_view(&mut self.hold().await).await
     }
@@ -159,11 +159,16 @@ impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> L
     /// revision of the one on view is announced, by the caller.
     async fn observe_in(&self, store: &S::Writes, st: &mut State) -> Result<Option<u32>> {
         if st.source == Source::WorkingTree {
-            return Ok(None);
+            if !self.track_head(st).await {
+                return Ok(None);
+            }
+            st.revision += 1;
+            st.changes = None;
+            return Ok(Some(st.revision));
         }
         let git = &self.acquisition.git;
         let tip = tip_of(git, &st.source).await?;
-        // A merge base follows the history; a base chosen as a branch's tip or a commit stays where it was chosen.
+        // A merge base follows the history; a base on a commit stays where it is.
         let base_commit = match &st.base_choice {
             BaseChoice::MergeBase { .. } => {
                 let resolved = base::resolve(git, st.base_choice.clone(), &tip).await;
@@ -236,9 +241,9 @@ impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> L
         };
         let (base_choice, base_commit) = match source {
             Source::PullRequest { remote, number } => {
-                base::default_for_pull_request(git, &PullRequestRefs::of(remote, *number), &tip).await
+                base::for_pull_request(git, &PullRequestRefs::of(remote, *number), &tip).await
             }
-            _ => base::default_for_branch(git, &tip).await,
+            _ => base::for_branch(git, &tip).await,
         }
         .map_err(SessionError::Base)?;
         let base = Arc::new(git.commit_snapshot(&base_commit).await?);
@@ -256,6 +261,7 @@ impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> L
             base_choice,
             base_commit,
             head: tip,
+            off_base: false,
             target_status: SnapshotStatus::of(&target),
             target,
             known: HashMap::new(),

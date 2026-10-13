@@ -91,7 +91,7 @@ fn version_value() -> Version {
         target: SnapshotId(h(2)),
         tip: CommitId("bb".into()),
         at: 1_700_000_000,
-        origin: VersionOrigin::BaseMoved,
+        origin: VersionOrigin::Observed,
         change: VersionChange {
             files: vec![
                 ChangedFile {
@@ -523,6 +523,7 @@ fn changeset_model(vote: Option<&PendingVote>) -> changeset::Model {
         draft: false,
         fork: false,
         trusted_head: None,
+        target_branch: None,
         vote: row.vote.unwrap(),
         vote_posting_since: row.vote_posting_since.unwrap(),
         vote_error: row.vote_error.unwrap(),
@@ -923,6 +924,6 @@ fn the_numbers_the_database_holds_for_each_kind_are_the_ones_rows_already_writte
     assert_eq!(numbers(kinds::PathFlag::iter()), [0, 1]);
     assert_eq!(numbers(kinds::ChangeKind::iter()), [0, 1, 2, 3, 4, 5, 6]);
     assert_eq!(numbers(kinds::SourceKind::iter()), [0, 1, 2]);
-    assert_eq!(numbers(kinds::VersionOrigin::iter()), [0, 1, 2]);
+    assert_eq!(numbers(kinds::VersionOrigin::iter()), [0, 1]);
     assert_eq!(numbers(kinds::Lens::iter()), [0, 1]);
 }

@@ -26,7 +26,6 @@ impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> L
             Shown::Changeset => {}
         }
         let branches = self.acquisition.git.branches().await?;
-        let base = self.base_view(&st, &branches).await?;
         let facts = self.lens_facts(&st).await?;
         let changes = st.changes();
         let cov = changes.remapped.coverage();
@@ -43,7 +42,7 @@ impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> L
             seq: st.seq,
             name: self.name.clone(),
             lifecycle: lifecycle_of(&st),
-            base,
+            base: facts.base.clone(),
             target: target_view(&st.source, &st.head, &branches),
             filter: st.filter.clone(),
             completion: changes.remapped.completion,
@@ -53,6 +52,7 @@ impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> L
             interdiff: None,
             lens: facts.lens,
             commits: facts.commits,
+            changeset_base: facts.base,
             changeset_files: facts.files,
             changeset_completion: facts.completion,
         })
@@ -260,7 +260,6 @@ mod tests {
             commit: CommitId(commit.into()),
             current,
             default: false,
-            upstream: None,
         }
     }
 

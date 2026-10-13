@@ -29,42 +29,25 @@ pub struct ReviewFilter {
     pub review_generated: bool,
 }
 
-/// How a review's base is chosen.
-#[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize, TS)]
-#[serde(tag = "type", rename_all = "camelCase", rename_all_fields = "camelCase")]
-#[ts(export)]
-pub enum BaseChoice {
-    /// Compared against `reference` (a branch or any revision): the merge base of
-    /// it and the changeset's tip. The reference moving on does not move the base
-    /// (`Base::behind`), choosing it again does.
-    MergeBase { reference: String },
-    /// A commit: a full or abbreviated id, or any revision.
-    Commit { id: String },
-}
-
-/// A base as resolved, with what to show of it.
+/// What a view is compared against. The base is fixed by the kind of changeset and never chosen.
 #[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
 #[ts(export)]
 pub struct Base {
-    /// A commit is reported by its full id.
-    pub choice: BaseChoice,
     /// The base commit.
     pub commit: CommitInfo,
-    /// What to call the commit: the branch if it is a branch tip, else
-    /// `branch~N` on a local branch's first-parent history (the chosen branch,
-    /// the current one, the default one, then the rest), else its short id.
-    pub name: String,
-    /// How many commits the chosen target branch has gained since the base;
-    /// absent unless it has moved.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[ts(optional)]
-    pub behind: Option<u32>,
-    /// Set when the chosen target already contains the changeset's tip: there is
-    /// nothing to review.
+    /// Set when the branch the base was taken from already contains the changeset's tip: there
+    /// is nothing to review.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub contained_in: Option<String>,
+    /// The branch a pull request is merged into, when that is not the repository's default branch.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub into: Option<String>,
+    /// The working tree's `HEAD` no longer builds on the base, so what is shown includes work that
+    /// came from elsewhere (a rebase, a reset).
+    pub head_off_base: bool,
 }
 
 /// What the changes lead to: the live working tree, or a branch's tip.
@@ -109,19 +92,6 @@ pub enum ReviewInfo {
         /// Unix seconds the version was recorded.
         updated_at: u32,
     },
-}
-
-#[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize, TS)]
-#[serde(rename_all = "camelCase")]
-#[ts(export)]
-pub struct BranchInfo {
-    pub name: String,
-    /// Full id of the tip.
-    pub commit: String,
-    /// The checked-out branch.
-    pub current: bool,
-    /// The remote's default branch (`origin/HEAD`); never set without a remote.
-    pub default: bool,
 }
 
 /// A hunk seen against an old base: the base-side lines as they were when it was marked, as a diff
@@ -223,6 +193,8 @@ pub struct Manifest {
     pub lens: Lens,
     /// How many commits lie between the base and the tip; none for the working tree.
     pub commits: u32,
+    /// The base of the changeset as a whole, whatever view this manifest is of.
+    pub changeset_base: Base,
     /// How many files the changeset as a whole changes, whatever view this manifest is of.
     pub changeset_files: u32,
     /// The completion of the changeset as a whole, whatever view this manifest is of.

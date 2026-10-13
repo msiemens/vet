@@ -27,7 +27,7 @@ pub mod kinds {
     int_enum!(PathFlag { Collision = 0, ContentUnavailable = 1 });
     int_enum!(ChangeKind { Mode = 0, Symlink = 1, Submodule = 2, Binary = 3, ContentUnavailable = 4, Rename = 5, Empty = 6 });
     int_enum!(SourceKind { WorkingTree = 0, Branch = 1, PullRequest = 2 });
-    int_enum!(VersionOrigin { Settled = 0, BaseMoved = 1, Observed = 2 });
+    int_enum!(VersionOrigin { Settled = 0, Observed = 1 });
     int_enum!(Lens { Squash = 0, PerCommit = 1 });
 }
 
@@ -194,6 +194,9 @@ pub mod changeset {
         pub fork: bool,
         /// The head commit the viewer trusted a pull request at (§7.5); none while it is not trusted.
         pub trusted_head: Option<String>,
+        /// The branch a pull request is merged into as the platform last said it; none for any other
+        /// changeset.
+        pub target_branch: Option<String>,
         /// The verdict of the viewer's vote that waits to be sent; none without one.
         pub vote: Option<String>,
         /// Unix seconds the vote was handed to the platform at, while Vet has not heard back.
@@ -322,27 +325,6 @@ pub mod project_trust {
     pub struct Model {
         #[sea_orm(primary_key, auto_increment = false)]
         pub repo: String,
-    }
-
-    #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]
-    pub enum Relation {}
-
-    impl ActiveModelBehavior for ActiveModel {}
-}
-
-/// The base last chosen for a repository's working tree, keyed by the repository root. No row
-/// means it was never chosen.
-pub mod project_base {
-    use super::kinds::*;
-    use sea_orm::entity::prelude::*;
-
-    #[derive(Clone, Debug, PartialEq, DeriveEntityModel)]
-    #[sea_orm(table_name = "project_base")]
-    pub struct Model {
-        #[sea_orm(primary_key, auto_increment = false)]
-        pub repo: String,
-        pub base_kind: BaseKind,
-        pub base_value: String,
     }
 
     #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]

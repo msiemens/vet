@@ -4,22 +4,24 @@
 //! base, with nothing stored. The first review action (marking seen,
 //! acknowledging, a new thread) starts the review: it records the base, `HEAD`
 //! and the current target as the working tree changeset's version 1, and from
-//! then on every settled snapshot and every other base is the next version.
-//! Finishing releases the review's refs and returns to browsing (see SPEC
-//! "Session lifecycle"); threads that are still open stay on view, because they
-//! belong to the changeset, not to the review.
+//! then on every settled snapshot is the next version. Finishing releases the
+//! review's refs and returns to browsing (see SPEC "Session lifecycle");
+//! threads that are still open stay on view, because they belong to the
+//! changeset, not to the review.
 //!
 //! **Changeset.** What it displays is `base → the latest settled snapshot`,
-//! the base being the one chosen with `set_base` (§6.5), by default the current
-//! branch's tip. The review is of everything the agent has done to the tree,
-//! so reviewing the live part (`previous version → now`) alone would hide
-//! reviewed work behind a changeset that has no review state of its own. Marks
-//! recorded against earlier targets carry over by remapping (§5.2), so the live
-//! part is exactly what shows up as unseen. Showing it separately is an
-//! interdiff, which belongs to the timeline (M1).
+//! the base being fixed by the kind of changeset (§6.5): the working tree's is
+//! the `HEAD` it was opened at, wherever `HEAD` goes after. The review is of
+//! everything the agent has done to the tree, so reviewing the live part
+//! (`previous version → now`) alone would hide reviewed work behind a
+//! changeset that has no review state of its own. Marks recorded against
+//! earlier targets carry over by remapping (§5.2), so the live part is exactly
+//! what shows up as unseen. Showing it separately is an interdiff, which
+//! belongs to the timeline (M1). A `HEAD` that no longer builds on the base
+//! (`off_base`) is told, since the changes then include work from elsewhere.
 //!
 //! **Revision.** Starts at 0 and increases by one with each settled snapshot,
-//! base or filter change, and finished review.
+//! filter change, observed move of a branch, and finished review.
 //!
 //! **Review state.** Recorded spans stay as they were marked and are never
 //! remapped in place. Remapping starts from them whenever the target changes or
@@ -102,11 +104,10 @@ pub use self::views::{
 };
 use crate::acquisition::{Acquisition, BlobError};
 use crate::base;
-use crate::changeset::{BaseChoice, ChangesetId, Source, Version, VersionChange, VersionOrigin};
+use crate::changeset::{ChangesetId, Source, Version, VersionChange, VersionOrigin};
 use crate::platform::PlatformError;
 use crate::ports::{
-    BaseCandidates, BranchInfo, Clock, Degraded, Dirty, GitError, GitRepo, LiveStore, ReviewWrites, Scan, StoreError,
-    Watcher,
+    BranchInfo, Clock, Degraded, Dirty, GitError, GitRepo, LiveStore, ReviewWrites, Scan, StoreError, Watcher,
 };
 use crate::progress::Tasks;
 use crate::review::{ReviewId, visible_threads};
@@ -174,9 +175,6 @@ impl From<BlobError> for SessionError {
 }
 
 type Result<T> = std::result::Result<T, SessionError>;
-
-/// How many recent commits a base can be picked from.
-const MAX_BASE_COMMITS: usize = 200;
 
 /// Unix seconds now.
 pub type UnixClock = fn() -> i64;
@@ -271,7 +269,8 @@ impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> L
         let source = Source::WorkingTree;
         let writes = acquisition.store.writes();
         let (changeset, threads) = match Self::stored(&acquisition, &writes, &repo, &source, &filter, clock).await? {
-            Stored::Resumed(state) => {
+            Stored::Resumed(mut state) => {
+                state.off_base = base::head_left(&acquisition.git, &state.base_commit).await;
                 let session = Self::assemble(acquisition, name, repo, clock, *state).await;
                 session.catch_up().await?;
                 return Ok(session);
@@ -280,16 +279,9 @@ impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> L
         };
         let git = &acquisition.git;
         let head = git.head().await?;
-        // The base chosen last time, unless it no longer resolves (its branch is gone).
-        let remembered = match acquisition.store.browsing_base(repo.clone()).await? {
-            Some(choice) => base::resolve(git, choice, &head).await.ok(),
-            None => None,
-        };
-        let (base_choice, base_commit) = match remembered {
-            Some(found) => found,
-            None => base::default_choice(&git.branches().await?, &head),
-        };
+        let (base_choice, base_commit) = base::for_working_tree(&head);
         let base = Arc::new(git.commit_snapshot(&base_commit).await?);
+        // The session opens at `HEAD`, which builds on itself.
         let Scan {
             snapshot: target,
             status,
@@ -308,6 +300,7 @@ impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> L
             base_choice,
             base_commit,
             head,
+            off_base: false,
             target,
             target_status: status,
             known: HashMap::new(),
@@ -408,6 +401,7 @@ impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> L
             base_choice: review.base,
             base_commit: latest.base_commit.clone(),
             head: latest.tip.clone(),
+            off_base: false,
             target,
             target_status,
             known: HashMap::new(),
@@ -571,92 +565,38 @@ impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> L
         Ok(complete)
     }
 
-    /// Changes what the target is compared against; the target stays as it is.
-    /// While a review is open, a base on another commit is the next
-    /// version. Bumps the revision unless nothing changed. Recorded spans are
-    /// untouched: the next manifest remaps them onto the new base, so base-side
-    /// changes in reviewed regions show as `SeenAgainstOldBase` (§5.2), and
-    /// choosing an earlier base again restores the earlier coverage. Returns the
-    /// revision.
-    pub async fn set_base(&self, choice: BaseChoice) -> Result<(BaseView, u32)> {
-        let git = &self.acquisition.git;
-        let mut st = self.hold().await;
-        // A merge base is where the target's history left the reference's: `HEAD` for the live tree.
-        let tip = match st.source {
-            Source::WorkingTree => git.head().await?,
-            _ => st.head.clone(),
-        };
-        let (choice, commit) = base::resolve(git, choice, &tip).await.map_err(SessionError::Base)?;
-        let snapshot = Arc::new(git.commit_snapshot(&commit).await?);
-
-        if st.source == Source::WorkingTree {
-            st.writes().set_browsing_base(self.repo.clone(), choice.clone()).await?;
-        }
-        if st.base_choice != choice || st.base_commit != commit {
-            if let (Some(review), Some(changeset)) = (&st.review, st.changeset) {
-                let (reads, writes) = (&self.acquisition.store, st.writes());
-                let (id, number) = (review.id, review.version + 1);
-                // The old base's content is kept apart from git, which may drop its objects.
-                self.retain_anchored(&st, st.anchors()).await?;
-                let now = (self.clock)();
-                writes
-                    .put_snapshot(Snapshot::clone(&snapshot), SnapshotStatus::of(&snapshot), now)
-                    .await?;
-                writes.set_base(id, choice.clone()).await?;
-                if commit != st.base_commit {
-                    let version = Version {
-                        n: number,
-                        base: snapshot.id,
-                        base_commit: commit.clone(),
-                        target: st.target.id,
-                        tip: st.head.clone(),
-                        at: now,
-                        origin: VersionOrigin::BaseMoved,
-                        change: self.change_of((&st.base, &st.target), &snapshot, &st.target).await?,
-                    };
-                    let previous = reads.versions(changeset).await?.pop();
-                    writes.append_version(changeset, version.clone()).await?;
-                    Self::keep_commits(&self.acquisition, changeset, &version, previous.as_ref()).await?;
-                    if let Some(review) = &mut st.review {
-                        review.version = number;
-                        review.updated_at = now;
-                    }
-                }
-            }
-            self.acquisition.record_commit(snapshot.id, commit.clone());
-            st.base = snapshot;
-            st.base_choice = choice;
-            st.base_commit = commit;
-            st.revision += 1;
-            st.changes = None;
-            st.publish();
-            self.revisions.advance(st.revision);
-        }
-        Ok((self.base_view(&st, &git.branches().await?).await?, st.revision))
-    }
-
-    /// The base as it displays now. How far its branch has moved on is read again, so the answer
-    /// changes after a fetch while the base itself stays where it is.
-    pub async fn base(&self) -> Result<BaseView> {
-        let st = self.published.read();
-        self.base_view(&st, &self.acquisition.git.branches().await?).await
-    }
-
     /// The base with its display facts; `branches` are the repository's.
     async fn base_view(&self, st: &State, branches: &[BranchInfo]) -> Result<BaseView> {
         let git = &self.acquisition.git;
-        let prefer = match &st.base_choice {
-            BaseChoice::MergeBase { reference } => Some(reference.as_str()),
-            _ => None,
-        };
         let own = manifest::target_view(&st.source, &st.head, branches).branch;
         Ok(BaseView {
-            choice: st.base_choice.clone(),
             commit: git.commit_info(&st.base_commit).await?,
-            name: base::name_of(git, branches, prefer, &st.base_commit).await?,
             contained_in: base::contained_in(&st.base_choice, &st.base_commit, &st.head, own.as_deref()),
-            behind: base::behind(git, branches, &st.base_choice, &st.base_commit).await?,
+            into: self.merged_into(st).await?,
+            head_off_base: st.off_base,
         })
+    }
+
+    /// The branch a pull request is merged into, when that is not the repository's default branch.
+    async fn merged_into(&self, st: &State) -> Result<Option<String>> {
+        if !matches!(st.source, Source::PullRequest { .. }) {
+            return Ok(None);
+        }
+        let Some(head) = self.pull_request_head(&st.source).await? else {
+            return Ok(None);
+        };
+        let default = self.acquisition.git.default_branch().await?;
+        Ok(default.filter(|d| *d != head.target_branch).map(|_| head.target_branch))
+    }
+
+    /// Looks at the working tree's `HEAD` again and keeps whether it still builds on the base.
+    /// Answers whether that changed. Does nothing for another changeset.
+    async fn track_head(&self, st: &mut State) -> bool {
+        if st.source != Source::WorkingTree {
+            return false;
+        }
+        let off_base = base::head_left(&self.acquisition.git, &st.base_commit).await;
+        std::mem::replace(&mut st.off_base, off_base) != off_base
     }
 
     /// Replaces the repository's review filter, stored whether or not a review
@@ -698,11 +638,6 @@ impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> L
         self.revisions.advance(st.revision);
         self.note_progress(&writes, st).await?;
         Ok(st.revision)
-    }
-
-    /// Branches and recent commits to pick a base from.
-    pub async fn base_candidates(&self) -> Result<BaseCandidates> {
-        Ok(self.acquisition.git.base_candidates(MAX_BASE_COMMITS).await?)
     }
 
     pub async fn revision(&self) -> u32 {
@@ -861,6 +796,7 @@ impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> L
         }
         st.revision += 1;
         st.changes = None;
+        self.track_head(st).await;
         if let Some(diffed) = settlement.diffed
             && let Err(e) = self.install_diff(store, st, diffed).await
         {
@@ -874,12 +810,13 @@ impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> L
     /// on view when a ref was written, calling `on_settled` with each new revision of the
     /// changeset on view, until dropped. A settled tree that is not on view is not announced:
     /// it is not what is shown. `on_quiet` is called when `settling` finds the settled tree
-    /// quiet.
+    /// quiet, `on_edits` when edits start or stop waiting to settle.
     pub async fn follow<W: Watcher + Send, C: Clock + Send + Sync>(
         &self,
         mut settling: Settling<W, C>,
         mut on_settled: impl FnMut(u32) + Send,
         mut on_quiet: impl FnMut() + Send,
+        mut on_edits: impl FnMut(bool) + Send,
     ) {
         self.set_degraded(settling.degraded());
         loop {
@@ -887,6 +824,10 @@ impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> L
                 Ok(Settled::Tree(scan)) => scan,
                 Ok(Settled::Quiet) => {
                     on_quiet();
+                    continue;
+                }
+                Ok(Settled::Edits(waiting)) => {
+                    on_edits(waiting);
                     continue;
                 }
                 Ok(Settled::RefsMoved) => {

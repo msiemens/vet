@@ -40,7 +40,7 @@ use vet_semantic::pool::Supervision;
 use vet_semantic::ports::Backend;
 
 use crate::caches::PersistentAnswers;
-use crate::events::{Connection, settled};
+use crate::events::{Connection, edits_pending, settled};
 use crate::hosting::Hosting;
 use crate::{
     AzureDevOps, GitHub, LanguageServers, Live, Open, Orchestrator, PlatformAccounts, Semantic, message,
@@ -204,9 +204,11 @@ impl Wired {
             debounce.as_millis() as u64,
             Some(session.settled_snapshot().await),
         )
-        .quiet_after(quiet.as_millis() as u64);
+        .quiet_after(quiet.as_millis() as u64)
+        .reporting_edits();
         let task = {
             let (session, subscribers, entry) = (session.clone(), subscribers.clone(), entry.clone());
+            let edit_subscribers = subscribers.clone();
             let quiet_entry = entry.clone();
             let quiet_session = session.clone();
             tokio::spawn(async move {
@@ -225,6 +227,7 @@ impl Wired {
                                 open.copy_ahead(&quiet_session);
                             }
                         },
+                        |pending| edits_pending(&edit_subscribers, id, pending),
                     )
                     .await;
             })

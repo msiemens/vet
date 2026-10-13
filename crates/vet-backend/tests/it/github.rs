@@ -61,9 +61,8 @@ async fn a_pull_request_from_a_fork_is_opened_and_reviewed_against_its_target() 
         panic!("not a manifest")
     };
     println!(
-        "{} against {} ({}): {:?}",
+        "{} against {}: {:?}",
         manifest.target.name,
-        manifest.base.name,
         manifest.base.commit.id,
         manifest.files.iter().map(|f| (&f.path, f.delta)).collect::<Vec<_>>()
     );

@@ -118,6 +118,8 @@ pub(crate) struct FakeGit {
     renames: Arc<Mutex<Vec<(RepoPath, RepoPath)>>>,
     user: Arc<Mutex<Option<String>>>,
     branches: Arc<Mutex<Vec<BranchInfo>>>,
+    /// Where a test moved `HEAD` to; it is the commit `head` until then.
+    moved_head: Arc<Mutex<Option<CommitId>>>,
     /// First-parent history of a tip, the tip first.
     history: Arc<Mutex<HashMap<CommitId, Vec<CommitId>>>>,
     /// The revision branches are compared against by default.
@@ -154,7 +156,6 @@ impl FakeGit {
             commit: chain[0].clone(),
             current,
             default: false,
-            upstream: None,
             remote: false,
         });
         branches.sort_by(|a, b| a.name.cmp(&b.name));
@@ -283,7 +284,8 @@ impl BlobReader for FakeGit {
 
 impl History for FakeGit {
     async fn head(&self) -> std::result::Result<CommitId, GitError> {
-        Ok(CommitId("head".into()))
+        let moved = self.moved_head.lock().unwrap().clone();
+        Ok(moved.unwrap_or_else(|| CommitId("head".into())))
     }
     async fn user_name(&self) -> Option<String> {
         self.user.lock().unwrap().clone()
@@ -310,6 +312,9 @@ impl History for FakeGit {
     async fn default_reference(&self) -> std::result::Result<Option<String>, GitError> {
         Ok(self.default_reference.lock().unwrap().clone())
     }
+    async fn default_branch(&self) -> std::result::Result<Option<String>, GitError> {
+        Ok(self.default_reference.lock().unwrap().clone())
+    }
     async fn first_parent_range(
         &self,
         base: &CommitId,
@@ -331,9 +336,6 @@ impl History for FakeGit {
     }
     async fn branch_tip(&self, name: &str) -> std::result::Result<CommitId, GitError> {
         self.resolve_commit(&format!("refs/heads/{name}")).await
-    }
-    async fn base_candidates(&self, _: usize) -> std::result::Result<crate::ports::BaseCandidates, GitError> {
-        unreachable!()
     }
     async fn branches(&self) -> std::result::Result<Vec<BranchInfo>, GitError> {
         Ok(self.branches.lock().unwrap().clone())
@@ -366,16 +368,6 @@ impl History for FakeGit {
     }
     async fn remerge(&self, merge: &CommitId) -> std::result::Result<Option<Remerged>, GitError> {
         Ok(self.remerges.lock().unwrap().get(merge).cloned())
-    }
-    async fn first_parent_distance(
-        &self,
-        tip: &CommitId,
-        commit: &CommitId,
-        max: usize,
-    ) -> std::result::Result<Option<usize>, GitError> {
-        let history = self.history.lock().unwrap();
-        let chain = history.get(tip).map(Vec::as_slice).unwrap_or_default();
-        Ok(chain.iter().position(|c| c == commit).filter(|&n| n <= max))
     }
     async fn commits_behind(&self, tip: &CommitId, base: &CommitId, _: usize) -> std::result::Result<usize, GitError> {
         let history = self.history.lock().unwrap();
@@ -491,7 +483,6 @@ struct Mem {
     threads: Vec<ChangesetThread>,
     next_message: u64,
     filter: Option<ReviewFilter>,
-    browsing_base: Option<BaseChoice>,
     project_trusted: bool,
     trusted_heads: HashMap<Source, CommitId>,
 }
@@ -614,9 +605,6 @@ impl ReviewStore for MemStore {
     async fn project_trusted(&self, _: String) -> StoreResult<bool> {
         Ok(self.0.lock().unwrap().project_trusted)
     }
-    async fn browsing_base(&self, _: String) -> StoreResult<Option<BaseChoice>> {
-        Ok(self.0.lock().unwrap().browsing_base.clone())
-    }
 }
 
 impl ThreadStore for MemStore {
@@ -683,7 +671,6 @@ impl ReviewWrites for MemStore {
             threads: std::mem::take(&mut mem.threads),
             next_message: mem.next_message,
             filter: mem.filter.take(),
-            browsing_base: mem.browsing_base.take(),
             lens: mem.lens.take(),
             heads: std::mem::take(&mut mem.heads),
             votes: std::mem::take(&mut mem.votes),
@@ -722,14 +709,6 @@ impl ReviewWrites for MemStore {
             Some(head) => mem.trusted_heads.insert(source, head),
             None => mem.trusted_heads.remove(&source),
         };
-        Ok(())
-    }
-    async fn set_browsing_base(&self, _: String, choice: BaseChoice) -> StoreResult<()> {
-        self.0.lock().unwrap().browsing_base = Some(choice);
-        Ok(())
-    }
-    async fn set_base(&self, _: ReviewId, choice: BaseChoice) -> StoreResult<()> {
-        self.0.lock().unwrap().base = Some(choice);
         Ok(())
     }
     async fn set_last_reviewed(&self, _: ReviewId, version: u32) -> StoreResult<()> {
@@ -1136,25 +1115,19 @@ async fn a_version_records_what_it_changed_against_the_one_before_it() {
 
 #[tokio::test]
 async fn a_version_that_only_moves_the_base_changed_nothing_the_author_did() {
-    let fx = Fixture::reviewing(&[("a.txt", "one\n")], &[("a.txt", "two\n"), ("upstream.txt", "u\n")]).await;
-    // The base moves to a commit that has what the tree has taken over from upstream.
-    fx.git
-        .add_commit("c1", "c1-full", &[("a.txt", "one\n"), ("upstream.txt", "u\n")]);
-    fx.git.add_commit(
-        "merge-base main",
-        "c1-full",
-        &[("a.txt", "one\n"), ("upstream.txt", "u\n")],
-    );
+    let fx = Fixture::open(&[("a.txt", "one\n")], &[("a.txt", "one\n")]).await;
+    let pushed = [("a.txt", "two\n"), ("upstream.txt", "u\n")];
+    fetch_pull_request_7(&fx.git, &[("a.txt", "one\n")], "pr1", &pushed);
+    fx.session.open_changeset(pull_request_7()).await.unwrap();
+    fx.begin().await;
 
-    fx.session
-        .set_base(BaseChoice::Commit {
-            id: CommitId("c1".into()),
-        })
-        .await
-        .unwrap();
+    // The author rebased onto a target branch that has what the tree took over from upstream.
+    fetch_pull_request_7(&fx.git, &[("a.txt", "one\n")], "pr2", &pushed);
+    move_base_of_pull_request_7(&fx.git, "c1-full", &[("a.txt", "one\n"), ("upstream.txt", "u\n")]);
+    fx.session.observe().await.unwrap().expect("head and base moved");
 
     let versions = fx.store.0.lock().unwrap().versions.clone();
-    assert_eq!(versions[1].origin, VersionOrigin::BaseMoved);
+    assert_eq!(versions[1].origin, VersionOrigin::Observed);
     assert_eq!(
         changed(&versions[0]),
         [("a.txt".to_string(), 1, 1), ("upstream.txt".to_string(), 1, 0)]
@@ -1163,61 +1136,78 @@ async fn a_version_that_only_moves_the_base_changed_nothing_the_author_did() {
 }
 
 #[tokio::test]
-async fn a_base_on_another_commit_is_the_next_version() {
-    NOW.store(500, Ordering::Relaxed);
+async fn the_working_tree_keeps_the_head_it_was_opened_at_as_its_base() {
+    let fx = Fixture::open(&[("a.txt", "one\n")], &[("a.txt", "two\n")]).await;
+    fx.git.add_branch("feature", true, "head", &[]);
+
+    // The agent commits: HEAD moves on, the base stays and nothing is amiss.
+    fx.git.add_branch("feature", true, "f1", &["head"]);
+    *fx.git.moved_head.lock().unwrap() = Some(CommitId("f1".into()));
+    fx.settle(&[("a.txt", "two\n")]).await;
+
+    let m = fx.session.manifest(View::Changeset).await.unwrap();
+    assert_eq!(m.base.commit.id, CommitId("head".into()));
+    assert_eq!(m.target.branch.as_deref(), Some("feature"));
+    assert!(!m.base.head_off_base);
+}
+
+/// The working tree's `HEAD` moves to `commit`, which builds on the commit `ancestry` ends in.
+fn move_head(git: &FakeGit, commit: &str, ancestry: &[&str]) {
+    git.add_branch("feature", true, commit, ancestry);
+    *git.moved_head.lock().unwrap() = Some(CommitId(commit.into()));
+}
+
+#[tokio::test]
+async fn a_head_that_no_longer_builds_on_the_base_is_told_until_it_does_again() {
     let fx = Fixture::reviewing(&[("a.txt", "one\n")], &[("a.txt", "two\n")]).await;
-    fx.settle(&[("a.txt", "three\n")]).await;
-    let before = fx.store.0.lock().unwrap().versions.clone();
-    fx.git.add_commit("c1", "c1-full", &[("a.txt", "zero\n")]);
-    fx.git.add_commit("merge-base main", "c1-full", &[("a.txt", "zero\n")]);
+    let off_base = || async {
+        fx.session
+            .manifest(View::Changeset)
+            .await
+            .unwrap()
+            .changeset_base
+            .head_off_base
+    };
+    assert!(!off_base().await);
 
-    fx.session
-        .set_base(BaseChoice::Commit {
-            id: CommitId("c1".into()),
-        })
-        .await
-        .unwrap();
-
-    assert!(matches!(
-        fx.session.lifecycle().await,
-        Lifecycle::Open { version: 3, .. }
-    ));
-    let versions = fx.store.0.lock().unwrap().versions.clone();
-    let (settled, moved) = (&versions[1], &versions[2]);
-    assert_eq!(versions.len(), 3);
-    assert_eq!(moved.origin, VersionOrigin::BaseMoved);
-    assert_eq!(moved.base_commit, CommitId("c1-full".into()));
-    assert_ne!(moved.base, settled.base, "the version has the new base's tree");
-    assert_eq!(
-        (&moved.target, &moved.tip, moved.at),
-        (&settled.target, &settled.tip, 500),
-        "and the target the tree had when the base moved"
+    // A rebase: HEAD is on other history, and the tree changed with it.
+    move_head(&fx.git, "r2", &["r1"]);
+    assert!(
+        fx.session.observe().await.unwrap().is_some(),
+        "a revision that tells it, with no snapshot settling"
     );
-    assert_eq!(versions[..2], before[..], "earlier versions stay as they were");
-    // Only what the version adds is kept by a ref: the new base, not the commit already held.
-    let mut refs: Vec<_> = fx.git.refs.lock().unwrap().iter().map(|(n, _)| n.clone()).collect();
-    refs.sort();
-    assert_eq!(refs, ["1/base", "1/tip", "3/base"]);
+    assert!(off_base().await);
+    assert_eq!(fx.session.observe().await.unwrap(), None, "told once");
 
-    // The same commit chosen another way is the same version.
-    fx.session
-        .set_base(BaseChoice::MergeBase {
-            reference: "main".into(),
-        })
-        .await
-        .unwrap();
-    assert!(matches!(
-        fx.session.lifecycle().await,
-        Lifecycle::Open { version: 3, .. }
-    ));
-    let mem = fx.store.0.lock().unwrap();
-    assert_eq!(mem.versions.len(), 3);
-    assert_eq!(
-        mem.base,
-        Some(BaseChoice::MergeBase {
-            reference: "main".into()
-        })
-    );
+    // Back on a commit that builds on the base.
+    move_head(&fx.git, "h2", &["head"]);
+    assert!(fx.session.observe().await.unwrap().is_some());
+    assert!(!off_base().await);
+}
+
+#[tokio::test]
+async fn a_head_that_left_the_base_while_vet_was_closed_is_told_on_resuming() {
+    let fx = Fixture::reviewing(&[("a.txt", "one\n")], &[("a.txt", "two\n")]).await;
+    move_head(&fx.git, "r2", &["r1"]);
+
+    let session = fx.reopen(&[("a.txt", "two\n")]).await;
+
+    let m = session.manifest(View::Changeset).await.unwrap();
+    assert!(m.changeset_base.head_off_base);
+    assert_eq!(m.base.commit.id, CommitId("head".into()), "the base stays");
+}
+
+#[tokio::test]
+async fn only_the_working_tree_is_told_about_its_head() {
+    let base = numbered(10, &[]);
+    let fx = Fixture::open(&[("a.txt", &base)], &[("a.txt", &base)]).await;
+    fx.git.feature(&[("a.txt", &base)], &[("a.txt", &numbered(10, &[1]))]);
+    *fx.git.moved_head.lock().unwrap() = Some(CommitId("r2".into()));
+    view_feature(&fx).await;
+
+    let m = fx.session.manifest(View::Changeset).await.unwrap();
+
+    assert!(!m.changeset_base.head_off_base);
 }
 
 #[tokio::test]
@@ -1501,7 +1491,7 @@ async fn toggling_a_file_marks_all_of_it_and_toggling_again_takes_it_back() {
 }
 
 #[tokio::test]
-async fn toggling_a_hunk_flips_what_is_stored_and_a_hunk_seen_against_an_old_base_becomes_seen() {
+async fn toggling_a_hunk_flips_what_is_stored() {
     let base = numbered(10, &[]);
     let fx = Fixture::open(&[("a.txt", &base)], &[("a.txt", &numbered(10, &[3, 4]))]).await;
 
@@ -1514,21 +1504,23 @@ async fn toggling_a_hunk_flips_what_is_stored_and_a_hunk_seen_against_an_old_bas
         (vec![HunkState::Unseen], None)
     );
 
-    fx.session.toggle_hunk(0, View::Changeset, "a.txt", 0).await.unwrap();
-    let other = base.replace("line 4\n", "");
-    fx.git.add_commit("merge-base main", "mb", &[("a.txt", &other)]);
-    fx.session
-        .set_base(BaseChoice::MergeBase {
-            reference: "main".into(),
-        })
+    let missing = fx.session.toggle_hunk(0, View::Changeset, "a.txt", 3).await;
+    assert!(matches!(missing, Err(SessionError::NotFound(_))));
+}
+
+#[tokio::test]
+async fn toggling_a_hunk_seen_against_an_old_base_marks_it_seen_again() {
+    let fx = seen_then_base_changed().await;
+    let revision = fx.session.revision().await;
+    assert_eq!(fx.hunks("a.txt").await, [HunkState::SeenAgainstOldBase]);
+
+    let update = fx
+        .session
+        .toggle_hunk(revision, View::Changeset, "a.txt", 0)
         .await
         .unwrap();
-    assert_eq!(fx.hunks("a.txt").await, [HunkState::SeenAgainstOldBase]);
-    let update = fx.session.toggle_hunk(1, View::Changeset, "a.txt", 0).await.unwrap();
-    assert_eq!(update.review.hunks, [HunkState::Seen]);
 
-    let missing = fx.session.toggle_hunk(1, View::Changeset, "a.txt", 3).await;
-    assert!(matches!(missing, Err(SessionError::NotFound(_))));
+    assert_eq!(update.review.hunks, [HunkState::Seen]);
 }
 
 #[tokio::test]
@@ -1754,8 +1746,8 @@ async fn a_resumed_session_uses_the_repository_filter_and_keeps_its_base_and_ref
     let session = fx.reopen(&[("a.txt", "two\n")]).await;
 
     let m = session.manifest(View::Changeset).await.unwrap();
-    assert_eq!((&m.filter, base_of(&m).0), (&filter, &detached_head()));
-    assert_eq!(base_of(&m).1, "head");
+    assert_eq!(m.filter, filter);
+    assert_eq!(m.base.commit.id, CommitId("head".into()));
     assert_eq!(fx.git.refs.lock().unwrap().len(), 2);
 }
 
@@ -1799,20 +1791,14 @@ async fn a_filter_set_while_browsing_is_stored_and_applies_to_the_review() {
 }
 
 #[tokio::test]
-async fn a_resumed_review_keeps_its_base_commit_however_its_branch_moved() {
-    let fx = Fixture::open(&[("a.txt", "one\n")], &[("a.txt", "two\n")]).await;
-    fx.git.add_commit("merge-base main", "m1", &[("a.txt", "one\n")]);
-    let choice = BaseChoice::MergeBase {
-        reference: "main".into(),
-    };
-    fx.session.set_base(choice.clone()).await.unwrap();
-    fx.begin().await;
+async fn a_resumed_review_keeps_its_base_commit_however_head_moved() {
+    let fx = Fixture::reviewing(&[("a.txt", "one\n")], &[("a.txt", "two\n")]).await;
+    move_head(&fx.git, "h2", &["head"]);
 
-    fx.git.add_commit("merge-base main", "m2", &[("a.txt", "one\n")]);
     let session = fx.reopen(&[("a.txt", "two\n")]).await;
 
     let m = session.manifest(View::Changeset).await.unwrap();
-    assert_eq!((base_of(&m).0, base_of(&m).1), (&choice, "m1"));
+    assert_eq!(m.base.commit.id, CommitId("head".into()));
 }
 
 #[tokio::test]
@@ -1848,310 +1834,78 @@ fn detached_head() -> BaseChoice {
     }
 }
 
-fn base_of(m: &ManifestView) -> (&BaseChoice, &str, &str) {
-    (&m.base.choice, &m.base.commit.id.0, &m.base.name)
-}
-
 #[tokio::test]
-async fn the_default_base_is_the_current_branchs_tip() {
-    let fx = Fixture::open(&[("a.txt", "one\n")], &[("a.txt", "two\n")]).await;
-    assert_eq!(fx.session.manifest(View::Changeset).await.unwrap().base.name, "head");
-
+async fn the_working_tree_is_compared_against_the_head_not_the_checked_out_branchs_tip() {
     let git = FakeGit::default();
     *git.base.lock().unwrap() = Some(git.snapshot(&[("a.txt", "one\n")]));
     let scan = git.snapshot(&[("a.txt", "two\n")]);
     git.scans.lock().unwrap().push(scan);
     git.add_branch("feature", true, "f3", &["f2", "f1"]);
-    git.add_branch("main", false, "m1", &[]);
     let session = LiveSession::open(git, MemStore::default(), REPO.into(), clock)
         .await
         .unwrap();
 
     let m = session.manifest(View::Changeset).await.unwrap();
-    assert_eq!(
-        base_of(&m),
-        (
-            &BaseChoice::MergeBase {
-                reference: "feature".into()
-            },
-            "f3",
-            "feature"
-        )
-    );
-    assert_eq!(m.base.behind, None);
+
+    assert_eq!(m.base.commit.id, CommitId("head".into()));
     assert_eq!(m.target.name, "Working tree");
     assert_eq!(m.target.branch.as_deref(), Some("feature"));
-    assert_eq!(m.base.commit.subject, "subject of f3");
+    assert_eq!(m.base.commit.subject, "subject of head");
+    assert_eq!(m.base.into, None);
 }
 
 #[tokio::test]
-async fn a_base_is_named_by_its_branch_tip_then_branch_relative_then_by_hash() {
-    let fx = Fixture::open(&[("a.txt", "one\n")], &[("a.txt", "two\n")]).await;
-    fx.git.add_branch("feature", true, "f2", &["f1", "base"]);
-    fx.git.add_branch("main", false, "m2", &["base", "root"]);
-    for (commit, name) in [
-        ("m2", "main"),
-        ("f1", "feature~1"),
-        // On both histories: the current branch wins.
-        ("base", "feature~2"),
-        ("root", "main~2"),
-        ("0123456789abcdef", "0123456"),
-    ] {
-        fx.git.add_commit(commit, commit, &[("a.txt", "one\n")]);
-        fx.session
-            .set_base(BaseChoice::Commit {
-                id: CommitId(commit.into()),
-            })
-            .await
-            .unwrap();
-        assert_eq!(
-            fx.session.manifest(View::Changeset).await.unwrap().base.name,
-            name,
-            "{commit}"
-        );
-    }
-}
-
-#[tokio::test]
-async fn a_branch_base_counts_how_far_the_branch_moved_on_and_latest_catches_up() {
-    let fx = Fixture::open(&[("a.txt", "one\n")], &[("a.txt", "two\n")]).await;
-    fx.git.add_branch("main", true, "m1", &["m0"]);
-    fx.git.add_commit("merge-base main", "m1", &[("a.txt", "one\n")]);
-    let main = BaseChoice::MergeBase {
-        reference: "main".into(),
+async fn a_pull_request_into_a_branch_other_than_the_default_says_so() {
+    let fx = Fixture::open(&[("a.txt", "one\n")], &[("a.txt", "one\n")]).await;
+    fx.git.feature(&[("a.txt", "one\n")], &[("a.txt", "one\n")]);
+    fetch_pull_request_7(&fx.git, &[("a.txt", "one\n")], "pr1", &[("a.txt", "two\n")]);
+    let into = |m: ManifestView| m.changeset_base.into;
+    let pull_request = |target: &str| PullRequestHead {
+        title: "Fix".into(),
+        draft: false,
+        fork: false,
+        target_branch: target.into(),
     };
-    fx.session.set_base(main.clone()).await.unwrap();
-    assert_eq!(fx.session.manifest(View::Changeset).await.unwrap().base.behind, None);
 
-    // Two commits on main since: the base stays where it was.
-    fx.git.add_branch("main", true, "m3", &["m2", "m1", "m0"]);
-    fx.git.branches.lock().unwrap().retain(|b| b.commit.0 != "m1");
-    fx.git.add_commit("main", "m3", &[("a.txt", "one\n")]);
-    let m = fx.session.manifest(View::Changeset).await.unwrap();
-    assert_eq!((base_of(&m), m.base.behind), ((&main, "m1", "main~2"), Some(2)));
-
-    fx.git.add_commit("merge-base main", "m3", &[("a.txt", "one\n")]);
-    let (view, _) = fx.session.set_base(main).await.unwrap();
-    assert_eq!(
-        (view.commit.id.0.as_str(), view.name.as_str(), view.behind),
-        ("m3", "main", None)
-    );
-}
-
-/// `main` is at `m3`, two commits past the base `m1`, and `origin/main` at `m5`, four.
-#[tokio::test]
-async fn behind_counts_the_branch_and_its_remote_whichever_way_the_reference_is_spelled() {
-    let fx = Fixture::open(&[("a.txt", "one\n")], &[("a.txt", "two\n")]).await;
-    fx.git.add_branch("main", true, "m3", &["m2", "m1"]);
-    fx.git.add_branch("other", false, "m5", &["m4", "m3", "m2", "m1"]);
-    fx.git
-        .branches
+    fx.store
+        .0
         .lock()
         .unwrap()
-        .iter_mut()
-        .find(|b| b.name == "main")
+        .heads
+        .insert(pull_request_7(), pull_request("release/2.1"));
+    fx.session.open_changeset(pull_request_7()).await.unwrap();
+    assert_eq!(
+        into(fx.session.manifest(View::Changeset).await.unwrap()).as_deref(),
+        Some("release/2.1")
+    );
+
+    fx.store
+        .0
+        .lock()
         .unwrap()
-        .upstream = Some(CommitId("m5".into()));
-    for (spec, tip) in [
-        ("main", "m3"),
-        ("refs/heads/main", "m3"),
-        ("origin/main", "m5"),
-        ("refs/remotes/origin/main", "m5"),
-        ("refs/remotes/origin/HEAD", "m5"),
-    ] {
-        fx.git.add_commit(spec, tip, &[("a.txt", "one\n")]);
-        fx.git
-            .add_commit(&format!("merge-base {spec}"), "m1", &[("a.txt", "one\n")]);
-        let (view, _) = fx
-            .session
-            .set_base(BaseChoice::MergeBase { reference: spec.into() })
-            .await
-            .unwrap();
-        assert_eq!(view.behind, Some(4), "{spec}");
-    }
+        .heads
+        .insert(pull_request_7(), pull_request("main"));
+    assert_eq!(into(fx.session.manifest(View::Changeset).await.unwrap()), None);
 }
 
-#[tokio::test]
-async fn setting_the_base_holds_its_commit_and_bumps_the_revision() {
-    let base = numbered(10, &[]);
-    let fx = Fixture::reviewing(&[("a.txt", &base)], &[("a.txt", &numbered(10, &[3]))]).await;
-    let m = fx.session.manifest(View::Changeset).await.unwrap();
-    assert_eq!(base_of(&m), (&detached_head(), "head", "head"));
-    assert_eq!(m.files[0].hunks.len(), 1);
-
-    // The chosen commit already has the edit: nothing is left to review.
-    fx.git.add_commit("c1", "c1-full", &[("a.txt", &numbered(10, &[3]))]);
-    let (view, revision) = fx
-        .session
-        .set_base(BaseChoice::Commit {
-            id: CommitId("c1".into()),
-        })
-        .await
-        .unwrap();
-    assert_eq!(revision, 1);
-    let full = BaseChoice::Commit {
-        id: CommitId("c1-full".into()),
-    };
-    assert_eq!(
-        (&view.choice, view.commit.id.0.as_str(), view.name.as_str()),
-        (&full, "c1-full", "c1-full")
-    );
-    let m = fx.session.manifest(View::Changeset).await.unwrap();
-    assert_eq!((m.revision, base_of(&m)), (1, (&full, "c1-full", "c1-full")));
-    assert!(m.files.is_empty());
-    let held = fx.git.refs.lock().unwrap().clone();
-    assert!(held.contains(&("2/base".to_string(), CommitId("c1-full".into()))));
-    assert!(
-        held.contains(&("1/base".to_string(), CommitId("head".into()))),
-        "the earlier version keeps its base"
-    );
-    assert_eq!(fx.store.0.lock().unwrap().base, Some(full));
-
-    // Back to where it was; asking again changes nothing.
-    fx.git.add_commit("head", "head", &[("a.txt", &base)]);
-    let back = || BaseChoice::Commit {
-        id: CommitId("head".into()),
-    };
-    let (view, revision) = fx.session.set_base(back()).await.unwrap();
-    assert_eq!((revision, view.commit.id.0.as_str()), (2, "head"));
-    assert_eq!(fx.session.set_base(back()).await.unwrap().1, 2);
-    assert_eq!(
-        fx.session.manifest(View::Changeset).await.unwrap().files[0].hunks.len(),
-        1
-    );
-    assert_eq!(fx.store.0.lock().unwrap().base, Some(back()));
-    assert!(matches!(
-        fx.session.lifecycle().await,
-        Lifecycle::Open { version: 3, .. }
-    ));
-    assert!(
-        fx.git
-            .refs
-            .lock()
-            .unwrap()
-            .contains(&("3/base".to_string(), CommitId("head".into())))
-    );
-}
-
-#[tokio::test]
-async fn a_base_chosen_while_browsing_is_carried_into_the_review() {
-    let fx = Fixture::open(&[("a.txt", "one\n")], &[("a.txt", "two\n")]).await;
-    fx.git.add_commit("c1", "c1-full", &[("a.txt", "zero\n")]);
-    let c1 = BaseChoice::Commit {
-        id: CommitId("c1-full".into()),
-    };
-    fx.session
-        .set_base(BaseChoice::Commit {
-            id: CommitId("c1".into()),
-        })
-        .await
-        .unwrap();
-    {
-        let mem = fx.store.0.lock().unwrap();
-        assert!(
-            mem.base.is_none() && mem.versions.is_empty(),
-            "nothing is stored while browsing"
-        );
-    }
-
-    fx.session.set_seen(1, "a.txt", &[0], true).await.unwrap();
-
-    let mem = fx.store.0.lock().unwrap();
-    assert_eq!(mem.base, Some(c1));
-    assert_eq!(mem.versions.len(), 1, "the base is no version of its own");
-    assert_eq!(mem.versions[0].base_commit, CommitId("c1-full".into()));
-    assert!(
-        fx.git
-            .refs
-            .lock()
-            .unwrap()
-            .contains(&("1/base".to_string(), CommitId("c1-full".into())))
-    );
-}
-
-#[tokio::test]
-async fn the_base_chosen_while_browsing_is_the_base_when_the_repository_opens_again() {
-    let fx = Fixture::open(&[("a.txt", "one\n")], &[("a.txt", "two\n")]).await;
-    fx.git.add_commit("c1", "c1-full", &[("a.txt", "zero\n")]);
-    fx.git.add_commit("c1-full", "c1-full", &[("a.txt", "zero\n")]);
-    let c1 = BaseChoice::Commit {
-        id: CommitId("c1-full".into()),
-    };
-    fx.session
-        .set_base(BaseChoice::Commit {
-            id: CommitId("c1".into()),
-        })
-        .await
-        .unwrap();
-
-    let session = fx.reopen(&[("a.txt", "two\n")]).await;
-
-    let m = session.manifest(View::Changeset).await.unwrap();
-    assert_eq!((base_of(&m).0, base_of(&m).1), (&c1, "c1-full"));
-    assert_eq!(session.lifecycle().await, Lifecycle::Browsing);
-}
-
-#[tokio::test]
-async fn a_remembered_base_that_no_longer_resolves_gives_way_to_the_default() {
-    let fx = Fixture::open(&[("a.txt", "one\n")], &[("a.txt", "two\n")]).await;
-    fx.store.0.lock().unwrap().browsing_base = Some(BaseChoice::MergeBase {
-        reference: "deleted".into(),
-    });
-
-    let session = fx.reopen(&[("a.txt", "two\n")]).await;
-
-    let m = session.manifest(View::Changeset).await.unwrap();
-    assert_eq!(base_of(&m).0, &detached_head());
-}
-
-#[tokio::test]
-async fn a_changed_base_makes_marks_seen_against_an_old_base_until_it_is_chosen_again() {
-    let base = numbered(10, &[]);
-    let fx = Fixture::open(&[("a.txt", &base)], &[("a.txt", &numbered(10, &[3, 4]))]).await;
-    fx.session.set_seen(0, "a.txt", &[0], true).await.unwrap();
-    // The merge base lacks the second base line of the marked hunk.
-    let other = base.replace("line 4\n", "");
-    fx.git.add_commit("merge-base main", "mb", &[("a.txt", &other)]);
-    let merge_base = BaseChoice::MergeBase {
-        reference: "main".into(),
-    };
-
-    fx.session.set_base(merge_base.clone()).await.unwrap();
-    // The target lines are as marked, the base lines are not all.
-    assert_eq!(fx.hunks("a.txt").await, [HunkState::SeenAgainstOldBase]);
-    let m = fx.session.manifest(View::Changeset).await.unwrap();
-    assert_eq!((m.completion.seen_lines, m.completion.old_base_lines), (1, 2));
-    assert!(!m.completion.is_complete());
-
-    // Choosing the first base again restores the coverage, and so does coming back.
-    fx.git.add_commit("head", "head", &[("a.txt", &base)]);
-    fx.session.set_base(detached_head()).await.unwrap();
-    assert_eq!(fx.hunks("a.txt").await, [HunkState::Seen]);
-    fx.session.set_base(merge_base).await.unwrap();
-    assert_eq!(fx.hunks("a.txt").await, [HunkState::SeenAgainstOldBase]);
-
-    // Re-confirming marks the hunk against the new base.
-    fx.session.set_seen(3, "a.txt", &[0], true).await.unwrap();
-    assert_eq!(fx.hunks("a.txt").await, [HunkState::Seen]);
-}
-
-/// A hunk of `a.txt` marked seen, then the base moved to a commit that lacks "line 4"; `b.txt`
-/// changes too and is not marked.
+/// A hunk of `a.txt` marked seen in pull request 7, then the author rebased it onto a target
+/// branch that lacks "line 4"; `b.txt` changes too and is not marked.
 async fn seen_then_base_changed() -> Fixture {
     let base = numbered(10, &[]);
+    let pushed = [("a.txt", numbered(10, &[3, 4])), ("b.txt", numbered(10, &[3, 4]))];
+    let pushed: Vec<(&str, &str)> = pushed.iter().map(|(p, t)| (*p, t.as_str())).collect();
     let fx = Fixture::open(
         &[("a.txt", &base), ("b.txt", &base)],
-        &[("a.txt", &numbered(10, &[3, 4])), ("b.txt", &numbered(10, &[3, 4]))],
+        &[("a.txt", &base), ("b.txt", &base)],
     )
     .await;
-    fx.session.set_seen(0, "a.txt", &[0], true).await.unwrap();
+    fetch_pull_request_7(&fx.git, &[("a.txt", &base), ("b.txt", &base)], "pr1", &pushed);
+    let revision = fx.session.open_changeset(pull_request_7()).await.unwrap().unwrap();
+    fx.session.set_seen(revision, "a.txt", &[0], true).await.unwrap();
     let other = base.replace("line 4\n", "");
-    fx.git
-        .add_commit("merge-base main", "mb", &[("a.txt", &other), ("b.txt", &other)]);
-    let merge_base = BaseChoice::MergeBase {
-        reference: "main".into(),
-    };
-    fx.session.set_base(merge_base).await.unwrap();
+    fetch_pull_request_7(&fx.git, &[("a.txt", &other), ("b.txt", &other)], "pr2", &pushed);
+    move_base_of_pull_request_7(&fx.git, "mb", &[("a.txt", &other), ("b.txt", &other)]);
+    fx.session.observe().await.unwrap().expect("head and base moved");
     fx
 }
 
@@ -2210,8 +1964,11 @@ async fn re_confirming_a_file_marks_its_hunks_seen_against_an_old_base_seen_and_
 #[tokio::test]
 async fn coverage_survives_git_dropping_the_old_base() {
     let base = numbered(10, &[]);
-    let fx = Fixture::open(&[("a.txt", &base)], &[("a.txt", &numbered(10, &[3, 4]))]).await;
-    fx.session.set_seen(0, "a.txt", &[0], true).await.unwrap();
+    let pushed = numbered(10, &[3, 4]);
+    let fx = Fixture::open(&[("a.txt", &base)], &[("a.txt", &base)]).await;
+    fetch_pull_request_7(&fx.git, &[("a.txt", &base)], "pr1", &[("a.txt", &pushed)]);
+    let revision = fx.session.open_changeset(pull_request_7()).await.unwrap().unwrap();
+    fx.session.set_seen(revision, "a.txt", &[0], true).await.unwrap();
     let held = |fx: &Fixture| {
         fx.store
             .0
@@ -2222,12 +1979,10 @@ async fn coverage_survives_git_dropping_the_old_base() {
     };
     assert!(!held(&fx), "git holds the base");
 
-    fx.git
-        .add_commit("c1", "c1-full", &[("a.txt", &base.replace("line 4\n", ""))]);
-    let c1 = BaseChoice::Commit {
-        id: CommitId("c1".into()),
-    };
-    fx.session.set_base(c1).await.unwrap();
+    let other = base.replace("line 4\n", "");
+    fetch_pull_request_7(&fx.git, &[("a.txt", &other)], "pr2", &[("a.txt", &pushed)]);
+    move_base_of_pull_request_7(&fx.git, "c1-full", &[("a.txt", &other)]);
+    fx.session.observe().await.unwrap().expect("head and base moved");
     assert!(held(&fx), "copied when the base changes");
 
     fx.git.forget(&base);
@@ -2237,54 +1992,27 @@ async fn coverage_survives_git_dropping_the_old_base() {
 #[tokio::test]
 async fn the_content_of_base_side_threads_is_copied_when_the_base_changes() {
     let base = numbered(10, &[]);
-    let fx = Fixture::open(&[("a.txt", &base)], &[("a.txt", &numbered(10, &[3]))]).await;
+    let fx = Fixture::open(&[("a.txt", &base)], &[("a.txt", &base)]).await;
+    let pushed = numbered(10, &[3]);
+    fetch_pull_request_7(&fx.git, &[("a.txt", &base)], "pr1", &[("a.txt", &pushed)]);
+    let revision = fx.session.open_changeset(pull_request_7()).await.unwrap().unwrap();
     let thread = NewThread::Range {
         side: Side::Base,
         path: path("a.txt"),
         range: LineRange { start: 5, end: 7 },
     };
     fx.session
-        .create_thread(0, View::Changeset, thread, "why".into(), 1)
+        .create_thread(revision, View::Changeset, thread, "why".into(), 1)
         .await
         .unwrap();
 
-    fx.git
-        .add_commit("c1", "c1-full", &[("a.txt", &base.replace("line 0\n", ""))]);
-    let c1 = BaseChoice::Commit {
-        id: CommitId("c1".into()),
-    };
-    fx.session.set_base(c1).await.unwrap();
+    let other = base.replace("line 0\n", "");
+    fetch_pull_request_7(&fx.git, &[("a.txt", &other)], "pr2", &[("a.txt", &pushed)]);
+    move_base_of_pull_request_7(&fx.git, "c1-full", &[("a.txt", &other)]);
+    fx.session.observe().await.unwrap().expect("head and base moved");
 
     let mem = fx.store.0.lock().unwrap();
     assert!(mem.blobs.contains_key(&BlobId::of(base.as_bytes())));
-}
-
-#[tokio::test]
-async fn a_base_that_does_not_resolve_is_refused_and_changes_nothing() {
-    let fx = Fixture::open(&[("a.txt", "one\n")], &[("a.txt", "two\n")]).await;
-
-    let err = fx
-        .session
-        .set_base(BaseChoice::Commit {
-            id: CommitId("nope".into()),
-        })
-        .await
-        .unwrap_err();
-    assert_eq!(err.to_string(), "unknown commit nope");
-    let err = fx
-        .session
-        .set_base(BaseChoice::MergeBase {
-            reference: "dev".into(),
-        })
-        .await
-        .unwrap_err();
-    assert_eq!(err.to_string(), "no common ancestor with dev");
-
-    assert_eq!(fx.session.revision().await, 0);
-    assert_eq!(
-        fx.session.manifest(View::Changeset).await.unwrap().base.choice,
-        detached_head()
-    );
 }
 
 #[tokio::test]
@@ -3610,7 +3338,7 @@ async fn the_list_names_the_branch_of_the_working_tree_and_counts_the_open_threa
     assert!(after.rows.iter().skip(1).all(|r| r.branch.is_none()));
 }
 
-fn pull_request_7() -> Source {
+pub(crate) fn pull_request_7() -> Source {
     Source::PullRequest {
         remote: RemoteKey {
             host: "github.com".into(),
@@ -3622,13 +3350,25 @@ fn pull_request_7() -> Source {
 
 /// Pull request 7 as fetched: its head at commit `head` with the tree `files`, which left the
 /// target branch at commit `m1` with the tree `base`.
-fn fetch_pull_request_7(git: &FakeGit, base: &[(&str, &str)], head: &str, files: &[(&str, &str)]) {
+pub(crate) fn fetch_pull_request_7(git: &FakeGit, base: &[(&str, &str)], head: &str, files: &[(&str, &str)]) {
     let Source::PullRequest { remote, number } = pull_request_7() else {
         unreachable!()
     };
     let refs = PullRequestRefs::of(&remote, number);
     git.add_commit(&refs.head, head, files);
     git.add_commit(&format!("merge-base {}", refs.target), "m1", base);
+}
+
+/// Pull request 7 was rebased onto the target branch as it is at commit `id` with the tree `files`.
+pub(crate) fn move_base_of_pull_request_7(git: &FakeGit, id: &str, files: &[(&str, &str)]) {
+    let Source::PullRequest { remote, number } = pull_request_7() else {
+        unreachable!()
+    };
+    git.add_commit(
+        &format!("merge-base {}", PullRequestRefs::of(&remote, number).target),
+        id,
+        files,
+    );
 }
 
 #[tokio::test]
@@ -3834,7 +3574,10 @@ async fn a_review_whose_base_moved_has_its_base_changed_lines_in_the_progress() 
     let fx = seen_then_base_changed().await;
     let m = fx.session.manifest(View::Changeset).await.unwrap();
 
-    let progress = tree_progress(&fx.session).await.expect("measured");
+    let RowReview::Open { progress, .. } = fx.session.reviews_of(&[pull_request_7()]).await.unwrap()[0] else {
+        panic!("the review is open")
+    };
+    let progress = progress.expect("measured");
 
     assert_eq!(
         (progress.total, progress.seen, progress.old_base),
@@ -3890,33 +3633,6 @@ async fn the_lines_of_a_branch_are_counted_between_its_base_and_its_tip_once_per
         Some(LineDelta { added: 1, removed: 1 })
     );
     assert_eq!(fx.git.diffs.load(Ordering::Relaxed), 2);
-}
-
-#[tokio::test]
-async fn a_reviewed_changeset_is_counted_against_the_base_its_review_chose() {
-    let base = numbered(30, &[]);
-    let fx = Fixture::open(&[("a.txt", &base)], &[("a.txt", &base)]).await;
-    fx.git
-        .feature(&[("a.txt", &base)], &[("a.txt", &numbered(30, &[3, 20]))]);
-    let revision = view_feature(&fx).await;
-    fx.session.set_seen(revision, "a.txt", &[0], true).await.unwrap();
-    assert_eq!(
-        fx.session.lines_of(&feature()).await.unwrap(),
-        Some(LineDelta { added: 2, removed: 2 })
-    );
-
-    fx.git.add_commit("m0", "m0", &[("a.txt", &numbered(30, &[3]))]);
-    fx.session
-        .set_base(BaseChoice::Commit {
-            id: CommitId("m0".into()),
-        })
-        .await
-        .unwrap();
-
-    assert_eq!(
-        fx.session.lines_of(&feature()).await.unwrap(),
-        Some(LineDelta { added: 1, removed: 1 })
-    );
 }
 
 #[tokio::test]

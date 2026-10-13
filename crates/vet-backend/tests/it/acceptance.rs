@@ -30,7 +30,7 @@ use vet_infra::materialize::Materialize;
 use vet_infra::materialize::kept::{KeptTrees, Limits, Referenced};
 use vet_infra::store::SqliteStore;
 use vet_protocol::{
-    AnchorState, AnchorStrategy, BaseChoice, EntryKind, Event, FileChange, HunkState, LineLocation, Manifest,
+    AnchorState, AnchorStrategy, ChangesetKey, EntryKind, Event, FileChange, HunkState, LineLocation, Manifest,
     NonTextKind, ProjectId, Request, Response, ReviewFilter, ServerMessage, Side, StaleReason, Thread, ThreadKind,
     ThreadTarget,
 };
@@ -151,8 +151,10 @@ impl Client {
         assert!(matches!(self.call(request).await.unwrap(), Response::Review(_)));
     }
 
-    async fn set_base(&self, project: ProjectId, base: BaseChoice) {
-        self.call(Request::SetBase { project, base }).await.unwrap();
+    /// Puts the local branch `name` on view: its base follows it as it is rebased.
+    async fn open_branch(&self, project: ProjectId, name: &str) {
+        let changeset = ChangesetKey::Branch { name: name.into() };
+        self.call(Request::OpenChangeset { project, changeset }).await.unwrap();
     }
 
     async fn set_filter(&self, project: ProjectId, filter: ReviewFilter) {
@@ -246,12 +248,6 @@ fn at(path: &str, start: u32, len: u32) -> Option<LineLocation> {
     })
 }
 
-fn merge_base(reference: &str) -> BaseChoice {
-    BaseChoice::MergeBase {
-        reference: reference.into(),
-    }
-}
-
 // ---------------------------------------------------------------------------
 // Criterion 1: anchor robustness
 // ---------------------------------------------------------------------------
@@ -311,31 +307,21 @@ async fn criterion1_rebase_moves_hunks_and_marks_and_comments_follow() {
     write(p, "a.txt", &text(40, &[20]));
     git(p, &["commit", "-q", "-a", "-m", "feature"]);
     write(p, "a.txt", &text(40, &[20, 30]));
+    git(p, &["commit", "-q", "-a", "-m", "feature again"]);
     let mut client = Client::new(&fx.handler);
     let project = client.open(p).await;
-    client.set_base(project, merge_base("main")).await;
-    client.settled().await;
+    client.open_branch(project, "feature").await;
     let m = client.manifest(project).await;
     assert_eq!(hunks(&m, "a.txt"), [HunkState::Unseen, HunkState::Unseen]);
     client.toggle_hunk(project, "a.txt", 0).await;
     let comment = client.comment(project, "a.txt", 20, 1).await;
 
     advance_main(p, &[("a.txt", &format!("header\n{}", text(40, &[])))]);
-    git(p, &["rebase", "-q", "--autostash", "main"]);
+    git(p, &["rebase", "-q", "main"]);
     client.quiet().await;
 
-    // Against the old base the header is one more change; the marks moved down by one line.
-    let m = client.manifest(project).await;
-    assert_eq!(
-        hunks(&m, "a.txt"),
-        [HunkState::Unseen, HunkState::Seen, HunkState::Unseen]
-    );
-    let thread = client.thread(project, comment.id).await;
-    assert_eq!((thread.anchor, thread.location), (Some(EXACT), at("a.txt", 21, 1)));
-
-    // Against the new merge base only the feature's own changes are left.
-    client.set_base(project, merge_base("main")).await;
-    client.settled().await;
+    // The base is where the branch left main now: only the feature's own changes are left, and
+    // the marks and the comment moved down by one line.
     let m = client.manifest(project).await;
     assert_eq!(hunks(&m, "a.txt"), [HunkState::Seen, HunkState::Unseen]);
     let thread = client.thread(project, comment.id).await;
@@ -351,8 +337,7 @@ async fn criterion1_a_rebase_that_changes_the_base_side_marks_seen_against_old_b
     git(p, &["commit", "-q", "-a", "-m", "feature"]);
     let mut client = Client::new(&fx.handler);
     let project = client.open(p).await;
-    client.set_base(project, merge_base("main")).await;
-    client.settled().await;
+    client.open_branch(project, "feature").await;
     client.toggle_hunk(project, "a.txt", 0).await;
     assert_eq!(hunks(&client.manifest(project).await, "a.txt"), [HunkState::Seen]);
 
@@ -361,8 +346,7 @@ async fn criterion1_a_rebase_that_changes_the_base_side_marks_seen_against_old_b
     advance_main(p, &[("a.txt", &text(40, &[]).replace("line 8\n", ""))]);
     git(p, &["rebase", "-q", "-X", "theirs", "main"]);
     assert_eq!(std::fs::read_to_string(p.join("a.txt")).unwrap(), text(40, &[7, 8, 9]));
-    client.set_base(project, merge_base("main")).await;
-    client.settled().await;
+    client.quiet().await;
 
     let m = client.manifest(project).await;
     assert_eq!(hunks(&m, "a.txt"), [HunkState::SeenAgainstOldBase]);
@@ -388,8 +372,7 @@ async fn criterion1_a_seen_deletion_survives_an_unrelated_rebase() {
     git(p, &["commit", "-q", "-a", "-m", "delete three lines"]);
     let mut client = Client::new(&fx.handler);
     let project = client.open(p).await;
-    client.set_base(project, merge_base("main")).await;
-    client.settled().await;
+    client.open_branch(project, "feature").await;
     let m = client.manifest(project).await;
     assert_eq!(
         (
@@ -405,14 +388,7 @@ async fn criterion1_a_seen_deletion_survives_an_unrelated_rebase() {
     git(p, &["rebase", "-q", "main"]);
     client.quiet().await;
 
-    // Against the old base the rebase shows up as extra changes; the deletion stays seen.
-    let m = client.manifest(project).await;
-    assert_eq!(
-        hunks(&m, "a.txt"),
-        [HunkState::Unseen, HunkState::Seen, HunkState::Unseen]
-    );
-    client.set_base(project, merge_base("main")).await;
-    client.settled().await;
+    // The base is where the branch left main now: the deletion stays seen.
     let m = client.manifest(project).await;
     assert_eq!(hunks(&m, "a.txt"), [HunkState::Seen]);
     assert_eq!((m.completion.lines, m.completion.seen_lines), (3, 3));
@@ -1059,6 +1035,7 @@ impl Live {
                         let _ = revisions.send(revision);
                     },
                     || {},
+                    |_| {},
                 )
                 .await;
         })

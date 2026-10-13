@@ -68,14 +68,7 @@ twin!(
     }
 );
 twin!(ThreadStatus, ThreadStatus { Open, Resolved });
-twin!(
-    VersionOrigin,
-    VersionOrigin {
-        Settled,
-        BaseMoved,
-        Observed
-    }
-);
+twin!(VersionOrigin, VersionOrigin { Settled, Observed });
 twin!(Lens, Lens { Squash, PerCommit });
 twin!(
     NonTextKind,

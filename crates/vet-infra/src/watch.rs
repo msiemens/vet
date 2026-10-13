@@ -130,9 +130,10 @@ impl Watcher for FsWatcher {
 /// Maps changed absolute paths to events: `Dirty` paths (root-relative, `/`-separated), empty
 /// when nothing changed that matters. Paths outside the root or `.git/HEAD` and
 /// `.git/index` (branch switches and commits change snapshot identity without
-/// touching the worktree) force `MustRescan`; a change below `.git/refs` or to
-/// `.git/packed-refs` (a commit on any branch, a fetch) is `RefsMoved`, besides
-/// whatever else the paths say; the rest of `.git` is ignored.
+/// touching the worktree) force `MustRescan`; a change below `.git/refs`, to
+/// `.git/packed-refs` (a commit on any branch, a fetch) or to `.git/HEAD` (a checkout, a
+/// commit on a detached HEAD) is `RefsMoved`, besides whatever else the paths say; the rest of
+/// `.git` is ignored.
 fn dirty_events<P: AsRef<Path>>(root: &Path, paths: impl IntoIterator<Item = P>) -> Vec<WatchEvent> {
     let mut dirty = Vec::new();
     let mut refs_moved = false;
@@ -150,7 +151,12 @@ fn dirty_events<P: AsRef<Path>>(root: &Path, paths: impl IntoIterator<Item = P>)
         let mut parts = path.0.split(|&b| b == b'/');
         if parts.next() == Some(b".git".as_slice()) {
             match parts.next() {
-                Some(b"HEAD" | b"index") => rescan = true,
+                Some(b"index") => rescan = true,
+                // A detached HEAD moves without a ref being written.
+                Some(b"HEAD") => {
+                    rescan = true;
+                    refs_moved = true;
+                }
                 Some(b"refs" | b"packed-refs") => refs_moved = true,
                 _ => {}
             }

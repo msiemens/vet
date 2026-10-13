@@ -74,6 +74,10 @@ lens: Lens,
  */
 commits: number, 
 /**
+ * The base of the changeset as a whole, whatever view this manifest is of.
+ */
+changesetBase: Base, 
+/**
  * How many files the changeset as a whole changes, whatever view this manifest is of.
  */
 changesetFiles: number, 

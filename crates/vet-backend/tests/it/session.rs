@@ -13,8 +13,8 @@ use tokio::sync::mpsc::UnboundedReceiver;
 use vet_app::ports::Store;
 use vet_backend::{Config, Orchestrator, open_store};
 use vet_protocol::{
-    AnchorState, Base, BaseChoice, BlobContent, ChangesetKey, Completion, DirEntry, DirEntryKind, Divergence, Event,
-    FileStatus, HunkState, LineDelta, LineLocation, Manifest, NoTextReason, NonTextKind, ProjectId, Request, Response,
+    AnchorState, BlobContent, ChangesetKey, Completion, DirEntry, DirEntryKind, Divergence, Event, FileStatus,
+    HunkState, LineDelta, LineLocation, Manifest, NoTextReason, NonTextKind, ProjectId, Request, Response,
     ReviewFilter, ReviewInfo, ReviewUpdate, RowReview, ServerMessage, Side, TextContent, Thread, ThreadStatus,
     ThreadTarget,
 };
@@ -65,6 +65,8 @@ struct Client {
     inbox: UnboundedReceiver<ServerMessage>,
     /// What `ReviewStarted` events said, which `event` and `no_event` skip.
     started: Vec<ReviewInfo>,
+    /// What `EditsPending` events said, which `event` and `no_event` skip too.
+    edits: Vec<bool>,
 }
 
 impl Client {
@@ -75,6 +77,7 @@ impl Client {
             events,
             inbox,
             started: Vec::new(),
+            edits: Vec::new(),
         }
     }
 
@@ -122,12 +125,28 @@ impl Client {
                     event: Event::ReviewStarted { review, .. },
                 } => self.started.push(review),
                 ServerMessage::Event {
+                    event: Event::EditsPending { pending, .. },
+                } => self.edits.push(pending),
+                ServerMessage::Event {
                     event: Event::Task(_), ..
                 } => {}
                 ServerMessage::Event { event } => return event,
                 other => panic!("{other:?}"),
             }
         }
+    }
+
+    /// What `EditsPending` events have said so far.
+    fn edits_pending(&mut self) -> Vec<bool> {
+        while let Ok(message) = self.inbox.try_recv() {
+            if let ServerMessage::Event {
+                event: Event::EditsPending { pending, .. },
+            } = message
+            {
+                self.edits.push(pending);
+            }
+        }
+        self.edits.clone()
     }
 
     /// The reviews that `ReviewStarted` events have announced so far.
@@ -162,6 +181,9 @@ impl Client {
                 ServerMessage::Event {
                     event: Event::ReviewStarted { review, .. },
                 } => self.started.push(review),
+                ServerMessage::Event {
+                    event: Event::EditsPending { pending, .. },
+                } => self.edits.push(pending),
                 ServerMessage::Event {
                     event: Event::Task(_), ..
                 } => {}
@@ -418,6 +440,16 @@ async fn mark_edit_settle_remap_and_revert() {
     assert_eq!(client.settled().await, 1);
     let m = client.manifest(project).await;
     assert_eq!(m.revision, 1);
+    // The edit was told to wait for its snapshot, and to wait no longer once it had one.
+    let mut told = client.edits_pending();
+    for _ in 0..50 {
+        if told.last() == Some(&false) {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        told = client.edits_pending();
+    }
+    assert_eq!(told, [true, false]);
     assert_eq!(hunk_states(&m), [HunkState::Seen, HunkState::Unseen]);
     assert_eq!(lines(&m.completion), (4, 2));
 
@@ -1067,148 +1099,49 @@ async fn paths_outside_a_repository_and_bare_repositories_are_rejected() {
     );
 }
 
-impl Client {
-    async fn set_base(&self, project: ProjectId, base: BaseChoice) -> Result<Base, String> {
-        match self.call(Request::SetBase { project, base }).await? {
-            Response::Base(base) => Ok(base),
-            other => panic!("{other:?}"),
-        }
-    }
-}
-
-/// The commit the base of `version` of the first changeset of a fresh store is held at.
-fn base_ref(repo: &Path, version: u32) -> String {
-    git(repo, &["rev-parse", &format!("refs/vet/changesets/1/{version}/base")])
-}
-
-fn merge_base(reference: &str) -> BaseChoice {
-    BaseChoice::MergeBase {
-        reference: reference.into(),
-    }
-}
-
 #[tokio::test]
-async fn the_base_can_be_changed_and_review_state_follows() {
-    let main_text = text(40, &[]);
-    let fx = fixture(&[("a.txt", &main_text)], &[]).await;
+async fn the_working_tree_keeps_the_head_it_was_opened_at_and_tells_when_head_leaves_it() {
+    let fx = fixture(&[("a.txt", &text(40, &[]))], &[("a.txt", &text(40, &[5]))]).await;
     let p = fx.repo.path();
-    let main = git(p, &["rev-parse", "HEAD"]);
-    git(p, &["checkout", "-q", "-b", "feature"]);
-    // The first branch commit drops a line inside what the second one edits.
-    let dropped = main_text.replace("line 21\n", "");
-    write(p, "a.txt", &dropped);
-    git(p, &["commit", "-q", "-am", "drop a line"]);
-    let one = git(p, &["rev-parse", "HEAD"]);
-    let committed = dropped.replace("line 20\n", "edited 20\n");
-    write(p, "a.txt", &committed);
-    git(p, &["commit", "-q", "-am", "edit a line"]);
-    let two = git(p, &["rev-parse", "HEAD"]);
-    write(p, "a.txt", &committed.replace("line 30\n", "edited 30\n"));
-    let tree = git(p, &["rev-parse", "HEAD^{tree}"]);
-    let unrelated = git(p, &["commit-tree", &tree, "-m", "unrelated"]);
-    git(p, &["branch", "unrelated", &unrelated]);
-
-    let mut client = Client::new(&fx.handler);
+    let opened_at = git(p, &["rev-parse", "HEAD"]);
+    let client = Client::new(&fx.handler);
     let project = open(&client, p).await;
 
-    // The current branch's tip: only the dirty edit.
     let m = client.manifest(project).await;
-    assert_eq!(m.base.choice, merge_base("feature"));
-    assert_eq!(
-        (m.base.commit.id.as_str(), m.base.name.as_str()),
-        (two.as_str(), "feature")
-    );
-    assert_eq!(m.base.commit.subject, "edit a line");
-    assert_eq!(
-        (m.target.name.as_str(), m.target.branch.as_deref()),
-        ("Working tree", Some("feature"))
-    );
-    assert_eq!(m.files[0].hunks.len(), 1);
-    assert_eq!(lines(&m.completion), (2, 0));
+    assert_eq!(m.base.commit.id, opened_at);
+    assert_eq!((m.base.into.as_deref(), m.changeset_base.head_off_base), (None, false));
 
-    // Where feature branched off main: the branch's change shows as well.
-    let base = client.set_base(project, merge_base("main")).await.unwrap();
-    assert_eq!((base.commit.id.as_str(), base.name.as_str()), (main.as_str(), "main"));
-    assert_eq!(client.settled().await, 1);
-    assert!(project_refs(p).is_empty(), "browsing holds no refs");
+    // The agent commits its work: HEAD moves on, the base stays and nothing is amiss.
+    git(p, &["commit", "-q", "-a", "-m", "agent work"]);
     let m = client.manifest(project).await;
-    assert_eq!((m.revision, &m.base), (1, &base));
-    assert_eq!(hunk_states(&m), [HunkState::Unseen, HunkState::Unseen]);
-    assert_eq!((m.files[0].base_lines, m.files[0].target_lines), (41, 40));
+    assert_eq!(m.base.commit.id, opened_at);
+    assert_eq!(m.files[0].hunks.len(), 1, "the commit is still being reviewed");
+    assert!(!m.changeset_base.head_off_base);
 
-    // Marking the branch's hunk starts the review, which holds the base chosen so far.
-    let update = client.toggle_hunk(project, 1, 0).await;
-    assert_eq!(update.review.hunks, [HunkState::Seen, HunkState::Unseen]);
-    assert_eq!(base_ref(p, 1), main);
+    // The agent rewrites the commit the review started from: HEAD no longer builds on it.
+    git(p, &["reset", "-q", "--soft", &opened_at]);
+    git(p, &["commit", "-q", "--amend", "--allow-empty", "-m", "reworded"]);
+    let m = client.head_off_base_becomes(project, true).await;
+    assert_eq!(m.base.commit.id, opened_at, "the base does not follow");
 
-    // Against the first branch commit, base lines of the marked hunk have changed.
-    let base = client
-        .set_base(project, BaseChoice::Commit { id: one[..10].into() })
-        .await
-        .unwrap();
-    assert_eq!(
-        (base.commit.id.as_str(), base.name.as_str()),
-        (one.as_str(), "feature~1")
-    );
-    assert_eq!(base.choice, BaseChoice::Commit { id: one.clone() });
-    assert_eq!(client.settled().await, 2);
-    assert_eq!((base_ref(p, 2), base_ref(p, 1)), (one.clone(), main.clone()));
-    let m = client.manifest(project).await;
-    assert_eq!(hunk_states(&m), [HunkState::SeenAgainstOldBase, HunkState::Unseen]);
-    assert_eq!(m.completion.old_base_lines, 1);
-    let Response::FileContents {
-        revision, base: shown, ..
-    } = client
-        .call(Request::FileContents {
-            view: vet_protocol::View::Changeset,
-            project,
-            path: "a.txt".into(),
-        })
-        .await
-        .unwrap()
-    else {
-        panic!("not file contents");
-    };
-    assert_eq!((revision, shown), (2, Some(dropped)));
+    // Back on the commit the base is.
+    git(p, &["reset", "-q", "--soft", &opened_at]);
+    client.head_off_base_becomes(project, false).await;
+}
 
-    // Back to the branch's tip; the mark lies outside what is left to review.
-    let base = client.set_base(project, merge_base("feature")).await.unwrap();
-    assert_eq!((base.commit.id.as_str(), base.name.as_str()), (two.as_str(), "feature"));
-    assert_eq!(client.settled().await, 3);
-    assert_eq!(base_ref(p, 3), two);
-    assert_eq!(hunk_states(&client.manifest(project).await), [HunkState::Unseen]);
-
-    // The earlier base brings the earlier coverage back.
-    client.set_base(project, merge_base("main")).await.unwrap();
-    client.settled().await;
-    assert_eq!(
-        hunk_states(&client.manifest(project).await),
-        [HunkState::Seen, HunkState::Unseen]
-    );
-
-    // Candidates: branches by name and the commits HEAD reaches.
-    let Response::BaseCandidates { branches, commits } =
-        client.call(Request::ListBaseCandidates { project }).await.unwrap()
-    else {
-        panic!("not candidates");
-    };
-    let branches: Vec<_> = branches.iter().map(|b| (b.name.as_str(), b.current)).collect();
-    assert_eq!(branches, [("feature", true), ("main", false), ("unrelated", false)]);
-    let ids: Vec<_> = commits.iter().map(|c| c.id.as_str()).collect();
-    assert_eq!(ids, [two.as_str(), one.as_str(), main.as_str()]);
-    assert_eq!(commits[0].short_id, two[..7]);
-    assert_eq!(commits[0].subject, "edit a line");
-
-    // Unresolvable bases are refused with a readable message and change nothing.
-    let err = client
-        .set_base(project, BaseChoice::Commit { id: "nope".into() })
-        .await
-        .unwrap_err();
-    assert_eq!(err, "unknown commit nope");
-    let err = client.set_base(project, merge_base("unrelated")).await.unwrap_err();
-    assert_eq!(err, "no common ancestor with unrelated");
-    assert_eq!(client.manifest(project).await.revision, 4);
-    assert!(client.no_event());
+impl Client {
+    /// The manifest once it says whether HEAD left the base as `expected`; the watcher tells
+    /// at its own pace.
+    async fn head_off_base_becomes(&self, project: ProjectId, expected: bool) -> Manifest {
+        for _ in 0..100 {
+            let m = self.manifest(project).await;
+            if m.changeset_base.head_off_base == expected {
+                return m;
+            }
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        }
+        panic!("head_off_base never became {expected}");
+    }
 }
 
 #[tokio::test]
@@ -1317,32 +1250,6 @@ async fn a_review_starts_with_the_first_mark_and_finishing_returns_to_browsing()
     ));
 }
 
-#[tokio::test]
-async fn a_branch_base_reports_how_far_the_branch_moved_on_until_chosen_again() {
-    let fx = fixture(&[("a.txt", &text(10, &[]))], &[("a.txt", &text(10, &[2]))]).await;
-    let p = fx.repo.path();
-    let first = git(p, &["rev-parse", "HEAD"]);
-    let mut client = Client::new(&fx.handler);
-    let project = open(&client, p).await;
-    let m = client.manifest(project).await;
-    assert_eq!((m.base.name.as_str(), m.base.behind), ("main", None));
-
-    // Two commits land on main; the working tree stays as it was.
-    git(p, &["commit", "-q", "-am", "edit"]);
-    git(p, &["commit", "-q", "--allow-empty", "-m", "empty"]);
-    let tip = git(p, &["rev-parse", "HEAD"]);
-
-    let m = client.manifest(project).await;
-    assert_eq!(m.base.commit.id, first);
-    assert_eq!((m.base.name.as_str(), m.base.behind), ("main~2", Some(2)));
-    assert_eq!(m.files[0].hunks.len(), 1, "the commits are still being reviewed");
-
-    let base = client.set_base(project, merge_base("main")).await.unwrap();
-    assert_eq!((base.commit.id, base.name.as_str(), base.behind), (tip, "main", None));
-    client.settled().await;
-    assert!(client.manifest(project).await.files.is_empty());
-}
-
 /// `main` gained `c.txt` after `feature` split off and `feature` added `b.txt`. Leaves `main` checked out.
 async fn diverged(fx: &Fixture) -> String {
     let p = fx.repo.path();
@@ -1380,67 +1287,27 @@ async fn a_branch_against_a_target_that_moved_on_shows_only_its_own_changes() {
     let project = open(&client, fx.repo.path()).await;
     client.open_branch(project, "feature").await;
 
-    let base = client.set_base(project, merge_base("main")).await.unwrap();
-
-    client.settled().await;
     let m = client.manifest(project).await;
     assert_eq!(paths(&m), ["b.txt"], "what main gained is not a reverse change");
     assert_eq!(
-        (base.commit.id.as_str(), base.behind, base.contained_in),
-        (fork.as_str(), Some(1), None)
+        m.base.commit.id, fork,
+        "a branch starts where it split off the default branch"
     );
+    assert_eq!(m.changeset_base.into, None);
 }
 
 #[tokio::test]
-async fn a_changeset_the_target_already_contains_is_empty_and_says_so() {
-    let fx = fixture(&[("a.txt", &text(10, &[]))], &[]).await;
-    let p = fx.repo.path();
-    git(p, &["checkout", "-q", "-b", "feature"]);
-    write(p, "b.txt", "from the branch\n");
-    git(p, &["add", "b.txt"]);
-    git(p, &["commit", "-q", "-m", "feature"]);
-    git(p, &["checkout", "-q", "main"]);
-    let mut client = Client::new(&fx.handler);
-    let project = open(&client, p).await;
-    client.open_branch(project, "main").await;
-
-    let base = client.set_base(project, merge_base("feature")).await.unwrap();
-
-    client.settled().await;
-    assert!(client.manifest(project).await.files.is_empty());
-    assert_eq!(base.contained_in.as_deref(), Some("feature"));
-    assert_eq!(base.name, "main");
-}
-
-#[tokio::test]
-async fn the_working_tree_against_a_target_is_the_branch_since_the_fork_plus_uncommitted_changes() {
+async fn the_working_tree_is_the_uncommitted_changes_whatever_the_branch_split_off() {
     let fx = fixture(&[("a.txt", &text(10, &[]))], &[]).await;
     let p = fx.repo.path();
     let fork = diverged(&fx).await;
     git(p, &["checkout", "-q", "feature"]);
     write(p, "a.txt", &text(10, &[2]));
-    let mut client = Client::new(&fx.handler);
+    let client = Client::new(&fx.handler);
     let project = open(&client, p).await;
-    assert_eq!(
-        paths(&client.manifest(project).await),
-        ["a.txt"],
-        "by default only uncommitted changes"
-    );
-
-    let base = client.set_base(project, merge_base("main")).await.unwrap();
-
-    client.settled().await;
-    assert_eq!(paths(&client.manifest(project).await), ["a.txt", "b.txt"]);
-    assert_eq!(base.commit.id, fork);
-
-    // An explicit commit is the base as chosen, whatever the target is.
-    let main_tip = git(p, &["rev-parse", "main"]);
-    client
-        .set_base(project, BaseChoice::Commit { id: main_tip })
-        .await
-        .unwrap();
-    client.settled().await;
-    assert_eq!(paths(&client.manifest(project).await), ["a.txt", "b.txt", "c.txt"]);
+    let m = client.manifest(project).await;
+    assert_eq!(paths(&m), ["a.txt"]);
+    assert_ne!(m.base.commit.id, fork);
 }
 
 #[tokio::test]
@@ -1554,7 +1421,7 @@ async fn review_branch(client: &mut Client, project: ProjectId, name: &str) {
     let revision = loop {
         match client.event().await {
             Event::ChangesetOpened { revision, .. } => break revision,
-            Event::BaseChanged { .. } | Event::ChangesetsChanged { .. } => {}
+            Event::ChangesetsChanged { .. } => {}
             other => panic!("not told which changeset is on view: {other:?}"),
         }
     };
@@ -1563,7 +1430,7 @@ async fn review_branch(client: &mut Client, project: ProjectId, name: &str) {
     loop {
         match client.event().await {
             Event::ReviewChanged { .. } => break,
-            Event::BaseChanged { .. } | Event::ChangesetsChanged { .. } => {}
+            Event::ChangesetsChanged { .. } => {}
             other => panic!("{other:?}"),
         }
     }
@@ -1655,10 +1522,10 @@ async fn a_fetch_that_moves_the_remote_branch_on_view_is_its_next_version() {
     git(&clone, &["push", "-q", "origin", "feature"]);
     git(p, &["fetch", "-q", "origin"]);
 
-    // The app fetches by itself on opening, and says so with `BaseChanged` and `ChangesetsChanged`.
+    // The app fetches by itself on opening, and says so with `ChangesetsChanged`.
     loop {
         match client.event().await {
-            Event::BaseChanged { .. } | Event::ChangesetsChanged { .. } => {}
+            Event::ChangesetsChanged { .. } => {}
             Event::SnapshotSettled { .. } => break,
             other => panic!("{other:?}"),
         }

@@ -1,11 +1,10 @@
 //! Fetching a project's remotes, on demand and on a timer, and telling its
-//! subscribers how the base stands afterwards.
+//! subscribers that the branches may have moved.
 
 use std::sync::Arc;
 use std::time::Duration;
 
 use vet_app::changeset::Source;
-use vet_mapping as mapping;
 use vet_protocol::{Event, ProjectId, Response};
 
 use crate::accounts::Held;
@@ -24,8 +23,8 @@ impl Orchestrator {
     }
 }
 
-/// Fetches the remotes, then tells every subscriber how far the base's branch has moved on and that
-/// the branches may have moved, and looks at the pull request on view for a push. A remote that
+/// Fetches the remotes, then tells every subscriber that the branches may have moved, and looks
+/// at the pull request on view for a push. A remote that
 /// failed is named by the failed task, where the footer shows it; what the others brought counts.
 async fn fetch_and_report(open: &Arc<Open>) {
     let Ok(ran) = open.fetch.run(&Held(&open.accounts)).await else {
@@ -37,12 +36,6 @@ async fn fetch_and_report(open: &Arc<Open>) {
     let Ok(booted) = open.booted().await else {
         return;
     };
-    if let Ok(base) = booted.session.base().await {
-        open.subscribers.broadcast(Event::BaseChanged {
-            project: open.id,
-            base: mapping::base(&base),
-        });
-    }
     open.subscribers
         .broadcast(Event::ChangesetsChanged { project: open.id });
     follow_pull_request(open, booted).await;

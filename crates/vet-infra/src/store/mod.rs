@@ -32,7 +32,7 @@ use sea_orm::{
     TransactionTrait,
 };
 use sea_orm_migration::MigratorTrait;
-use vet_app::changeset::{BaseChoice, ChangesetId, CommitId, Lens, Source, Version};
+use vet_app::changeset::{ChangesetId, CommitId, Lens, Source, Version};
 use vet_app::platform::PullRequestHead;
 use vet_app::ports::{ChangesetStore, LiveStore, ReviewStore, Store, StoreError, ThreadStore};
 use vet_app::review::{ChangesetThread, Review, ReviewId};
@@ -456,6 +456,7 @@ impl ChangesetStore for SqliteStore {
                 title: r.title?,
                 draft: r.draft,
                 fork: r.fork,
+                target_branch: r.target_branch?,
             })
         }))
     }
@@ -571,11 +572,6 @@ impl ReviewStore for SqliteStore {
             .one(&self.reader.db)
             .await?
             .is_some())
-    }
-
-    async fn browsing_base(&self, repo: String) -> Result<Option<BaseChoice>, StoreError> {
-        let row = project_base::Entity::find_by_id(repo).one(&self.reader.db).await?;
-        Ok(row.map(|r| base_from(r.base_kind, r.base_value)))
     }
 }
 

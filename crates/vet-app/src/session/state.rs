@@ -232,6 +232,8 @@ pub(super) struct State {
     /// The commit target snapshots are built on: `HEAD`, as of the review's
     /// start while one is open.
     pub(super) head: CommitId,
+    /// The working tree's `HEAD` no longer builds on `base_commit`.
+    pub(super) off_base: bool,
     pub(super) target: Arc<Snapshot>,
     pub(super) target_status: SnapshotStatus,
     /// Other snapshots that recorded spans refer to.

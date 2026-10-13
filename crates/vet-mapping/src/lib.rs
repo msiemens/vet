@@ -5,12 +5,12 @@ pub mod progress;
 pub mod semantic;
 
 use base64::Engine;
-use vet_app::changeset::{BaseChoice, CommitId, Lens, RemoteKey, Source, VersionOrigin};
+use vet_app::changeset::{CommitId, Lens, RemoteKey, Source, VersionOrigin};
 use vet_app::platform::{
     ChangesAsked, CheckLog, CiState, CommitChecks, ConversationKind, PlatformError, PlatformKind, PlatformTraits,
     Posting, PullRequestState, QueueStatus, ReviewVerdict, ReviewerState,
 };
-use vet_app::ports::{BaseCandidates, CommitInfo, Degraded};
+use vet_app::ports::{CommitInfo, Degraded};
 use vet_app::pull_request::PullRequestList;
 use vet_app::session::{
     BaseDiffKind, BaseDiffView, BaseView, ChangesetList, CommentAt, CommentSpot, CommitKind, CommitsView, DirEntryKind,
@@ -133,7 +133,6 @@ pub fn versions(versions: &[VersionView]) -> p::Response {
                 at: unix_secs(v.at),
                 origin: match v.origin {
                     VersionOrigin::Settled => p::VersionOrigin::Settled,
-                    VersionOrigin::BaseMoved => p::VersionOrigin::BaseMoved,
                     VersionOrigin::Observed => p::VersionOrigin::Observed,
                 },
                 tip: v.tip.as_ref().map(commit_info),
@@ -235,13 +234,6 @@ fn file(f: &FileView) -> p::FileChange {
     }
 }
 
-pub fn core_base_choice(choice: p::BaseChoice) -> BaseChoice {
-    match choice {
-        p::BaseChoice::MergeBase { reference } => BaseChoice::MergeBase { reference },
-        p::BaseChoice::Commit { id } => BaseChoice::Commit { id: CommitId(id) },
-    }
-}
-
 pub fn core_filter(f: p::ReviewFilter) -> ReviewFilter {
     ReviewFilter {
         roots: f.roots.into_iter().map(RepoPath::from).collect(),
@@ -301,16 +293,10 @@ fn unix_secs(time: i64) -> u32 {
 
 pub fn base(b: &BaseView) -> p::Base {
     p::Base {
-        choice: match &b.choice {
-            BaseChoice::MergeBase { reference } => p::BaseChoice::MergeBase {
-                reference: reference.clone(),
-            },
-            BaseChoice::Commit { id } => p::BaseChoice::Commit { id: id.0.clone() },
-        },
         commit: commit_info(&b.commit),
-        name: b.name.clone(),
-        behind: b.behind,
         contained_in: b.contained_in.clone(),
+        into: b.into.clone(),
+        head_off_base: b.head_off_base,
     }
 }
 
@@ -321,22 +307,6 @@ pub fn review_info(l: Lifecycle) -> p::ReviewInfo {
             version,
             updated_at: unix_secs(updated_at),
         },
-    }
-}
-
-pub fn base_candidates(c: &BaseCandidates) -> p::Response {
-    p::Response::BaseCandidates {
-        branches: c
-            .branches
-            .iter()
-            .map(|b| p::BranchInfo {
-                name: b.name.clone(),
-                commit: b.commit.0.clone(),
-                current: b.current,
-                default: b.default,
-            })
-            .collect(),
-        commits: c.commits.iter().map(commit_info).collect(),
     }
 }
 
@@ -593,6 +563,7 @@ pub fn manifest(
         name: m.name.clone(),
         review: review_info(m.lifecycle),
         base: base(&m.base),
+        changeset_base: base(&m.changeset_base),
         target: p::Target {
             changeset: changeset_key(&m.target.source),
             name: m.target.name.clone(),

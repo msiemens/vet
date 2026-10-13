@@ -110,6 +110,7 @@ impl ReviewWrites for ReviewWriter {
             title: Set(Some(head.title)),
             draft: Set(head.draft),
             fork: Set(head.fork),
+            target_branch: Set(Some(head.target_branch)),
             ..Default::default()
         }
         .update(&txn)
@@ -233,33 +234,6 @@ impl ReviewWrites for ReviewWriter {
             project_trust::ActiveModel { repo: Set(repo) }.insert(&txn).await?;
         }
         Ok(txn.commit().await?)
-    }
-
-    async fn set_browsing_base(&self, repo: String, choice: BaseChoice) -> Result<(), StoreError> {
-        let txn = self.db.begin().await?;
-        project_base::Entity::delete_by_id(repo.clone()).exec(&txn).await?;
-        let (base_kind, base_value) = base_columns(choice);
-        project_base::ActiveModel {
-            repo: Set(repo),
-            base_kind: Set(base_kind),
-            base_value: Set(base_value),
-        }
-        .insert(&txn)
-        .await?;
-        Ok(txn.commit().await?)
-    }
-
-    async fn set_base(&self, id: ReviewId, choice: BaseChoice) -> Result<(), StoreError> {
-        let (kind, value) = base_columns(choice);
-        review::ActiveModel {
-            id: Set(id.0 as i64),
-            base_kind: Set(kind),
-            base_value: Set(value),
-            ..Default::default()
-        }
-        .update(&self.db)
-        .await?;
-        Ok(())
     }
 
     async fn set_last_reviewed(&self, id: ReviewId, version: u32) -> Result<(), StoreError> {

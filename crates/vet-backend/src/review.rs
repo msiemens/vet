@@ -242,21 +242,6 @@ impl Orchestrator {
         Ok(mapping::item_blob(blob))
     }
 
-    pub(crate) async fn set_base(
-        &self,
-        project: ProjectId,
-        base: vet_protocol::BaseChoice,
-    ) -> Result<Response, String> {
-        let open = self.ready(project).await?;
-        let (base, revision) = open
-            .session
-            .set_base(mapping::core_base_choice(base))
-            .await
-            .map_err(message)?;
-        revision_changed(open, revision);
-        Ok(Response::Base(mapping::base(&base)))
-    }
-
     pub(crate) async fn set_project_filter(
         &self,
         project: ProjectId,
@@ -282,17 +267,6 @@ impl Orchestrator {
         let revision = open.session.exclude_path(path, directory).await.map_err(message)?;
         settled(&open.subscribers, project, revision);
         Ok(Response::Done)
-    }
-
-    pub(crate) async fn list_base_candidates(&self, project: ProjectId) -> Result<Response, String> {
-        let candidates = self
-            .ready(project)
-            .await?
-            .session
-            .base_candidates()
-            .await
-            .map_err(message)?;
-        Ok(mapping::base_candidates(&candidates))
     }
 
     pub(crate) async fn list_directory(&self, project: ProjectId, path: &str) -> Result<Response, String> {

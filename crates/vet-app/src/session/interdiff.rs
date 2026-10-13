@@ -16,8 +16,7 @@ use super::manifest::{file_views, target_view};
 use super::state::{Interdiffed, Shown, State, ack_of, find_diff, find_non_text, lifecycle_of, shown_items};
 use super::views::{InterdiffView, ManifestView, ReviewUpdateView, ReviewView};
 use super::{LiveSession, Result, SessionError};
-use crate::base;
-use crate::changeset::{BaseChoice, Version};
+use crate::changeset::{Version, VersionChange};
 use crate::ports::{GitRepo, LiveStore};
 use crate::review::SpanOrigin;
 
@@ -41,7 +40,8 @@ impl Interdiffing {
 }
 
 impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> LiveSession<G, S> {
-    /// The interdiff of the versions `from` and `to` of the open review.
+    /// The interdiff of the versions `from` and `to` of the open review. Version 0 is the base the
+    /// review started from, a tree without a change: what `to` changed is then all of its patch.
     pub(super) async fn interdiffing(&self, st: &State, from: u32, to: u32) -> Result<Interdiffing> {
         let (Some(changeset), Some(review)) = (st.changeset, &st.review) else {
             return Err(SessionError::Invalid(
@@ -57,7 +57,19 @@ impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> L
         let find = |n: u32| {
             (versions.iter().find(|v| v.n == n).cloned()).ok_or_else(|| SessionError::NotFound(format!("version {n}")))
         };
-        let (a, b) = (find(from)?, find(to)?);
+        let a = if from == 0 {
+            let first = find(1)?;
+            Version {
+                n: 0,
+                target: first.base,
+                tip: first.base_commit.clone(),
+                change: VersionChange::default(),
+                ..first
+            }
+        } else {
+            find(from)?
+        };
+        let b = find(to)?;
         let key = Interdiff {
             base_a: a.base,
             target_a: a.target,
@@ -78,35 +90,30 @@ impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> L
         let files = file_views(&id.compared.diffed, &st.filter, |diff, items| lens.state(diff, items));
         let git = &self.acquisition.git;
         let branches = git.branches().await?;
-        let commit = git.commit_info(&id.to.base_commit).await?;
-        let base = super::BaseView {
-            choice: BaseChoice::Commit {
-                id: id.to.base_commit.clone(),
-            },
-            name: base::name_of(git, &branches, None, &id.to.base_commit).await?,
-            commit,
-            behind: None,
-            contained_in: None,
-        };
+        let base = super::BaseView::of_commit(git.commit_info(&id.to.base_commit).await?);
         let facts = self.lens_facts(st).await?;
         let conflicts = (id.compared.hunks.values().flatten()).any(|h| h.flags.conflict);
+        let old = if id.from.n == 0 {
+            "the base".to_owned()
+        } else {
+            format!("version {}", id.from.n)
+        };
         let mut limits = vec![if id.markable {
             format!(
-                "The old side is version {} rebased onto the base of version {}, a synthetic tree: hover, definitions and \
+                "The old side is {old} rebased onto the base of version {}, a synthetic tree: hover, definitions and \
                  diagnostics work on the new side only.",
-                id.from.n, id.to.n
+                id.to.n
             )
         } else {
             format!(
-                "Version {} is not the latest, and the old side is version {} rebased onto its base: hover, definitions \
+                "Version {} is not the latest, and the old side is {old} rebased onto its base: hover, definitions \
                  and diagnostics are not available on either side, and marks and comments are not possible.",
-                id.to.n, id.from.n
+                id.to.n
             )
         }];
         if conflicts {
             limits.push(format!(
-                "Hunks marked as not applied did not apply to the new base: their old side shows version {}'s lines unrebased.",
-                id.from.n
+                "Hunks marked as not applied did not apply to the new base: their old side shows {old}'s lines unrebased."
             ));
         }
         Ok(ManifestView {
@@ -123,6 +130,7 @@ impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> L
             degraded: self.degraded_for(&st.source),
             lens: facts.lens,
             commits: facts.commits,
+            changeset_base: facts.base,
             changeset_files: facts.files,
             changeset_completion: facts.completion,
             interdiff: Some(InterdiffView {
@@ -361,8 +369,8 @@ mod tests {
     use super::super::state::View;
     use super::super::{CommentAt, NewThread};
     use super::*;
-    use crate::changeset::{CommitId, VersionOrigin};
-    use crate::session::tests::Fixture;
+    use crate::changeset::VersionOrigin;
+    use crate::session::tests::{Fixture, fetch_pull_request_7, move_base_of_pull_request_7, pull_request_7};
 
     fn lines(n: usize) -> String {
         (0..n).map(|i| format!("l{i}\n")).collect()
@@ -377,24 +385,37 @@ mod tests {
         m.files.iter().flat_map(|f| f.review.hunks.clone()).collect()
     }
 
-    /// The review moves to a base of `files`, the next version.
-    async fn rebase_onto(fx: &Fixture, files: &[(&str, &str)]) {
-        fx.git.add_commit("c1", "c1-full", files);
-        let base = BaseChoice::Commit {
-            id: CommitId("c1".into()),
-        };
-        fx.session.set_base(base).await.unwrap();
+    /// A review of pull request 7 at its first push: `files` on a target branch that is `base`.
+    async fn reviewing_pull_request(base: &[(&str, &str)], files: &[(&str, &str)]) -> Fixture {
+        let fx = Fixture::open(base, base).await;
+        fetch_pull_request_7(&fx.git, base, "pr1", files);
+        fx.session.open_changeset(pull_request_7()).await.unwrap();
+        fx.begin().await;
+        fx
+    }
+
+    /// The author pushes pull request 7 again, rebased onto the target branch at commit `base_id`
+    /// where it has `base`: the next version.
+    async fn push(fx: &Fixture, head: &str, (base_id, base): (&str, &[(&str, &str)]), files: &[(&str, &str)]) {
+        fetch_pull_request_7(&fx.git, base, head, files);
+        move_base_of_pull_request_7(&fx.git, base_id, base);
+        fx.session.observe().await.unwrap().expect("pushed to");
     }
 
     #[tokio::test]
     async fn an_interdiff_after_a_rebase_leaves_out_what_the_base_brought() {
         let base = lines(20);
         let upstream = base.replace("l2\n", "upstream\n");
-        let fx = Fixture::reviewing(&[("a.txt", &base)], &[("a.txt", &base.replace("l15\n", "mine\n"))]).await;
-        rebase_onto(&fx, &[("a.txt", &upstream)]).await;
-        fx.settle(&[("a.txt", &upstream.replace("l15\n", "mine\n"))]).await;
+        let fx = reviewing_pull_request(&[("a.txt", &base)], &[("a.txt", &base.replace("l15\n", "mine\n"))]).await;
+        push(
+            &fx,
+            "pr2",
+            ("m2", &[("a.txt", &upstream)]),
+            &[("a.txt", &upstream.replace("l15\n", "mine\n"))],
+        )
+        .await;
 
-        let m = fx.session.manifest(between(1, 3)).await.unwrap();
+        let m = fx.session.manifest(between(1, 2)).await.unwrap();
 
         assert!(m.files.is_empty(), "the author changed nothing between the versions");
         assert!(m.interdiff.unwrap().rebased);
@@ -428,18 +449,46 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn the_first_push_is_what_version_1_changed_from_the_base() {
+        let base = lines(30);
+        let first = base.replace("l5\n", "mine\n");
+        let second = first.replace("l25\n", "more\n");
+        let fx = Fixture::reviewing(&[("a.txt", &base)], &[("a.txt", &first)]).await;
+        fx.settle(&[("a.txt", &second)]).await;
+
+        let from_base = fx.session.manifest(between(0, 1)).await.unwrap();
+        let text = fx.session.file_text(between(0, 1), "a.txt").await.unwrap();
+
+        let [file] = &from_base.files[..] else {
+            panic!("{:?}", from_base.files)
+        };
+        assert_eq!(file.hunks.len(), 1, "only what version 1 brought");
+        assert_eq!(
+            (text.base.as_deref(), text.target.as_deref()),
+            (Some(base.as_str()), Some(first.as_str()))
+        );
+        let all = fx.session.manifest(between(0, 2)).await.unwrap();
+        assert_eq!(all.files[0].hunks.len(), 2, "the pushes up to version 2 as one");
+        assert!(fx.session.manifest(between(2, 2)).await.is_err());
+    }
+
+    #[tokio::test]
     async fn a_hunk_the_old_patch_did_not_apply_to_the_new_base_for_is_flagged() {
         let base = lines(20);
         let upstream = base.replace("l10\n", "upstream\n");
-        let fx = Fixture::reviewing(&[("a.txt", &base)], &[("a.txt", &base.replace("l10\n", "mine\n"))]).await;
-        rebase_onto(&fx, &[("a.txt", &upstream)]).await;
-        fx.settle(&[("a.txt", &upstream.replace("upstream\n", "mine, redone\n"))])
-            .await;
+        let fx = reviewing_pull_request(&[("a.txt", &base)], &[("a.txt", &base.replace("l10\n", "mine\n"))]).await;
+        push(
+            &fx,
+            "pr2",
+            ("m2", &[("a.txt", &upstream)]),
+            &[("a.txt", &upstream.replace("upstream\n", "mine, redone\n"))],
+        )
+        .await;
 
-        assert_eq!(states(&fx, between(1, 3)).await, [HunkState::Unapplied]);
+        assert_eq!(states(&fx, between(1, 2)).await, [HunkState::Unapplied]);
         let limits = fx
             .session
-            .manifest(between(1, 3))
+            .manifest(between(1, 2))
             .await
             .unwrap()
             .interdiff
@@ -519,16 +568,36 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn the_versions_list_follows_settles_and_a_base_move() {
+    async fn the_versions_list_follows_pushes_and_a_base_move() {
         let base = lines(10);
-        let fx = Fixture::open(&[("a.txt", &base)], &[("a.txt", &base.replace("l1\n", "x\n"))]).await;
+        let fx = Fixture::open(&[("a.txt", &base)], &[("a.txt", &base)]).await;
         assert!(
             fx.session.versions().await.unwrap().is_empty(),
             "browsing records no versions"
         );
+        fetch_pull_request_7(
+            &fx.git,
+            &[("a.txt", &base)],
+            "pr1",
+            &[("a.txt", &base.replace("l1\n", "x\n"))],
+        );
+        fx.session.open_changeset(pull_request_7()).await.unwrap();
         fx.begin().await;
-        fx.settle(&[("a.txt", &base.replace("l1\n", "y\n"))]).await;
-        rebase_onto(&fx, &[("a.txt", &base.replace("l8\n", "up\n"))]).await;
+        push(
+            &fx,
+            "pr2",
+            ("m1", &[("a.txt", &base)]),
+            &[("a.txt", &base.replace("l1\n", "y\n"))],
+        )
+        .await;
+        let upstream = base.replace("l8\n", "up\n");
+        push(
+            &fx,
+            "pr3",
+            ("m2", &[("a.txt", &upstream)]),
+            &[("a.txt", &upstream.replace("l1\n", "y\n"))],
+        )
+        .await;
 
         let versions = fx.session.versions().await.unwrap();
 
@@ -537,8 +606,8 @@ mod tests {
             shape,
             [
                 (1, VersionOrigin::Settled, false),
-                (2, VersionOrigin::Settled, false),
-                (3, VersionOrigin::BaseMoved, false)
+                (2, VersionOrigin::Observed, false),
+                (3, VersionOrigin::Observed, false)
             ]
         );
         assert_ne!(versions[2].base, versions[1].base, "the base moved");

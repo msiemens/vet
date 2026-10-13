@@ -16,14 +16,14 @@ impl CommitId {
     }
 }
 
-/// The base rule of a changeset (§6.5): how its base is chosen. The target does
-/// not follow from it; that is the changeset's source.
+/// How a changeset's base follows from its kind (§6.5). The target does not follow from it; that
+/// is the changeset's source.
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub enum BaseChoice {
-    /// The merge base of `reference` (a branch or any revision) and the changeset's tip.
+    /// The merge base of `reference` (a branch or any revision) and the changeset's tip, which
+    /// moves with them.
     MergeBase { reference: String },
-    /// A commit. As requested the id may be abbreviated or a revision; the
-    /// changeset stores and reports the full id.
+    /// A commit, stored and reported by its full id.
     Commit { id: CommitId },
 }
 
@@ -97,8 +97,6 @@ impl VersionChange {
 pub enum VersionOrigin {
     /// The tree settled, or the review of it started.
     Settled,
-    /// A different base was chosen.
-    BaseMoved,
     /// A branch's tip or its merge base was seen to have moved: new commits, an
     /// amend or a rebase.
     Observed,

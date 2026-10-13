@@ -1,40 +1,28 @@
-//! What a base is called, how far its branch has moved on, and the default (§6.5).
+//! What each changeset is compared against (§6.5). A base is fixed by the kind of changeset and
+//! never chosen: the working tree's is the `HEAD` it was opened at, a branch's is where it left
+//! the repository's default branch, a pull request's where its head left the fetched target.
 
 use crate::changeset::{BaseChoice, CommitId};
-use crate::ports::{BranchInfo, GitError, History};
+use crate::ports::History;
 use crate::pull_request::PullRequestRefs;
 
-/// First-parent steps searched for a branch-relative name.
-const MAX_RELATIVE: usize = 1000;
-/// Commits counted for "behind".
-const MAX_BEHIND: usize = 10_000;
-
-/// The current branch's tip, or `head` itself when none is checked out. Against the checked-out
-/// branch the merge base with `HEAD` is its tip.
-pub fn default_choice(branches: &[BranchInfo], head: &CommitId) -> (BaseChoice, CommitId) {
-    match branches.iter().find(|b| b.current) {
-        Some(b) => (
-            BaseChoice::MergeBase {
-                reference: b.name.clone(),
-            },
-            b.commit.clone(),
-        ),
-        None => (BaseChoice::Commit { id: head.clone() }, head.clone()),
-    }
+/// What the working tree is compared against: `head` itself, wherever `HEAD` moves later.
+pub fn for_working_tree(head: &CommitId) -> (BaseChoice, CommitId) {
+    (BaseChoice::Commit { id: head.clone() }, head.clone())
 }
 
-/// What a branch is compared against unless the viewer chose otherwise: where it left the
-/// repository's default branch, or `tip` itself (an empty changeset) when there is no such branch.
-pub async fn default_for_branch<G: History>(git: &G, tip: &CommitId) -> Result<(BaseChoice, CommitId), String> {
+/// What a branch is compared against: where it left the repository's default branch, or `tip`
+/// itself (an empty changeset) when there is no such branch.
+pub async fn for_branch<G: History>(git: &G, tip: &CommitId) -> Result<(BaseChoice, CommitId), String> {
     match git.default_reference().await.map_err(|e| e.0)? {
         Some(reference) => resolve(git, BaseChoice::MergeBase { reference }, tip).await,
         None => Ok((BaseChoice::Commit { id: tip.clone() }, tip.clone())),
     }
 }
 
-/// What a pull request is compared against unless the viewer chose otherwise: where its head left
-/// the target branch as it was fetched.
-pub async fn default_for_pull_request<G: History>(
+/// What a pull request is compared against: where its head left the target branch as it was
+/// fetched.
+pub async fn for_pull_request<G: History>(
     git: &G,
     refs: &PullRequestRefs,
     tip: &CommitId,
@@ -68,28 +56,6 @@ pub async fn resolve<G: History>(
     }
 }
 
-/// The name a person knows `commit` by: a branch whose tip it is, else
-/// `branch~N` on a branch's first-parent history, else its short hash. Branches
-/// are tried in this order: `prefer`, the current one, the default one, the rest.
-pub async fn name_of<G: History>(
-    git: &G,
-    branches: &[BranchInfo],
-    prefer: Option<&str>,
-    commit: &CommitId,
-) -> Result<String, GitError> {
-    let mut order: Vec<&BranchInfo> = branches.iter().collect();
-    order.sort_by_key(|b| (Some(b.name.as_str()) != prefer, !b.current, !b.default));
-    if let Some(tip) = order.iter().find(|b| b.commit == *commit) {
-        return Ok(tip.name.clone());
-    }
-    for b in order {
-        if let Some(steps) = git.first_parent_distance(&b.commit, commit, MAX_RELATIVE).await? {
-            return Ok(format!("{}~{steps}", b.name));
-        }
-    }
-    Ok(commit.short().to_owned())
-}
-
 /// The reference a changeset whose tip the base reached is already contained in: set when
 /// the choice is a merge base that is `tip` itself, and the reference is not the changeset's own
 /// branch `own`. Such a changeset has nothing to review.
@@ -102,30 +68,14 @@ pub fn contained_in(choice: &BaseChoice, base: &CommitId, tip: &CommitId, own: O
     }
 }
 
-/// How many commits the chosen reference has gained since `base`, on its own or, for a local
-/// branch, on the remote as of the last fetch; `None` unless the choice is a merge base that has
-/// moved. The reference is whatever names a revision (`main`, `refs/heads/main`, `origin/main`,
-/// `refs/remotes/origin/HEAD`); only a local branch is looked up by name, for its upstream.
-pub async fn behind<G: History>(
-    git: &G,
-    branches: &[BranchInfo],
-    choice: &BaseChoice,
-    base: &CommitId,
-) -> Result<Option<u32>, GitError> {
-    let BaseChoice::MergeBase { reference } = choice else {
-        return Ok(None);
+/// Whether `HEAD` no longer builds on `base`: `base` is neither `HEAD` nor one of its ancestors.
+/// A `HEAD` that cannot be compared with it has not been seen to leave.
+pub async fn head_left<G: History>(git: &G, base: &CommitId) -> bool {
+    let Ok(head) = git.head().await else {
+        return false;
     };
-    let Ok(tip) = git.resolve_commit(reference).await else {
-        return Ok(None);
-    };
-    let mut count = git.commits_behind(&tip, base, MAX_BEHIND).await?;
-    let name = reference.strip_prefix("refs/heads/").unwrap_or(reference);
-    let upstream = branches
-        .iter()
-        .find(|b| !b.remote && b.name == name)
-        .and_then(|b| b.upstream.as_ref());
-    if let Some(upstream) = upstream {
-        count = count.max(git.commits_behind(upstream, base, MAX_BEHIND).await?);
-    }
-    Ok((count > 0).then_some(count as u32))
+    // The commits only `base` reaches: none when `head` has them all.
+    git.commits_behind(base, &head, 1)
+        .await
+        .is_ok_and(|only_in_base| only_in_base > 0)
 }

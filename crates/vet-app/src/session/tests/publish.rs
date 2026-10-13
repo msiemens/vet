@@ -12,21 +12,27 @@ use super::*;
 /// that waits for the command into a failure and not a hang.
 const ANSWERED: Duration = Duration::from_secs(10);
 
-/// A reviewing session with a mark in `a.txt`, and a command to move its base that waits for
-/// git. Moving the base keeps what the marks are anchored in, which only git holds: the guard
-/// returned holds git.
+/// A reviewing session with a mark in `a.txt` and a comment on its base side, and a command to
+/// finish the review that waits for git. Finishing keeps what the open comments are anchored in,
+/// which only git holds: the guard returned holds git.
 async fn waiting_for_git(
     fx: &Fixture,
 ) -> (
     tokio::sync::MutexGuard<'_, ()>,
-    Pin<Box<impl Future<Output = Result<(BaseView, u32)>> + '_>>,
+    Pin<Box<impl Future<Output = Result<bool>> + '_>>,
 ) {
-    fx.git
-        .add_commit("merge-base main", "mb", &[("a.txt", &numbered(10, &[4]))]);
+    let thread = NewThread::Range {
+        side: Side::Base,
+        path: path("a.txt"),
+        range: LineRange { start: 5, end: 7 },
+    };
+    let revision = fx.session.revision().await;
+    fx.session
+        .create_thread(revision, View::Changeset, thread, "why".into(), 1)
+        .await
+        .unwrap();
     let paused = fx.git.paused.lock().await;
-    let mut moving = Box::pin(fx.session.set_base(BaseChoice::MergeBase {
-        reference: "main".into(),
-    }));
+    let mut moving = Box::pin(fx.session.finish_review());
     let mut cx = Context::from_waker(Waker::noop());
     assert!(moving.as_mut().poll(&mut cx).is_pending(), "the command waits for git");
     (paused, moving)
@@ -65,8 +71,7 @@ async fn requests_are_answered_with_the_published_state_while_a_command_waits_fo
     ));
 
     drop(paused);
-    let (_, revision) = moving.await.unwrap();
-    assert_eq!(revision, 1);
+    moving.await.unwrap();
     assert_eq!(fx.session.revision().await, 1);
     assert_eq!(fx.session.manifest(View::Changeset).await.unwrap().revision, 1);
 }

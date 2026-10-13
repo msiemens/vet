@@ -69,7 +69,7 @@ where
     }
 
     /// The commit the changeset of `source`, whose tip is `tip`, is compared against: the base its
-    /// latest review chose, else the default one for its kind. `None` if that does not resolve.
+    /// latest review recorded, else the one for its kind. `None` if that does not resolve.
     async fn base_of(&self, source: &Source, tip: &CommitId) -> super::Result<Option<CommitId>> {
         let (git, store) = (&self.acquisition.git, &self.acquisition.store);
         let mut chosen = None;
@@ -81,9 +81,9 @@ where
         let resolved = match (chosen, source) {
             (Some(choice), _) => base::resolve(git, choice, tip).await,
             (None, Source::PullRequest { remote, number }) => {
-                base::default_for_pull_request(git, &PullRequestRefs::of(remote, *number), tip).await
+                base::for_pull_request(git, &PullRequestRefs::of(remote, *number), tip).await
             }
-            (None, _) => base::default_for_branch(git, tip).await,
+            (None, _) => base::for_branch(git, tip).await,
         };
         Ok(resolved.ok().map(|(_, commit)| commit))
     }

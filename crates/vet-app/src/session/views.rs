@@ -5,7 +5,7 @@ use vet_core::completion::{Completion, HunkState};
 use vet_core::content::{FileEntry, Hunk, LineDelta, NonTextKind, RepoPath, SnapshotId};
 use vet_core::filter::ReviewFilter;
 
-use crate::changeset::{BaseChoice, CommitId, Lens, Source};
+use crate::changeset::{CommitId, Lens, Source};
 use crate::ports::{CommitInfo, Degraded};
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -81,17 +81,30 @@ pub struct FileView {
     pub completion: Completion,
 }
 
-/// The session's base as chosen and as resolved, with what to show of it.
+/// What a view is compared against, with what to say of it.
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub struct BaseView {
-    pub choice: BaseChoice,
     pub commit: CommitInfo,
-    /// What a person calls the commit: a branch, `branch~N` or the short hash.
-    pub name: String,
-    /// How many commits a chosen branch has gained since; `None` unless it moved.
-    pub behind: Option<u32>,
-    /// The chosen target when it already contains the changeset's tip, so the changeset is empty.
+    /// The branch the base was taken from when it already contains the changeset's tip, so the
+    /// changeset is empty.
     pub contained_in: Option<String>,
+    /// The branch a pull request is merged into, when that is not the repository's default one.
+    pub into: Option<String>,
+    /// The working tree's `HEAD` no longer builds on the base, so what is shown includes work
+    /// that came from elsewhere.
+    pub head_off_base: bool,
+}
+
+impl BaseView {
+    /// A base that is just a commit: a commit's parent, or the base of an interdiff.
+    pub fn of_commit(commit: CommitInfo) -> Self {
+        Self {
+            commit,
+            contained_in: None,
+            into: None,
+            head_off_base: false,
+        }
+    }
 }
 
 /// What the changes lead to.
@@ -142,6 +155,8 @@ pub struct ManifestView {
     pub lens: Lens,
     /// How many commits lie between the base and the tip; none for the working tree.
     pub commits: u32,
+    /// The base of the changeset as a whole, whatever view the manifest is of.
+    pub changeset_base: BaseView,
     /// How many files the changeset as a whole changes, whatever view the manifest is of.
     pub changeset_files: u32,
     /// The completion of the changeset as a whole, whatever view the manifest is of.

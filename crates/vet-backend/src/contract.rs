@@ -16,6 +16,7 @@ pub enum Kind {
     AccountsChanged,
     RecentProjectsChanged,
     SnapshotSettled,
+    EditsPending,
     ChangesetOpened,
     ReviewChanged,
     LensChanged,
@@ -26,7 +27,6 @@ pub enum Kind {
     ServerInstallOutput,
     ServersChanged,
     RestoreFailed,
-    BaseChanged,
     Task,
     PlatformStatus,
     Notification,
@@ -39,6 +39,7 @@ impl Kind {
             Event::AccountsChanged => Self::AccountsChanged,
             Event::RecentProjectsChanged => Self::RecentProjectsChanged,
             Event::SnapshotSettled { .. } => Self::SnapshotSettled,
+            Event::EditsPending { .. } => Self::EditsPending,
             Event::ChangesetOpened { .. } => Self::ChangesetOpened,
             Event::ReviewChanged { .. } => Self::ReviewChanged,
             Event::LensChanged { .. } => Self::LensChanged,
@@ -49,7 +50,6 @@ impl Kind {
             Event::ServerInstallOutput { .. } => Self::ServerInstallOutput,
             Event::ServersChanged { .. } => Self::ServersChanged,
             Event::RestoreFailed { .. } => Self::RestoreFailed,
-            Event::BaseChanged { .. } => Self::BaseChanged,
             Event::Task(_) => Self::Task,
             Event::PlatformStatus { .. } => Self::PlatformStatus,
             Event::Notification { .. } => Self::Notification,
@@ -126,7 +126,6 @@ pub fn effect(request: &Request) -> Effect {
         | Request::RemovalImpact { .. }
         | Request::Reachability { .. }
         | Request::ListServers { .. }
-        | Request::ListBaseCandidates { .. }
         | Request::ListDirectory { .. }
         | Request::FileText { .. }
         | Request::ItemBlob { .. }
@@ -159,17 +158,18 @@ pub fn effect(request: &Request) -> Effect {
         | Request::ToggleFlag { .. }
         | Request::ToggleItem { .. }
         | Request::ToggleFileSeen { .. }
-        | Request::SetFilesSeen { .. }
-        | Request::ReconfirmFile { .. } => tested(&[ReviewChanged]),
-        Request::SetBase { .. } | Request::SetProjectFilter { .. } | Request::ExcludePath { .. } => {
-            tested(&[SnapshotSettled])
-        }
+        | Request::SetFilesSeen { .. } => tested(&[ReviewChanged]),
+        Request::ReconfirmFile { .. } => untested(
+            &[ReviewChanged],
+            "needs lines seen against a base that has since moved, which only a followed branch or pull request base brings",
+        ),
+        Request::SetProjectFilter { .. } | Request::ExcludePath { .. } => tested(&[SnapshotSettled]),
         Request::SetProjectTrusted { .. } => tested(&[TargetChanged, ServersChanged]),
         Request::TrustPullRequest { .. } => untested(&[TargetChanged, ServersChanged], NEEDS_A_PLATFORM),
         // When a remote was fetched. A pull request on view whose head moved settles
         // (`SnapshotSettled`), one the platform names differently says `TargetChanged`, and its
         // sync announces as `SyncThreads` does.
-        Request::Fetch { .. } => tested(&[BaseChanged, ChangesetsChanged]),
+        Request::Fetch { .. } => tested(&[ChangesetsChanged]),
         // The first comment of a review also announces `ReviewStarted`.
         Request::CreateThread { .. }
         | Request::Reply { .. }
@@ -210,9 +210,8 @@ mod tests {
 
     use tokio::sync::mpsc::UnboundedReceiver;
     use vet_protocol::{
-        AnchorState, BackendSettings, BaseChoice, ChangesetKey, CommentAt, EditChoice, HunkState, Lens, Manifest,
-        NonTextKind, ProjectId, Response, ReviewFilter, Secret, ServerMessage, Side, SymbolId, Thread, ThreadStatus,
-        ThreadTarget, View,
+        AnchorState, BackendSettings, ChangesetKey, CommentAt, EditChoice, Lens, Manifest, NonTextKind, ProjectId,
+        Response, ReviewFilter, Secret, ServerMessage, Side, SymbolId, Thread, ThreadStatus, ThreadTarget, View,
     };
     use vet_transport::Events;
 
@@ -480,11 +479,6 @@ mod tests {
                 project,
                 language: "rust".into(),
             },
-            Request::SetBase {
-                project,
-                base: BaseChoice::Commit { id: "HEAD".into() },
-            },
-            Request::ListBaseCandidates { project },
             Request::Fetch { project },
             Request::SetProjectFilter {
                 project,
@@ -916,29 +910,6 @@ mod tests {
                 project,
                 path: "notes".into(),
                 directory: true,
-            })
-            .await;
-
-        // A commit drops a line of the base under the marked lines, which the tree keeps.
-        write(p, "d.txt", &text(40, &[]).replace("line 8\n", ""));
-        git(p, &["commit", "-q", "-m", "drop a line", "--", "d.txt"]);
-        write(p, "d.txt", &text(40, &[7, 8, 9]));
-        world.quiet().await;
-        world
-            .drive(Request::SetBase {
-                project,
-                base: BaseChoice::Commit { id: "HEAD".into() },
-            })
-            .await;
-        world.quiet().await;
-        let manifest = world.manifest().await;
-        let d = manifest.files.iter().find(|f| f.path == "d.txt").unwrap();
-        assert_eq!(d.review.hunks, [HunkState::SeenAgainstOldBase]);
-        world
-            .drive(Request::ReconfirmFile {
-                project,
-                revision: manifest.revision,
-                path: "d.txt".into(),
             })
             .await;
 

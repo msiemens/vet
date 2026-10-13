@@ -1,4 +1,4 @@
-//! Base resolution and candidate listing against a real temporary repository.
+//! Base resolution and the branch listing against a real temporary repository.
 //! `git` is used only to build the fixture.
 
 #![allow(clippy::disallowed_methods)]
@@ -161,64 +161,30 @@ async fn commits_resolve_by_full_id_abbreviation_and_revision() {
 }
 
 #[tokio::test]
-async fn candidates_list_branches_and_recent_commits_newest_first() {
+async fn the_branches_are_sorted_by_name_with_the_checked_out_one_marked() {
     let fx = fixture();
     let repo = GixRepo::new(fx.dir.path());
 
-    let c = repo.base_candidates(200).await.unwrap();
+    let branches = repo.branches().await.unwrap();
 
-    let branches: Vec<_> = c
-        .branches
+    let shape: Vec<_> = branches
         .iter()
-        .map(|b| (b.name.as_str(), &b.commit, b.current))
+        .map(|b| (b.name.as_str(), &b.commit, b.current, b.default))
         .collect();
     assert_eq!(
-        branches,
-        [("feature", &fx.f2, true), ("main", &fx.m2, false)],
-        "sorted by name, HEAD's branch marked"
+        shape,
+        [("feature", &fx.f2, true, false), ("main", &fx.m2, false, false)],
+        "there is no remote, so no default"
     );
-    assert!(c.branches.iter().all(|b| !b.default), "there is no remote");
-    let subjects: Vec<_> = c.commits.iter().map(|c| c.subject.as_str()).collect();
-    assert_eq!(subjects, ["f2", "f1", "m1"], "only what HEAD reaches");
-    assert_eq!(c.commits[0].id, fx.f2);
-    assert_eq!(c.commits[0].author, "Tess");
-    assert!(c.commits[0].time > 1_600_000_000);
-
-    assert_eq!(repo.base_candidates(2).await.unwrap().commits.len(), 2);
-
-    // What a chip shows for one commit and for the branches.
     let info = repo.commit_info(&fx.m1).await.unwrap();
     assert_eq!((info.subject.as_str(), info.author.as_str()), ("m1", "Tess"));
     assert!(info.time > 1_600_000_000);
-    let names: Vec<_> = repo
-        .branches()
-        .await
-        .unwrap()
-        .into_iter()
-        .map(|b| (b.name, b.current))
-        .collect();
-    assert_eq!(names, [("feature".to_string(), true), ("main".to_string(), false)]);
 }
 
 #[tokio::test]
-async fn first_parent_distance_and_commits_behind_follow_the_history() {
+async fn commits_behind_follows_the_history() {
     let fx = fixture();
     let repo = GixRepo::new(fx.dir.path());
-    let head = CommitId(git(fx.dir.path(), &["rev-parse", "HEAD~1"]));
-
-    assert_eq!(repo.first_parent_distance(&fx.f2, &fx.f2, 10).await.unwrap(), Some(0));
-    assert_eq!(repo.first_parent_distance(&fx.f2, &head, 10).await.unwrap(), Some(1));
-    assert_eq!(repo.first_parent_distance(&fx.f2, &fx.m1, 10).await.unwrap(), Some(2));
-    assert_eq!(
-        repo.first_parent_distance(&fx.f2, &fx.m1, 1).await.unwrap(),
-        None,
-        "too far"
-    );
-    assert_eq!(
-        repo.first_parent_distance(&fx.f2, &fx.m2, 10).await.unwrap(),
-        None,
-        "other branch"
-    );
 
     assert_eq!(repo.commits_behind(&fx.f2, &fx.m1, 100).await.unwrap(), 2);
     assert_eq!(repo.commits_behind(&fx.f2, &fx.f2, 100).await.unwrap(), 0);
@@ -235,38 +201,36 @@ async fn first_parent_distance_and_commits_behind_follow_the_history() {
 }
 
 #[tokio::test]
-async fn a_base_is_named_like_a_person_would() {
-    let fx = fixture();
-    let repo = GixRepo::new(fx.dir.path());
-    let branches = repo.branches().await.unwrap();
-    let name = async |commit: &CommitId| vet_app::base::name_of(&repo, &branches, None, commit).await.unwrap();
-
-    assert_eq!(name(&fx.f2).await, "feature");
-    assert_eq!(name(&fx.m2).await, "main");
-    // On both branches' history: the current branch's name wins.
-    assert_eq!(name(&fx.m1).await, "feature~2");
-    let hash = CommitId("0123456789abcdef0123456789abcdef01234567".into());
-    assert_eq!(name(&hash).await, "0123456");
-}
-
-#[tokio::test]
-async fn the_default_branch_is_the_one_origin_head_names() {
+async fn the_default_branch_is_the_one_origin_head_names_else_main_or_master() {
     let fx = fixture();
     let p = fx.dir.path();
+    let repo = GixRepo::new(p);
+    assert_eq!(repo.default_branch().await.unwrap().as_deref(), Some("main"));
+
+    git(p, &["update-ref", "refs/remotes/origin/develop", "main"]);
+    git(
+        p,
+        &[
+            "symbolic-ref",
+            "refs/remotes/origin/HEAD",
+            "refs/remotes/origin/develop",
+        ],
+    );
+    assert_eq!(repo.default_branch().await.unwrap().as_deref(), Some("develop"));
+
     git(p, &["update-ref", "refs/remotes/origin/main", "main"]);
     git(
         p,
         &["symbolic-ref", "refs/remotes/origin/HEAD", "refs/remotes/origin/main"],
     );
-    let repo = GixRepo::new(p);
-
-    let c = repo.base_candidates(10).await.unwrap();
-
-    let default: Vec<_> = c
-        .branches
-        .iter()
+    let default: Vec<_> = (repo.branches().await.unwrap().iter())
         .filter(|b| b.default)
-        .map(|b| b.name.as_str())
+        .map(|b| b.name.clone())
         .collect();
     assert_eq!(default, ["main"]);
+
+    let bare = tempfile::tempdir().unwrap();
+    git(bare.path(), &["init", "-q", "-b", "trunk"]);
+    commit(bare.path(), "a.txt", "a");
+    assert_eq!(GixRepo::new(bare.path()).default_branch().await.unwrap(), None);
 }

@@ -406,7 +406,6 @@ impl Orchestrator {
                 kind,
                 side,
             } => reply(async move { self.item_blob(project, view, revision, &path, kind, side).await }),
-            Request::SetBase { project, base } => reply(self.set_base(project, base)),
             Request::SetProjectFilter { project, filter } => reply(self.set_project_filter(project, filter)),
             Request::SetProjectTrusted { project, trusted } => reply(self.set_project_trusted(project, trusted)),
             Request::TrustPullRequest { project } => reply(self.trust_pull_request(project)),
@@ -415,7 +414,6 @@ impl Orchestrator {
                 path,
                 directory,
             } => reply(async move { self.exclude_path(project, &path, directory).await }),
-            Request::ListBaseCandidates { project } => reply(self.list_base_candidates(project)),
             Request::Fetch { project } => reply(self.fetch(project)),
             Request::ListDirectory { project, path } => reply(async move { self.list_directory(project, &path).await }),
             Request::FileText { project, view, path } => {

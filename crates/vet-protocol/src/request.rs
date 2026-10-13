@@ -4,8 +4,8 @@ use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
 use crate::{
-    BackendSettings, BaseChoice, ChangesetKey, CommentAt, EditChoice, Lens, NonTextKind, ProjectId, ReviewFilter,
-    Secret, Side, SymbolId, ThreadStatus, ThreadTarget, View,
+    BackendSettings, ChangesetKey, CommentAt, EditChoice, Lens, NonTextKind, ProjectId, ReviewFilter, Secret, Side,
+    SymbolId, ThreadStatus, ThreadTarget, View,
 };
 
 #[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize, TS)]
@@ -418,22 +418,10 @@ pub enum Request {
         project: ProjectId,
         language: String,
     },
-    /// Changes what the live tree is compared against (§6.5). Review state is
-    /// remapped onto the new base. The revision increases and every subscriber,
-    /// including the requester, gets `SnapshotSettled`; fetch the manifest again.
-    /// Fails with a message fit to show if the choice does not resolve.
-    SetBase {
-        project: ProjectId,
-        base: BaseChoice,
-    },
-    /// What a base can be picked from.
-    ListBaseCandidates {
-        project: ProjectId,
-    },
     /// Fetches the repository's remotes now, as a `Fetch` task, and answers with
     /// `Response::Done` when it ended. A remote that fails (offline, refused) fails the
     /// task with its name, not this request, and the others are still fetched. If any
-    /// remote was fetched, every subscriber then gets `BaseChanged` and `ChangesetsChanged`,
+    /// remote was fetched, every subscriber then gets `ChangesetsChanged`,
     /// a pull request on view whose head moved is its next version (`SnapshotSettled`), and
     /// its threads are synced.
     Fetch {
