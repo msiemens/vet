@@ -29,6 +29,8 @@ const COMPARED_AT_ONCE = 2;
 /** A file's target-side diagnostics, each with its origin. */
 export interface FileDiagnostics {
   diagnostics: Diagnostic[];
+  /** The base side has answered (or failed to): the origins are as known as they will be. */
+  compared: boolean;
   /** Why the origins are unknown, when the base side could not be analysed. */
   originUnavailable?: Unavailable;
 }
@@ -42,6 +44,10 @@ class SemanticStore {
   private originListeners = new Set<(path: string) => void>();
   /** The latest diagnostics of each file asked about at `revision`, with the origins once they are known. */
   files = new SvelteMap<string, FileDiagnostics>();
+  /** What `files` held when the revision last advanced, for what shows until the new revision has answered. */
+  previous = $state.raw<ReadonlyMap<string, FileDiagnostics>>(new Map());
+  /** Counts the times the answers were dropped; what was asked of the servers is asked again when it changes. */
+  generation = $state(0);
   private hovering = new InFlight<HoverAnswer>();
   private probe = new DefinitionProbe((key, signal) => this.lookUp(key, signal));
   /** The number of diagnostics to tell the viewer about, per file asked about at `revision`. */
@@ -58,7 +64,9 @@ class SemanticStore {
     if (revision < this.revision) return false;
     if (revision > this.revision) {
       this.revision = revision;
+      const held = new Map(this.files);
       this.invalidate();
+      this.previous = held;
     }
     return true;
   }
@@ -67,11 +75,18 @@ class SemanticStore {
   reset() {
     this.revision = -1;
     this.invalidate();
+    this.previous = new Map();
+  }
+
+  /** The reason the backend gave for having no diagnostics of `path`, if it did. */
+  unavailableOf(path: string): Unavailable | undefined {
+    return this.missing.get(path);
   }
 
   /** What the servers answered may differ now (a server was installed or its path changed). */
   invalidate() {
     this.epoch++;
+    this.generation++;
     this.pending.clear();
     this.hovering.clear();
     this.probe.clear();
@@ -200,7 +215,7 @@ class SemanticStore {
     try {
       const r = await backend.diagnostics(revision, path, false);
       if (epoch !== this.epoch) return;
-      this.take(path, r);
+      this.take(path, r, false);
       if (!r.unavailable) void this.compare(backend, revision, path, epoch);
     } catch {
       if (epoch === this.epoch) this.pending.delete(path); // stale: the next revision asks again
@@ -214,7 +229,7 @@ class SemanticStore {
         epoch === this.epoch ? backend.diagnostics(revision, path, true) : Promise.resolve(undefined),
       );
       if (!r || epoch !== this.epoch || r.unavailable) return;
-      this.take(path, r);
+      this.take(path, r, true);
       for (const listener of this.originListeners) listener(path);
     } catch {
       // The diagnostics stay as they are, with their origin pending.
@@ -224,6 +239,7 @@ class SemanticStore {
   private take(
     path: string,
     r: { diagnostics: Diagnostic[]; count: number; unavailable?: Unavailable; originUnavailable?: Unavailable },
+    compared: boolean,
   ) {
     if (r.unavailable) {
       this.missing.set(path, r.unavailable);
@@ -231,7 +247,7 @@ class SemanticStore {
     }
     this.missing.delete(path);
     this.counts.set(path, r.count);
-    this.files.set(path, { diagnostics: r.diagnostics, originUnavailable: r.originUnavailable });
+    this.files.set(path, { diagnostics: r.diagnostics, compared, originUnavailable: r.originUnavailable });
   }
 }
 

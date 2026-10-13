@@ -162,6 +162,8 @@
   /* The timeline, the bottom panel listing the review's versions. */
   --h-timeline: 300px;
   --w-timeline-files: 360px;
+  /* The Problems tool, a bottom panel like the timeline. */
+  --h-problems: 300px;
   /* A progress bar, and the footer's one for the newest background task. */
   --h-progress: 3px;
   --w-progress: 96px;

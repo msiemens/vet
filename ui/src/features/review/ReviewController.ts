@@ -785,6 +785,11 @@ export class ReviewController {
     return this.analysable(id, "target") ? pathOf(id) : undefined;
   }
 
+  /** The files that have a tab open, each once. */
+  get openPaths(): string[] {
+    return [...new Set(this.tabs.open.flatMap((id) => pathOf(id) ?? []))];
+  }
+
   /** Shows a place the popup listed, which the tab `from` asked for: in its file's tab, or says where it is when it is outside the repository. */
   private async openRow(from: TabId, row: LocationRow, side: Side) {
     if (row.external) {
@@ -1327,6 +1332,52 @@ export class ReviewController {
   async openSource(origin: Origin, path: string, line?: number) {
     const opened = await this.showFile(origin, path, "file");
     if (opened && line !== undefined) this.texts.get(opened.id)?.goToLine(line);
+  }
+
+  /**
+   * Shows a problem, which sits at a 0-based `line` of the latest code. With `jump` it is Jump to
+   * Source: the file's tab in File mode, the editor focused. Otherwise it is shown without taking the
+   * focus, in the tab on screen when that shows the file (the Changes tab of the whole changeset, or
+   * the file's own tab), else in the file's open tab, else in the Changes tab, else in a tab the file
+   * gets. A tab at a commit is never used: it shows the commit's code, not the latest.
+   */
+  async showProblem(path: string, line: number, jump: boolean) {
+    const id = fileTab(path);
+    if (jump) {
+      await this.openSource(id, path, line);
+      this.focusEditor();
+      return;
+    }
+    const wholeChanges = this.changeset.shownCommit === undefined && !this.changeset.currentLayout()?.interdiff;
+    const changes = this.views.get(CHANGES);
+    const changesIndex = wholeChanges && changes ? changes.indexOf(path) : -1;
+    const active = this.tabs.active;
+    if (active === CHANGES && changesIndex >= 0) {
+      await changes?.goToLine(changesIndex, line, true);
+    } else if (active === id || this.tabs.open.includes(id)) {
+      this.tabs.active = id;
+      await this.lineInTab(id, line);
+    } else if (changesIndex >= 0) {
+      this.tabs.active = CHANGES;
+      await changes?.goToLine(changesIndex, line, true);
+    } else {
+      await this.openLocation(id, path, line, "target");
+    }
+  }
+
+  /** A file's header in a list was chosen: the Changes tab, when it is the tab on screen, shows the file. */
+  async revealFileInChanges(path: string) {
+    if (this.tabs.active === CHANGES) await this.revealInChanges(path);
+  }
+
+  /** Puts the caret on a target line of the file tab `id`, in the mode it is in, without moving the focus. */
+  private async lineInTab(id: TabId, line: number) {
+    if (this.tabs.modes.get(id) === "file") {
+      this.ensureText(id);
+      this.texts.get(id)?.goToLine(line);
+    } else {
+      await this.views.get(id)?.goToLine(0, line, true);
+    }
   }
 
   /** What the file's text tab offers for the file's hunks. */
