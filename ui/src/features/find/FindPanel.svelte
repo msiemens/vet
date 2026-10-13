@@ -710,7 +710,7 @@
   }
   .within {
     flex: none;
-    width: 150px;
+    width: 100px;
     overflow: hidden;
     text-overflow: ellipsis;
     color: var(--text-2);
