@@ -52,6 +52,13 @@
     };
   });
 
+  const countTitle = $derived(
+    summary.error ??
+      (summary.skipped
+        ? `${summary.skipped} ${summary.skipped === 1 ? "file is" : "files are"} over the size limit and not searched`
+        : undefined),
+  );
+
   const sides: { id: FindSide; label: string }[] = [
     { id: "both", label: "Both" },
     { id: "target", label: "Target" },
@@ -87,7 +94,7 @@
     if (e.key === "Enter") {
       e.preventDefault();
       onstep(e.shiftKey ? -1 : 1);
-    } else if (e.altKey && !e.ctrlKey && e.metaKey === isMac) {
+    } else if (e.altKey && !e.ctrlKey && !e.shiftKey && e.metaKey === isMac) {
       // Option types a letter in a field, so the toggles are read by the key's place.
       const toggle = toggles.find((t) => t.code === e.code);
       if (!toggle) return;
@@ -128,15 +135,12 @@
       {/each}
     </span>
   </div>
-  <span class="count {count.tone}" title={summary.error}>{count.text}</span>
+  <span class="count {count.tone}" title={countTitle}>{count.text}</span>
   {#if summary.pending}<Spinner label="Reading the texts of {summary.pending} more files" />{/if}
   {#if summary.total && !options.onlyChanges && summary.unchanged && !noSides}
     <span class="sub" title="Matches in lines the change did not touch, inside collapsed regions or in context"
       >{summary.unchanged} in unchanged code</span
     >
-  {/if}
-  {#if summary.skipped}
-    <span class="sub" title="Files over the size limit are not searched">{summary.skipped} too large</span>
   {/if}
   <IconButton
     icon="up"

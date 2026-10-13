@@ -342,10 +342,10 @@ export class Backend {
 
   /**
    * The lines of the files in `query.scope` that `query.pattern` matches. Fails with a message fit to show
-   * when the pattern or the file mask is invalid.
+   * when the pattern or the file mask is invalid. Aborting `signal` stops the search in the backend.
    */
-  async search(query: SearchQuery): Promise<SearchResults> {
-    return expect(await this.conn.request({ type: "search", project: this.pid, ...query }), "searchResults");
+  async search(query: SearchQuery, signal?: AbortSignal): Promise<SearchResults> {
+    return expect(await this.conn.request({ type: "search", project: this.pid, ...query }, signal), "searchResults");
   }
 
   /** One side of a non-text item's file, as of `revision`. */

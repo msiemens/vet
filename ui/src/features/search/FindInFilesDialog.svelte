@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onMount, tick } from "svelte";
+  import { onDestroy, onMount, tick } from "svelte";
   import { SvelteSet } from "svelte/reactivity";
   import type { SearchFile } from "../../generated/SearchFile";
   import type { SearchLine } from "../../generated/SearchLine";
@@ -16,12 +16,13 @@
   import Meter from "../../lib/ui/Meter.svelte";
   import Popover from "../../lib/ui/Popover.svelte";
   import Segmented from "../../lib/ui/Segmented.svelte";
-  import Spinner from "../../lib/ui/Spinner.svelte";
   import VirtualRows from "../../lib/ui/VirtualRows.svelte";
   import type { Backend, SearchResults } from "../../state/backend";
   import { commands } from "../../state/commands";
   import { isMac } from "../../state/host";
+  import { EscapeGate } from "./escapeGate";
   import { findInFiles } from "./FindInFiles.svelte";
+  import { LatestRun } from "./latestRun";
   import ResultPreview from "./ResultPreview.svelte";
   import {
     type OpenedResult,
@@ -80,9 +81,8 @@
   let scopeOpen = $state(false);
   let input = $state<HTMLInputElement>();
   let list = $state<VirtualRows>();
-  let sequence = 0;
-  // Escape closes the scope menu first and the dialog only when no menu was open.
-  let menuWasOpen = false;
+  const latest = new LatestRun<SearchResults>();
+  const escape = new EscapeGate();
 
   const choices = $derived(
     scopeChoices({ view, files, range, commits: commits.map(({ shortId, subject }) => ({ shortId, subject })) }),
@@ -124,8 +124,8 @@
     };
     // eslint-disable-next-line @typescript-eslint/no-unused-expressions -- the read makes the revision a dependency
     revision;
-    const n = ++sequence;
     if (!request.pattern.text) {
+      latest.cancel();
       results = undefined;
       error = undefined;
       pending = false;
@@ -133,34 +133,35 @@
     }
     pending = true;
     const timer = setTimeout(() => {
-      backend.search(request).then(
-        (r) => {
-          if (n !== sequence) return;
-          results = r;
-          error = undefined;
+      void latest
+        .run((signal) => backend.search(request, signal))
+        .then((outcome) => {
+          if (!outcome) return;
           pending = false;
-        },
-        (e: unknown) => {
-          if (n !== sequence) return;
-          results = undefined;
-          error = errorText(e);
-          pending = false;
-        },
-      );
+          if (outcome.type === "done") {
+            results = outcome.value;
+            error = undefined;
+          } else {
+            results = undefined;
+            error = errorText(outcome.error);
+          }
+        });
     }, 120);
     return () => clearTimeout(timer);
   });
+
+  onDestroy(() => latest.cancel());
 
   const maskError = $derived(error?.startsWith('invalid pattern "') === true);
 
   const summary = $derived.by(() => {
     if (!find.text) return "";
     if (error !== undefined) return "";
-    if (!results) return pending ? "Searching…" : "";
+    if (!results || pending) return "Searching…";
     const { hits, files: found, truncated } = results;
     if (!hits) return "0 matches";
     const count = `${hits.toLocaleString()}${truncated ? "+" : ""} ${hits === 1 ? "match" : "matches"} in ${found.length} ${found.length === 1 ? "file" : "files"}`;
-    return truncated ? `${count}. Only the first ${LIMIT.toLocaleString()} are listed; narrow the query` : count;
+    return truncated ? `${count}, narrow the query` : count;
   });
 
   const sides: { id: SearchSide; label: string }[] = [
@@ -184,7 +185,7 @@
 
   const scopeItems = $derived.by((): MenuItem[] => {
     const groups: [ScopeChoice["group"], string][] = [
-      ["view", "The changeset"],
+      ["view", "The view on show"],
       ["commit", "A commit of this changeset"],
       ["repository", "Beyond the changeset"],
     ];
@@ -258,12 +259,18 @@
     });
   }
 
+  /** Escape with the scope menu open closes it alone; the menu is in the title row, outside the box that reads the other keys. */
+  function escapeKey(e: KeyboardEvent) {
+    if (e.key !== "Escape" || !escape.press(scopeOpen)) return;
+    e.preventDefault();
+    e.stopPropagation();
+    scopeOpen = false;
+    input?.focus();
+    setTimeout(() => escape.settle());
+  }
+
   function keydown(e: KeyboardEvent) {
     const target = e.target as HTMLElement;
-    if (e.key === "Escape") {
-      menuWasOpen = scopeOpen;
-      return;
-    }
     if (e.altKey && !e.ctrlKey && e.metaKey === isMac && !e.shiftKey) {
       // Option types a letter, so the toggles are read by the key's place.
       const toggle = toggles.find((t) => t.code === e.code);
@@ -286,12 +293,7 @@
   }
 
   function close() {
-    if (menuWasOpen) {
-      menuWasOpen = false;
-      scopeOpen = false;
-      return;
-    }
-    find.close();
+    if (escape.cancel()) find.close();
   }
 
   /** The 1-based number of a result's line. */
@@ -351,7 +353,9 @@
   />
 {/snippet}
 
-<Dialog title="Find in Files" width="840px" height="640px" padded={false} onclose={close} {bar}>
+<svelte:window onkeydowncapture={escapeKey} />
+
+<Dialog title="Find in Files" width="840px" height="640px" padded={false} closeButton={false} onclose={close} {bar}>
   <!-- The keys of the controls inside are read here. -->
   <!-- svelte-ignore a11y_no_static_element_interactions -->
   <div class="box" onkeydown={keydown}>
@@ -385,7 +389,6 @@
     </div>
     <div class="filters">
       <span class="summary">{summary}</span>
-      {#if pending && results}<Spinner label="Searching" />{/if}
       <span class="grow"></span>
       <Segmented
         small

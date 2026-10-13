@@ -15,6 +15,7 @@
     children,
     actions,
     bar,
+    closeButton = true,
   }: {
     title: string;
     onclose: () => void;
@@ -31,6 +32,8 @@
     actions?: Snippet;
     /** Controls in the title row, right-aligned before the close button. */
     bar?: Snippet;
+    /** Whether the title row has a close button; without it Escape and a press outside close the dialog. */
+    closeButton?: boolean;
   } = $props();
 
   const MIN = { w: 360, h: 240 };
@@ -143,7 +146,7 @@
   <header>
     <h2>{title}</h2>
     {#if bar}<div class="bar">{@render bar()}</div>{/if}
-    <IconButton icon="close" label="Close" size={22} iconSize={12} onclick={onclose} />
+    {#if closeButton}<IconButton icon="close" label="Close" size={22} iconSize={12} onclick={onclose} />{/if}
   </header>
   {#if padded}
     <ScrollArea><div class="padded">{@render children()}</div></ScrollArea>
