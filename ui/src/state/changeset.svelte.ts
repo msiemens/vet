@@ -596,8 +596,10 @@ class ChangesetStore implements ViewSource {
    * the backend then pushes `snapshotSettled`.
    */
   async narrow(filter: ReviewFilter | undefined) {
+    const changeset = this.facts?.target.changeset;
+    if (!changeset) return;
     try {
-      await session.connected().narrowReview(filter);
+      await session.connected().narrowReview(changeset, filter);
     } catch (error) {
       session.notice = errorText(error);
     }

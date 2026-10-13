@@ -7,6 +7,7 @@
   import type { SoftWrap } from "../../lib/softWrap";
   import type { Backend } from "../../state/backend";
   import type { Changeset } from "../../state/changeset.svelte";
+  import { keyId } from "../../state/changesetKey";
   import type { CommandContext } from "../../state/commands";
   import { commands } from "../../state/commands";
   import { contextMenus } from "../../state/contextMenu.svelte";
@@ -147,6 +148,14 @@
   );
   /** The tree's group of excluded files is open. */
   let excludedOpen = $state(false);
+  // Another changeset has other excluded files.
+  let excludedOf: string | undefined;
+  $effect(() => {
+    const id = changeset.facts && keyId(changeset.facts.target.changeset);
+    if (id === excludedOf) return;
+    excludedOf = id;
+    untrack(() => (excludedOpen = false));
+  });
 
   function act(action: Action) {
     switch (action.id) {

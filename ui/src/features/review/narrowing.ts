@@ -2,15 +2,21 @@
 
 import type { ReviewFilter } from "../../generated/ReviewFilter";
 
-/** What `narrowing` shows that the project's filter does not, as a chip words it: "Only src/api", "Only generated". */
+/**
+ * What `narrowing` shows that the project's filter does not, as a chip words it: "Only src/api" for
+ * folders, "Also generated" for rules that are lifted, "Only src/api + generated" for both.
+ */
 export function narrowingLabel(project: ReviewFilter, narrowing: ReviewFilter): string {
-  const parts: string[] = [];
-  if (narrowing.roots.length && narrowing.roots.join("\0") !== project.roots.join("\0")) {
-    parts.push(narrowing.roots.join(", "));
-  } else if (!narrowing.roots.length && project.roots.length) parts.push("outside roots");
-  if (!narrowing.include.length && project.include.length) parts.push("not included");
-  for (const pattern of project.exclude) if (!narrowing.exclude.includes(pattern)) parts.push(`matching ${pattern}`);
-  if (narrowing.reviewGenerated && !project.reviewGenerated) parts.push("generated");
-  if (!narrowing.hideBinary && project.hideBinary) parts.push("binary");
-  return `Only ${parts.join(", ") || "part of the project"}`;
+  const only =
+    narrowing.roots.length && narrowing.roots.join("\0") !== project.roots.join("\0") ? narrowing.roots.join(", ") : "";
+  const also: string[] = [];
+  if (!narrowing.roots.length && project.roots.length) also.push("outside roots");
+  if (!narrowing.include.length && project.include.length) also.push("not included");
+  for (const pattern of project.exclude) if (!narrowing.exclude.includes(pattern)) also.push(`matching ${pattern}`);
+  if (narrowing.reviewGenerated && !project.reviewGenerated) also.push("generated");
+  if (!narrowing.hideBinary && project.hideBinary) also.push("binary");
+  if (only && also.length) return `Only ${only} + ${also.join(", ")}`;
+  if (only) return `Only ${only}`;
+  if (also.length) return `Also ${also.join(", ")}`;
+  return "Only part of the project";
 }

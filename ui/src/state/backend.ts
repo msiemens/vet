@@ -460,11 +460,15 @@ export class Backend {
   }
 
   /**
-   * Narrows the review on view to `filter` in place of the project's, or ends the narrowing for none; every
-   * subscriber, this one included, then gets `snapshotSettled`. Rejects with the backend's message for an invalid glob.
+   * Narrows the review of `changeset` to `filter` in place of the project's, or ends the narrowing for none; every
+   * subscriber, this one included, then gets `snapshotSettled`, unless `changeset` is not on view any more and
+   * nothing changed. Rejects with the backend's message for an invalid glob.
    */
-  async narrowReview(filter: ReviewFilter | undefined): Promise<void> {
-    expect(await this.conn.request({ type: "narrowReview", project: this.pid, filter: filter ?? null }), "done");
+  async narrowReview(changeset: ChangesetKey, filter: ReviewFilter | undefined): Promise<void> {
+    expect(
+      await this.conn.request({ type: "narrowReview", project: this.pid, changeset, filter: filter ?? null }),
+      "done",
+    );
   }
 
   /** Marks the open repository trusted or not; every subscriber, this one included, then gets `targetChanged` and `serversChanged`. */

@@ -164,6 +164,11 @@ void test("a pull request row has its number apart from its title, the repositor
   assert.equal(updatedText(row, NOW), "12:30");
 });
 
+void test("the default branch is named with the commits it has not pushed, once it has some", () => {
+  assert.deepEqual(labelOf({ ...retry, title: "main", unpushed: 3 }), { text: "main, 3 unpushed" });
+  assert.deepEqual(labelOf({ ...retry, title: "main", unpushed: 0 }), { text: "main" });
+});
+
 void test("a pull request counts the platform's comments, a local changeset its open threads", () => {
   assert.equal(commentCount(pullRequestRow(pr)), 2);
   assert.equal(commentCount(retry), 2);

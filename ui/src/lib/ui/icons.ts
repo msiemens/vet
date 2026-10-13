@@ -55,9 +55,17 @@ export const ICONS = {
   warning:
     '<path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3"/><path d="M12 9v4"/><path d="M12 17h.01"/>',
   minus: '<path d="M6 12h12"/>',
-  // Lucide's circle-minus and circle-check (ISC).
-  circleMinus: '<circle cx="12" cy="12" r="10"/><path d="M8 12h8"/>',
-  circleCheck: '<circle cx="12" cy="12" r="10"/><path d="m9 12 2 2 4-4"/>',
+  // The marks of a view that shows no file.
+  emptyWatch:
+    '<path d="M2.5 12S6 5.5 12 5.5 21.5 12 21.5 12 18 18.5 12 18.5 2.5 12 2.5 12z"/><circle cx="12" cy="12" r="2.8"/>',
+  emptyMerge:
+    '<circle cx="6.5" cy="5.5" r="2.2"/><circle cx="6.5" cy="18.5" r="2.2"/><circle cx="17.5" cy="12" r="2.2"/><path d="M6.5 7.7v8.6M8.4 6.6c5 1.2 7 2.6 7.2 3.4"/>',
+  emptyFilter: '<path d="M3.5 5h17l-6.5 7.8V19l-4 1.5v-7.7z" stroke-linejoin="round"/>',
+  emptyCommit: '<circle cx="12" cy="12" r="3.8"/><path d="M2.5 12h5.7M15.8 12h5.7"/>',
+  emptyRange: '<circle cx="12" cy="12" r="8.5"/><path d="M12 7v5l3.2 2" stroke-linecap="round"/>',
+  emptyCheck:
+    '<circle cx="12" cy="12" r="8.5"/><path d="M8 12.4l2.7 2.7L16.2 9.6" stroke-linecap="round" stroke-linejoin="round"/>',
+  emptyMinus: '<circle cx="12" cy="12" r="8.5"/><path d="M8 12h8" stroke-linecap="round"/>',
   eye: '<path d="M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/>',
   user: '<circle cx="12" cy="8" r="4"/><path d="M4.5 20a7.5 7.5 0 0115 0"/>',
   settings:

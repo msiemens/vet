@@ -290,7 +290,8 @@
   const shownAll = $derived(searchedAll?.rows ?? all.rows);
   const hits: ReadonlyMap<object, Range[]> | undefined = $derived((searchedChanges ?? searchedAll)?.hits);
 
-  const hasExcluded = $derived(!!excluded && excluded.lines + excluded.items > 0 && !search.active);
+  const excludedFiles = $derived(excluded?.groups.reduce((sum, g) => sum + g.count, 0) ?? 0);
+  const hasExcluded = $derived(excludedFiles > 0 && !search.active);
   const heldRows = $derived(excludedRows(excluded?.groups ?? []));
   const extra = $derived(extraRows(hasExcluded, excludedOpen, heldRows));
   let changesList = $state<VirtualRows>();
@@ -648,7 +649,19 @@
                 name="filter"
                 size={11}
                 stroke={2}
-              />Excluded<span class="mono x">{excluded.lines}</span>
+              />Excluded<span class="mono x">{excludedFiles}</span>
+            </button>
+          {:else if !r && held?.path !== undefined}
+            {@const path = held.path}
+            <button
+              class="flat tw held"
+              type="button"
+              tabindex="-1"
+              title="{held.name}: {held.why}"
+              onclick={() => onopen(path)}
+            >
+              <span class="name">{held.name}</span>
+              <span class="why">{held.why}</span>
             </button>
           {:else if !r && held}
             <div class="tw held" title="{held.name}: {held.why}">

@@ -42,7 +42,9 @@ export interface Label {
 }
 
 export function labelOf(row: QueueRow): Label {
-  return row.key.type === "pullRequest" ? { number: `#${row.key.number}`, text: row.title } : { text: row.title };
+  if (row.key.type === "pullRequest") return { number: `#${row.key.number}`, text: row.title };
+  // The default branch is offered for the commits it has not pushed.
+  return { text: row.unpushed ? `${row.title}, ${row.unpushed} unpushed` : row.title };
 }
 
 /** What the changeset on view is called in the header. */

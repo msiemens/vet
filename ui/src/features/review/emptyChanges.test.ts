@@ -6,7 +6,7 @@ import type { ExcludedGroup } from "../../generated/ExcludedGroup.ts";
 import type { PullRequestInfo } from "../../generated/PullRequestInfo.ts";
 import type { ReviewFilter } from "../../generated/ReviewFilter.ts";
 import type { VersionInfo } from "../../generated/VersionInfo.ts";
-import { type EmptyInput, type Panel, emptyView, lifting } from "./emptyChanges.ts";
+import { type EmptyInput, type Panel, emptyView } from "./emptyChanges.ts";
 
 const NOW = new Date(2026, 9, 12, 12, 0).getTime();
 const commit = (shortId: string, subject = "a commit"): CommitInfo => ({
@@ -51,11 +51,12 @@ const pullRequest = (state: PullRequestInfo["state"]): PullRequestInfo =>
   }) as PullRequestInfo;
 
 const labels = (panels: Panel[]) => panels.flatMap((p) => p.rows.map((r) => r.label));
-const group = (by: ExcludedGroup["by"], paths: string[]): ExcludedGroup => ({
+const group = (by: ExcludedGroup["by"], paths: string[], folders: ExcludedGroup["folders"] = []): ExcludedGroup => ({
   by,
   count: paths.length,
   delta: { added: paths.length, removed: 0 },
   files: paths.map((path) => ({ path, delta: { added: 1, removed: 0 } })),
+  folders,
 });
 
 void test("a branch the default branch holds names the merge that brought it in, and only when git could say", () => {
@@ -71,10 +72,52 @@ void test("a branch the default branch holds names the merge that brought it in,
   assert.deepEqual(labels(fastForward.panels), []);
 });
 
+void test("a merge that carried commits says how many and how far the branch has gone since", () => {
+  const view = emptyView(
+    input({
+      target: { ...input().target, head: "7c8d9e0aaaa" },
+      changesetBase: base({
+        branch: "main",
+        sameTip: false,
+        mergedBy: commit("a1b2c3d", "Merge"),
+        commits: 4,
+        since: 11,
+      }),
+    }),
+  );
+  const rows = view.panels[0].rows;
+  assert.deepEqual(
+    rows.map((r) => [r.label, r.meta, r.value.at(-1)]),
+    [
+      ["Merged by", undefined, " Merge"],
+      ["When", undefined, "Anna · 11:00"],
+      ["Branch tip", "4 commits, all in main", { mono: "7c8d9e0" }],
+      ["main since", undefined, "11 commits ahead of the merge"],
+    ],
+  );
+});
+
 void test("a branch at the default branch's tip has no commits yet, not a merge", () => {
   const view = emptyView(input({ changesetBase: base({ branch: "main", sameTip: true }) }));
   assert.equal(view.title, "No commits yet");
   assert.deepEqual(labels(view.panels), ["Branch", "Target"]);
+});
+
+void test("a pull request at the target's tip has no commits to review yet", () => {
+  const view = emptyView(
+    input({
+      key: { type: "pullRequest", remote: "github.com/acme/app", number: 7 },
+      changesetBase: base({ branch: "main", sameTip: true }),
+      pullRequest: pullRequest("open"),
+    }),
+  );
+  assert.equal(view.title, "No commits to review yet");
+});
+
+void test("a changeset with nothing different and no known reason names its base with the hash as code", () => {
+  const view = emptyView(input());
+  assert.equal(view.title, "No changes");
+  assert.deepEqual(view.panels[0].rows[0], { label: "Base", value: [{ mono: "b4c7a21" }], meta: "a commit" });
 });
 
 void test("a merged pull request keeps the viewer's review only while there are threads, and says what is open", () => {
@@ -90,6 +133,7 @@ void test("a merged pull request keeps the viewer's review only while there are 
     );
   assert.equal(merged({ total: 0, open: 0 }).title, "Merged");
   assert.deepEqual(labels(merged({ total: 0, open: 0 }).panels), ["Source", "Merge commit"]);
+  assert.equal(merged({ total: 0, open: 0 }).panels[0].rows[0].meta, undefined, "no head is known to name");
   const review = merged({ total: 3, open: 1 }).panels[0].rows.find((r) => r.label === "Your review");
   assert.ok(review);
   assert.deepEqual(review.value, ["3 threads, 1 still open"]);
@@ -116,7 +160,7 @@ void test("a workspace that was edited and put back lists its versions, newest f
   assert.deepEqual(
     rows.map((r) => [r.label, r.action?.n, r.meta]),
     [
-      ["v3", 3, "Module.cs"],
+      ["v3", 3, "Module.cs · undid v2"],
       ["v2", 2, "Module.cs"],
       ["v1", undefined, "opened"],
     ],
@@ -140,9 +184,9 @@ void test("when the filter hides every file each rule's files are listed and its
     input({
       filter,
       excluded: [
-        group({ kind: "outsideRoots" }, ["docs/a.md", "README.md"]),
-        group({ kind: "pattern", pattern: "**/*.snap" }, ["tests/x.snap"]),
-        group({ kind: "generated" }, ["Cargo.lock"]),
+        group([{ kind: "outsideRoots" }], ["docs/a.md", "README.md"]),
+        group([{ kind: "pattern", pattern: "**/*.snap" }], ["tests/x.snap"]),
+        group([{ kind: "generated" }], ["Cargo.lock"]),
       ],
     }),
   );
@@ -156,9 +200,18 @@ void test("when the filter hides every file each rule's files are listed and its
   ]);
 });
 
+void test("a file that two rules leave out is in one panel, and its link brings back both", () => {
+  const filter: ReviewFilter = { ...NO_FILTER, roots: ["src"], reviewGenerated: false };
+  const view = emptyView(
+    input({ filter, excluded: [group([{ kind: "outsideRoots" }, { kind: "generated" }], ["Cargo.lock"])] }),
+  );
+  assert.equal(view.panels[0].heading, "Outside review roots, Generated");
+  assert.deepEqual(view.panels[0].link?.filter, { ...filter, roots: [], reviewGenerated: true });
+});
+
 void test("a long group lists its first files and counts the rest", () => {
   const paths = Array.from({ length: 8 }, (_, i) => `lock/${i}.lock`);
-  const view = emptyView(input({ excluded: [group({ kind: "generated" }, paths)] }));
+  const view = emptyView(input({ excluded: [group([{ kind: "generated" }], paths)] }));
   const rows = view.panels[0].rows;
   assert.equal(rows.length, 6);
   assert.deepEqual(rows.at(-1)?.value, ["+ 3 more"]);
@@ -167,12 +220,22 @@ void test("a long group lists its first files and counts the rest", () => {
 
 void test("a narrowed review offers the folders its narrowing left out and no way to lift project rules", () => {
   const narrowing: ReviewFilter = { ...NO_FILTER, roots: ["src/legacy"] };
+  const folder = (path: string, dir: boolean, files: number): ExcludedGroup["folders"][number] => ({
+    path,
+    dir,
+    files,
+    delta: { added: files, removed: 0 },
+  });
   const view = emptyView(
     input({
       narrowing,
       excluded: [
-        group({ kind: "narrowing" }, ["src/api/a.rs", "src/api/b.rs", "src/sync/c.rs", "top.rs"]),
-        group({ kind: "generated" }, ["Cargo.lock"]),
+        group(
+          [{ kind: "narrowing" }],
+          ["src/api/a.rs", "src/api/b.rs", "src/sync/c.rs", "top.rs"],
+          [folder("src/api", true, 2), folder("src/sync", true, 1), folder("top.rs", false, 1)],
+        ),
+        group([{ kind: "generated" }], ["Cargo.lock"]),
       ],
     }),
   );
@@ -180,21 +243,31 @@ void test("a narrowed review offers the folders its narrowing left out and no wa
   assert.match(view.lead, /The 4 changed files are elsewhere/);
   const folders = view.panels[0].rows;
   assert.deepEqual(
-    folders.map((r) => [r.value, r.meta, r.action?.filter?.roots]),
-    [[[{ mono: "src" }], "3 files · +3 −0", ["src"]]],
+    folders.map((r) => [r.value, r.meta, r.action?.filter?.roots, r.action?.filter?.include]),
+    [
+      [[{ mono: "src/api" }], "2 files · +2 −0", ["src/api"], []],
+      [[{ mono: "src/sync" }], "1 file · +1 −0", ["src/sync"], []],
+      [[{ mono: "top.rs" }], "1 file · +1 −0", [], ["/top.rs"]],
+    ],
   );
-  assert.equal(view.panels[1].link, undefined);
+  assert.equal(view.panels[1].link, undefined, "the project's rules cannot be lifted from inside a narrowing");
   assert.deepEqual(
     view.actions.map((a) => a.id),
     ["reset", "filter"],
   );
 });
 
-void test("lifting a rule leaves the rest of the project's filter alone and a narrowing has nothing to lift", () => {
-  const filter: ReviewFilter = { ...NO_FILTER, include: ["*.rs"], hideBinary: true };
-  assert.deepEqual(lifting(filter, { kind: "binary" }), { ...filter, hideBinary: false });
-  assert.deepEqual(lifting(filter, { kind: "notIncluded" }), { ...filter, include: [] });
-  assert.equal(lifting(filter, { kind: "narrowing" }), undefined);
+void test("a narrowing whose left-out files are all the project's still offers to reset it", () => {
+  const view = emptyView(
+    input({
+      narrowing: { ...NO_FILTER, roots: ["src/legacy"] },
+      excluded: [group([{ kind: "generated" }], ["Cargo.lock"])],
+    }),
+  );
+  assert.deepEqual(
+    view.actions.map((a) => a.id),
+    ["reset", "filter"],
+  );
 });
 
 void test("a push that changed nothing says whether the base moved, and shows the versions compared", () => {
@@ -217,6 +290,7 @@ void test("a push that changed nothing says whether the base moved, and shows th
     [
       ["v3", "based on m1"],
       ["v4", "based on m2"],
+      ["Why", undefined],
     ],
   );
   assert.match(view.lead, /base moved/);

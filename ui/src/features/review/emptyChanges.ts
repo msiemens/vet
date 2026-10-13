@@ -68,7 +68,7 @@ export interface Panel {
 }
 
 export interface EmptyView {
-  glyph: "eye" | "circleMinus" | "merge" | "circleCheck" | "filter" | "commit" | "timeline";
+  glyph: "emptyWatch" | "emptyMinus" | "emptyMerge" | "emptyCheck" | "emptyFilter" | "emptyCommit" | "emptyRange";
   title: string;
   lead: string;
   panels: Panel[];
@@ -115,11 +115,12 @@ export function emptyView(input: EmptyInput): EmptyView {
   if (input.view === "range") return emptyRange(input);
   if (input.changesetBase.containedIn) return contained(input);
   if (input.key.type === "workingTree") return emptyWorkingTree(input);
+  const base = input.changesetBase.commit;
   return {
-    glyph: "circleMinus",
+    glyph: "emptyMinus",
     title: "No changes",
-    lead: `Nothing differs from ${input.changesetBase.commit.shortId}.`,
-    panels: [],
+    lead: "Nothing differs from the base.",
+    panels: [{ rows: [{ label: "Base", value: [mono(base.shortId)], meta: base.subject }] }],
     actions: [BROWSE],
   };
 }
@@ -144,71 +145,77 @@ export function ruleName(by: ExcludedBy): string {
   }
 }
 
-/**
- * The filter that shows what `by` leaves out, for this review only: the project's filter without that
- * rule. None for a narrowing, which ends instead.
- */
-export function lifting(project: ReviewFilter, by: ExcludedBy): ReviewFilter | undefined {
+/** The names of the rules that together leave files out. */
+export const rulesName = (by: readonly ExcludedBy[]): string => by.map(ruleName).join(", ");
+
+/** The rule in a word or two, where a row has little room. */
+export function shortRule(by: ExcludedBy): string {
   switch (by.kind) {
     case "narrowing":
-      return undefined;
+      return "narrowing";
     case "outsideRoots":
-      return { ...project, roots: [] };
+      return "outside roots";
     case "notIncluded":
-      return { ...project, include: [] };
+      return "not included";
     case "pattern":
-      return { ...project, exclude: project.exclude.filter((p) => p !== by.pattern) };
+      return "pattern";
     case "generated":
-      return { ...project, reviewGenerated: true };
+      return "generated";
     case "binary":
-      return { ...project, hideBinary: false };
+      return "binary";
   }
 }
 
-/** The folder a path is in, at its first level; none for a file at the top. */
-const topFolder = (path: string): string | undefined => {
-  const slash = path.indexOf("/");
-  return slash < 0 ? undefined : path.slice(0, slash);
-};
-
-/** The files `group` lists, by their first folder, with the files and lines of each. */
-function folders(group: ExcludedGroup): { folder: string; files: number; delta: LineDelta }[] {
-  const by = new Map<string, { folder: string; files: number; delta: LineDelta }>();
-  for (const file of group.files) {
-    const folder = topFolder(file.path);
-    if (folder === undefined) continue;
-    const entry = by.get(folder) ?? { folder, files: 0, delta: { added: 0, removed: 0 } };
-    entry.files++;
-    entry.delta = { added: entry.delta.added + file.delta.added, removed: entry.delta.removed + file.delta.removed };
-    by.set(folder, entry);
-  }
-  return [...by.values()].sort((a, b) => b.files - a.files || a.folder.localeCompare(b.folder));
+/**
+ * The filter that shows what `by` leaves out, for this review only: the project's filter without those
+ * rules. None for a narrowing, which ends instead.
+ */
+export function lifting(project: ReviewFilter, by: readonly ExcludedBy[]): ReviewFilter | undefined {
+  if (by.some((b) => b.kind === "narrowing")) return undefined;
+  return by.reduce<ReviewFilter>((filter, b) => {
+    switch (b.kind) {
+      case "outsideRoots":
+        return { ...filter, roots: [] };
+      case "notIncluded":
+        return { ...filter, include: [] };
+      case "pattern":
+        return { ...filter, exclude: filter.exclude.filter((p) => p !== b.pattern) };
+      case "generated":
+        return { ...filter, reviewGenerated: true };
+      case "binary":
+        return { ...filter, hideBinary: false };
+      case "narrowing":
+        return filter;
+    }
+  }, project);
 }
 
 /** The files of a group listed in its panel before the rest are counted. */
 const LISTED = 5;
 
 function filtered(input: EmptyInput): EmptyView {
-  const narrowed = input.excluded.find((g) => g.by.kind === "narrowing");
+  const narrowed = input.excluded.find((g) => g.by.some((b) => b.kind === "narrowing"));
   const count = input.excluded.reduce((sum, g) => sum + g.count, 0);
   const lines = input.excluded.reduce((sum, g) => sum + g.delta.added + g.delta.removed, 0);
   const panels: Panel[] = [];
   if (narrowed) {
     panels.push({
       heading: "Changed outside it",
-      rows: folders(narrowed).map((f) => ({
-        value: [mono(f.folder)],
+      rows: narrowed.folders.map((f) => ({
+        value: [mono(f.path)],
         meta: `${plural(f.files, "file")} · ${delta(f.delta)}`,
         action: {
           id: "narrow",
           label: "Review only this",
-          filter: { ...input.filter, roots: [f.folder] },
+          filter: f.dir
+            ? { ...input.filter, roots: [f.path] }
+            : { ...input.filter, roots: [], include: [`/${f.path}`] },
         },
       })),
     });
   }
   for (const group of input.excluded) {
-    if (group.by.kind === "narrowing") continue;
+    if (group === narrowed) continue;
     const lift = lifting(input.filter, group.by);
     const rows: Row[] = group.files.slice(0, LISTED).map((file) => ({
       value: [mono(file.path)],
@@ -217,19 +224,21 @@ function filtered(input: EmptyInput): EmptyView {
     }));
     if (group.count > rows.length) rows.push({ value: [`+ ${group.count - rows.length} more`] });
     panels.push({
-      heading: ruleName(group.by),
+      heading: rulesName(group.by),
       count: group.count,
       link: lift && !input.narrowing ? { id: "narrow", label: "Review these", filter: lift } : undefined,
       rows,
     });
   }
-  if (narrowed) {
-    const roots = input.narrowing?.roots ?? [];
+  if (input.narrowing) {
+    const roots = input.narrowing.roots;
     const where = roots.length ? roots.join(", ") : "what it is narrowed to";
     return {
-      glyph: "filter",
+      glyph: "emptyFilter",
       title: `Nothing in ${where}`,
-      lead: `This review is narrowed to ${where}. The ${plural(narrowed.count, "changed file")} ${narrowed.count === 1 ? "is" : "are"} elsewhere.`,
+      lead: narrowed
+        ? `This review is narrowed to ${where}. The ${plural(narrowed.count, "changed file")} ${narrowed.count === 1 ? "is" : "are"} elsewhere.`
+        : `This review is narrowed to ${where}, and the project's filter leaves out everything that changed.`,
       panels,
       actions: [
         { id: "reset", label: "Reset to the project filter", primary: true },
@@ -238,7 +247,7 @@ function filtered(input: EmptyInput): EmptyView {
     };
   }
   return {
-    glyph: "filter",
+    glyph: "emptyFilter",
     title: "Everything is filtered out",
     lead: `${count === 1 ? "The changed file" : `All ${count} changed files`} (${plural(lines, "line")}) ${count === 1 ? "is" : "are"} excluded by the review filter.`,
     panels,
@@ -264,7 +273,7 @@ function emptyCommit(input: EmptyInput): EmptyView {
   ];
   const hasNext = at !== undefined && at + 1 < input.commits.length;
   return {
-    glyph: "commit",
+    glyph: "emptyCommit",
     title: "This commit changes no files",
     lead: "Its tree is identical to its parent's.",
     panels: [{ rows }],
@@ -287,13 +296,16 @@ function emptyRange(input: EmptyInput): EmptyView {
       });
     }
   }
+  if (range?.rebased) {
+    rows.push({ label: "Why", value: ["The base moved on. Files and lines are unchanged."] });
+  }
   const pushes = range
     ? range.from + 1 === range.to
       ? `Push v${range.to}`
       : `Pushes v${range.from + 1}–v${range.to}`
     : "These pushes";
   return {
-    glyph: "timeline",
+    glyph: "emptyRange",
     title: `${pushes} changed nothing`,
     lead: range?.rebased
       ? `The changes are the same as before; the base moved on.`
@@ -304,6 +316,17 @@ function emptyRange(input: EmptyInput): EmptyView {
 }
 
 // ---- the changeset itself is empty ----
+
+/** The version that `version` took back: the one before it, when `version` changed the same files by the lines it had added and removed. */
+function takenBack(versions: readonly VersionInfo[], version: VersionInfo): number | undefined {
+  const before = versions.find((v) => v.n === version.n - 1);
+  if (!before || !version.files.length || version.files.length !== before.files.length) return undefined;
+  const swapped = version.files.every((f) => {
+    const was = before.files.find((b) => b.path === f.path);
+    return was?.delta.added === f.delta.removed && was.delta.removed === f.delta.added;
+  });
+  return swapped ? before.n : undefined;
+}
 
 function emptyWorkingTree(input: EmptyInput): EmptyView {
   const undone = input.review.state === "open" && input.versions.length > 1;
@@ -317,15 +340,16 @@ function emptyWorkingTree(input: EmptyInput): EmptyView {
         },
       );
       const names = v.files.map((f) => f.path.slice(f.path.lastIndexOf("/") + 1)).join(", ");
+      const undid = takenBack(input.versions, v);
       return {
         label: `v${v.n}`,
         value: [shortTime(v.at, input.now, "detailed"), ...(v.files.length ? [" ", mono(delta(total))] : [])],
-        meta: names || (v.n === 1 ? "opened" : undefined),
+        meta: names ? (undid ? `${names} · undid v${undid}` : names) : v.n === 1 ? "opened" : undefined,
         action: v.files.length ? ({ id: "pick", label: "Show", n: v.n } as const) : undefined,
       };
     });
     return {
-      glyph: "circleMinus",
+      glyph: "emptyMinus",
       title: "No changes left",
       lead: "The working tree matches what it was when opened. The edits made since were undone.",
       panels: [{ heading: "Versions", rows }],
@@ -342,7 +366,7 @@ function emptyWorkingTree(input: EmptyInput): EmptyView {
   });
   rows.push({ label: "Compared with", value: ["HEAD when opened"], meta: "commits made on top do not move it" });
   return {
-    glyph: "eye",
+    glyph: "emptyWatch",
     title: "No changes yet",
     lead: "Vet is watching this folder. A file appears here about a second after it stops changing.",
     panels: [{ rows }],
@@ -372,8 +396,8 @@ function contained(input: EmptyInput): EmptyView {
     ];
     if (pr) rows.push({ label: "Opened by", value: [pr.authorName] });
     return {
-      glyph: "circleMinus",
-      title: "No commits yet",
+      glyph: "emptyMinus",
+      title: isPr ? "No commits to review yet" : "No commits yet",
       lead: isPr
         ? `The source branch is at the same commit as ${held.branch}. Vet refreshes when the author pushes.`
         : `${name} has not moved off ${held.branch}. Commits made on it show up here.`,
@@ -383,7 +407,13 @@ function contained(input: EmptyInput): EmptyView {
   }
 
   if (pr?.state === "merged") {
-    const rows: Row[] = [{ label: "Source", value: [mono(pr.sourceBranch)] }];
+    const rows: Row[] = [
+      {
+        label: "Source",
+        value: [mono(pr.sourceBranch)],
+        meta: head ? `head ${head} is in ${held.branch}` : undefined,
+      },
+    ];
     if (held.mergedBy) {
       rows.push({
         label: "Merge commit",
@@ -400,7 +430,7 @@ function contained(input: EmptyInput): EmptyView {
       });
     }
     return {
-      glyph: "circleCheck",
+      glyph: "emptyCheck",
       title: "Merged",
       lead: `#${pr.number} is merged into ${held.branch}, so it no longer adds anything.`,
       panels: [{ rows }],
@@ -416,9 +446,21 @@ function contained(input: EmptyInput): EmptyView {
       value: [`${held.mergedBy.author} · ${shortTime(held.mergedBy.time, input.now, "detailed")}`],
     });
   }
-  if (head) rows.push({ label: isPr ? "Head" : "Branch tip", value: [mono(head)] });
+  if (head) {
+    rows.push({
+      label: isPr ? "Head" : "Branch tip",
+      value: [mono(head)],
+      meta: held.commits === undefined ? undefined : `${plural(held.commits, "commit")}, all in ${held.branch}`,
+    });
+  }
+  if (held.since !== undefined) {
+    rows.push({
+      label: `${held.branch} since`,
+      value: [`${plural(held.since, "commit")} ahead of the merge`],
+    });
+  }
   return {
-    glyph: "merge",
+    glyph: "emptyMerge",
     title: `Already in ${held.branch}`,
     lead: `Every commit of ${name} is part of ${held.branch}, so there is nothing left to review.`,
     panels: rows.length ? [{ rows }] : [],
