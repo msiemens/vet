@@ -61,6 +61,10 @@
 
   let cursor = $state(0);
   let scroller = $state<HTMLElement>();
+  let input = $state<HTMLInputElement>();
+
+  // The field takes the focus from the trigger that opened the popover, which `autofocus` leaves where it is.
+  $effect(() => input?.focus());
 
   const stops = $derived(items.length + actions.length);
   const current = $derived(Math.min(cursor, stops - 1));
@@ -94,7 +98,7 @@
 <Popover bind:open {trigger}>
   <div class="switcher">
     <div class="top">
-      <SearchField autofocus bind:value={query} {label} {onkeydown} oninput={() => (cursor = 0)} />
+      <SearchField bind:input bind:value={query} {label} {onkeydown} oninput={() => (cursor = 0)} />
       {@render filters?.(() => (cursor = 0))}
     </div>
     <div class="scroll" bind:this={scroller}>
