@@ -6,6 +6,8 @@
   import { SvelteSet } from "svelte/reactivity";
   import FileIcon from "../../lib/ui/FileIcon.svelte";
   import Icon from "../../lib/ui/Icon.svelte";
+  import Banner from "../../lib/ui/Banner.svelte";
+  import Chip from "../../lib/ui/Chip.svelte";
   import IconButton from "../../lib/ui/IconButton.svelte";
   import { ListNav } from "../../lib/ui/listNav";
   import Spinner from "../../lib/ui/Spinner.svelte";
@@ -222,19 +224,15 @@
           />
         {/if}
       </span>
-      <button
-        class="flat chip"
-        type="button"
+      <Chip
         title="Only places in the changeset"
-        aria-pressed={set.filters.changeset}
-        onclick={() => (set.filters.changeset = !set.filters.changeset)}>Changeset</button
+        active={set.filters.changeset}
+        onclick={() => (set.filters.changeset = !set.filters.changeset)}>Changeset</Chip
       >
-      <button
-        class="flat chip"
-        type="button"
+      <Chip
         title="Only places in hunks not seen"
-        aria-pressed={set.filters.notSeen}
-        onclick={() => (set.filters.notSeen = !set.filters.notSeen)}>Not seen</button
+        active={set.filters.notSeen}
+        onclick={() => (set.filters.notSeen = !set.filters.notSeen)}>Not seen</Chip
       >
       <span class="grow"></span>
       <span
@@ -269,32 +267,17 @@
     </div>
 
     {#if stale}
-      <div class="notice warn">
-        <Icon name="warning" size={14} />
-        <div>
-          {staleText([...moved])}
-          <button class="link" type="button" onclick={() => findSets.rerun(set)}>Rerun</button>
-        </div>
-      </div>
+      <Banner message={staleText([...moved])} action={{ label: "Rerun", onclick: () => findSets.rerun(set) }} />
     {:else if set.rerun && set.phase === "done"}
-      <div class="notice info">
-        <Icon name="info" size={14} />
-        <div>{rerunText(set.rerun)}</div>
-      </div>
+      <Banner message={rerunText(set.rerun)} />
     {/if}
     {#if cut !== undefined}
-      <div class="notice info">
-        <Icon name="info" size={14} />
-        <div>
-          {cutText(set.places.length, cut)} Filter the list, or
-          <button class="link" type="button" onclick={() => findSets.showAll(set)}>show all</button> to read every one.
-        </div>
-      </div>
+      <Banner
+        message="{cutText(set.places.length, cut)} Filter the list or show all."
+        action={{ label: "Show all", onclick: () => findSets.showAll(set) }}
+      />
     {:else if set.truncated && set.phase === "done"}
-      <div class="notice info">
-        <Icon name="info" size={14} />
-        <div>The search stopped at its limit of matches. Narrow the query to read the rest.</div>
-      </div>
+      <Banner message="The search stopped at its limit of matches. Narrow the query to read the rest." />
     {/if}
 
     <div class="main">
@@ -336,7 +319,7 @@
                 : "The filters hide every result."}
               {set.places.length} kept
               {set.places.length === 1 ? "result is" : "results are"} hidden.
-              <button class="link" type="button" onclick={clearFilters}>Remove filters</button></span
+              <button class="ctl" type="button" onclick={clearFilters}>Remove filters</button></span
             >
           </div>
         {:else}
@@ -484,7 +467,7 @@
     flex: none;
     display: flex;
     align-items: stretch;
-    height: 30px;
+    height: var(--h-tab);
     overflow-x: auto;
     scrollbar-width: none;
     border-bottom: 1px solid var(--line-soft);
@@ -505,17 +488,6 @@
   }
   .hot :global(button) {
     color: var(--old-base);
-  }
-  .chip {
-    height: 22px;
-    padding: 0 8px;
-    border-radius: var(--radius);
-    font-size: 12px;
-    color: var(--text-2);
-  }
-  .chip[aria-pressed="true"] {
-    background: var(--toggle);
-    color: var(--accent);
   }
   .view {
     display: inline-flex;
@@ -551,42 +523,6 @@
     color: var(--text);
     font: inherit;
     font-size: 12px;
-  }
-  .notice {
-    flex: none;
-    display: flex;
-    align-items: flex-start;
-    gap: 8px;
-    padding: 5px 12px;
-    font-size: 12px;
-    color: var(--text-2);
-    border-bottom: 1px solid var(--line-soft);
-  }
-  .notice :global(svg) {
-    margin-top: 2px;
-  }
-  .notice.warn {
-    background: color-mix(in srgb, var(--old-base) 12%, var(--bg-panel));
-  }
-  .notice.warn :global(svg) {
-    color: var(--old-base);
-  }
-  .notice.info {
-    background: color-mix(in srgb, var(--accent) 9%, var(--bg-panel));
-  }
-  .notice.info :global(svg) {
-    color: var(--accent);
-  }
-  .link {
-    padding: 0;
-    border: 0;
-    background: none;
-    font: inherit;
-    color: var(--accent);
-    cursor: default;
-  }
-  .link:hover {
-    text-decoration: underline;
   }
   .main {
     flex: 1;

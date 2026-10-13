@@ -9,6 +9,7 @@
     onclose,
     closeLabel = "Close tab",
     onmenu,
+    actions,
     children,
   }: {
     selected: boolean;
@@ -20,6 +21,8 @@
     closeLabel?: string;
     /** Context menu on the tab, at the pointer position. */
     onmenu?: (x: number, y: number) => void;
+    /** Buttons of the tab's own, between its label and the close button. */
+    actions?: Snippet;
     children: Snippet;
   } = $props();
 </script>
@@ -43,6 +46,7 @@
   <button class="label" type="button" role="tab" aria-selected={selected} {title} onclick={onselect}>
     {@render children()}
   </button>
+  {@render actions?.()}
   {#if onclose}
     <button class="flat close" type="button" aria-label={closeLabel} title={closeLabel} tabindex="-1" onclick={onclose}>
       <Icon name="close" size={10} stroke={2} />
