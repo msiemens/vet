@@ -10,7 +10,7 @@ use crate::git::list_files;
 use crate::paths::has_extension;
 
 #[derive(Clone, PartialEq, Eq, Debug)]
-pub enum Load {
+pub(crate) enum Load {
     /// The only solution in the root.
     Solution(PathBuf),
     /// Every project, when there is no single solution in the root to load.
@@ -19,7 +19,7 @@ pub enum Load {
 
 /// The solution (`.sln` or `.slnx`) directly in `root` if there is exactly one,
 /// else every `.csproj` of the tree. `None` if there is nothing to load.
-pub async fn find(io: &Budget, root: &Path) -> Result<Option<Load>, String> {
+pub(crate) async fn find(io: &Budget, root: &Path) -> Result<Option<Load>, String> {
     let files = list_files(io, root).await?;
     let mut solutions: Vec<PathBuf> = (files.iter())
         .filter(|f| f.components().count() == 1 && has_extension(f, &["sln", "slnx"]))

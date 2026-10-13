@@ -13,7 +13,7 @@ use vet_core::content::Hash;
 
 use super::entity::*;
 
-pub struct Migrator;
+pub(super) struct Migrator;
 
 impl MigratorTrait for Migrator {
     fn migrations() -> Vec<Box<dyn MigrationTrait>> {
@@ -22,7 +22,7 @@ impl MigratorTrait for Migrator {
 }
 
 /// Whether `db` applied migrations that `Migrator` does not know.
-pub async fn is_foreign(db: &impl ConnectionTrait) -> Result<bool, DbErr> {
+pub(super) async fn is_foreign(db: &impl ConnectionTrait) -> Result<bool, DbErr> {
     let known: HashSet<String> = Migrator::migrations().iter().map(|m| m.name().to_owned()).collect();
     let applied = Migrator::get_migration_models(db).await?;
     Ok(applied.iter().any(|m| !known.contains(&m.version)))

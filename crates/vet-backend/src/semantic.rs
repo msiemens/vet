@@ -61,13 +61,13 @@ impl Booted {
     /// Starts the servers the current revision's changed files and the
     /// repository's languages need. A server that fails to start is reported
     /// by the query that needs it.
-    pub async fn start_servers(&self) {
+    pub(crate) async fn start_servers(&self) {
         let revision = self.session.revision().await;
         let _ = self.semantics.start_servers(&self.view, revision).await;
     }
 
     /// Replaces the servers of `language` and waits until the ones the revision needs run.
-    pub async fn restart_server(&self, language: &BackendId) -> Result<(), String> {
+    pub(crate) async fn restart_server(&self, language: &BackendId) -> Result<(), String> {
         let revision = self.session.revision().await;
         (self.semantics)
             .restart_now(&self.view, revision, language)
@@ -76,7 +76,14 @@ impl Booted {
             .map_err(|e| e.to_string())
     }
 
-    pub async fn hover(&self, revision: u32, side: Side, path: &str, line: u32, col: u32) -> Result<Response, String> {
+    pub(crate) async fn hover(
+        &self,
+        revision: u32,
+        side: Side,
+        path: &str,
+        line: u32,
+        col: u32,
+    ) -> Result<Response, String> {
         let at = map::at(path, line, col);
         let answer = (self.semantics)
             .hover(&self.view, revision, core_side(side), &at)
@@ -101,7 +108,7 @@ impl Booted {
         }
     }
 
-    pub async fn definition(
+    pub(crate) async fn definition(
         &self,
         revision: u32,
         side: Side,
@@ -117,7 +124,7 @@ impl Booted {
         Ok(Response::Definition(self.locations(answer, side, &at)))
     }
 
-    pub async fn workspace_symbols(&self, revision: u32, query: &str) -> Result<Response, String> {
+    pub(crate) async fn workspace_symbols(&self, revision: u32, query: &str) -> Result<Response, String> {
         let found = (self.semantics)
             .workspace_symbols(&self.view, revision, query)
             .await
@@ -125,7 +132,7 @@ impl Booted {
         Ok(Response::WorkspaceSymbols(map::workspace_symbols(&found)))
     }
 
-    pub async fn references(
+    pub(crate) async fn references(
         &self,
         highlighter: &Highlighter,
         revision: u32,
@@ -144,7 +151,7 @@ impl Booted {
         ))
     }
 
-    pub async fn implementations(
+    pub(crate) async fn implementations(
         &self,
         highlighter: &Highlighter,
         revision: u32,
@@ -228,7 +235,7 @@ impl Booted {
         })
     }
 
-    pub async fn diagnostics(&self, revision: u32, path: &str, against_base: bool) -> Result<Response, String> {
+    pub(crate) async fn diagnostics(&self, revision: u32, path: &str, against_base: bool) -> Result<Response, String> {
         let file = RepoPath::from(path);
         let language = self.language_of(&file);
         if !against_base {
@@ -272,7 +279,7 @@ impl Booted {
         })
     }
 
-    pub async fn file_symbols(&self, revision: u32, path: &str) -> Result<Response, String> {
+    pub(crate) async fn file_symbols(&self, revision: u32, path: &str) -> Result<Response, String> {
         let file = RepoPath::from(path);
         let found = (self.semantics)
             .file_symbols(&self.view, revision, &file)
@@ -286,7 +293,12 @@ impl Booted {
         )))
     }
 
-    pub async fn file_outline(&self, view: vet_protocol::View, revision: u32, path: &str) -> Result<Response, String> {
+    pub(crate) async fn file_outline(
+        &self,
+        view: vet_protocol::View,
+        revision: u32,
+        path: &str,
+    ) -> Result<Response, String> {
         let file = RepoPath::from(path);
         let answer = match core_view(view) {
             View::Changeset => (self.semantics)
@@ -331,7 +343,7 @@ impl Booted {
         )))
     }
 
-    pub async fn symbol_at(
+    pub(crate) async fn symbol_at(
         &self,
         revision: u32,
         side: Side,
@@ -352,7 +364,7 @@ impl Booted {
         )))
     }
 
-    pub async fn calls(&self, revision: u32, symbol: &vet_protocol::SymbolId) -> Result<Response, String> {
+    pub(crate) async fn calls(&self, revision: u32, symbol: &vet_protocol::SymbolId) -> Result<Response, String> {
         let (info, calls) = (self.semantics)
             .calls(&self.view, revision, &map::core_sym(symbol))
             .await
@@ -360,7 +372,7 @@ impl Booted {
         Ok(Response::Calls(map::calls(revision, &info, &calls)))
     }
 
-    pub async fn usages(&self, revision: u32, symbol: &vet_protocol::SymbolId) -> Result<Response, String> {
+    pub(crate) async fn usages(&self, revision: u32, symbol: &vet_protocol::SymbolId) -> Result<Response, String> {
         let (info, usages) = (self.semantics)
             .usages(&self.view, revision, &map::core_sym(symbol))
             .await
@@ -368,7 +380,7 @@ impl Booted {
         Ok(Response::Usages(map::usages(revision, &info, &usages)))
     }
 
-    pub async fn signature(&self, revision: u32, symbol: &vet_protocol::SymbolId) -> Result<Response, String> {
+    pub(crate) async fn signature(&self, revision: u32, symbol: &vet_protocol::SymbolId) -> Result<Response, String> {
         let answer = (self.semantics)
             .signature(&self.view, revision, &map::core_sym(symbol))
             .await
@@ -377,7 +389,11 @@ impl Booted {
         Ok(highlight::signature(&symbol.path, revision, found, unavailable))
     }
 
-    pub async fn removal_impact(&self, revision: u32, symbol: &vet_protocol::SymbolId) -> Result<Response, String> {
+    pub(crate) async fn removal_impact(
+        &self,
+        revision: u32,
+        symbol: &vet_protocol::SymbolId,
+    ) -> Result<Response, String> {
         let impact = (self.semantics)
             .removal_impact(&self.view, revision, &map::core_sym(symbol))
             .await
@@ -385,7 +401,11 @@ impl Booted {
         Ok(Response::RemovalImpact(map::removal_impact(revision, &impact)))
     }
 
-    pub async fn reachability(&self, revision: u32, symbol: &vet_protocol::SymbolId) -> Result<Response, String> {
+    pub(crate) async fn reachability(
+        &self,
+        revision: u32,
+        symbol: &vet_protocol::SymbolId,
+    ) -> Result<Response, String> {
         let (info, reach) = (self.semantics)
             .reachability(&self.view, revision, &map::core_sym(symbol))
             .await

@@ -17,14 +17,14 @@ use vet_mapping as mapping;
 const CAPACITY: usize = 64 << 20;
 
 #[derive(Clone)]
-pub struct Highlighter {
+pub(crate) struct Highlighter {
     cache: Arc<Cache<BlobId>>,
     /// What parsing draws on: it answers a view of a file, so it is the review lane's.
     io: Budget,
 }
 
 impl Highlighter {
-    pub fn new(io: Budget) -> Self {
+    pub(crate) fn new(io: Budget) -> Self {
         Self {
             cache: Arc::new(Cache::new(CAPACITY)),
             io,
@@ -33,7 +33,7 @@ impl Highlighter {
 
     /// The highlights of `text`, a file's content at `path`; empty if there is no text or its
     /// language has no grammar.
-    pub async fn text(&self, path: &str, text: Option<&str>) -> Vec<u32> {
+    pub(crate) async fn text(&self, path: &str, text: Option<&str>) -> Vec<u32> {
         let (Some(text), Some(language)) = (text, Language::of_path(path)) else {
             return Vec::new();
         };
@@ -44,7 +44,7 @@ impl Highlighter {
             .unwrap_or_default()
     }
 
-    pub async fn file_contents(&self, path: &str, text: FileText) -> Response {
+    pub(crate) async fn file_contents(&self, path: &str, text: FileText) -> Response {
         let (base_highlights, target_highlights) = tokio::join!(
             self.text(path, text.base.as_deref()),
             self.text(path, text.target.as_deref())
@@ -59,14 +59,14 @@ impl Highlighter {
         }
     }
 
-    pub async fn file_text(&self, path: &str, text: &TargetText) -> Response {
+    pub(crate) async fn file_text(&self, path: &str, text: &TargetText) -> Response {
         let highlights = self.text(path, text.content.as_deref().ok()).await;
         mapping::target_text(text, highlights)
     }
 }
 
 /// A hover over the file at `path`, with the highlights of the code blocks in its text.
-pub fn hover(
+pub(crate) fn hover(
     path: &str,
     revision: u32,
     side: Side,
@@ -87,7 +87,7 @@ pub fn hover(
 
 /// The signature of a symbol of the file at `path`; its highlights are empty for prose and for
 /// a language without a grammar.
-pub fn signature(
+pub(crate) fn signature(
     path: &str,
     revision: u32,
     signature: Option<Signature>,

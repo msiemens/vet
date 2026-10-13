@@ -23,7 +23,7 @@ impl PlatformKind {
 const AZURE_DEVOPS: &str = "dev.azure.com";
 
 /// The host of the account of an Azure DevOps organization.
-pub fn azure_devops_account(organization: &str) -> String {
+pub(super) fn azure_devops_account(organization: &str) -> String {
     format!("{AZURE_DEVOPS}/{}", organization.to_ascii_lowercase())
 }
 

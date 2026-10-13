@@ -9,7 +9,7 @@ use std::{fmt, io};
 use vet_core::content::{Hash, RepoPath};
 
 #[derive(Debug, PartialEq, Eq)]
-pub struct PathError(String);
+pub(crate) struct PathError(String);
 
 impl fmt::Display for PathError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -27,7 +27,7 @@ fn unrepresentable(name: &[u8]) -> PathError {
 }
 
 /// The filesystem path of `path`, a `RepoPath`'s bytes, below the root.
-pub fn to_path(path: &[u8]) -> Result<&Path, PathError> {
+pub(crate) fn to_path(path: &[u8]) -> Result<&Path, PathError> {
     gix::path::try_from_byte_slice(path).map_err(|_| unrepresentable(path))
 }
 
@@ -49,7 +49,7 @@ pub(crate) fn hash_of_file(path: &Path) -> Option<Hash> {
 }
 
 /// The `RepoPath` of `relative`, a path below the root.
-pub fn from_relative(relative: &Path) -> Result<RepoPath, PathError> {
+pub(crate) fn from_relative(relative: &Path) -> Result<RepoPath, PathError> {
     let mut parts: Vec<&[u8]> = Vec::new();
     for component in relative.components() {
         match component {
@@ -68,7 +68,7 @@ pub fn from_relative(relative: &Path) -> Result<RepoPath, PathError> {
 /// The part of `path` below `root`, both absolute. A Windows drive letter
 /// matches in either case and with or without the `\\?\` prefix: language
 /// servers report paths in their own spelling (`c:` for `C:`).
-pub fn below<'a>(root: &Path, path: &'a Path) -> Option<&'a Path> {
+pub(crate) fn below<'a>(root: &Path, path: &'a Path) -> Option<&'a Path> {
     let mut rest = path.components();
     for want in root.components() {
         if !same_component(want, rest.next()?) {
@@ -93,7 +93,7 @@ fn same_component(a: Component, b: Component) -> bool {
 }
 
 /// An absolute path in the `/`-separated form `RepoPath` uses for places outside the root.
-pub fn from_absolute(path: &Path) -> Result<RepoPath, PathError> {
+pub(crate) fn from_absolute(path: &Path) -> Result<RepoPath, PathError> {
     let bytes = gix::path::try_into_bstr(path)
         .map_err(|_| PathError(format!("the path {} cannot be represented here", path.display())))?;
     Ok(RepoPath(
@@ -102,7 +102,7 @@ pub fn from_absolute(path: &Path) -> Result<RepoPath, PathError> {
 }
 
 /// `path` with links resolved, in the plain form wherever that names the same file.
-pub fn canonical(path: &Path) -> io::Result<PathBuf> {
+pub(crate) fn canonical(path: &Path) -> io::Result<PathBuf> {
     std::fs::canonicalize(path).map(simplified)
 }
 
@@ -110,7 +110,7 @@ pub fn canonical(path: &Path) -> io::Result<PathBuf> {
 /// (`\\?\C:\…`, `\\?\UNC\server\share\…`), which few programs accept and nobody wants
 /// to read. A path the plain form cannot name stays verbatim: one too long for
 /// `MAX_PATH`, or with a name Windows reads differently without it (`CON`, `a.`).
-pub fn simplified(path: PathBuf) -> PathBuf {
+pub(crate) fn simplified(path: PathBuf) -> PathBuf {
     if !cfg!(windows) {
         return path;
     }

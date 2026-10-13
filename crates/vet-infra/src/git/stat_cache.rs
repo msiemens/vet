@@ -25,7 +25,7 @@ pub(crate) struct StatKey {
 }
 
 impl StatKey {
-    pub fn of(md: &Metadata, index_mode: Option<u32>) -> Self {
+    pub(super) fn of(md: &Metadata, index_mode: Option<u32>) -> Self {
         #[cfg(unix)]
         let (ctime, ino) = { ((md.ctime(), md.ctime_nsec() as u32), md.ino()) };
         #[cfg(not(unix))]
@@ -59,7 +59,7 @@ pub(crate) struct Record {
 impl Record {
     /// Racy like git's index: a file modified in the same second the content was
     /// read could keep an identical stat, so its mtime must be older.
-    pub fn matches(&self, key: &StatKey) -> bool {
+    pub(super) fn matches(&self, key: &StatKey) -> bool {
         self.key == *key && key.mtime.0 < self.recorded_secs
     }
 }
@@ -79,7 +79,7 @@ struct State {
 impl StatCache {
     /// Take the records for a scan. They are dropped if the git configuration
     /// changed since they were made.
-    pub fn take(&self, config: Vec<Option<(u64, (i64, u32))>>) -> HashMap<RepoPath, Record> {
+    pub(super) fn take(&self, config: Vec<Option<(u64, (i64, u32))>>) -> HashMap<RepoPath, Record> {
         let mut state = self.state.lock().expect("not poisoned");
         if state.config != config {
             state.records.clear();
@@ -90,7 +90,7 @@ impl StatCache {
 
     /// Replace the records with those of the finished scan, which also drops
     /// paths that no longer exist.
-    pub fn put(&self, records: HashMap<RepoPath, Record>) {
+    pub(super) fn put(&self, records: HashMap<RepoPath, Record>) {
         self.state.lock().expect("not poisoned").records = records;
     }
 }

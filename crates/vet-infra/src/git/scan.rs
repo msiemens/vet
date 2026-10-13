@@ -49,7 +49,7 @@ pub(crate) struct Worktree<'r> {
 }
 
 impl<'r> Worktree<'r> {
-    pub fn new(
+    pub(super) fn new(
         repo: &'r gix::Repository,
         blobs: &'r BlobCache,
         stats: &'r StatCache,
@@ -85,13 +85,13 @@ impl<'r> Worktree<'r> {
         })
     }
 
-    pub fn item_by_path(&mut self, path: &BStr, keep: bool) -> Result<Option<Item>, GitError> {
+    pub(super) fn item_by_path(&mut self, path: &BStr, keep: bool) -> Result<Option<Item>, GitError> {
         let tracked = self.index.entry_by_path(path).cloned();
         self.item(path, tracked.as_ref(), keep)
     }
 
     /// The item at `path`, or `None` if it is gone or cannot be tracked.
-    pub fn item(
+    pub(super) fn item(
         &mut self,
         path: &BStr,
         tracked: Option<&gix::index::Entry>,
@@ -249,7 +249,7 @@ impl<'r> Worktree<'r> {
 
     /// Start a scan that reuses and refreshes the stat cache. Other uses of the
     /// worktree (diff, `read_blob`) neither read nor change it.
-    pub fn use_stat_cache(&mut self) {
+    pub(super) fn use_stat_cache(&mut self) {
         let git_dir = self.repo.git_dir();
         let config = [git_dir.join("config"), git_dir.join("info/attributes")]
             .iter()
@@ -259,12 +259,12 @@ impl<'r> Worktree<'r> {
     }
 
     /// Drop cached entries; they may predate a change of conversion rules.
-    pub fn forget_cached(&mut self) {
+    pub(super) fn forget_cached(&mut self) {
         self.prev.clear();
     }
 
     /// Hand the records of this scan back to the cache.
-    pub fn finish(&mut self) {
+    pub(super) fn finish(&mut self) {
         self.stats.put(std::mem::take(&mut self.next));
     }
 

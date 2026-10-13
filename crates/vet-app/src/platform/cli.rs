@@ -11,12 +11,12 @@ use crate::ports::Command;
 const AZURE_DEVOPS_RESOURCE: &str = "499b84ac-1321-427f-aa17-267ca6975798";
 
 /// A token a CLI printed, and when it stops being good (unix seconds) if it said.
-pub struct CliToken {
+pub(super) struct CliToken {
     pub token: Token,
     pub expires_at: Option<i64>,
 }
 
-pub fn command(kind: PlatformKind, host: &str, cwd: &Path) -> Command {
+pub(super) fn command(kind: PlatformKind, host: &str, cwd: &Path) -> Command {
     let (program, args): (&str, Vec<&str>) = match kind {
         PlatformKind::GitHub => ("gh", vec!["auth", "token", "--hostname", host]),
         PlatformKind::AzureDevOps => (
@@ -41,7 +41,7 @@ pub fn command(kind: PlatformKind, host: &str, cwd: &Path) -> Command {
 }
 
 /// The command that lists the hosts `gh` is signed in to, GitHub Enterprise ones too.
-pub fn hosts_command(cwd: &Path) -> Command {
+pub(super) fn hosts_command(cwd: &Path) -> Command {
     Command {
         program: "gh".to_owned(),
         args: ["auth", "status", "--active", "--json", "hosts"]
@@ -54,7 +54,7 @@ pub fn hosts_command(cwd: &Path) -> Command {
 
 /// A host `gh` knows, and what it says is wrong with its sign-in, if anything.
 #[derive(Debug, PartialEq, Eq)]
-pub struct GhHost {
+pub(super) struct GhHost {
     /// In lower case.
     pub host: String,
     /// `gh`'s `error` for the host's account, else its `state` when that is not `success`.
@@ -62,7 +62,7 @@ pub struct GhHost {
 }
 
 /// The hosts in what `hosts_command` printed; none if it is not that.
-pub fn parse_hosts(stdout: &str) -> Vec<GhHost> {
+pub(super) fn parse_hosts(stdout: &str) -> Vec<GhHost> {
     let Ok(answer) = serde_json::from_str::<serde_json::Value>(stdout) else {
         return Vec::new();
     };
@@ -92,7 +92,7 @@ fn account_problem(account: &serde_json::Value) -> Option<String> {
 }
 
 /// The token in what the command printed, `None` if there is none.
-pub fn parse(kind: PlatformKind, stdout: &str) -> Option<CliToken> {
+pub(super) fn parse(kind: PlatformKind, stdout: &str) -> Option<CliToken> {
     match kind {
         PlatformKind::GitHub => Some(CliToken {
             token: Token::new(stdout)?,

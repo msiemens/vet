@@ -12,7 +12,7 @@ use vet_infra::store::SqliteStore;
 
 /// The bases of the latest versions of the open changesets. When the store cannot
 /// be read nothing is held back: a tree that goes is built again.
-pub struct StoreReferences(pub SqliteStore);
+pub(crate) struct StoreReferences(pub SqliteStore);
 
 impl Referenced for StoreReferences {
     fn snapshots(&self) -> Pin<Box<dyn Future<Output = HashSet<SnapshotId>> + Send + '_>> {

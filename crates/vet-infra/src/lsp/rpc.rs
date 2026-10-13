@@ -108,7 +108,7 @@ impl RequestError {
 
     /// The server dropped the request and would take it again (see
     /// [`ResponseError::is_transient`]). Only the caller knows what to redo first.
-    pub fn is_transient(&self) -> bool {
+    pub(super) fn is_transient(&self) -> bool {
         self.transient
     }
 }
@@ -196,7 +196,7 @@ pub(super) struct Connection {
 }
 
 impl Connection {
-    pub fn spawn(
+    pub(super) fn spawn(
         binary: &str,
         args: &[String],
         cwd: &std::path::Path,
@@ -216,7 +216,7 @@ impl Connection {
     }
 
     /// A connection over any byte streams; `child` is the process behind them, if any.
-    pub fn over(
+    pub(super) fn over(
         reader: impl AsyncRead + Send + Unpin + 'static,
         writer: impl AsyncWrite + Send + Unpin + 'static,
         child: Option<Child>,
@@ -243,11 +243,11 @@ impl Connection {
 
     /// One request. A server that drops it as transient is not asked again here:
     /// what has to be redone first is the caller's to know.
-    pub async fn request<R: Request>(&self, params: R::Params) -> Result<R::Result, RequestError> {
+    pub(super) async fn request<R: Request>(&self, params: R::Params) -> Result<R::Result, RequestError> {
         self.request_with_timeout::<R>(params, REQUEST_TIMEOUT).await
     }
 
-    pub async fn request_with_timeout<R: Request>(
+    pub(super) async fn request_with_timeout<R: Request>(
         &self,
         params: R::Params,
         timeout: Duration,
@@ -283,12 +283,12 @@ impl Connection {
         }
     }
 
-    pub fn notify<N: Notification>(&self, params: N::Params) -> Result<(), String> {
+    pub(super) fn notify<N: Notification>(&self, params: N::Params) -> Result<(), String> {
         self.notify_raw(N::METHOD, serde_json::to_value(params).map_err(|e| e.to_string())?)
     }
 
     /// A notification outside the LSP types, such as a server's own extension.
-    pub fn notify_raw(&self, method: &str, params: Value) -> Result<(), String> {
+    pub(super) fn notify_raw(&self, method: &str, params: Value) -> Result<(), String> {
         let message = json!({"jsonrpc": "2.0", "method": method, "params": params});
         self.outbox
             .send(&message)
@@ -296,12 +296,12 @@ impl Connection {
     }
 
     /// Adds the server's last stderr lines to an error.
-    pub fn describe(&self, error: String) -> String {
+    pub(super) fn describe(&self, error: String) -> String {
         self.shared.describe(error)
     }
 
     /// Completes when the server's output has ended, with why. Owns what it waits on.
-    pub fn exited(&self) -> Pin<Box<dyn Future<Output = String> + Send>> {
+    pub(super) fn exited(&self) -> Pin<Box<dyn Future<Output = String> + Send>> {
         let shared = self.shared.clone();
         Box::pin(async move {
             loop {
@@ -319,13 +319,13 @@ impl Connection {
         })
     }
 
-    pub fn with_state<T>(&self, f: impl FnOnce(&mut State) -> T) -> T {
+    pub(super) fn with_state<T>(&self, f: impl FnOnce(&mut State) -> T) -> T {
         f(&mut self.shared.state.lock().expect("not poisoned"))
     }
 
     /// Waits until `ready` holds for the state, re-checking on every server
     /// message, until `timeout`. `false` on timeout or if the server exited.
-    pub async fn wait_for(&self, timeout: Duration, mut ready: impl FnMut(&State) -> bool) -> bool {
+    pub(super) async fn wait_for(&self, timeout: Duration, mut ready: impl FnMut(&State) -> bool) -> bool {
         let deadline = tokio::time::Instant::now() + timeout;
         loop {
             let notified = self.shared.changed.notified();
@@ -350,7 +350,7 @@ impl Connection {
     }
 
     /// `shutdown` then `exit`; kills the process if it lingers.
-    pub async fn close(&self) {
+    pub(super) async fn close(&self) {
         let _ = self
             .request_with_timeout::<lsp_types::request::Shutdown>((), Duration::from_secs(5))
             .await;
@@ -367,7 +367,7 @@ impl Connection {
 }
 
 impl State {
-    pub fn touch(&mut self) {
+    pub(super) fn touch(&mut self) {
         self.last_activity = Some(Instant::now());
     }
 
@@ -422,7 +422,7 @@ impl State {
 
     /// Indexing is done: no work in progress, the server (if it reports it) is
     /// quiescent, and nothing has happened for `quiet`.
-    pub fn is_idle(&self, quiet: Duration) -> bool {
+    pub(super) fn is_idle(&self, quiet: Duration) -> bool {
         !self.at_work() && self.last_activity.is_some_and(|t| t.elapsed() >= quiet)
     }
 
@@ -432,7 +432,7 @@ impl State {
     }
 
     /// Whether answers given now are complete, and the count of work begun so far.
-    pub fn readiness(&self) -> Readiness {
+    pub(super) fn readiness(&self) -> Readiness {
         Readiness {
             idle: !self.at_work(),
             epoch: self.work_epoch,

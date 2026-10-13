@@ -9,7 +9,7 @@ use vet_protocol::{Event, Response};
 use crate::open::Ready;
 
 /// Tells every subscriber that a request started the review, as `started` says.
-pub fn announce_start(open: &Ready, started: Option<Lifecycle>) {
+pub(crate) fn announce_start(open: &Ready, started: Option<Lifecycle>) {
     if let Some(lifecycle) = started {
         open.subscribers.broadcast(Event::ReviewStarted {
             project: open.id,
@@ -19,7 +19,7 @@ pub fn announce_start(open: &Ready, started: Option<Lifecycle>) {
 }
 
 /// Tells every subscriber that threads changed.
-pub async fn threads_changed(open: &Ready) {
+pub(crate) async fn threads_changed(open: &Ready) {
     let revision = open.session.revision().await;
     open.subscribers.broadcast(Event::ThreadsChanged {
         project: open.id,
@@ -27,7 +27,7 @@ pub async fn threads_changed(open: &Ready) {
     });
 }
 
-pub async fn thread_changed(open: &Ready, thread: &ThreadView) -> Response {
+pub(crate) async fn thread_changed(open: &Ready, thread: &ThreadView) -> Response {
     threads_changed(open).await;
     Response::Thread(mapping::thread(thread))
 }
@@ -35,7 +35,7 @@ pub async fn thread_changed(open: &Ready, thread: &ThreadView) -> Response {
 /// The protocol update for the requester; every subscriber is told of the changeset's file. A
 /// mark made in an interdiff or in a commit changes the changeset's file too, which is what
 /// is announced then.
-pub async fn review_changed(open: &Ready, view: View, update: &ReviewUpdateView) -> vet_protocol::ReviewUpdate {
+pub(crate) async fn review_changed(open: &Ready, view: View, update: &ReviewUpdateView) -> vet_protocol::ReviewUpdate {
     let mapped = mapping::review_update(update);
     match view {
         View::Changeset => open.subscribers.broadcast(Event::ReviewChanged {

@@ -15,7 +15,7 @@ use super::{Guard, StartError, dirty_events};
 
 type NotifyResult = notify::Result<notify::Event>;
 
-pub fn start(root: &Path, tx: UnboundedSender<WatchEvent>) -> Result<Guard, StartError> {
+pub(super) fn start(root: &Path, tx: UnboundedSender<WatchEvent>) -> Result<Guard, StartError> {
     let event_root = root.to_owned();
     let on_event = move |res| {
         for event in translate(&event_root, res) {

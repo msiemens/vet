@@ -27,7 +27,7 @@ use crate::sync::lock;
 
 static TMP_COUNTER: AtomicU64 = AtomicU64::new(0);
 
-pub struct ContentStore {
+pub(super) struct ContentStore {
     root: PathBuf,
     /// Blobs renamed into place that are not durable yet. A crash could still lose them, so
     /// they do not count as held.
@@ -40,7 +40,7 @@ pub struct ContentStore {
 /// Blobs renamed into place by [`ContentStore::place`]. They are durable once `dirs` are
 /// synced and [`ContentStore::durable`] was told.
 #[derive(Default)]
-pub struct Placed {
+pub(super) struct Placed {
     /// The id of every blob given, in order.
     pub ids: Vec<BlobId>,
     /// The blobs that were written; the others were held already.
@@ -51,7 +51,7 @@ pub struct Placed {
 
 impl Placed {
     /// One batch of what `self` and `other` placed.
-    pub fn merge(mut self, other: Placed) -> Self {
+    pub(super) fn merge(mut self, other: Placed) -> Self {
         self.ids.extend(other.ids);
         self.written.extend(other.written);
         self.dirs.extend(other.dirs);
@@ -60,7 +60,7 @@ impl Placed {
 }
 
 impl ContentStore {
-    pub fn open(root: PathBuf) -> io::Result<Self> {
+    pub(super) fn open(root: PathBuf) -> io::Result<Self> {
         fs::create_dir_all(root.join("tmp"))?;
         Ok(Self {
             root,
@@ -85,14 +85,14 @@ impl ContentStore {
     }
 
     /// Of `ids`, those the store does not hold durably.
-    pub fn missing(&self, ids: &[BlobId]) -> Vec<BlobId> {
+    pub(super) fn missing(&self, ids: &[BlobId]) -> Vec<BlobId> {
         ids.iter().copied().filter(|id| !self.holds(*id)).collect()
     }
 
     /// Writes each of `blobs` the store does not hold to a temp file, fsyncs it and renames it
     /// into place. The directories are left to sync: until [`ContentStore::durable`] is told
     /// of them, the written blobs are [`missing`](ContentStore::missing).
-    pub fn place(&self, blobs: &[Vec<u8>]) -> io::Result<Placed> {
+    pub(super) fn place(&self, blobs: &[Vec<u8>]) -> io::Result<Placed> {
         self.place_with(blobs, |_| {})
     }
 
@@ -128,7 +128,7 @@ impl ContentStore {
 
     /// Called once the directories of `placed` are synced: makes what the batch wrote reach
     /// the drive's storage, then counts its blobs as held.
-    pub fn durable(&self, placed: &Placed) -> io::Result<()> {
+    pub(super) fn durable(&self, placed: &Placed) -> io::Result<()> {
         if placed.written.is_empty() {
             return Ok(());
         }
@@ -156,7 +156,7 @@ impl ContentStore {
 
     /// The blob `id`; `None` if it is not in place or its content does not hash to `id`,
     /// which is removed so that the next batch writes it again.
-    pub fn get(&self, id: BlobId) -> io::Result<Option<Vec<u8>>> {
+    pub(super) fn get(&self, id: BlobId) -> io::Result<Option<Vec<u8>>> {
         let path = self.path(id);
         match fs::read(&path) {
             Ok(bytes) if BlobId::of(&bytes) == id => Ok(Some(bytes)),
@@ -174,7 +174,7 @@ impl ContentStore {
 
     /// Delete files not in `live` that are older than `grace`, including
     /// abandoned temp files. Returns the number of blobs deleted.
-    pub fn sweep(&self, live: &HashSet<BlobId>, now: SystemTime, grace: Duration) -> io::Result<usize> {
+    pub(super) fn sweep(&self, live: &HashSet<BlobId>, now: SystemTime, grace: Duration) -> io::Result<usize> {
         let old = |path: &Path| -> io::Result<bool> {
             let modified = fs::metadata(path)?.modified()?;
             Ok(now.duration_since(modified).unwrap_or_default() >= grace)
@@ -226,7 +226,7 @@ fn sync_file(file: &File) -> io::Result<()> {
 /// Makes the entries of `dir` survive a crash; on Apple systems once the drive's cache is
 /// flushed too.
 #[cfg(unix)]
-pub fn sync_dir(dir: &Path) -> io::Result<()> {
+pub(super) fn sync_dir(dir: &Path) -> io::Result<()> {
     sync_file(&File::open(dir)?)
 }
 

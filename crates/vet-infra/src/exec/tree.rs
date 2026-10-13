@@ -10,6 +10,6 @@ mod unix;
 mod windows;
 
 #[cfg(unix)]
-pub use unix::{Tree, prepare};
+pub(super) use unix::{Tree, prepare};
 #[cfg(windows)]
 pub use windows::{Tree, prepare};

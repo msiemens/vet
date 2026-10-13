@@ -114,7 +114,7 @@ thread_local! {
 }
 
 impl<'a> Text<'a> {
-    pub fn new(bytes: &'a [u8]) -> Self {
+    pub(crate) fn new(bytes: &'a [u8]) -> Self {
         #[cfg(test)]
         SPLITS.with(|n| n.set(n.get() + 1));
         let raw: Vec<_> = bytes.split_inclusive(|&b| b == b'\n').collect();
@@ -127,7 +127,7 @@ impl<'a> Text<'a> {
     }
 
     /// Hash of each normalized line, computed on first use.
-    pub fn hashes(&self) -> &[Hash] {
+    pub(crate) fn hashes(&self) -> &[Hash] {
         self.hashes
             .get_or_init(|| self.norm.iter().map(|l| Hash::of(l)).collect())
     }
@@ -136,7 +136,7 @@ impl<'a> Text<'a> {
         r.start < r.end && r.end as usize <= self.raw.len()
     }
 
-    pub fn raw_hash(&self, r: LineRange) -> Option<Hash> {
+    pub(crate) fn raw_hash(&self, r: LineRange) -> Option<Hash> {
         self.in_bounds(r).then(|| {
             let mut h = blake3::Hasher::new();
             for l in &self.raw[r.start as usize..r.end as usize] {
@@ -147,7 +147,7 @@ impl<'a> Text<'a> {
     }
 
     /// Hash of the normalized line hashes of `r`.
-    pub fn norm_hash(&self, r: LineRange) -> Option<Hash> {
+    pub(crate) fn norm_hash(&self, r: LineRange) -> Option<Hash> {
         self.in_bounds(r).then(|| {
             let mut h = blake3::Hasher::new();
             for l in &self.hashes()[r.start as usize..r.end as usize] {
@@ -158,7 +158,7 @@ impl<'a> Text<'a> {
     }
 
     /// `CONTEXT` lines before, then `CONTEXT` lines after, normalized.
-    pub fn context(&self, r: LineRange) -> Vec<Hash> {
+    pub(crate) fn context(&self, r: LineRange) -> Vec<Hash> {
         let hashes = self.hashes();
         let at = |i: Option<usize>| i.and_then(|i| hashes.get(i)).copied().unwrap_or(NO_LINE);
         let (s, e) = (r.start as usize, r.end as usize);
@@ -169,7 +169,7 @@ impl<'a> Text<'a> {
             .collect()
     }
 
-    pub fn anchor(&self, side: Side, snapshot: SnapshotId, file: RepoPath, range: LineRange) -> Option<Anchor> {
+    pub(crate) fn anchor(&self, side: Side, snapshot: SnapshotId, file: RepoPath, range: LineRange) -> Option<Anchor> {
         Some(Anchor {
             side,
             snapshot,

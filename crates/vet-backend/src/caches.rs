@@ -9,7 +9,7 @@ use tokio::sync::OnceCell;
 use vet_infra::semantic_cache::{SqliteSemanticCache, size_on_disk};
 use vet_semantic::reuse::SemanticCache;
 
-pub struct PersistentAnswers {
+pub(crate) struct PersistentAnswers {
     dir: PathBuf,
     /// The bytes the file may hold, for when it opens.
     budget: AtomicU64,
@@ -17,7 +17,7 @@ pub struct PersistentAnswers {
 }
 
 impl PersistentAnswers {
-    pub fn new(dir: PathBuf, budget: u64) -> Self {
+    pub(crate) fn new(dir: PathBuf, budget: u64) -> Self {
         Self {
             dir,
             budget: AtomicU64::new(budget),
@@ -42,19 +42,19 @@ impl PersistentAnswers {
     }
 
     /// The store for a project's answers; none if the file cannot be had.
-    pub async fn store(&self) -> Option<Arc<dyn SemanticCache>> {
+    pub(crate) async fn store(&self) -> Option<Arc<dyn SemanticCache>> {
         Some(self.file().await?.clone())
     }
 
     /// Removes every stored answer.
-    pub async fn clear(&self) {
+    pub(crate) async fn clear(&self) {
         if let Some(file) = self.file().await {
             file.clear().await;
         }
     }
 
     /// Holds the file to `budget` bytes from now on, and at once.
-    pub async fn set_budget(&self, budget: u64) {
+    pub(crate) async fn set_budget(&self, budget: u64) {
         self.budget.store(budget, Ordering::Relaxed);
         if let Some(file) = self.file().await {
             file.set_budget(budget).await;
@@ -62,7 +62,7 @@ impl PersistentAnswers {
     }
 
     /// The bytes the file takes on disk.
-    pub fn usage(&self) -> u64 {
+    pub(crate) fn usage(&self) -> u64 {
         size_on_disk(&self.dir)
     }
 }

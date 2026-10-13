@@ -54,7 +54,7 @@ use crate::{
 const TASK_UPDATES: Duration = Duration::from_millis(250);
 
 /// What a project runs on once its first scan is done.
-pub struct Booted {
+pub(crate) struct Booted {
     pub session: Arc<Live>,
     /// What `semantics` reads of `session`: the review state as published, and nothing that
     /// changes it.
@@ -105,7 +105,7 @@ impl TaskSlot {
 }
 
 /// What one open project runs on.
-pub struct Wired {
+pub(crate) struct Wired {
     /// The background work of the project, announced to its subscribers.
     pub tasks: Tasks,
     pub fetch: Fetch<GixRepo>,
@@ -134,7 +134,7 @@ impl Wired {
     /// The session and its semantic layer, once the first scan is done. The
     /// first caller scans; the others wait for it. A scan that failed fails
     /// every caller with the same message.
-    pub async fn booted(&self) -> Result<&Arc<Booted>, String> {
+    pub(crate) async fn booted(&self) -> Result<&Arc<Booted>, String> {
         self.booted
             .get_or_init(|| self.boot())
             .await
@@ -143,32 +143,32 @@ impl Wired {
     }
 
     /// Whether edits of the working tree wait to settle into a snapshot.
-    pub fn edits_waiting(&self) -> bool {
+    pub(crate) fn edits_waiting(&self) -> bool {
         self.edits_waiting.load(Ordering::SeqCst)
     }
 
     /// The session if it has scanned successfully already.
-    pub fn booted_now(&self) -> Option<&Arc<Booted>> {
+    pub(crate) fn booted_now(&self) -> Option<&Arc<Booted>> {
         self.booted.get()?.as_ref().ok()
     }
 
     /// The client of the platform `kind`.
-    pub fn hosting(&self, kind: PlatformKind) -> Hosting {
+    pub(crate) fn hosting(&self, kind: PlatformKind) -> Hosting {
         Hosting::of(kind, &self.github, &self.azure_devops)
     }
 
     /// Records how syncing with `host` went and answers how it went before.
-    pub fn set_connection(&self, host: &str, now: PlatformConnection) -> Option<PlatformConnection> {
+    pub(crate) fn set_connection(&self, host: &str, now: PlatformConnection) -> Option<PlatformConnection> {
         lock(&self.connections).insert(host.to_owned(), now)
     }
 
     /// How syncing with `host` went last, if it was tried.
-    pub fn connection(&self, host: &str) -> Option<PlatformConnection> {
+    pub(crate) fn connection(&self, host: &str) -> Option<PlatformConnection> {
         lock(&self.connections).get(host).cloned()
     }
 
     /// Hands over the task that fetches periodically, which ends with the session.
-    pub fn keep_fetching(&self, task: AbortHandle) {
+    pub(crate) fn keep_fetching(&self, task: AbortHandle) {
         self.fetching.keep(task);
     }
 
@@ -345,7 +345,7 @@ impl Resident for Wired {
 }
 
 /// A project whose first scan is done: what the requests about its review run on.
-pub struct Ready {
+pub(crate) struct Ready {
     pub id: ProjectId,
     pub subscribers: Subscribers<Connection>,
     /// The entry, for starting the servers of a new revision.
