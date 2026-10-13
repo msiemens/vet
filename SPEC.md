@@ -17,7 +17,7 @@ Vet is a **review-first IDE** for the agentic coding age. The unit of work is th
 - Being a general-purpose authoring IDE
 - Multi-user/team collaboration (personal tool)
 
-**Threat model:** agents are non-adversarial but fallible. Vet guards against *accidents*, not against attacks. The one exception is contributor PRs, which Vet does not analyze with code-executing backends until you choose to trust them (§7.5).
+**Threat model:** agents are non-adversarial but fallible. Vet guards against *accidents*, not against attacks. The one exception is what does not come from your own project: pull requests from a fork, and, in a project you have not marked trusted, pull requests at all. Vet does not analyze them with code-executing backends until you choose to trust them (§7.5).
 
 **Platforms:** macOS, Windows, and WSL2, including the split where the shell runs on Windows and the backend runs in WSL (§4.1).
 
@@ -277,8 +277,9 @@ Adding a language means adding a config entry plus a one-time manual check that 
 - **The live target** (the dirty tree) is served by a server running on the worktree itself. Its answers are asked fresh for every request, except answers that depend only on a document's text (its symbols): those are asked with the text of the revision's blob and reused by that blob (§7.6).
 - **Any other snapshot** (a pinned base, an older timeline entry, a PR's base or head) is served by a server on a directory obtained from Acquisition via `materialize(SnapshotId) → root`. The semantic layer never sees how the directory was produced (I1). Acquisition builds it from the snapshot's commit plus the content store, and refuses if the snapshot is not materializable (§6.1).
 - **Pool:** servers are keyed by `(SnapshotId or live worktree, backend, policy)`, kept warm while in use, and evicted LRU. Answers outlive their server: they are kept by query key (§7.6), not per server. Changing backend settings restarts the affected servers; their answers stop matching because the server identity in the key changed, and nothing is deleted.
-- **Materialized snapshots are kept between launches** under Vet's data directory, one tree per snapshot and analysis policy shared by all languages, with a record of each language's restore. Reopening a review with the same base starts its servers without copying or restoring again. A restore record is checked against the current tools before reuse. Kept trees are garbage-collected under a disk budget (§8).
-- **Restore:** a materialized snapshot needs installed dependencies for its server to work. Fetch-without-execution is the default and covers documentation needs (cargo registry, `.d.ts`, typeshed, NuGet XML docs).
+- **Materialized snapshots are kept between launches** under Vet's data directory, one tree per snapshot and analysis policy shared by all languages, with a record of each language's restore. Reopening a review with the same base starts its servers without copying or restoring again. A restore record is checked against the current tools and the policy before reuse. Kept trees are garbage-collected under a disk budget (§8).
+- **Restore:** a materialized snapshot needs installed dependencies for its server to work. Fetch-without-execution is the default and covers documentation needs (cargo registry, `.d.ts`, typeshed, NuGet XML docs): no install script, `.pnpmfile.cjs`, build backend or MSBuild evaluation runs. Where the analysis policy lets restores execute (§7.5), the commands drop what prevents that: `--ignore-scripts`, `--ignore-pnpmfile`, Yarn's `--mode=skip-build` and disabled scripts, uv's `--no-build`; and `dotnet restore` (MSBuild) runs only there. `cargo fetch` runs nothing either way.
+
 ### 7.3 Queries
 
 Primitive rows pass backend answers through. Derived rows combine primitives with the diff; per I6 they are labeled derived in the UI and show their inputs.
@@ -309,8 +310,13 @@ Whole-repo dead code is not a Vet analysis; it appears only when a language serv
 
 What analysis may execute project code. Not a security boundary.
 
-- **Contributor PRs** (head on a fork or a remote not marked trusted): fetch-only restores, and only servers with `executes_project_code_during_analysis = false` start; other languages show a visible "analysis limited" marker. One action ("Trust this PR") lifts this for the PR's **current head commit**. Any new push to the PR voids the trust and restores the restrictions.
-- **Analysis on trusted code** runs normally: language servers may execute project code (build scripts, proc macros, MSBuild design-time builds) without asking.
+The analysis policy has two parts: whether language servers may execute project code (build scripts, proc macros, MSBuild design-time builds), and whether restores may (§7.2). It is part of the keys of kept trees, restore records and cached answers, so a fetch-only restore is never reused as an executing one, and the reverse. Changing trust restarts the servers the changeset on view needs under the new policy.
+
+- **Trusted project:** a per-repository setting ("Trust this project", on the Review page of Settings), off by default. For a trusted project the working tree, local branches and pull requests whose head is in the repository itself (not in a fork) are analysed with executing restores and servers that execute project code, without asking.
+- **Project not trusted:** the working tree and local branches keep servers that execute project code, because they are the reviewer's own, but their restores are fetch-only. A pull request is **limited** until trusted: fetch-only restores, and only servers with `executes_project_code_during_analysis = false` start; other languages show a visible "analysis limited" marker, and a banner says why and offers "Trust this PR".
+- **Pull requests from a fork** (the head is in a repository other than the one the pull request is opened against, or the platform's data on it was never stored) are limited in a trusted project too.
+- **Trust this PR** lifts the limit, restores and servers alike, for the PR's **current head commit**. Any new push to the PR voids the trust and restores the restrictions. A pull request that a trusted project's repository itself holds is trusted by the project and a push does not void that. There is no action to withdraw trust from a PR; unchecking "Trust this project" withdraws the project's.
+- A pull request's base side executes only where its project is trusted; trusting a PR covers its head commit alone.
 
 ### 7.6 Reuse of answers (I2)
 
@@ -330,7 +336,7 @@ An answer the server gave while it reported work in progress or had not finished
 
 - **Location:** the backend side's native filesystem (in WSL, the Linux home directory, never `/mnt/*`), in standard per-platform data directories.
 - **Content store:** content-addressed files written temp → fsync → rename, referenced from metadata only once durable.
-- **SQLite (WAL mode):** snapshots and their timeline order, sessions, reviewed spans, comments, and PR trust.
+- **SQLite (WAL mode):** snapshots and their timeline order, sessions, reviewed spans, comments, which projects are trusted, and for each PR whether it is from a fork and the head commit it is trusted at.
 - **Retention:** content is kept while any open session, unresolved or unsynced comment, or reviewed span references it; closed sessions are kept 30 days (configurable). Unreferenced content is garbage-collected.
 - **Semantic cache:** one SQLite file (`semantic-cache.sqlite`, WAL), apart from the review database. It holds reusable answers (§7.6) under a size budget (default 256 MB, adjustable in Settings), evicted least recently used. It is disposable: deleting it, or a format Vet does not recognise, only costs speed.
 - **Materialized snapshots:** one tree per snapshot and analysis policy, with completion and restore records. A tree in use by a running Vet is locked; others are kept while an open session or a repository's remembered base refers to them, then removed least recently used to stay under a disk budget (default 20 GB, adjustable in Settings) and after 14 days unused. Settings shows the current use next to a "Clear semantic caches" action.
@@ -523,7 +529,7 @@ Grouped by area; areas and the items within each are in priority order.
 - Stacked changesets: branch stacks (each branch building on the one before) reviewed as a stack
 - Themes and colour schemes as two settings, as in IntelliJ: an app theme (light, dark, Darcula, following the system) for the chrome, and an editor colour scheme (Default, Darcula, Solarized light and dark, high contrast) for syntax, diff and review-state colours. Syntax highlighting grows to the categories a scheme needs (comment, constant, variable, parameter, property, operator, punctuation, attribute, namespace, tag, …). Custom schemes by importing IntelliJ colour schemes and VS Code themes into an editable scheme file; no in-app colour editor
 - Several projects open at once, each in its own window, with the welcome screen as a window of its own (until then one window switches between the welcome screen and a project, keeping a position and size for each)
-- Contributor-PR trust (§7.5): limited analysis until trusted; a new push voids trust
+- Trust (§7.5): fork PRs, and PRs of a project not trusted, are limited until trusted; a new push voids a PR's trust; restores execute only under a trusted project or PR
 - Semantic-graph diff
 - Review-questions assistant (read-only; answers cite hunks)
 - Worktree groups
