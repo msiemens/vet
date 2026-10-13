@@ -146,6 +146,11 @@ pub struct LocationRow {
     pub match_start: u32,
     pub match_end: u32,
     pub change: LocationChange,
+    /// The index among the file's hunks of the changed hunk the place is in; set exactly when
+    /// `change` is `Hunk`. The hunk's review state is the manifest's `FileReview.hunks` entry.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub hunk: Option<u32>,
     /// Outside the repository: a dependency or toolchain source, which Vet has no snapshot of.
     pub external: bool,
 }

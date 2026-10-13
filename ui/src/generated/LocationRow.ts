@@ -39,6 +39,11 @@ highlights: Array<number>,
  */
 matchStart: number, matchEnd: number, change: LocationChange, 
 /**
+ * The index among the file's hunks of the changed hunk the place is in; set exactly when
+ * `change` is `Hunk`. The hunk's review state is the manifest's `FileReview.hunks` entry.
+ */
+hunk?: number, 
+/**
  * Outside the repository: a dependency or toolchain source, which Vet has no snapshot of.
  */
 external: boolean, };

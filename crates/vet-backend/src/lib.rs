@@ -524,10 +524,11 @@ impl Orchestrator {
                 path,
                 line,
                 col,
+                limit,
             } => reply(async move {
                 self.ready(project)
                     .await?
-                    .references(&self.highlighter, revision, side, &path, line, col)
+                    .references(&self.highlighter, revision, side, (&path, line, col), limit)
                     .await
             }),
             Request::Implementations {

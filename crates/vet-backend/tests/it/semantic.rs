@@ -159,6 +159,7 @@ async fn rust_semantics_through_the_protocol() {
             path: path.into(),
             line,
             col,
+            limit: None,
         })
         .await
         .unwrap()
@@ -184,7 +185,16 @@ async fn rust_semantics_through_the_protocol() {
         })
     );
     assert_eq!(row.change, LocationChange::Hunk, "{refs:?}");
+    assert_eq!(row.hunk, Some(0), "{refs:?}");
     assert!(!row.external);
+    let cut = client
+        .references_up_to(project, revision, Side::Target, path, (line, col), Some(0))
+        .await;
+    assert_eq!(
+        (cut.rows.len(), cut.total),
+        (0, 1),
+        "a limit cuts the rows and keeps the total"
+    );
 
     // A server that ran says what it offers; one that has not started does not.
     let Response::Servers { servers } = client.call(Request::ListServers { project }).await.unwrap() else {

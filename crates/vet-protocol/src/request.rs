@@ -302,7 +302,9 @@ pub enum Request {
         col: u32,
     },
     /// The references to the symbol at the position, without its declaration, as rows to list
-    /// (see `LocationRows`). Answers with `Response::References`; otherwise like `Hover`.
+    /// (see `LocationRows`). `limit` is the most rows to answer with, a default one if absent;
+    /// `LocationRows::total` says how many there were. Answers with `Response::References`;
+    /// otherwise like `Hover`.
     References {
         project: ProjectId,
         revision: u32,
@@ -310,6 +312,9 @@ pub enum Request {
         path: String,
         line: u32,
         col: u32,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        #[ts(optional)]
+        limit: Option<u32>,
     },
     /// The implementations of the interface, trait or abstract member at the position, as rows to
     /// list. A server that cannot answer makes `unavailable` set. Answers with

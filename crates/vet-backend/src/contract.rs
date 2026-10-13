@@ -422,6 +422,7 @@ mod tests {
                 path: path(),
                 line: 0,
                 col: 0,
+                limit: None,
             },
             Request::Implementations {
                 project,

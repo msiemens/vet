@@ -130,16 +130,18 @@ impl Booted {
         highlighter: &Highlighter,
         revision: u32,
         side: Side,
-        path: &str,
-        line: u32,
-        col: u32,
+        (path, line, col): (&str, u32, u32),
+        limit: Option<u32>,
     ) -> Result<Response, String> {
         let at = map::at(path, line, col);
         let answer = (self.semantics)
             .references(&self.view, revision, core_side(side), &at)
             .await
             .map_err(message)?;
-        Ok(Response::References(self.rows(highlighter, answer, side, &at).await?))
+        let limit = limit.map_or(map::MAX_ROWS, |l| l as usize);
+        Ok(Response::References(
+            self.rows(highlighter, answer, side, &at, limit).await?,
+        ))
     }
 
     pub async fn implementations(
@@ -157,18 +159,19 @@ impl Booted {
             .await
             .map_err(message)?;
         Ok(Response::Implementations(
-            self.rows(highlighter, answer, side, &at).await?,
+            self.rows(highlighter, answer, side, &at, map::MAX_ROWS).await?,
         ))
     }
 
-    /// The places of `answer` as rows to list: with their line, and where they stand against
-    /// the changeset on `side`.
+    /// The places of `answer` as rows to list, at most `limit` of them: with their line, and
+    /// where they stand against the changeset on `side`.
     async fn rows(
         &self,
         highlighter: &Highlighter,
         answer: vet_app::semantics::Answer<Vec<Reference>>,
         side: Side,
         at: &At,
+        limit: usize,
     ) -> Result<vet_protocol::LocationRows, String> {
         let revision = answer.revision;
         let (found, unavailable) = map::answer(answer.result, self.language_of(&at.file));
@@ -203,19 +206,19 @@ impl Booted {
             let line = r.location.span.start.line;
             let source = texts[file].as_ref();
             let text = source.map_or("", |s| map::line_at(&s.text, line));
-            let change = if r.location.external {
-                vet_protocol::LocationChange::Unchanged
+            let standing = if r.location.external {
+                (vet_protocol::LocationChange::Unchanged, None)
             } else {
                 map::change_at(&files, core_side(side), file, line)
             };
-            rows.push(map::row(r, text, change, |from, to| {
+            rows.push(map::row(r, text, standing, |from, to| {
                 source.map_or_else(Vec::new, |s| {
                     let start = s.line_start(line);
                     vet_highlight::slice(&s.highlights, start + from, start + to)
                 })
             }));
         }
-        let (rows, total) = map::finish(rows);
+        let (rows, total) = map::finish(rows, limit);
         Ok(vet_protocol::LocationRows {
             revision,
             side,

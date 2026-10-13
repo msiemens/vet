@@ -201,6 +201,19 @@ impl Client {
         path: &str,
         (line, col): (u32, u32),
     ) -> LocationRows {
+        self.references_up_to(project, revision, side, path, (line, col), None)
+            .await
+    }
+
+    pub async fn references_up_to(
+        &self,
+        project: ProjectId,
+        revision: u32,
+        side: Side,
+        path: &str,
+        (line, col): (u32, u32),
+        limit: Option<u32>,
+    ) -> LocationRows {
         let request = Request::References {
             project,
             revision,
@@ -208,6 +221,7 @@ impl Client {
             path: path.into(),
             line,
             col,
+            limit,
         };
         match self.call(request).await.unwrap() {
             Response::References(locations) => locations,

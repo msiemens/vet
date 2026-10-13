@@ -115,38 +115,39 @@ pub fn line_at(text: &str, line: u32) -> &str {
     text.lines().nth(line as usize).unwrap_or("")
 }
 
-/// Where a place on `side` stands against the diff: `files` are the changed files.
-pub fn change_at(files: &[FileDiff], side: Side, file: &RepoPath, line: u32) -> p::LocationChange {
+/// Where a place on `side` stands against the diff (`files` are the changed files), and for a
+/// place in a hunk, the hunk's index in its file.
+pub fn change_at(files: &[FileDiff], side: Side, file: &RepoPath, line: u32) -> (p::LocationChange, Option<u32>) {
     let on_side = |f: &&FileDiff| match side {
         Side::Base => f.old_path.as_ref() == Some(file),
         Side::Target => f.new_path.as_ref() == Some(file),
     };
     let Some(diff) = files.iter().find(on_side) else {
-        return p::LocationChange::Unchanged;
+        return (p::LocationChange::Unchanged, None);
     };
     let at = LineRange {
         start: line,
         end: line + 1,
     };
-    let touched = diff.hunks.iter().any(|h| {
+    let hunk = diff.hunks.iter().position(|h| {
         at.intersects(match side {
             Side::Base => h.old,
             Side::Target => h.new,
         })
     });
-    if touched {
-        p::LocationChange::Hunk
-    } else {
-        p::LocationChange::File
+    match hunk {
+        Some(i) => (p::LocationChange::Hunk, Some(sat_u32(i))),
+        None => (p::LocationChange::File, None),
     }
 }
 
 /// A row for the reference `r`, whose line is `line_text` (the whole line, if it could be read).
-/// `highlights` gives the highlighting of a range of the line, in UTF-16 units from its start.
+/// `change` and `hunk` are what [`change_at`] says. `highlights` gives the highlighting of a
+/// range of the line, in UTF-16 units from its start.
 pub fn row(
     r: &Reference,
     line_text: &str,
-    change: p::LocationChange,
+    (change, hunk): (p::LocationChange, Option<u32>),
     highlights: impl FnOnce(u32, u32) -> p::Highlights,
 ) -> p::LocationRow {
     let span = r.location.span;
@@ -187,23 +188,24 @@ pub fn row(
         match_start,
         match_end,
         change,
+        hunk,
         external: r.location.external,
     }
 }
 
-/// The rows by path and line, those in the repository before the others, cut to [`MAX_ROWS`];
-/// with how many there were. A cut keeps the places in changed hunks, then those in changed
-/// files, before the others.
-pub fn finish(mut rows: Vec<p::LocationRow>) -> (Vec<p::LocationRow>, u32) {
+/// The rows by path and line, those in the repository before the others, cut to `limit`
+/// ([`MAX_ROWS`] by default); with how many there were. A cut keeps the places in changed
+/// hunks, then those in changed files, before the others.
+pub fn finish(mut rows: Vec<p::LocationRow>, limit: usize) -> (Vec<p::LocationRow>, u32) {
     let total = sat_u32(rows.len());
-    if rows.len() > MAX_ROWS {
+    if rows.len() > limit {
         let rank = |r: &p::LocationRow| match r.change {
             p::LocationChange::Hunk => 0,
             p::LocationChange::File => 1,
             p::LocationChange::Unchanged => 2,
         };
         rows.sort_by_key(|r| (rank(r), r.external));
-        rows.truncate(MAX_ROWS);
+        rows.truncate(limit);
     }
     rows.sort_by(|a, b| (a.external, &a.path, a.line, a.col).cmp(&(b.external, &b.path, b.line, b.col)));
     (rows, total)
@@ -576,7 +578,7 @@ mod tests {
 
     /// A row of an unhighlighted line.
     fn plain_row(r: &Reference, line: &str) -> p::LocationRow {
-        row(r, line, p::LocationChange::Unchanged, |_, _| Vec::new())
+        row(r, line, (p::LocationChange::Unchanged, None), |_, _| Vec::new())
     }
 
     fn diff(path: &str, hunks: &[(u32, u32, u32, u32)]) -> FileDiff {
@@ -636,7 +638,7 @@ mod tests {
         let r = reference("a.rs", (0, 4), (0, 5), false);
         let asked = std::cell::Cell::new((0, 0));
         // Three units of indentation, then "é😀 f" (five units) and trailing blanks.
-        row(&r, "   é😀 f  ", p::LocationChange::Unchanged, |from, to| {
+        row(&r, "   é😀 f  ", (p::LocationChange::Unchanged, None), |from, to| {
             asked.set((from, to));
             vec![1, 2, 3]
         });
@@ -733,14 +735,24 @@ mod tests {
     fn a_place_is_in_a_hunk_in_a_changed_file_or_unchanged() {
         let files = [diff("a.rs", &[(10, 12, 10, 15)])];
         let a = RepoPath::from("a.rs");
-        assert_eq!(change_at(&files, Side::Target, &a, 14), p::LocationChange::Hunk);
-        assert_eq!(change_at(&files, Side::Target, &a, 15), p::LocationChange::File);
-        assert_eq!(change_at(&files, Side::Base, &a, 12), p::LocationChange::File);
-        assert_eq!(change_at(&files, Side::Base, &a, 11), p::LocationChange::Hunk);
+        let hunk = (p::LocationChange::Hunk, Some(0));
+        assert_eq!(change_at(&files, Side::Target, &a, 14), hunk);
+        assert_eq!(change_at(&files, Side::Target, &a, 15), (p::LocationChange::File, None));
+        assert_eq!(change_at(&files, Side::Base, &a, 12), (p::LocationChange::File, None));
+        assert_eq!(change_at(&files, Side::Base, &a, 11), hunk);
         assert_eq!(
             change_at(&files, Side::Target, &RepoPath::from("b.rs"), 14),
-            p::LocationChange::Unchanged
+            (p::LocationChange::Unchanged, None)
         );
+    }
+
+    #[test]
+    fn a_place_in_a_hunk_names_the_hunk_by_its_index_in_the_file() {
+        let files = [diff("a.rs", &[(1, 2, 1, 2), (10, 12, 10, 15), (30, 31, 33, 34)])];
+        let a = RepoPath::from("a.rs");
+        assert_eq!(change_at(&files, Side::Target, &a, 11).1, Some(1));
+        assert_eq!(change_at(&files, Side::Target, &a, 33).1, Some(2));
+        assert_eq!(change_at(&files, Side::Base, &a, 30).1, Some(2));
     }
 
     #[test]
@@ -750,11 +762,11 @@ mod tests {
         let files = [renamed];
         assert_eq!(
             change_at(&files, Side::Base, &RepoPath::from("old.rs"), 0),
-            p::LocationChange::Hunk
+            (p::LocationChange::Hunk, Some(0))
         );
         assert_eq!(
             change_at(&files, Side::Target, &RepoPath::from("old.rs"), 0),
-            p::LocationChange::Unchanged
+            (p::LocationChange::Unchanged, None)
         );
     }
 
@@ -768,7 +780,7 @@ mod tests {
             at("src/a.rs", 20, false),
             at("src/a.rs", 3, false),
         ];
-        let (sorted, total) = finish(rows);
+        let (sorted, total) = finish(rows, MAX_ROWS);
         let order: Vec<_> = sorted.iter().map(|r| (r.path.as_str(), r.line)).collect();
         assert_eq!(
             order,
@@ -785,10 +797,24 @@ mod tests {
                 r
             })
             .collect();
-        let (cut, total) = finish(many);
+        let (cut, total) = finish(many, MAX_ROWS);
         assert_eq!((cut.len(), total as usize), (MAX_ROWS, MAX_ROWS + 7));
         let hunks = cut.iter().filter(|r| r.change == p::LocationChange::Hunk).count();
         assert_eq!(hunks, 7, "a cut keeps the places in changed hunks");
         assert!(cut.windows(2).all(|w| w[0].line < w[1].line));
+    }
+
+    #[test]
+    fn a_larger_limit_lists_every_row_and_a_smaller_one_cuts_sooner() {
+        let rows = |n: u32| -> Vec<_> {
+            (0..n)
+                .map(|n| plain_row(&reference("src/a.rs", (n, 0), (n, 1), false), ""))
+                .collect()
+        };
+        let n = MAX_ROWS as u32 + 50;
+        let (all, total) = finish(rows(n), n as usize);
+        assert_eq!((all.len(), total), (n as usize, n));
+        let (few, total) = finish(rows(n), 10);
+        assert_eq!((few.len(), total), (10, n));
     }
 }
