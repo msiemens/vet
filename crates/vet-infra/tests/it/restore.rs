@@ -226,7 +226,7 @@ async fn pnpm_installs_from_the_lockfile_without_running_scripts() {
         "require('fs').writeFileSync('pnpmfile-ran', '');\nmodule.exports = { hooks: {} };\n",
     );
 
-    let restorer = ToolRestorer::with_env(env("pnpm_config_store_dir", store.path()));
+    let restorer = ToolRestorer::with_env(env("npm_config_store_dir", store.path()));
     restore(&restorer, project.path(), &config::typescript(), false).await;
     assert!(project.path().join("node_modules/picocolors/package.json").is_file());
     assert!(!project.path().join("script-ran").exists());
