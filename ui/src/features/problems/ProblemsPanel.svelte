@@ -11,11 +11,12 @@
   import EmptyState from "../../lib/ui/EmptyState.svelte";
   import FilterChip from "../../lib/ui/FilterChip.svelte";
   import FilterField from "../../lib/ui/FilterField.svelte";
-  import Icon from "../../lib/ui/Icon.svelte";
+  import GroupHeader from "../../lib/ui/GroupHeader.svelte";
   import IconButton from "../../lib/ui/IconButton.svelte";
   import FileIcon from "../../lib/ui/FileIcon.svelte";
   import Menu from "../../lib/ui/Menu.svelte";
   import ProgressBar from "../../lib/ui/ProgressBar.svelte";
+  import ReviewDot from "../../lib/ui/ReviewDot.svelte";
   import SeverityIcon from "../../lib/ui/SeverityIcon.svelte";
   import { ListNav } from "../../lib/ui/listNav";
   import Popover from "../../lib/ui/Popover.svelte";
@@ -86,12 +87,6 @@
   /** How a problem is matched with the base's, which is why one that moved or changed reads as it does. */
   const MATCHING =
     "Matched with the base's problems by line (as the diff moves it) and message: one that only moved is existing, one whose message changed with the code reads as new.";
-  const REVIEWED = {
-    seen: "Seen",
-    old: "Seen against an old base",
-    unseen: "Not seen",
-    none: "Outside any hunk",
-  } as const;
 
   function chooseGroup(id: string) {
     const next = chooseGroupItem(id, grouping, filters);
@@ -474,34 +469,34 @@
           {@const item = items[i]}
           {#if item}
             {#if item.kind === "group"}
-              <button
-                class="flat pick line group"
-                class:cur={i === cursor}
-                class:new={item.tone === "new"}
-                type="button"
-                tabindex="-1"
+              <GroupHeader
+                open={item.open}
+                count={item.count}
+                strong={item.tone === "new"}
+                cur={i === cursor}
+                tabindex={-1}
                 onclick={(e) => click(e, i)}
               >
-                <span class="chev"><Icon name={item.open ? "open" : "closed"} size={10} /></span>
-                {#if item.tone === "error" || item.tone === "warning" || item.tone === "info"}
-                  <SeverityIcon severity={item.tone} />
-                {/if}
-                <span>{item.title}</span>
-                <span class="n" class:strong={item.tone === "new"}>{item.count}</span>
-              </button>
+                {#snippet before()}
+                  {#if item.tone === "error" || item.tone === "warning" || item.tone === "info"}
+                    <SeverityIcon severity={item.tone} />
+                  {/if}
+                {/snippet}
+                {item.title}
+              </GroupHeader>
             {:else if item.kind === "file"}
-              <button
-                class="flat pick line filehead"
-                class:cur={i === cursor}
-                type="button"
-                tabindex="-1"
+              <GroupHeader
+                kind="file"
+                indent={22}
+                open={item.open}
+                count={item.count}
+                cur={i === cursor}
+                tabindex={-1}
                 onclick={(e) => click(e, i)}
               >
-                <span class="chev"><Icon name={item.open ? "open" : "closed"} size={10} /></span>
-                <FileIcon name={base(item.path)} />
+                {#snippet before()}<FileIcon name={base(item.path)} />{/snippet}
                 <span class="path"><span class="dir">{dir(item.path)}</span>{base(item.path)}</span>
-                <span class="n mono">{item.count}</span>
-              </button>
+              </GroupHeader>
             {:else if item.kind === "problem"}
               {@const p = item.problem}
               <button
@@ -522,11 +517,14 @@
                 >
                 <span class="src mono">{[p.diagnostic.source, p.diagnostic.code].filter(Boolean).join(" ")}</span>
                 {#if item.pill && (p.origin === "new" || p.origin === "existing" || p.origin === "pending")}
-                  <span class="pill {p.origin}" title={ORIGIN_TITLE[p.origin]}
-                    >{p.origin === "pending" ? "comparing" : p.origin}</span
+                  <span
+                    class="badge"
+                    class:badge-new={p.origin === "new"}
+                    class:badge-pending={p.origin === "pending"}
+                    title={ORIGIN_TITLE[p.origin]}>{p.origin === "pending" ? "comparing" : p.origin}</span
                   >
                 {/if}
-                <span class="rv {p.reviewed}" title={REVIEWED[p.reviewed]}><i></i></span>
+                <ReviewDot reviewed={p.reviewed} />
                 <span class="loc mono">{place(p, item.showFile)}</span>
               </button>
             {:else if item.kind === "wait"}
@@ -535,17 +533,13 @@
                 <span class="path">Waiting for {item.server}: {item.files.map(base).join(", ")}</span>
               </div>
             {:else if item.kind === "na"}
-              <button
-                class="flat pick line group"
-                class:cur={i === cursor}
-                type="button"
-                tabindex="-1"
-                onclick={(e) => click(e, i)}
+              <GroupHeader
+                open={item.open}
+                count={item.count}
+                cur={i === cursor}
+                tabindex={-1}
+                onclick={(e) => click(e, i)}>Not analysed</GroupHeader
               >
-                <span class="chev"><Icon name={item.open ? "open" : "closed"} size={10} /></span>
-                <span>Not analysed</span>
-                <span class="n">{item.count}</span>
-              </button>
             {:else}
               <div class="pick line na" class:cur={i === cursor}>
                 <FileIcon name={base(item.path)} />
@@ -619,25 +613,6 @@
     font-size: var(--fs-ctl);
     border-radius: 0;
   }
-  .group {
-    padding-left: 12px;
-    font-weight: 600;
-    color: var(--text-2);
-  }
-  .group.new {
-    color: var(--text);
-  }
-  .filehead {
-    padding-left: 22px;
-    color: var(--text);
-  }
-  .chev {
-    flex: none;
-    width: var(--w-chev);
-    display: inline-flex;
-    justify-content: center;
-    color: var(--text-2);
-  }
   .dir {
     color: var(--text-3);
   }
@@ -646,16 +621,6 @@
     min-width: 0;
     overflow: hidden;
     text-overflow: ellipsis;
-  }
-  .n {
-    flex: none;
-    font-weight: 400;
-    color: var(--text-3);
-    font-size: 11.5px;
-  }
-  .n.strong {
-    color: var(--accent);
-    font-weight: 600;
   }
   .problem {
     padding-left: 44px;
@@ -689,62 +654,6 @@
   .loc {
     min-width: 40px;
     text-align: right;
-  }
-  .pill {
-    flex: none;
-    display: inline-flex;
-    align-items: center;
-    height: 15px;
-    padding: 0 6px;
-    border-radius: 8px;
-    font-size: 10.5px;
-    font-weight: 600;
-    line-height: 1;
-  }
-  .pill.new {
-    color: var(--accent);
-    background: color-mix(in srgb, var(--accent) 16%, transparent);
-  }
-  .pill.existing {
-    color: var(--text-3);
-    border: 1px solid var(--line);
-    font-weight: 400;
-  }
-  .pill.pending {
-    color: var(--text-3);
-    border: 1px dashed var(--line);
-    font-weight: 400;
-  }
-  .rv {
-    flex: none;
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    width: 12px;
-    height: 12px;
-  }
-  .rv i {
-    display: block;
-    width: 9px;
-    height: 9px;
-    border-radius: 50%;
-  }
-  .rv.seen i {
-    background: var(--seen);
-  }
-  .rv.old i {
-    background: var(--old-base-stripes);
-  }
-  .rv.unseen i {
-    border: 1.5px solid var(--text-3);
-    box-sizing: border-box;
-  }
-  .rv.none i {
-    width: 7px;
-    height: 1.5px;
-    border-radius: 1px;
-    background: var(--text-3);
-    opacity: 0.7;
   }
   .na {
     padding-left: 34px;

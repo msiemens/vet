@@ -14,6 +14,7 @@
   import EmptyState from "../../lib/ui/EmptyState.svelte";
   import FileIcon from "../../lib/ui/FileIcon.svelte";
   import FilterChip from "../../lib/ui/FilterChip.svelte";
+  import GroupHeader from "../../lib/ui/GroupHeader.svelte";
   import Icon from "../../lib/ui/Icon.svelte";
   import KeyHint from "../../lib/ui/KeyHint.svelte";
   import Menu from "../../lib/ui/Menu.svelte";
@@ -444,36 +445,36 @@
             {@const r = rows[i]}
             {#if r.kind === "file"}
               {@const dir = dirname(r.file.path)}
-              <button
-                class="flat head"
-                type="button"
-                tabindex="-1"
-                title={r.file.path}
+              <GroupHeader
+                kind="file"
+                open={!r.collapsed}
+                count={r.file.hits}
+                tip={r.file.path}
+                tabindex={-1}
                 onclick={() => toggleFile(r.file.path)}
               >
-                <span class="chev"><Icon name={r.collapsed ? "closed" : "open"} size={10} /></span>
-                <FileIcon name={basename(r.file.path)} />
+                {#snippet before()}<FileIcon name={basename(r.file.path)} />{/snippet}
                 <span class="name">{basename(r.file.path)}</span>
                 {#if dir}<span class="dir">{dir}/</span>{/if}
-                <span class="grow"></span>
-                <span class="count">{r.file.hits}</span>
-                {#if r.file.completion && r.file.status}
-                  <SeenMeter
-                    width={30}
-                    title="{Math.round(r.file.completion.seenPercent)}% seen"
-                    seen={r.file.completion.seenPercent}
-                    old={r.file.completion.oldBasePercent}
-                  />
-                  <ChangeLetter letter={letterOfStatus(r.file.status)} title={r.file.status} />
-                {:else}
-                  <span class="unchanged">unchanged</span>
-                {/if}
-              </button>
+                {#snippet trailing()}
+                  {#if r.file.completion && r.file.status}
+                    <SeenMeter
+                      width={30}
+                      title="{Math.round(r.file.completion.seenPercent)}% seen"
+                      seen={r.file.completion.seenPercent}
+                      old={r.file.completion.oldBasePercent}
+                    />
+                    <ChangeLetter letter={letterOfStatus(r.file.status)} title={r.file.status} />
+                  {:else}
+                    <span class="unchanged">unchanged</span>
+                  {/if}
+                {/snippet}
+              </GroupHeader>
             {:else}
               <!-- The row is chosen by the keys of the dialog; a click only chooses it too. -->
               <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
               <div
-                class="pick line {r.line.kind}"
+                class="pick review-strip line {r.line.kind}"
                 class:cur={i === at}
                 data-state={r.line.hunk === undefined ? undefined : r.file.states[r.line.hunk]}
                 onclick={() => select(i)}
@@ -595,51 +596,19 @@
     flex: 1;
     min-height: 0;
   }
-  .head {
-    width: 100%;
-    height: var(--h-row);
-    display: flex;
-    align-items: center;
-    gap: 6px;
-    padding: 0 10px 0 6px;
-    font-size: 12.5px;
-    text-align: left;
-  }
-  .chev {
-    display: inline-flex;
-    width: 12px;
-    color: var(--text-2);
-  }
   .name {
     font-weight: 600;
-    white-space: nowrap;
   }
   .dir {
-    min-width: 0;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
+    margin-left: 6px;
     color: var(--text-3);
     font-size: 11.5px;
-  }
-  .count {
-    min-width: 18px;
-    height: 15px;
-    box-sizing: border-box;
-    padding: 0 5px;
-    border-radius: 8px;
-    background: var(--track);
-    color: var(--text-2);
-    font: 600 10.5px/15px var(--font-ui);
-    text-align: center;
-    font-variant-numeric: tabular-nums;
   }
   .unchanged {
     color: var(--text-3);
     font-size: 11px;
   }
   .line {
-    position: relative;
     display: flex;
     align-items: center;
     gap: 6px;
@@ -656,19 +625,6 @@
   }
   .line:hover {
     box-shadow: inset 0 0 0 100px var(--hover);
-  }
-  .line[data-state="seen"]::before,
-  .line[data-state="seenAgainstOldBase"]::before {
-    content: "";
-    position: absolute;
-    left: 0;
-    top: 0;
-    bottom: 0;
-    width: 3px;
-    background: var(--seen);
-  }
-  .line[data-state="seenAgainstOldBase"]::before {
-    background: var(--old-base-stripes);
   }
   .no {
     width: 28px;

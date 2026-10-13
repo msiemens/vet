@@ -214,10 +214,6 @@
     font-family: var(--font-mono);
     font-size: var(--fs-mono);
   }
-  .n {
-    font-size: var(--fs-mono-s);
-    color: var(--text-3);
-  }
   .search {
     flex: none;
     display: flex;

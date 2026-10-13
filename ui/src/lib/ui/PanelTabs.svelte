@@ -25,7 +25,7 @@
       aria-selected={tab.id === value}
       onclick={() => onchange(tab.id)}
     >
-      {tab.label}{#if tab.count !== undefined}<span class="count">{tab.count}</span>{/if}
+      {tab.label}{#if tab.count !== undefined}<span class="n">{tab.count}</span>{/if}
     </button>
   {/each}
 </div>
@@ -51,9 +51,5 @@
   .tab.selected {
     color: var(--text);
     border-bottom-color: var(--accent);
-  }
-  .count {
-    color: var(--text-3);
-    font-size: var(--fs-mono-s);
   }
 </style>

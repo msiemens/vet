@@ -10,6 +10,7 @@
   import { fullName } from "../../lib/symbolLabel";
   import ChangeLetter from "../../lib/ui/ChangeLetter.svelte";
   import EmptyState from "../../lib/ui/EmptyState.svelte";
+  import GroupHeader from "../../lib/ui/GroupHeader.svelte";
   import Icon from "../../lib/ui/Icon.svelte";
   import IconButton from "../../lib/ui/IconButton.svelte";
   import OpenInFindButton from "../../lib/ui/OpenInFindButton.svelte";
@@ -209,8 +210,8 @@
   <div class="head">
     <span class="title">{view.kind === "usages" ? "Usages of" : "Implementations of"} <code>{view.symbol}</code></span>
     {#if count}
-      <span class="mono count">{count.count}</span>
-      {#if count.cut}<span class="mono cut">{count.cut}</span>{/if}
+      <span class="n">{count.count}</span>
+      {#if count.cut}<span class="n">{count.cut}</span>{/if}
     {/if}
     <span class="grow"></span>
     {#if view.onkeep && results?.rows.length}
@@ -284,15 +285,13 @@
       {:else}
         {#each items as item, i (i)}
           {#if item.kind === "section"}
-            <div class="section">{item.label}</div>
+            <GroupHeader kind="label">{item.label}</GroupHeader>
           {:else if item.kind === "file"}
-            <div class="file">
-              {#if item.external}<Icon name="module" size={12} />{/if}
-              <PathText path={item.path} />
-              {#if item.status}<ChangeLetter letter={item.status} />{/if}
-              <span class="grow"></span>
-              <span class="mono n">{item.count}</span>
-            </div>
+            <GroupHeader kind="file" count={item.count}>
+              {#snippet before()}{#if item.external}<Icon name="module" size={12} />{/if}{/snippet}
+              <span class="path"><PathText path={item.path} /></span>
+              {#snippet trailing()}{#if item.status}<ChangeLetter letter={item.status} />{/if}{/snippet}
+            </GroupHeader>
           {:else}
             <button
               class="pick hit"
@@ -342,11 +341,6 @@
     font-family: var(--font-mono);
     font-size: var(--fs-mono);
   }
-  .count,
-  .cut {
-    font-size: var(--fs-mono-s);
-    color: var(--text-3);
-  }
   .grow {
     flex: 1;
   }
@@ -355,25 +349,8 @@
     min-height: 0;
     overflow-y: auto;
   }
-  .section {
-    padding: 10px 12px 2px;
-    font-size: 11px;
-    font-weight: 600;
-    letter-spacing: 0.04em;
-    color: var(--text-3);
-  }
-  .file {
+  .path {
     display: flex;
-    align-items: center;
-    gap: 6px;
-    height: var(--h-row);
-    padding: 0 12px;
-    color: var(--text);
-    white-space: nowrap;
-  }
-  .n {
-    font-size: var(--fs-mono-s);
-    color: var(--text-3);
   }
   .hit,
   .two {

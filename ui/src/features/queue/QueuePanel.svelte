@@ -11,6 +11,7 @@
   import Avatar from "../../lib/ui/Avatar.svelte";
   import CiStatus from "../../lib/ui/CiStatus.svelte";
   import EmptyState from "../../lib/ui/EmptyState.svelte";
+  import GroupHeader from "../../lib/ui/GroupHeader.svelte";
   import Icon from "../../lib/ui/Icon.svelte";
   import IconButton from "../../lib/ui/IconButton.svelte";
   import ScrollArea from "../../lib/ui/ScrollArea.svelte";
@@ -251,13 +252,13 @@
 
         {#snippet commentsBody()}
           {#if openThreads.length}
-            <div class="sh"><span>Open</span><span class="mono n">{openThreads.length}</span></div>
+            <GroupHeader kind="label" count={openThreads.length}>Open</GroupHeader>
             <div class="cards"><ThreadCards list={openThreads} {card} /></div>
           {:else}
             <EmptyState align="start" text={groups.resolved.length ? "No open threads." : "No comments yet."} />
           {/if}
           {#if groups.resolved.length}
-            <div class="sh"><span>Resolved</span><span class="mono n">{groups.resolved.length}</span></div>
+            <GroupHeader kind="label" count={groups.resolved.length}>Resolved</GroupHeader>
             <div class="cards">
               <ThreadCards list={groups.resolved} {card} isOpen={() => resolvedOpen} ontoggle={flipResolved} />
             </div>

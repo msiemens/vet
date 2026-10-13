@@ -13,6 +13,8 @@
   import FilterField from "../../lib/ui/FilterField.svelte";
   import Banner from "../../lib/ui/Banner.svelte";
   import FilterChip from "../../lib/ui/FilterChip.svelte";
+  import GroupHeader from "../../lib/ui/GroupHeader.svelte";
+  import ReviewDot from "../../lib/ui/ReviewDot.svelte";
   import IconButton from "../../lib/ui/IconButton.svelte";
   import { ListNav } from "../../lib/ui/listNav";
   import Spinner from "../../lib/ui/Spinner.svelte";
@@ -42,13 +44,6 @@
     /** Gives the keyboard focus back to the editor. */
     oneditor: () => void;
   } = $props();
-
-  const REVIEWED = {
-    seen: "Seen",
-    old: "Seen against an old base",
-    unseen: "Not seen",
-    none: "Outside any hunk",
-  } as const;
 
   const set = $derived(findSets.current);
   const shown = $derived(set ? visible(set.places, set.filters) : []);
@@ -314,29 +309,32 @@
               {@const item = items.at(i)}
               {#if item?.kind === "file"}
                 {@const f = item.file}
-                <button
-                  class="flat pick line head"
-                  class:on={i === cursor}
-                  class:cur={i === cursor}
-                  type="button"
-                  tabindex="-1"
-                  title={f.path}
+                <GroupHeader
+                  kind="file"
+                  open={item.open}
+                  count={item.count}
+                  cur={i === cursor}
+                  on={i === cursor}
+                  tip={f.path}
+                  tabindex={-1}
                   onclick={(e) => nav.click(e, i)}
                 >
-                  <span class="chev"><Icon name={item.open ? "open" : "closed"} size={10} /></span>
-                  {#if f.external}<span class="lib"><Icon name="module" size={12} /></span>{:else}<FileIcon
-                      name={basename(f.path)}
-                    />{/if}
+                  {#snippet before()}
+                    {#if f.external}<span class="lib"><Icon name="module" size={12} /></span>{:else}<FileIcon
+                        name={basename(f.path)}
+                      />{/if}
+                  {/snippet}
                   <span class="path"
                     >{#if f.external}{f.label}{:else}<span class="dir">{dir(f.path)}</span>{basename(f.path)}{/if}</span
                   >
-                  {#if f.status}<ChangeLetter letter={letterOfStatus(f.status)} title={f.status} />{/if}
-                  {#if moved.has(f.path)}<span class="moved" title="This file changed since the run">changed since</span
-                    >{/if}
-                  <span class="grow"></span>
-                  {#if item.notSeen}<span class="uns">{item.notSeen} not seen</span>{/if}
-                  <span class="n mono">{item.count}</span>
-                </button>
+                  {#snippet trailing()}
+                    {#if f.status}<ChangeLetter letter={letterOfStatus(f.status)} title={f.status} />{/if}
+                    {#if moved.has(f.path)}<span class="moved" title="This file changed since the run"
+                        >changed since</span
+                      >{/if}
+                    {#if item.notSeen}<span class="uns">{item.notSeen} not seen</span>{/if}
+                  {/snippet}
+                </GroupHeader>
               {:else if item?.kind === "place"}
                 {@const p = item.place}
                 {@const move = set.moves.get(p.id)}
@@ -356,7 +354,7 @@
                       : ''}"
                   onclick={(e) => nav.click(e, i)}
                 >
-                  <span class="rv {p.review}" title={REVIEWED[p.review]}><i></i></span>
+                  <ReviewDot reviewed={p.review} />
                   <span class="ln mono">{(move?.line ?? p.line) + 1}</span>
                   <span class="within" class:none={p.within === MODULE_LEVEL} title={p.withinTitle}
                     >{p.within ?? ""}</span
@@ -542,16 +540,6 @@
     border-radius: 0;
     position: relative;
   }
-  .head {
-    color: var(--text);
-  }
-  .chev {
-    flex: none;
-    width: var(--w-chev);
-    display: inline-flex;
-    justify-content: center;
-    color: var(--text-2);
-  }
   .lib {
     display: inline-flex;
     color: var(--text-3);
@@ -575,11 +563,6 @@
     font-size: 11.5px;
     font-weight: 500;
   }
-  .n {
-    flex: none;
-    color: var(--text-3);
-    font-size: 11.5px;
-  }
   .place {
     padding-left: 30px;
   }
@@ -595,37 +578,6 @@
     bottom: 0;
     width: 2px;
     background: var(--accent);
-  }
-  .rv {
-    flex: none;
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    width: 12px;
-    height: 12px;
-  }
-  .rv i {
-    display: block;
-    width: 9px;
-    height: 9px;
-    border-radius: 50%;
-  }
-  .rv.seen i {
-    background: var(--seen);
-  }
-  .rv.old i {
-    background: var(--old-base-stripes);
-  }
-  .rv.unseen i {
-    border: 1.5px solid var(--text-3);
-    box-sizing: border-box;
-  }
-  .rv.none i {
-    width: 7px;
-    height: 1.5px;
-    border-radius: 1px;
-    background: var(--text-3);
-    opacity: 0.7;
   }
   .ln {
     flex: none;

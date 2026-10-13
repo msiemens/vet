@@ -12,6 +12,7 @@
   import EmptyState from "../../lib/ui/EmptyState.svelte";
   import FileIcon from "../../lib/ui/FileIcon.svelte";
   import FilterChip from "../../lib/ui/FilterChip.svelte";
+  import GroupHeader from "../../lib/ui/GroupHeader.svelte";
   import Icon from "../../lib/ui/Icon.svelte";
   import KeyHint from "../../lib/ui/KeyHint.svelte";
   import Kbd from "../../lib/ui/Kbd.svelte";
@@ -511,10 +512,12 @@
   <div role="listbox" aria-label="Results">
     {#each built.groups as group, gi (gi)}
       {#if group.label}
-        <div class="group">
-          {group.label}{#if group.count !== undefined && palette.tab !== "all"}<span class="gn">{group.count}</span
-            >{/if}{#if group.loading}<Spinner label={group.loading} /><span class="wait">{group.loading}</span>{/if}
-        </div>
+        <GroupHeader kind="label" count={palette.tab !== "all" ? group.count : undefined}>
+          {group.label}
+          {#snippet trailing()}
+            {#if group.loading}<Spinner label={group.loading} /><span class="wait">{group.loading}</span>{/if}
+          {/snippet}
+        </GroupHeader>
       {/if}
       {#each group.entries as e, ei (ei)}{@render entry(e, starts[gi] + ei)}{/each}
       {#if group.cut}<div class="cut">{group.cut} more, keep typing to narrow them</div>{/if}
@@ -631,22 +634,9 @@
     text-overflow: ellipsis;
     white-space: nowrap;
   }
-  .count,
-  .gn {
+  .count {
     color: var(--text-3);
     font: var(--fs-mono-s) var(--font-mono);
-  }
-  .group {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    padding: 10px 12px 3px;
-    font-size: 11.5px;
-    font-weight: 600;
-    color: var(--text-3);
-  }
-  .group .gn {
-    font-weight: 400;
   }
   .r {
     display: flex;

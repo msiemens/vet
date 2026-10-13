@@ -225,9 +225,12 @@ textarea.field {
   padding-right: 6px;
   border-bottom: 1px solid var(--line-soft);
 }
-.sh .n {
-  font-weight: 400;
+/* `.n`: a count after a title or a label. */
+.n {
+  flex: none;
   color: var(--text-3);
+  font: 400 var(--fs-mono-s) var(--font-mono);
+  font-variant-numeric: tabular-nums;
 }
 .note {
   margin: 0;
@@ -241,6 +244,25 @@ textarea.field {
 }
 .grow {
   flex: 1;
+}
+
+/* `.review-strip`: a line of a diff in a list, with a bar on its left edge where its hunk was seen
+   (`data-state` is the hunk's state); solid blue, or the old-base stripes. */
+.review-strip {
+  position: relative;
+}
+.review-strip[data-state="seen"]::before,
+.review-strip[data-state="seenAgainstOldBase"]::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: 3px;
+  background: var(--seen);
+}
+.review-strip[data-state="seenAgainstOldBase"]::before {
+  background: var(--old-base-stripes);
 }
 
 /* A path or qualified name on one line: the leading part (`.dir`, the folders or the qualifier) is
@@ -262,7 +284,8 @@ textarea.field {
   flex: none;
 }
 
-/* `.badge`: a small status pill; `.badge-moved` and `.badge-ok` colour it. */
+/* `.badge`: a small status pill; `.badge-moved`, `.badge-ok` and `.badge-new` colour it, `.badge-pending`
+   is one whose answer is not in yet. */
 .badge {
   height: 16px;
   box-sizing: border-box;
@@ -283,6 +306,14 @@ textarea.field {
 .badge-ok {
   border-color: var(--ok);
   color: var(--ok);
+}
+.badge-new {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+.badge-pending {
+  border-style: dashed;
+  color: var(--text-3);
 }
 
 /* Window controls drawn by tauri-plugin-decoration (Windows): the full header height, and the

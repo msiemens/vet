@@ -119,7 +119,7 @@
       {#if e.loc}<span class="loc">{e.loc}</span>{/if}
       {#if e.lines}<span class="ln">{e.lines}</span>{/if}
       {#if e.fate}<span class="fate" style:color={FATE[e.fate.tone]}>{e.fate.label}</span>{/if}
-      {#if holds(e) && !open}<span class="mono cnt">{e.count}</span>{/if}
+      {#if holds(e) && !open}<span class="n">{e.count}</span>{/if}
     {/snippet}
   </TreeRow>
   {#if e.fixed === true || open}
@@ -218,11 +218,6 @@
     font-size: 11px;
     color: var(--text-3);
     font-variant-numeric: tabular-nums;
-  }
-  .cnt {
-    flex: none;
-    font-size: 11px;
-    color: var(--text-2);
   }
   .fate {
     flex: none;

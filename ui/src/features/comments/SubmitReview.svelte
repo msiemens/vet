@@ -25,7 +25,7 @@
       aria-expanded={form.open}
       onclick={() => (form.open = !form.open)}
     >
-      Submit review{#if drafts > 0}<span class="n">{drafts}</span>{/if}
+      Submit review{#if drafts > 0}<span class="drafts">{drafts}</span>{/if}
     </button>
   {:else}
     <button
@@ -35,7 +35,7 @@
       title={blocked}
       onclick={() => void sendComments(info)}
     >
-      Post{#if drafts > 0}<span class="n">{drafts}</span>{/if}
+      Post{#if drafts > 0}<span class="drafts">{drafts}</span>{/if}
     </button>
   {/if}
   <PostingControls {info} part="vote" disabled={blocked !== undefined} />
@@ -64,7 +64,7 @@
     padding: 6px 10px;
     border-bottom: 1px solid var(--line-soft);
   }
-  .n {
+  .drafts {
     margin-left: 6px;
     font-family: var(--font-mono);
   }

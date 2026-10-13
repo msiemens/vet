@@ -3,6 +3,7 @@
   import { canSubmit, isSubmitKey } from "../../lib/composer";
   import { movedLabel, movedTitle } from "../../lib/movedTitle";
   import EmptyState from "../../lib/ui/EmptyState.svelte";
+  import GroupHeader from "../../lib/ui/GroupHeader.svelte";
   import Icon from "../../lib/ui/Icon.svelte";
   import IconButton from "../../lib/ui/IconButton.svelte";
   import ScrollArea from "../../lib/ui/ScrollArea.svelte";
@@ -134,11 +135,9 @@
 {#snippet group(title: string, list: Thread[], id: GroupId)}
   {@const cut = shown(list, id === "resolved" && showAllResolved, RESOLVED_SHOWN)}
   <section aria-label={title} data-group={id}>
-    <button class="flat sh head" type="button" aria-expanded={!folded.includes(id)} onclick={() => fold(id)}>
-      <Icon name={folded.includes(id) ? "closed" : "open"} size={10} />
-      <span class="title" class:conflict={id === "conflicts"}>{title}</span>
-      <span class="mono n">{list.length}</span>
-    </button>
+    <GroupHeader open={!folded.includes(id)} count={list.length} onclick={() => fold(id)}>
+      <span class:conflict={id === "conflicts"}>{title}</span>
+    </GroupHeader>
     {#if !folded.includes(id)}
       <ul>
         {#each id === "resolved" ? cut.rows : list as thread (thread.id)}{@render row(thread)}{/each}
@@ -266,12 +265,6 @@
     justify-content: flex-end;
     gap: 6px;
   }
-  .sh .title {
-    min-width: 0;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
   ul {
     margin: 0;
     padding: 0 0 6px;
@@ -283,10 +276,6 @@
   }
   li.resolved .preview {
     color: var(--text-3);
-  }
-  .head {
-    width: 100%;
-    text-align: left;
   }
   .conflict {
     color: var(--warn);

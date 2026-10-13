@@ -68,11 +68,6 @@
     display: inline-flex;
     justify-content: center;
   }
-  .n {
-    font-weight: 400;
-    color: var(--text-3);
-    font-variant-numeric: tabular-nums;
-  }
   .summary {
     margin-left: auto;
     min-width: 0;

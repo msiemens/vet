@@ -72,11 +72,6 @@
   .name.loose {
     font-style: italic;
   }
-  .n {
-    flex: none;
-    color: var(--text-3);
-    font-size: 11px;
-  }
   .stale {
     flex: none;
     width: 7px;

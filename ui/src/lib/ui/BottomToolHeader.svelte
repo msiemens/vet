@@ -26,7 +26,7 @@
 <header>
   <span class="title">
     {title}
-    {#if count !== undefined}<span class="count">{count}</span>{/if}
+    {#if count !== undefined}<span class="n">{count}</span>{/if}
   </span>
   {#if summary}<span class="summary">{summary}</span>{/if}
   <div class="controls">{@render controls?.()}</div>
@@ -47,10 +47,8 @@
   .title {
     flex: none;
   }
-  .count {
+  .n {
     margin-left: 4px;
-    font-weight: 400;
-    color: var(--text-3);
   }
   .summary {
     flex: none;

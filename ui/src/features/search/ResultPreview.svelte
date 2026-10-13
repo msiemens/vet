@@ -131,7 +131,7 @@
   </div>
   <div class="code">
     {#each rows as row, i (i)}
-      <div class="ln {row.kind}" class:at={row.at} data-state={stateOf(row.hunk)}>
+      <div class="review-strip ln {row.kind}" class:at={row.at} data-state={stateOf(row.hunk)}>
         <span class="no">{row.oldNo ?? ""}</span>
         <span class="no">{row.newNo ?? ""}</span>
         <span class="sign">{row.kind === "added" ? "+" : row.kind === "removed" ? "−" : ""}</span>
@@ -181,7 +181,6 @@
     flex: 1;
   }
   .ln {
-    position: relative;
     display: flex;
     align-items: center;
     height: var(--h-line);
@@ -198,19 +197,6 @@
   }
   .ln.at {
     box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 55%, transparent);
-  }
-  .ln[data-state="seen"]::before,
-  .ln[data-state="seenAgainstOldBase"]::before {
-    content: "";
-    position: absolute;
-    left: 0;
-    top: 0;
-    bottom: 0;
-    width: 3px;
-    background: var(--seen);
-  }
-  .ln[data-state="seenAgainstOldBase"]::before {
-    background: var(--old-base-stripes);
   }
   .no {
     width: 40px;

@@ -110,7 +110,7 @@
                 aria-current={row.shown ? "true" : undefined}
                 onclick={(e) => choose(row.n, e.shiftKey)}
               >
-                <span class="mono n"
+                <span class="mono ver"
                   ><span class="slot"
                     >{#if row.ring}<span class="ring" title="The changes shown are compared with this version"
                       ></span>{/if}</span
@@ -136,7 +136,7 @@
           {#if base}
             <li>
               <div class="row base" aria-label="The base the review started from">
-                <span class="mono n"
+                <span class="mono ver"
                   ><span class="slot"
                     >{#if base.ring}<span class="ring" title="The changes shown are compared with the base"
                       ></span>{/if}</span
@@ -216,7 +216,7 @@
     color: var(--text-2);
     font-size: var(--fs-ctl);
   }
-  .n {
+  .ver {
     display: flex;
     align-items: center;
     gap: 5px;

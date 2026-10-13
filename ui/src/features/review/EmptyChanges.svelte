@@ -142,7 +142,6 @@
     border-top: 0;
   }
   .n {
-    font-weight: 400;
     letter-spacing: 0;
   }
   .end {
