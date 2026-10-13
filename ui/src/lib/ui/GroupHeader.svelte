@@ -52,7 +52,7 @@
     {@render trailing?.()}
   </div>
 {:else if open === undefined}
-  <div class="head {kind}" style:padding-left={indent === undefined ? undefined : `${indent}px`}>
+  <div class="head kind-{kind}" style:padding-left={indent === undefined ? undefined : `${indent}px`}>
     {@render before?.()}
     <span class="text">{@render children()}</span>
     {@render trailing?.()}
@@ -60,7 +60,7 @@
   </div>
 {:else}
   <button
-    class="flat pick head {kind}"
+    class="flat pick head kind-{kind}"
     class:on
     class:cur
     class:strong
@@ -93,12 +93,12 @@
     white-space: nowrap;
     font-size: var(--fs-ctl);
   }
-  .group {
+  .kind-group {
     font-weight: 600;
     color: var(--text-2);
   }
-  .group.strong,
-  .file {
+  .kind-group.strong,
+  .kind-file {
     color: var(--text);
   }
   .chev {

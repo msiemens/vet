@@ -293,8 +293,10 @@
           {:else if item.kind === "file"}
             <GroupHeader kind="file" count={item.count}>
               {#snippet before()}{#if item.external}<Icon name="module" size={12} />{/if}{/snippet}
-              <span class="path"><PathText path={item.path} /></span>
-              {#snippet trailing()}{#if item.status}<ChangeLetter letter={item.status} />{/if}{/snippet}
+              <span class="path">
+                <PathText path={item.path} />
+                {#if item.status}<ChangeLetter letter={item.status} />{/if}
+              </span>
             </GroupHeader>
           {:else}
             <button
@@ -337,6 +339,8 @@
   }
   .path {
     display: flex;
+    align-items: center;
+    gap: 6px;
   }
   .hit,
   .two {

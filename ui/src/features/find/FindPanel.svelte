@@ -324,11 +324,15 @@
                         name={basename(f.path)}
                       />{/if}
                   {/snippet}
-                  <span class="path"
-                    >{#if f.external}{f.label}{:else}<span class="dir">{dir(f.path)}</span>{basename(f.path)}{/if}</span
-                  >
-                  {#snippet trailing()}
+                  <span class="named">
+                    <span class="path"
+                      >{#if f.external}{f.label}{:else}<span class="dir">{dir(f.path)}</span>{basename(
+                          f.path,
+                        )}{/if}</span
+                    >
                     {#if f.status}<ChangeLetter letter={letterOfStatus(f.status)} title={f.status} />{/if}
+                  </span>
+                  {#snippet trailing()}
                     {#if moved.has(f.path)}<span class="moved" title="This file changed since the run"
                         >changed since</span
                       >{/if}
@@ -543,6 +547,11 @@
   .lib {
     display: inline-flex;
     color: var(--text-3);
+  }
+  .named {
+    display: flex;
+    align-items: center;
+    gap: 8px;
   }
   .path {
     min-width: 0;
