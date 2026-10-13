@@ -133,7 +133,7 @@ function composer(
 }
 
 /** A card inside its slot. */
-function slot(card: HTMLElement): HTMLElement {
+export function slot(card: HTMLElement): HTMLElement {
   const outer = el("div", "vet-thread");
   outer.append(card);
   return outer;
@@ -238,7 +238,7 @@ function editForm(message: ThreadMessage, actions: ThreadActions, close: () => v
 }
 
 /** The text of a comment, as markdown; a link in it opens in the browser, never in the webview. */
-function markdownBody(text: string, actions: ThreadActions): HTMLElement {
+export function markdownBody(text: string, actions: Pick<ThreadActions, "openLink">): HTMLElement {
   const body = el("div", "vet-msg-body vet-md selectable");
   body.innerHTML = renderComment(text);
   body.addEventListener("click", (e) => {
@@ -250,10 +250,8 @@ function markdownBody(text: string, actions: ThreadActions): HTMLElement {
   return body;
 }
 
-/** A message: its author's picture, who wrote it and when, and its text; the viewer's own can be edited and removed. */
-function messageRow(thread: Thread, message: ThreadMessage, actions: ThreadActions): HTMLElement {
-  const draft = isDraft(thread, message);
-  const row = el("div", draft ? "vet-msg vet-msg-draft" : "vet-msg");
+/** A message's meta line: who wrote it and when, whether it was edited, and whether it waits to be posted. */
+export function messageMeta(thread: Thread, message: ThreadMessage): HTMLElement {
   const meta = el("div", "vet-msg-meta");
   const when = el("span", "vet-msg-time", shortTime(message.at, Date.now(), "detailed"));
   when.title = fullTime(message.at);
@@ -263,7 +261,15 @@ function messageRow(thread: Thread, message: ThreadMessage, actions: ThreadActio
     edited.title = fullTime(message.editedAt);
     meta.append(edited);
   }
-  if (draft) meta.append(el("span", "vet-msg-draft-label", "Draft"));
+  if (isDraft(thread, message)) meta.append(el("span", "vet-msg-draft-label", "Draft"));
+  return meta;
+}
+
+/** A message: its author's picture, who wrote it and when, and its text; the viewer's own can be edited and removed. */
+function messageRow(thread: Thread, message: ThreadMessage, actions: ThreadActions): HTMLElement {
+  const draft = isDraft(thread, message);
+  const row = el("div", draft ? "vet-msg vet-msg-draft" : "vet-msg");
+  const meta = messageMeta(thread, message);
   let shown: HTMLElement = message.conflict
     ? conflictCard(message, message.conflict, actions)
     : markdownBody(message.body, actions);
@@ -320,11 +326,11 @@ export function foldedSummary(thread: Thread) {
   };
 }
 
-/** A resolved thread, folded to the row that says who started it and what they said. */
-function foldedCard(thread: Thread, actions: ThreadActions): HTMLElement {
+/** A resolved thread, folded to the row that says who started it and what they said; `extra` ends the row. */
+export function foldedCard(thread: Thread, toggle: () => void, extra?: HTMLElement): HTMLElement {
   const summary = foldedSummary(thread);
   const card = el("div", "vet-thread-card vet-thread-folded");
-  card.addEventListener("click", () => actions.toggle(thread.id));
+  card.addEventListener("click", toggle);
   const chevron = iconButton("Show the thread", "closed", () => undefined, "vet-thread-btn", 10, 2);
   const ok = el("span", "vet-thread-ok");
   ok.innerHTML = iconSvg("check", 13, 2);
@@ -335,6 +341,7 @@ function foldedCard(thread: Thread, actions: ThreadActions): HTMLElement {
   const stack = el("span", "vet-avatar-stack");
   stack.append(...summary.participants.slice(0, 3).map((p) => avatar(p.author, p.picture)));
   card.append(stack, el("span", "vet-thread-by", summary.resolved));
+  if (extra) card.append(extra);
   return slot(card);
 }
 
@@ -403,7 +410,7 @@ function threadTools(thread: Thread, actions: ThreadActions): HTMLElement | unde
 
 function threadCard(thread: Thread, open: boolean, actions: ThreadActions): HTMLElement {
   const resolved = thread.status === "resolved";
-  if (resolved && !open) return foldedCard(thread, actions);
+  if (resolved && !open) return foldedCard(thread, () => actions.toggle(thread.id));
   const card = el("div", `vet-thread-card${resolved ? " vet-thread-resolved" : ""}`);
   card.dataset.thread = String(thread.id);
   const note = notes(thread, actions);

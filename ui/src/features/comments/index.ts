@@ -4,6 +4,7 @@ export { commentsSeen } from "./commentsSeen.svelte";
 export { threadCommands, threadMenu } from "./commentCommands";
 export { seenKey, seenNow, unreadCount } from "./unread";
 export { default as ThreadPlace } from "./ThreadPlace.svelte";
-export { groupThreads, placeLabel, preview } from "./groups";
+export { default as ThreadCards } from "./ThreadCards.svelte";
+export { groupThreads, placeLabel, preview, threadPlace } from "./groups";
 export { outgoingComments, summarizeOutgoing } from "./outgoing";
 export { submitBlock } from "./pullRequest";
