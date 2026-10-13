@@ -100,6 +100,9 @@
   .ci.running {
     color: var(--old-base);
   }
+  .ci.waiting {
+    color: var(--text-3);
+  }
   .parents,
   .body {
     margin: 4px 0 0;

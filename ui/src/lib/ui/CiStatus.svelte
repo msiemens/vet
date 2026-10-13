@@ -25,7 +25,7 @@
   .running {
     color: var(--old-base);
   }
-  .attention {
-    color: var(--warn);
+  .waiting {
+    color: var(--text-3);
   }
 </style>
