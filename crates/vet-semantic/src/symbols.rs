@@ -24,9 +24,23 @@ pub struct Outline {
 }
 
 /// Whether a server names a symbol only by where it is: a function or class expression it
-/// reports as `<function>` or `<class>`, or a callback it reports as `items.map() callback`.
+/// reports as `<function>` or `<class>`, a callback as `items.map() callback`, a lambda as
+/// `(lambda)`, or compiler-made code by a bracketed last part, as in
+/// `Program.<top-level-statements-entry-point>`.
 fn is_anonymous(name: &str) -> bool {
-    (name.starts_with('<') && name.ends_with('>')) || name.ends_with(" callback")
+    let last = name.rsplit('.').next().unwrap_or(name);
+    (last.starts_with('<') && last.ends_with('>'))
+        || (name.starts_with('(') && name.ends_with(')'))
+        || name.ends_with(" callback")
+}
+
+/// Whether some symbol of the outline is declared where a server item named `name` has its
+/// name. The file-level item a server reports for code outside every declaration (named after
+/// the file, at its start) is not, whatever declaration happens to start there.
+pub fn is_declared_at(symbols: &[SymbolInfo], name: &str, at: Pos) -> bool {
+    symbols
+        .iter()
+        .any(|s| s.at == at && s.sym.name.last().map(String::as_str) == Some(name))
 }
 
 /// The symbols of `outline`, each named by the chain of its named containers. Only what is
@@ -53,7 +67,6 @@ pub fn flatten(file: &RepoPath, outline: &[Outline]) -> Vec<SymbolInfo> {
                 span: symbol.span,
                 at: symbol.at,
                 detail: symbol.detail.clone(),
-                container: symbol.container,
             });
             walk(file, chain, holds_code, &symbol.children, out);
             chain.pop();
@@ -99,18 +112,18 @@ pub fn resolve(symbols: &[SymbolInfo], file: RepoPath, name: &str, span: Span, a
         span,
         at,
         detail: None,
-        container: false,
     })
 }
 
-/// The innermost container among `symbols` that holds `pos`: the symbol a reference there is
-/// part of. A variable, parameter or field is not one, so a reference in a function's signature
-/// belongs to the function, not to its parameter.
+/// The innermost of `symbols` that holds `pos`: the symbol a reference there is part of. What
+/// a function declares locally is no symbol (see [`flatten`]), so a reference in a function's
+/// signature or body belongs to the function. A constant or field is one, whether it holds a
+/// closure or plain data: a reference in its initializer is part of it.
 pub fn enclosing(symbols: &[SymbolInfo], pos: Pos) -> Option<&SymbolInfo> {
     let key = |p: Pos| (p.line, p.col);
     symbols
         .iter()
-        .filter(|s| s.container && contains(s.span, pos))
+        .filter(|s| contains(s.span, pos))
         .max_by_key(|s| (key(s.span.start), std::cmp::Reverse(key(s.span.end))))
 }
 
@@ -211,6 +224,24 @@ mod tests {
         assert_eq!(found, None);
         let found = resolve(&symbols(), file(), "<function>", span(30, 0, 32, 1), pos(30, 0));
         assert_eq!(found, None);
+    }
+
+    #[test]
+    fn lambdas_and_compiler_made_code_outside_every_symbol_resolve_to_none() {
+        for name in ["(lambda)", "Program.<top-level-statements-entry-point>"] {
+            assert_eq!(resolve(&symbols(), file(), name, span(30, 0, 32, 1), pos(30, 0)), None);
+        }
+        // A generic type's name is a name.
+        assert!(resolve(&symbols(), file(), "Box<T>.get()", span(30, 0, 32, 1), pos(30, 0)).is_some());
+    }
+
+    #[test]
+    fn a_file_level_item_is_not_declared_by_what_starts_at_the_same_place() {
+        // `Shape` starts where a server puts the item it names after the file.
+        let symbols = symbols();
+        assert!(!is_declared_at(&symbols, "a.ts", pos(0, 7)));
+        assert!(is_declared_at(&symbols, "Shape", pos(0, 7)));
+        assert!(!is_declared_at(&symbols, "Shape", pos(0, 0)));
     }
 
     /// What typescript-language-server lists for a class whose method has a callback, a local
@@ -365,12 +396,20 @@ mod tests {
     }
 
     #[test]
-    fn a_reference_outside_every_container_belongs_to_none() {
+    fn a_reference_outside_every_symbol_belongs_to_none() {
         let symbols = python_invoice();
         assert_eq!(within(&symbols, pos(21, 0)), None);
-        // A module-level variable is not a container either.
-        assert_eq!(within(&symbols, pos(22, 4)), None);
         assert_eq!(within(&[], pos(0, 0)), None);
+    }
+
+    #[test]
+    fn a_reference_in_a_module_level_constant_belongs_to_it() {
+        // `const handler = () => helper()` holds code, `const LIMIT = 10` data; the outline
+        // does not say which, and the reference is part of the constant either way.
+        let tree = vec![variable("handler", span(3, 0, 3, 30), pos(3, 6))];
+        let symbols = flatten(&file(), &tree);
+        assert_eq!(within(&symbols, pos(3, 20)), Some(vec!["handler".into()]));
+        assert_eq!(within(&symbols, pos(4, 0)), None);
     }
 
     #[test]

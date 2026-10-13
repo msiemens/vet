@@ -14,8 +14,8 @@ use crate::symbols::enclosing;
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub struct Reference {
     pub location: Location,
-    /// The innermost container (see [`SymbolInfo::container`]) the reference is in. `None` at the
-    /// top level of a file, outside the repository and where the outline of its file is unknown.
+    /// The innermost symbol the reference is in. `None` at the top level of a file, outside the
+    /// repository and where the outline of its file is unknown.
     pub within: Option<Sym>,
 }
 

@@ -1240,7 +1240,6 @@ mod tests {
             span: span(at, version),
             at,
             detail: None,
-            container: false,
         }
     }
 

@@ -16,17 +16,19 @@ export RUSTC_WRAPPER
 scope=("${@:---workspace}")
 
 # Tool, the command that tells it is installed, and the tests that need it.
-names=(python3 rust-analyzer typescript-language-server roslyn-language-server)
+names=(python3 rust-analyzer typescript-language-server pyright-langserver roslyn-language-server)
 probes=(
     "python3 --version"
     "rust-analyzer --version"
     "typescript-language-server --version"
+    "command -v pyright-langserver"
     "roslyn-language-server --version && dotnet --version"
 )
 filters=(
     'package(vet-backend) & binary(it) & test(/^(restart|cancel|load)::/)'
     '(package(vet-infra) & binary(it) & test(/^lsp::rust_analyzer/)) | (package(vet-backend) & binary(it) & test(/^semantic::/))'
     'package(vet-infra) & binary(it) & test(/^lsp::typescript/)'
+    'package(vet-infra) & binary(it) & test(/^lsp::pyright/)'
     'package(vet-infra) & binary(it) & test(/^lsp::roslyn/)'
 )
 # Ignored tests that run on request: they download packages, talk to a network service, take

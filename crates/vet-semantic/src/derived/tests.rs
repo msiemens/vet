@@ -35,15 +35,6 @@ fn sym(path: &str, name: &str, start: u32, end: u32) -> SymbolInfo {
         span: span(start, end),
         at: Pos { line: start, col: 3 },
         detail: None,
-        container: true,
-    }
-}
-
-/// Like [`sym`], but a parameter, variable or field: nothing is written inside it.
-fn variable(path: &str, name: &str, start: u32, end: u32) -> SymbolInfo {
-    SymbolInfo {
-        container: false,
-        ..sym(path, name, start, end)
     }
 }
 
@@ -378,7 +369,7 @@ fn impact_lists_references_and_callers_of_added_and_modified_symbols_only() {
 }
 
 #[test]
-fn a_reference_is_in_the_innermost_container_not_in_a_parameter_or_variable() {
+fn a_reference_is_in_the_innermost_symbol_around_it() {
     let (mut fake, files) = changed_fixture();
     let changes = block_on(changed_symbols(&fake, &NoTexts, &files, &|_, _| {}))
         .value
@@ -388,17 +379,15 @@ fn a_reference_is_in_the_innermost_container_not_in_a_parameter_or_variable() {
         vec![
             sym("b.rs", "Billing", 0, 20),
             sym("b.rs", "Billing::run", 4, 12),
-            variable("b.rs", "Billing::run::arg", 4, 5),
-            variable("b.rs", "Billing::run::total", 6, 7),
             sym("b.rs", "Billing::run::inner", 8, 10),
-            variable("b.rs", "LIMIT", 22, 23),
+            sym("b.rs", "LIMIT", 22, 23),
         ],
     );
     fake.references.insert(
         (Side::Target, changes[0].symbol.location()),
         vec![
-            // In the parameter's type, in a local's initializer, in the nested function, in
-            // the class body, at the top level and in a variable at the top level.
+            // In the function's signature, in its body, in the nested function, in the class
+            // body, at the top level and in a constant at the top level.
             site("b.rs", 4),
             site("b.rs", 6),
             site("b.rs", 9),
@@ -421,7 +410,7 @@ fn a_reference_is_in_the_innermost_container_not_in_a_parameter_or_variable() {
             Some("Billing::run::inner".to_owned()),
             Some("Billing".to_owned()),
             None,
-            None,
+            Some("LIMIT".to_owned()),
         ]
     );
     // The outline is asked once for the file, however many references are in it.

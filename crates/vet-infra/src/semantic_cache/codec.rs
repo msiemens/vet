@@ -1,8 +1,10 @@
 //! The stored form of an answer and the address of the row it is kept under.
 //!
-//! An answer is stored as the semantic layer has it, before any Vet logic is applied
-//! to it (`symbols::flatten`, the preference for locations inside the root), so a
-//! change to that logic never needs the cache flushed. A value that does not decode
+//! An answer is stored as the semantic layer returns it, which for symbols is after
+//! `symbols::flatten` and `symbols::resolve` (what is a symbol, how it is named), while
+//! the preference for locations inside the root is applied after the cache. A change to
+//! the logic that makes symbols therefore bumps the format of the symbols kind, or old
+//! rows would keep answering with the old symbols. A value that does not decode
 //! to exactly the kind its key names is corrupt.
 //!
 //! Each kind has its own format version, which is part of the address: a change to
@@ -36,7 +38,7 @@ impl Kind {
     /// Bumped when the stored form of this kind changes.
     fn format(self) -> u32 {
         match self {
-            Kind::Symbols => 3,
+            Kind::Symbols => 4,
             Kind::Locations => 1,
             Kind::Hover => 1,
             Kind::Diagnostics => 1,
@@ -211,7 +213,6 @@ impl Writer {
         self.number(symbol.at.line);
         self.number(symbol.at.col);
         self.maybe(&symbol.detail);
-        self.0.push(u8::from(symbol.container));
     }
 }
 
@@ -324,7 +325,6 @@ impl Reader<'_> {
                 col: self.number()?,
             },
             detail: self.maybe()?,
-            container: self.flag()?,
         })
     }
 }

@@ -106,18 +106,6 @@ async fn rust_analyzer_answers_the_primitive_queries() {
     assert!(names.contains(&"Counter".to_string()), "{names:?}");
     assert!(names.contains(&"impl Counter::bump".to_string()), "{names:?}");
     assert!(names.contains(&"entry".to_string()), "{names:?}");
-    // What holds code is told from the fields and locals the outline lists as well.
-    let container = |name: &str| {
-        symbols
-            .iter()
-            .find(|s| s.sym.name.join("::") == name)
-            .map(|s| s.container)
-    };
-    assert_eq!(container("Counter"), Some(true));
-    assert_eq!(container("impl Counter"), Some(true));
-    assert_eq!(container("impl Counter::bump"), Some(true));
-    assert_eq!(container("entry"), Some(true));
-    assert_eq!(container("Counter::n"), Some(false));
 
     let call = At {
         file: lib.clone(),
@@ -261,6 +249,8 @@ async fn typescript_language_server_answers_the_primitive_queries() {
 
 /// typescript-language-server lists every callback, function expression and local constant in
 /// its outline; none of them is a symbol, and a call in one is a call of the function around it.
+/// A call from top-level code is reported as a call of a module item named after the file; that
+/// is no symbol either.
 #[tokio::test]
 #[ignore = "needs typescript-language-server"]
 async fn typescript_closures_belong_to_the_function_around_them() {
@@ -270,6 +260,10 @@ export function helper(): number {
   return 1;
 }
 export const arrow = (a: number) => a + helper();
+(() => {
+  helper();
+})();
+helper();
 export class Widget {
   field = 1;
   method(items: number[]) {
@@ -317,6 +311,226 @@ export class Widget {
     assert_eq!(
         symbol_names(server.incoming_calls(&helper).await.unwrap()),
         ["Widget::method", "arrow"]
+    );
+    server.shutdown().await;
+}
+
+/// rust-analyzer lists a closure and a local in no outline and a nested function in its function's;
+/// a call in a closure is a call of the function around it.
+#[tokio::test]
+#[ignore = "needs rust-analyzer"]
+async fn rust_analyzer_closures_belong_to_the_function_around_them() {
+    let dir = TempDir::new().unwrap();
+    let src = "\
+pub fn helper() -> u32 {
+    1
+}
+
+pub struct S {
+    pub n: u32,
+}
+
+impl S {
+    pub fn go(&self, extra: u32) -> u32 {
+        let local = helper();
+        let closure = |x: u32| x + helper();
+        fn inner() -> u32 {
+            helper()
+        }
+        closure(extra) + inner() + local
+    }
+}
+
+pub static VALUE: std::sync::LazyLock<u32> = std::sync::LazyLock::new(|| helper());
+";
+    std::fs::create_dir_all(dir.path().join("src")).unwrap();
+    std::fs::write(
+        dir.path().join("Cargo.toml"),
+        "[package]\nname = \"tiny\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+    )
+    .unwrap();
+    std::fs::write(dir.path().join("src/lib.rs"), src).unwrap();
+    let launcher = LspLauncher {
+        ready_timeout: Duration::from_secs(120),
+        ..LspLauncher::new(BinaryLocator, NoRestore)
+    };
+    let server = launcher
+        .start(
+            dir.path(),
+            Tree::Live,
+            &config::rust_analyzer(),
+            AnalysisPolicy { allow_executing: true },
+        )
+        .await
+        .expect("rust-analyzer starts and has every required capability")
+        .server;
+    let lib = path("src/lib.rs");
+    assert_eq!(
+        symbol_names(server.document_symbols(&lib).await.unwrap()),
+        [
+            "S",
+            "S::n",
+            "VALUE",
+            "helper",
+            "impl S",
+            "impl S::go",
+            "impl S::go::inner"
+        ]
+    );
+    let helper = At {
+        file: lib,
+        pos: find(src, "helper", 0, 1),
+    };
+    assert_eq!(
+        symbol_names(server.incoming_calls(&helper).await.unwrap()),
+        ["impl S::go", "impl S::go::inner"]
+    );
+    server.shutdown().await;
+}
+
+/// Pyright lists the parameters and locals of a function in its outline, and reports a lambda as
+/// `(lambda)` and the code outside every declaration as a module item.
+#[tokio::test]
+#[ignore = "needs pyright-langserver"]
+async fn pyright_lambdas_and_locals_belong_to_the_function_around_them() {
+    let dir = TempDir::new().unwrap();
+    let src = "\
+def helper():
+    return 1
+
+
+helper()
+
+VALUE = helper()
+
+
+class K:
+    attr = helper()
+
+    def method(self, p):
+        loc = helper()
+        f = lambda: helper()
+        def inner():
+            return helper()
+        return [helper() for _ in range(2)]
+
+
+handler = lambda: helper()
+";
+    std::fs::write(dir.path().join("m.py"), src).unwrap();
+    let server = LspLauncher::new(BinaryLocator, NoRestore)
+        .start(
+            dir.path(),
+            Tree::Immutable,
+            &config::pyright(),
+            AnalysisPolicy { allow_executing: false },
+        )
+        .await
+        .expect("pyright starts and has every required capability")
+        .server;
+    let file = path("m.py");
+    assert_eq!(
+        symbol_names(server.document_symbols(&file).await.unwrap()),
+        [
+            "K",
+            "K::attr",
+            "K::method",
+            "K::method::inner",
+            "VALUE",
+            "handler",
+            "helper"
+        ]
+    );
+    let helper = At {
+        file: file.clone(),
+        pos: find(src, "helper", 0, 1),
+    };
+    assert_eq!(
+        symbol_names(server.incoming_calls(&helper).await.unwrap()),
+        ["K::method", "K::method::inner"]
+    );
+    server.shutdown().await;
+}
+
+/// roslyn-language-server lists no lambda, anonymous method, local variable or parameter in its
+/// outline, a local function in its method's; a call in a lambda is a call of the method around
+/// it, and top-level statements are the call of a generated entry point, which is no symbol.
+#[tokio::test]
+#[ignore = "needs roslyn-language-server and dotnet"]
+async fn roslyn_lambdas_and_locals_belong_to_the_method_around_them() {
+    let dir = TempDir::new().unwrap();
+    std::fs::write(
+        dir.path().join("app.csproj"),
+        "<Project Sdk=\"Microsoft.NET.Sdk\"><PropertyGroup><TargetFramework>net10.0</TargetFramework><OutputType>Library</OutputType></PropertyGroup></Project>",
+    )
+    .unwrap();
+    let src = "\
+using System;
+using System.Linq;
+
+namespace App;
+
+public class W
+{
+    public static int Helper() => 1;
+
+    public Func<int> Cb = () => Helper();
+
+    public int Method(int[] items, int p)
+    {
+        int loc = Helper();
+        Func<int> f = () => Helper();
+        Func<int> g = delegate () { return Helper(); };
+        int Local(int x) { return Helper() + x; }
+        var q = items.Select(i => i + Helper()).ToList();
+        return loc + f() + g() + Local(1) + q.Count;
+    }
+}
+";
+    std::fs::write(dir.path().join("W.cs"), src).unwrap();
+    std::fs::write(dir.path().join("Program.cs"), "using App;\n\nvar top = W.Helper();\n").unwrap();
+    let restored = Command::new("dotnet")
+        .arg("restore")
+        .current_dir(dir.path())
+        .output()
+        .unwrap();
+    assert!(
+        restored.status.success(),
+        "{}",
+        String::from_utf8_lossy(&restored.stdout)
+    );
+    let server = LspLauncher::new(BinaryLocator, NoRestore)
+        .start(
+            dir.path(),
+            Tree::Immutable,
+            &config::roslyn(),
+            AnalysisPolicy { allow_executing: true },
+        )
+        .await
+        .expect("roslyn starts")
+        .server;
+    let file = path("W.cs");
+    assert_eq!(
+        symbol_names(server.document_symbols(&file).await.unwrap()),
+        [
+            "App",
+            "App::W",
+            "App::W::Cb : Func<int>",
+            "App::W::Helper() : int",
+            "App::W::Method(int[], int) : int",
+            "App::W::Method(int[], int) : int::Local(int) : int",
+        ]
+    );
+    let helper = At {
+        file,
+        pos: find(src, "Helper", 0, 1),
+    };
+    assert_eq!(
+        symbol_names(server.incoming_calls(&helper).await.unwrap()),
+        [
+            "App::W::Method(int[], int) : int",
+            "App::W::Method(int[], int) : int::Local(int) : int",
+        ]
     );
     server.shutdown().await;
 }

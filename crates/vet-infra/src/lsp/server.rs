@@ -519,12 +519,20 @@ impl LspServer {
         Ok(items?.unwrap_or_default())
     }
 
-    /// The symbols the call hierarchy `items` stand for, each once, those
-    /// outside the root left out.
+    /// The symbols the call hierarchy `items` stand for, each once, those outside the root
+    /// and the code outside every declaration left out. A server reports that code as a
+    /// module item named after the file.
     async fn symbols_of(&self, items: Vec<lsp::CallHierarchyItem>) -> Vec<SymbolInfo> {
         let mut cache = HashMap::new();
         let mut out: Vec<SymbolInfo> = Vec::new();
         for item in items {
+            if matches!(item.kind, lsp::SymbolKind::MODULE | lsp::SymbolKind::FILE) {
+                let Some(file) = self.file_of(&item.uri) else { continue };
+                let symbols = self.symbols_cached(&mut cache, &file).await;
+                if !symbols::is_declared_at(&symbols, &item.name, pos(item.selection_range.start)) {
+                    continue;
+                }
+            }
             let resolved = self
                 .resolve(
                     &mut cache,
@@ -611,7 +619,6 @@ fn symbols_in(file: &RepoPath, response: Option<lsp::DocumentSymbolResponse>) ->
                 span: span(s.location.range),
                 at: pos(s.location.range.start),
                 detail: None,
-                container: is_container(s.kind),
             })
             .collect(),
     }

@@ -21,7 +21,6 @@ fn symbols() -> Value {
         span: span(),
         at: Pos { line: 5, col: 6 },
         detail: Some("d".into()),
-        container: true,
     }])
 }
 
@@ -64,7 +63,6 @@ fn stored() -> [(Value, Vec<u8>); 5] {
                 &span,
                 &[5, 0, 0, 0, 6, 0, 0, 0], // at
                 &[1, 1, 0, 0, 0, b'd'],    // detail
-                &[1],                      // container
             ]),
         ),
         (locations(), join(&[&[1, 0, 0, 0], &[1, 0, 0, 0, b'a'], &span, &[1]])),
@@ -178,7 +176,6 @@ fn text_and_paths_that_are_not_ascii_come_back_byte_for_byte() {
         span: span(),
         at: Pos { line: u32::MAX, col: 0 },
         detail: Some(String::new()),
-        container: false,
     }]);
     let (kind, bytes) = encode(&value);
 
