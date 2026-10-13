@@ -3,6 +3,7 @@
   import CiStatus from "../../lib/ui/CiStatus.svelte";
   import Icon from "../../lib/ui/Icon.svelte";
   import LineDelta from "../../lib/ui/LineDelta.svelte";
+  import { ListNav } from "../../lib/ui/listNav";
   import ScrollArea from "../../lib/ui/ScrollArea.svelte";
   import SeenMeter from "../../lib/ui/SeenMeter.svelte";
   import { checks } from "../../state/checks.svelte";
@@ -20,32 +21,50 @@
   } = $props();
 
   const rows = $derived(commits.map((c) => commitRow(c)));
+  const indices = $derived(commits.map((_, i) => i));
 
-  /** Up and down move the selection through the list. */
-  function move(e: KeyboardEvent, index: number) {
-    const to = e.key === "ArrowDown" ? index + 1 : e.key === "ArrowUp" ? index - 1 : undefined;
-    if (to === undefined || to < 0 || to >= rows.length) return;
+  let cursor = $state(-1);
+  let list = $state<HTMLElement>();
+  const nav = new ListNav<number>({
+    element: () => list,
+    items: () => indices,
+    single: (index) => onselect(index),
+    highlight: { get: () => cursor, set: (i) => (cursor = i) },
+    reveal: (i) => list?.querySelectorAll(".row")[i]?.scrollIntoView({ block: "nearest" }),
+    start: () => selected ?? -1,
+  });
+
+  function onkeydown(e: KeyboardEvent) {
+    if (!nav.keydown(e)) return;
     e.preventDefault();
-    onselect(to);
-    (e.currentTarget as HTMLElement).parentElement?.querySelectorAll<HTMLElement>(".row")[to]?.focus();
+    e.stopPropagation();
   }
 </script>
 
 <ScrollArea>
-  <div class="list" role="listbox" aria-label="Commits">
+  <div
+    class="list"
+    role="listbox"
+    aria-label="Commits"
+    bind:this={list}
+    {onkeydown}
+    onfocusin={() => nav.focusin()}
+    {...nav.attributes}
+  >
     {#each rows as row, index (commits[index].commit.id)}
       <button
         class="flat pick row"
         class:on={index === selected}
+        class:cur={index === cursor}
         class:clean={row.clean}
         type="button"
         role="option"
+        tabindex="-1"
         aria-selected={index === selected}
         title={row.notRemerged
           ? "Compared with its first parent: the automatic merge of its parents could not be made"
           : undefined}
-        onclick={() => onselect(index)}
-        onkeydown={(e) => move(e, index)}
+        onclick={(e) => nav.click(e, index)}
       >
         <span class="mark">
           {#if row.merge}<Icon name="merge" size={12} />{:else}<span class="dot"></span>{/if}
