@@ -10,8 +10,8 @@
   import type { Tabs } from "./Tabs.svelte";
 
   /**
-   * `files` are the ones the first tab lists, which it names by `scope`, what they are of, or the commit's,
-   * which it then names by its hash and subject; `unitOf` is the commit a file tab stays at, once it is read; `onmenu` opens the context menu of a tab.
+   * `files` are the ones the first tab lists, which it names by `scope`, what they are of; its tooltip
+   * counts them and, by commit, names `commit`; `unitOf` is the commit a file tab stays at, once it is read; `onmenu` opens the context menu of a tab.
    */
   let {
     tabs,
@@ -74,9 +74,7 @@
         ? (log.hint ?? log.title)
         : path !== undefined
           ? titleOf(id, path)
-          : commit
-            ? commit.commit.subject
-            : changesTitle(files.length)}
+          : changesTitle(files.length, commit?.commit.subject)}
       onselect={() => (tabs.active = id)}
       onclose={commands.isEnabled("tab.close", subject) ? () => commands.run("tab.close", subject) : undefined}
       closeLabel={tabs.active === id ? commands.tooltip("tab.close") : commands.label("tab.close")}
@@ -85,10 +83,6 @@
       {#if log}
         <Icon name="file" size={12} />
         {log.title}
-      {:else if path === undefined && commit}
-        <Icon name={commit.kind.type === "merge" ? "merge" : "commit"} size={12} />
-        <span class="mono hash">{commit.commit.shortId}</span>
-        <span class="subject">{commit.commit.subject}</span>
       {:else if path === undefined}
         {scope}
       {:else}
@@ -117,10 +111,6 @@
     overflow-x: auto;
     scrollbar-width: none;
   }
-  .hash {
-    margin: 0 6px 0 4px;
-    color: var(--text-2);
-  }
   .at {
     display: inline-flex;
     align-items: center;
@@ -130,10 +120,5 @@
   .at .mono {
     color: var(--text-2);
     font-size: var(--fs-mono-s);
-  }
-  .subject {
-    max-width: 320px;
-    overflow: hidden;
-    text-overflow: ellipsis;
   }
 </style>

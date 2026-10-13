@@ -26,8 +26,9 @@ export const kindOf = (id: TabId): TabKind => (id === CHANGES ? "changes" : isFi
 /** The tab can show the changeset's diff: the Changes tab, or one file's. */
 export const hasDiff = (id: TabId): boolean => kindOf(id) !== "log";
 
-/** What the Changes tab's tooltip says: how many files it lists. */
-export const changesTitle = (files: number): string => `${files} changed ${files === 1 ? "file" : "files"}`;
+/** What the Changes tab's tooltip says: the subject of the commit shown, if one is, and how many files it lists. */
+export const changesTitle = (files: number, subject?: string): string =>
+  `${subject === undefined ? "" : `${subject}\n`}${files} changed ${files === 1 ? "file" : "files"}`;
 
 /** The path of a file tab; `undefined` for the Changes tab and a log. */
 export const pathOf = (id: TabId): string | undefined => {

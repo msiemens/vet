@@ -17,6 +17,7 @@ import {
 void test("the Changes tab's tooltip carries the file count", () => {
   assert.match(changesTitle(34), /^34 changed files$/);
   assert.match(changesTitle(1), /^1 changed file$/);
+  assert.match(changesTitle(3, "fix: retry"), /^fix: retry\n3 changed files$/);
 });
 
 void test("a file opened at a commit is another tab than the file, and the id tells both back", () => {
