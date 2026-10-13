@@ -13,8 +13,8 @@ use vet_app::platform::{
     RemoteKey, Run, Step,
 };
 
-use super::wire::parse_timestamp;
 use super::{Bucket, GitHubClient, repository};
+use crate::platform::time::parse_rfc3339;
 
 /// The app whose check runs have a log to fetch.
 const ACTIONS_APP: &str = "github-actions";
@@ -159,8 +159,8 @@ fn run_check(job: CheckRunJson, runs: &[WorkflowRun]) -> Check {
         state: run_state(&job.status, job.conclusion.as_deref()),
         phase: phase_of(&job.status, job.conclusion.as_deref()),
         run,
-        started: job.started_at.as_deref().and_then(parse_instant),
-        finished: job.completed_at.as_deref().and_then(parse_instant),
+        started: job.started_at.as_deref().and_then(parse_rfc3339),
+        finished: job.completed_at.as_deref().and_then(parse_rfc3339),
         url: job.html_url,
         log: job.app.is_some_and(|a| a.slug == ACTIONS_APP),
         name: job.name,
@@ -170,11 +170,11 @@ fn run_check(job: CheckRunJson, runs: &[WorkflowRun]) -> Check {
 fn status_check(status: Status) -> Check {
     let state = status_state(&status.state);
     let finished = (state != CiState::Pending)
-        .then(|| status.updated_at.as_deref().and_then(parse_instant))
+        .then(|| status.updated_at.as_deref().and_then(parse_rfc3339))
         .flatten();
     Check {
         id: format!("status-{}", status.id),
-        started: status.created_at.as_deref().and_then(parse_instant),
+        started: status.created_at.as_deref().and_then(parse_rfc3339),
         finished,
         url: status.target_url.filter(|u| !u.is_empty()),
         log: false,
@@ -301,7 +301,7 @@ impl<C: CredentialProvider + Sync> GitHubClient<C> {
         let failed = job.steps.iter().find(|s| s.conclusion.as_deref() == Some("failure"));
         Ok(process_log(
             &body,
-            failed.map(|s| (s.name.as_str(), s.started_at.as_deref().and_then(parse_instant))),
+            failed.map(|s| (s.name.as_str(), s.started_at.as_deref().and_then(parse_rfc3339))),
         ))
     }
 
@@ -324,8 +324,8 @@ impl<C: CredentialProvider + Sync> GitHubClient<C> {
                 Step {
                     state: run_state(status, step.conclusion.as_deref()),
                     phase: phase_of(status, step.conclusion.as_deref()),
-                    started: step.started_at.as_deref().and_then(parse_instant),
-                    finished: step.completed_at.as_deref().and_then(parse_instant),
+                    started: step.started_at.as_deref().and_then(parse_rfc3339),
+                    finished: step.completed_at.as_deref().and_then(parse_rfc3339),
                     name: step.name,
                 }
             })
@@ -384,24 +384,6 @@ fn run_number(run: &str, host: &str) -> Result<u64, PlatformError> {
         .map_err(|_| PlatformError::Unexpected(format!("{run:?} is not a run of {host}")))
 }
 
-/// Unix seconds of a time as GitHub writes it: UTC or with an offset, with or without a fraction
-/// of a second (`2024-05-01T12:00:00Z`, `2024-05-01T12:00:00.1234567Z`, `2024-05-01T05:00:00-07:00`).
-pub(super) fn parse_instant(text: &str) -> Option<i64> {
-    let (date, time) = text.split_once('T')?;
-    let end = time.find(['Z', '+', '-'])?;
-    let (clock, zone) = time.split_at(end);
-    let clock = clock.split_once('.').map_or(clock, |(whole, _)| whole);
-    let offset = match zone {
-        "Z" => 0,
-        _ => {
-            let sign = if zone.starts_with('-') { -1 } else { 1 };
-            let (hours, minutes) = zone[1..].split_once(':')?;
-            sign * (hours.parse::<i64>().ok()? * 3600 + minutes.parse::<i64>().ok()? * 60)
-        }
-    };
-    Some(parse_timestamp(&format!("{date}T{clock}Z"))? - offset)
-}
-
 /// `line` without the colour codes tools print (`ESC [ … m`), which an editor shows as garbage.
 fn without_colours(line: &str) -> String {
     let mut plain = String::with_capacity(line.len());
@@ -434,7 +416,7 @@ pub(super) fn process_log(raw: &str, failed_step: Option<(&str, Option<i64>)>) -
     let mut times = Vec::new();
     for line in raw.trim_start_matches('\u{feff}').lines() {
         let (stamp, text) = line.split_once(' ').unwrap_or((line, ""));
-        match parse_instant(stamp) {
+        match parse_rfc3339(stamp) {
             Some(at) => {
                 times.push(Some(at));
                 texts.push(without_colours(text));
@@ -478,15 +460,6 @@ pub(super) fn process_log(raw: &str, failed_step: Option<(&str, Option<i64>)>) -
 mod tests {
     use super::*;
 
-    #[test]
-    fn times_are_read_with_fractions_and_offsets() {
-        assert_eq!(parse_instant("2024-05-01T12:00:00Z"), Some(1_714_564_800));
-        assert_eq!(parse_instant("2024-05-01T12:00:00.1234567Z"), Some(1_714_564_800));
-        assert_eq!(parse_instant("2024-05-01T05:00:00.000-07:00"), Some(1_714_564_800));
-        assert_eq!(parse_instant("2024-05-01T14:00:00+02:00"), Some(1_714_564_800));
-        assert_eq!(parse_instant("not a time"), None);
-    }
-
     const LOG: &str = "\
 2024-05-01T12:00:00.0000000Z ##[group]Run cargo build
 2024-05-01T12:00:01.0000000Z Compiling app
@@ -498,7 +471,7 @@ mod tests {
 ";
 
     fn at(clock: &str) -> Option<i64> {
-        parse_instant(&format!("2024-05-01T{clock}Z"))
+        parse_rfc3339(&format!("2024-05-01T{clock}Z"))
     }
 
     #[test]

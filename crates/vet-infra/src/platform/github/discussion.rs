@@ -16,10 +16,10 @@ use vet_app::platform::{
 };
 
 use super::wire::{
-    Author, CommitNode, Name, Nodes, Oid, PageInfo, RequestNode, latest_ci, parse_timestamp, requested, review_verdict,
-    unexpected,
+    Author, CommitNode, Name, Nodes, Oid, PageInfo, RequestNode, latest_ci, requested, review_verdict, unexpected,
 };
 use super::{Clients, GitHubClient, repository};
+use crate::platform::time::parse_rfc3339;
 
 /// Threads asked for per page.
 const THREAD_PAGE: u32 = 50;
@@ -157,9 +157,9 @@ struct CommentNode {
 
 impl CommentNode {
     fn into_comment(self) -> Result<PlatformComment, PlatformError> {
-        let created_at = parse_timestamp(&self.created_at).ok_or_else(|| unexpected("a time"))?;
+        let created_at = parse_rfc3339(&self.created_at).ok_or_else(|| unexpected("a time"))?;
         let edited_at = match self.last_edited_at {
-            Some(at) => parse_timestamp(&at).ok_or_else(|| unexpected("a time"))?,
+            Some(at) => parse_rfc3339(&at).ok_or_else(|| unexpected("a time"))?,
             None => created_at,
         };
         let (author, avatar) = match self.author {
@@ -387,7 +387,7 @@ fn conversation(
     }
     for review in reviews.present() {
         // A review that was not submitted is its author's and no one else's business.
-        let Some(at) = review.submitted_at.as_deref().and_then(parse_timestamp) else {
+        let Some(at) = review.submitted_at.as_deref().and_then(parse_rfc3339) else {
             continue;
         };
         let verdict = review_verdict(&review.state);

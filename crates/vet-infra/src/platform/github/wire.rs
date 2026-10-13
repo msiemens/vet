@@ -6,6 +6,8 @@ use vet_app::platform::{
     ReviewDecision, ReviewRequest, ReviewVerdict, ViewerReview,
 };
 
+use crate::platform::time::parse_rfc3339;
+
 /// The fields of a pull request that the queue shows. One request per page asks for these
 /// for every pull request on it; each connection counts once per pull request against
 /// the rate limit (6 of them: labels, assignees, review requests, the reviewers' latest
@@ -348,7 +350,7 @@ pub(super) fn requested(node: RequestNode) -> Option<(ReviewRequest, String)> {
 
 impl PullRequestNode {
     pub(super) fn into_pull_request(self) -> Result<PullRequest, PlatformError> {
-        let updated_at = parse_timestamp(&self.updated_at).ok_or_else(|| unexpected("a time"))?;
+        let updated_at = parse_rfc3339(&self.updated_at).ok_or_else(|| unexpected("a time"))?;
         let ci = latest_ci(self.commits);
         let unresolved_threads = self.review_threads.present().filter(|t| !t.is_resolved).count();
         Ok(PullRequest {
@@ -424,33 +426,12 @@ pub(super) fn force_pushes(nodes: Vec<Option<ForcePushNode>>) -> Result<Vec<Forc
             continue;
         };
         found.push(ForcePush {
-            at: parse_timestamp(&node.created_at).ok_or_else(|| unexpected("a time"))?,
+            at: parse_rfc3339(&node.created_at).ok_or_else(|| unexpected("a time"))?,
             before: before.oid,
             after: after.oid,
         });
     }
     Ok(found)
-}
-
-/// Unix seconds of a UTC time as GitHub writes it, `2024-05-01T12:00:00Z`.
-pub(super) fn parse_timestamp(text: &str) -> Option<i64> {
-    let (date, time) = text.strip_suffix('Z')?.split_once('T')?;
-    let mut date = date.split('-').map(|n| n.parse::<i64>().ok());
-    let (year, month, day) = (date.next()??, date.next()??, date.next()??);
-    let mut time = time.split(':').map(|n| n.parse::<i64>().ok());
-    let (hour, minute, second) = (time.next()??, time.next()??, time.next()??);
-    if !(1..=12).contains(&month) || !(1..=31).contains(&day) || hour > 23 || minute > 59 || second > 60 {
-        return None;
-    }
-    // Days since 1970-01-01 of a proleptic Gregorian date (Howard Hinnant's algorithm).
-    let year = if month <= 2 { year - 1 } else { year };
-    let era = year.div_euclid(400);
-    let year_of_era = year.rem_euclid(400);
-    let month_from_march = (month + 9) % 12;
-    let day_of_year = (153 * month_from_march + 2) / 5 + day - 1;
-    let day_of_era = year_of_era * 365 + year_of_era / 4 - year_of_era / 100 + day_of_year;
-    let days = era * 146_097 + day_of_era - 719_468;
-    Some(days * 86_400 + hour * 3_600 + minute * 60 + second)
 }
 
 #[cfg(test)]
@@ -478,25 +459,6 @@ mod tests {
             None,
         ] {
             assert!(!is_blocked(state), "{state:?}");
-        }
-    }
-
-    #[test]
-    fn github_timestamps_are_unix_seconds() {
-        assert_eq!(parse_timestamp("1970-01-01T00:00:00Z"), Some(0));
-        assert_eq!(parse_timestamp("2024-05-01T12:00:00Z"), Some(1_714_564_800));
-        // A leap day, and the day after it.
-        assert_eq!(parse_timestamp("2024-02-29T23:59:59Z"), Some(1_709_251_199));
-        assert_eq!(parse_timestamp("2024-03-01T00:00:00Z"), Some(1_709_251_200));
-        assert_eq!(parse_timestamp("1969-12-31T23:59:59Z"), Some(-1));
-        for bad in [
-            "",
-            "2024-05-01",
-            "2024-05-01T12:00:00+02:00",
-            "2024-13-01T00:00:00Z",
-            "x-y-zT0:0:0Z",
-        ] {
-            assert_eq!(parse_timestamp(bad), None, "{bad:?}");
         }
     }
 }

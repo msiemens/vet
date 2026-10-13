@@ -13,6 +13,7 @@ use crate::clock::unix_now;
 use crate::http::http_client;
 use crate::platform::azure_devops::access::{API_ENDPOINT, Access};
 use crate::platform::github;
+use crate::platform::time::parse_token_expiry;
 
 const TIMEOUT: Duration = Duration::from_secs(10);
 
@@ -56,7 +57,7 @@ impl HttpValidator {
                     .headers()
                     .get("github-authentication-token-expiration")
                     .and_then(|v| v.to_str().ok())
-                    .and_then(github_time);
+                    .and_then(parse_token_expiry);
                 let body = crab
                     .body_to_string(response)
                     .await
@@ -119,49 +120,6 @@ impl CredentialValidator for HttpValidator {
         }
         answer
     }
-}
-
-/// Unix seconds of a time as GitHub's token header writes it: `2026-11-01 12:00:00 UTC`, or with
-/// an offset such as `+0200` in place of `UTC`.
-fn github_time(text: &str) -> Option<i64> {
-    let mut parts = text.split_whitespace();
-    let (date, time, zone) = (parts.next()?, parts.next()?, parts.next()?);
-    let numbers = |s: &str, sep: char| -> Option<Vec<i64>> { s.split(sep).map(|n| n.parse().ok()).collect() };
-    let (date, time) = (numbers(date, '-')?, numbers(time, ':')?);
-    let ([year, month, day], [hour, minute, second]) = (date.as_slice(), time.as_slice()) else {
-        return None;
-    };
-    let offset = match zone {
-        "UTC" | "Z" => 0,
-        _ => {
-            let (sign, digits) = zone.split_at_checked(1)?;
-            let sign = match sign {
-                "+" => 1,
-                "-" => -1,
-                _ => return None,
-            };
-            if digits.len() != 4 {
-                return None;
-            }
-            let (h, m): (i64, i64) = (digits[..2].parse().ok()?, digits[2..].parse().ok()?);
-            sign * (h * 3600 + m * 60)
-        }
-    };
-    let days = days_from_civil(*year, *month, *day)?;
-    Some(days * 86_400 + hour * 3600 + minute * 60 + second - offset)
-}
-
-/// Days since 1970-01-01 of a date of the proleptic Gregorian calendar.
-fn days_from_civil(year: i64, month: i64, day: i64) -> Option<i64> {
-    if !(1..=12).contains(&month) || !(1..=31).contains(&day) {
-        return None;
-    }
-    let year = if month <= 2 { year - 1 } else { year };
-    let era = year.div_euclid(400);
-    let year_of_era = year - era * 400;
-    let day_of_year = (153 * (month + if month > 2 { -3 } else { 9 }) + 2) / 5 + day - 1;
-    let day_of_era = year_of_era * 365 + year_of_era / 4 - year_of_era / 100 + day_of_year;
-    Some(era * 146_097 + day_of_era - 719_468)
 }
 
 fn refusal(host: &str, status: StatusCode, reason: &str) -> ValidationError {
@@ -235,8 +193,6 @@ mod tests {
                 .unwrap();
             assert_eq!(owner.expires_at, Some(expected), "{header}");
         }
-        assert_eq!(github_time("tomorrow"), None);
-        assert_eq!(github_time("2026-13-01 12:00:00 UTC"), None);
     }
 
     #[tokio::test]
