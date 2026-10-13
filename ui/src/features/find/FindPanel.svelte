@@ -4,6 +4,8 @@
   // place chosen. A click chooses a place, Enter and a double click open it where it was found.
   import { untrack } from "svelte";
   import { SvelteSet } from "svelte/reactivity";
+  import { letterOfStatus } from "../../lib/changeLetter";
+  import ChangeLetter from "../../lib/ui/ChangeLetter.svelte";
   import FileIcon from "../../lib/ui/FileIcon.svelte";
   import Icon from "../../lib/ui/Icon.svelte";
   import BottomToolHeader from "../../lib/ui/BottomToolHeader.svelte";
@@ -18,7 +20,7 @@
   import { type FindSet, findSets } from "../../state/findSets.svelte";
   import { type Item, narrowing, itemsOf, visible } from "../../state/findRows";
   import { previewBasis, relocated } from "../../state/findRuns";
-  import { type Place, letterOf } from "../../state/foundPlace";
+  import type { Place } from "../../state/foundPlace";
   import { basename, dirname } from "../../lib/paths";
   import { MODULE_LEVEL } from "../../lib/symbolLabel";
   import { ResultPreview } from "../search";
@@ -40,12 +42,6 @@
     oneditor: () => void;
   } = $props();
 
-  const LETTER_COLOR = {
-    M: "var(--old-base)",
-    A: "var(--add-text)",
-    D: "var(--del-text)",
-    R: "var(--text-2)",
-  } as const;
   const REVIEWED = {
     seen: "Seen",
     old: "Seen against an old base",
@@ -342,11 +338,7 @@
                   <span class="path"
                     >{#if f.external}{f.label}{:else}<span class="dir">{dir(f.path)}</span>{basename(f.path)}{/if}</span
                   >
-                  {#if f.status}<span
-                      class="mono letter"
-                      style:color={LETTER_COLOR[letterOf(f.status)]}
-                      title={f.status}>{letterOf(f.status)}</span
-                    >{/if}
+                  {#if f.status}<ChangeLetter letter={letterOfStatus(f.status)} title={f.status} />{/if}
                   {#if moved.has(f.path)}<span class="moved" title="This file changed since the run">changed since</span
                     >{/if}
                   <span class="grow"></span>
@@ -429,8 +421,6 @@
               : { type: "changeset" }}
             revision={findSets.revision ?? 0}
             repository={set.spec.type === "search" && set.spec.request.scope.type === "repository"}
-            status={chosen.file.status}
-            letter={chosen.file.status && letterOf(chosen.file.status)}
           />
         </div>
       {/if}
@@ -608,10 +598,6 @@
   }
   .dir {
     color: var(--text-3);
-  }
-  .letter {
-    flex: none;
-    font-size: 11px;
   }
   .moved {
     flex: none;

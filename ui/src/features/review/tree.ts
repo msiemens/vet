@@ -3,8 +3,8 @@
 // directories with a single directory child and no files are shown as one row
 // (`crates/vet-core/src`).
 
-import type { FileStatus } from "../../generated/FileStatus";
 import type { ModeChange } from "../../generated/ModeChange";
+import { letterOfStatus, type StatusLetter } from "../../lib/changeLetter.ts";
 import { basename, compactChain, dirname } from "../../lib/paths.ts";
 import { match, type Range } from "../../lib/speedSearch.ts";
 import type { FileLayout, ReviewedFile } from "../../state/reviewModel.ts";
@@ -32,7 +32,7 @@ export type Row = DirRow | FileRow | SymbolRow;
 
 /** What a file row shows besides its name: it changes with review updates. */
 export interface FileSummary {
-  status: "M" | "A" | "D" | "R";
+  status: StatusLetter;
   seenPercent: number;
   oldBasePercent: number;
   /** Set when the mode changed: the executable bit gained or lost, else a plain mode change. */
@@ -48,8 +48,6 @@ interface DirNode {
   below: string[];
 }
 
-const LETTER: Record<FileStatus, FileSummary["status"]> = { modified: "M", added: "A", deleted: "D", renamed: "R" };
-
 const MODE: Record<ModeChange, NonNullable<FileSummary["mode"]>> = {
   gainedExecutable: "+x",
   lostExecutable: "-x",
@@ -61,9 +59,6 @@ export function modeChange(file: FileLayout): FileSummary["mode"] {
   const change = file.nonText.find((i) => i.kind === "mode")?.modeChange;
   return change ? MODE[change] : undefined;
 }
-
-/** The letter that stands for how a file changed. */
-export const statusLetter = (file: FileLayout): FileSummary["status"] => LETTER[file.status];
 
 // One collator: `localeCompare` creates one per call.
 const collator = new Intl.Collator();
@@ -100,7 +95,7 @@ export function buildTree(paths: readonly string[]): DirNode {
 
 export function summarize(file: ReviewedFile): FileSummary {
   const { seenPercent, oldBasePercent } = file.completion;
-  return { status: statusLetter(file), seenPercent, oldBasePercent, mode: modeChange(file) };
+  return { status: letterOfStatus(file.status), seenPercent, oldBasePercent, mode: modeChange(file) };
 }
 
 /**

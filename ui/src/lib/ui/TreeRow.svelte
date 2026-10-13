@@ -4,6 +4,8 @@
   // it, and a column for the letter of the change. A row of the Structure tool is one line; a row
   // of the Symbol panel may `wrap`, so no name is cut.
   import type { Snippet } from "svelte";
+  import type { StatusLetter } from "../changeLetter";
+  import ChangeLetter from "./ChangeLetter.svelte";
   import Icon from "./Icon.svelte";
 
   let {
@@ -17,7 +19,6 @@
     cur = false,
     title,
     status,
-    statusColor,
     statusTitle,
     tabindex,
     disabled = false,
@@ -43,8 +44,7 @@
     cur?: boolean;
     title?: string;
     /** The letter of the change. */
-    status?: string;
-    statusColor?: string;
+    status?: StatusLetter;
     statusTitle?: string;
     tabindex?: number;
     disabled?: boolean;
@@ -77,7 +77,7 @@
   {@render glyph?.()}
   <span class="name" class:mono>{@render children()}</span>
   {@render trailing?.()}
-  <span class="mono status" style:color={statusColor} title={statusTitle}>{status ?? ""}</span>
+  <ChangeLetter letter={status} title={statusTitle} />
 </button>
 
 <style>
@@ -109,7 +109,7 @@
     justify-content: center;
   }
   .wrap .chev,
-  .wrap .status {
+  .wrap :global(.change-letter) {
     height: 16px;
     align-items: center;
   }
@@ -128,16 +128,6 @@
   }
   .name.mono {
     font-size: var(--fs-mono-s);
-  }
-  .status {
-    flex: none;
-    width: 10px;
-    font-size: 11px;
-    text-align: center;
-  }
-  .wrap .status {
-    display: inline-flex;
-    justify-content: center;
   }
   .strong {
     color: var(--text);

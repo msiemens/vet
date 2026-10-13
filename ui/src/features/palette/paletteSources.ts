@@ -9,6 +9,7 @@ import type { SymbolInfo } from "../../generated/SymbolInfo";
 import type { Task } from "../../generated/Task";
 import type { Thread } from "../../generated/Thread";
 import type { UnavailableKind } from "../../generated/UnavailableKind";
+import type { StatusLetter } from "../../lib/changeLetter.ts";
 import { splitQualified } from "../../lib/qualified.ts";
 import { shortLabel } from "../../lib/symbolLabel.ts";
 import type { CommandRegistry } from "../../lib/commands.ts";
@@ -26,7 +27,7 @@ import type {
 /** A changed file as the changeset's manifest and review state say. */
 export interface ChangedFile {
   path: string;
-  status: "M" | "A" | "D" | "R";
+  status: StatusLetter;
   added: number;
   removed: number;
   seen: number;

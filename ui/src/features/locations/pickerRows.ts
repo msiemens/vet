@@ -3,6 +3,7 @@
 // (implementations).
 
 import type { LocationRow } from "../../generated/LocationRow.ts";
+import type { StatusLetter } from "../../lib/changeLetter.ts";
 import { match } from "../../lib/speedSearch.ts";
 import { placeLabel } from "../../lib/symbolLabel.ts";
 
@@ -10,7 +11,7 @@ export type Section = "CHANGESET" | "OTHER FILES" | "LIBRARIES";
 
 export type Item =
   | { kind: "section"; label: Section }
-  | { kind: "file"; path: string; status?: string; count: number; external: boolean }
+  | { kind: "file"; path: string; status?: StatusLetter; count: number; external: boolean }
   | { kind: "hit"; row: LocationRow; at: number };
 
 /** Places in changed hunks come first, then those in changed files, then other files, then libraries. */
@@ -50,7 +51,7 @@ export function matchedRow(row: LocationRow, symbol: string): LocationRow {
  * the others; then the other files; then the libraries. A file lists its places in line order. `at`
  * numbers the places in the order shown, which is the order the keys move through them.
  */
-export function groupRows(rows: readonly LocationRow[], statusOf: (path: string) => string | undefined): Item[] {
+export function groupRows(rows: readonly LocationRow[], statusOf: (path: string) => StatusLetter | undefined): Item[] {
   const files = new Map<string, LocationRow[]>();
   for (const row of rows) files.set(row.path, [...(files.get(row.path) ?? []), row]);
   const blocks: Record<Section, { path: string; rows: LocationRow[]; hunk: boolean }[]> = {

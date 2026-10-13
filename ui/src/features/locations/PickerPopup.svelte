@@ -4,9 +4,11 @@
   // Enter opens, Escape closes, and typing filters.
   import { onDestroy, onMount, tick } from "svelte";
   import type { LocationRow } from "../../generated/LocationRow";
+  import type { StatusLetter } from "../../lib/changeLetter";
   import { codeRuns, libraryLabel } from "../../lib/foundText";
   import { LIST } from "../../lib/listKeys";
   import { fullName } from "../../lib/symbolLabel";
+  import ChangeLetter from "../../lib/ui/ChangeLetter.svelte";
   import Icon from "../../lib/ui/Icon.svelte";
   import IconButton from "../../lib/ui/IconButton.svelte";
   import SeverityIcon from "../../lib/ui/SeverityIcon.svelte";
@@ -24,18 +26,12 @@
     onsettings,
   }: {
     view: PickerView;
-    /** `M`, `A`, `D` or `R` for a changed file, none for any other. */
-    statusOf: (path: string) => string | undefined;
+    /** The letter of a changed file, none for any other. */
+    statusOf: (path: string) => StatusLetter | undefined;
     /** Opens Settings at the language servers. */
     onsettings: () => void;
   } = $props();
 
-  const STATUS: Record<string, string> = {
-    M: "var(--old-base)",
-    A: "var(--add-text)",
-    D: "var(--del-text)",
-    R: "var(--text-2)",
-  };
   /** The most the popup grows to, and how wide it is with the places grouped, listed flat, or without any. */
   const MAX_HEIGHT = 520;
   const WIDTH = { grouped: 720, flat: 560, none: 520 };
@@ -189,7 +185,7 @@
 
 {#snippet status(path: string)}
   {@const letter = statusOf(path)}
-  {#if letter}<span class="mono letter" style:color={STATUS[letter]}>{letter}</span>{/if}
+  {#if letter}<ChangeLetter {letter} />{/if}
 {/snippet}
 
 <div
@@ -294,7 +290,7 @@
             <div class="file">
               {#if item.external}<Icon name="module" size={12} />{/if}
               <PathText path={item.path} />
-              {#if item.status}<span class="mono letter" style:color={STATUS[item.status]}>{item.status}</span>{/if}
+              {#if item.status}<ChangeLetter letter={item.status} />{/if}
               <span class="grow"></span>
               <span class="mono n">{item.count}</span>
             </div>
@@ -412,10 +408,6 @@
     padding: 0 12px;
     color: var(--text);
     white-space: nowrap;
-  }
-  .letter {
-    flex: none;
-    font-size: 11px;
   }
   .n {
     font-size: var(--fs-mono-s);

@@ -2,9 +2,11 @@
   import type { SearchFile } from "../../generated/SearchFile";
   import type { SearchLine } from "../../generated/SearchLine";
   import type { View } from "../../generated/View";
+  import { letterOfStatus } from "../../lib/changeLetter";
   import { segments } from "../../lib/foundText";
   import { basename, dirname } from "../../lib/paths";
   import { NO_HIGHLIGHTS, type Highlights, decodeHighlights } from "../../lib/highlights";
+  import ChangeLetter from "../../lib/ui/ChangeLetter.svelte";
   import FileIcon from "../../lib/ui/FileIcon.svelte";
   import SeenMeter from "../../lib/ui/SeenMeter.svelte";
   import type { Backend } from "../../state/backend";
@@ -17,8 +19,6 @@
     view,
     revision,
     repository,
-    status,
-    letter,
   }: {
     backend: Backend;
     /** The file as a search sees it; `lines` are the matches the preview marks. */
@@ -29,9 +29,6 @@
     revision: number;
     /** The search was of the target alone: removed lines are not drawn. */
     repository: boolean;
-    /** The letter of the file's status; none for an unchanged file. */
-    status?: string;
-    letter?: string;
   } = $props();
 
   /** Lines of context on each side of the result. */
@@ -120,14 +117,14 @@
     {#if dir}<span class="dim">{dir}/</span>{/if}
     <span class="grow"></span>
     <span class="dim">{line.kind === "removed" ? "base line" : "line"} {line.line + 1}</span>
-    {#if file.completion && letter}
+    {#if file.completion && file.status}
       <SeenMeter
         width={30}
         title="{Math.round(file.completion.seenPercent)}% seen"
         seen={file.completion.seenPercent}
         old={file.completion.oldBasePercent}
       />
-      <span class="mono letter" title={status}>{letter}</span>
+      <ChangeLetter letter={letterOfStatus(file.status)} title={file.status} />
     {:else}
       <span class="dim small">unchanged</span>
     {/if}
@@ -182,11 +179,6 @@
   }
   .grow {
     flex: 1;
-  }
-  .letter {
-    width: 12px;
-    text-align: center;
-    color: var(--old-base);
   }
   .ln {
     position: relative;

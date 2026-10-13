@@ -53,7 +53,6 @@
     fileTab,
     reviewActions,
     modeChange,
-    statusLetter,
     viewCommands,
   } from "../features/review";
   import { FindInFilesDialog, findInFiles, searchCommands } from "../features/search";
@@ -63,6 +62,7 @@
   import { type RangeFile, TimelinePanel } from "../features/timeline";
   import { ProjectSwitcher, recentCommands, WelcomeScreen } from "../features/welcome";
   import type { Thread } from "../generated/Thread";
+  import { letterOfStatus } from "../lib/changeLetter";
   import { errorText } from "../lib/errorText";
   import { repoName } from "../lib/paths";
   import { platformName } from "../lib/platformName";
@@ -914,7 +914,7 @@
 <LocationPicker
   statusOf={(path) => {
     const file = changeset.layoutOf(path);
-    return file && statusLetter(file);
+    return file && letterOfStatus(file.status);
   }}
   onsettings={() => showDialog("settings", "servers")}
 />

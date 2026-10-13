@@ -82,11 +82,6 @@ export interface Place {
   changed: boolean;
 }
 
-const LETTER = { modified: "M", added: "A", deleted: "D", renamed: "R" } as const satisfies Record<FileStatus, string>;
-
-/** The letter a file's status is marked with. */
-export const letterOf = (status: FileStatus): "M" | "A" | "D" | "R" => LETTER[status];
-
 export const idOf = (side: Side, path: string, line: number, col: number) => `${side}:${path}:${line}:${col}`;
 
 /** The places of the files a search found: one per matching line. */

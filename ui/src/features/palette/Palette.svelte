@@ -3,9 +3,11 @@
   // threads, actions), with a tab for each kind. Arrow keys move, Tab or Ctrl+Tab changes the tab, Enter chooses,
   // Shift+Enter shows a changed file or symbol in All changes, Escape closes.
   import { tick, untrack } from "svelte";
+  import { letterOfChange, letterOfStatus } from "../../lib/changeLetter";
   import { bindingOf, matches } from "../../lib/keymap";
   import { splitPath } from "../../lib/paths";
   import { highlightRuns, sliceRanges, type Range } from "../../lib/speedSearch";
+  import ChangeLetter from "../../lib/ui/ChangeLetter.svelte";
   import DiffBar from "../../lib/ui/DiffBar.svelte";
   import FileIcon from "../../lib/ui/FileIcon.svelte";
   import Icon from "../../lib/ui/Icon.svelte";
@@ -23,7 +25,6 @@
   import { threads } from "../../state/threads.svelte";
   import { symbols } from "../../state/symbols.svelte";
   import { queueRows, labelOf, reviewedOf, sourceText } from "../queue";
-  import { statusLetter } from "../review";
   import { openFindInFiles } from "../search";
   import { SymbolGlyph } from "../symbols";
   import type { Choice } from "./choice";
@@ -61,11 +62,9 @@
   const PAGE = 8;
   /** How long the query rests before the language servers are asked. */
   const SERVER_PAUSE_MS = 120;
-  const LETTER_COLORS = { M: "var(--old-base)", A: "var(--add-text)", D: "var(--del-text)", R: "var(--text-2)" };
   /** The tabs the Unchanged files toggle applies to. */
   const TOGGLES: readonly PaletteTab[] = ["all", "file", "symbol"];
   const SYMBOL_TABS: readonly PaletteTab[] = ["all", "symbol"];
-  const SYMBOL_LETTERS = { modified: "M", added: "A", removed: "D" } as const;
   const NEXT_TAB = bindingOf("Ctrl-Tab", isMac ? "Meta" : "Ctrl").label;
 
   let cursor = $state(0);
@@ -78,7 +77,7 @@
         const completion = changeset.reviewed(f.path)?.completion;
         return {
           path: f.path,
-          status: statusLetter(f),
+          status: letterOfStatus(f.status),
           added: f.delta.added,
           removed: f.delta.removed,
           seen: completion?.seenPercent ?? 0,
@@ -344,10 +343,6 @@
   >
 {/snippet}
 
-{#snippet letter(char: string)}
-  <span class="ltr" style:color={LETTER_COLORS[char as keyof typeof LETTER_COLORS]}>{char}</span>
-{/snippet}
-
 {#snippet result(row: Row, index: number)}
   {@const item = row.item}
   <button
@@ -371,7 +366,7 @@
       <span class="meta">
         {#if item.changed}
           <DiffBar width={28} added={item.added} removed={item.removed} seen={item.seen} old={item.oldBase} />
-          {#if item.status}{@render letter(item.status)}{/if}
+          {#if item.status}<ChangeLetter letter={item.status} />{/if}
         {:else}
           <span>unchanged</span>
         {/if}
@@ -382,7 +377,7 @@
       <span class="sp"></span>
       <span class="meta">
         <span>{shortPath(item.info.id.path)}:{item.info.span.start.line + 1}</span>
-        {#if item.change}{@render letter(SYMBOL_LETTERS[item.change])}{:else}<span class="ltr"></span>{/if}
+        <ChangeLetter letter={item.change && letterOfChange(item.change)} />
       </span>
     {:else if item.kind === "changeset"}
       <span class="gl"><Icon name={item.icon} size={14} /></span>
@@ -751,11 +746,6 @@
     gap: 8px;
     color: var(--text-3);
     font: var(--fs-mono-s) var(--font-mono);
-  }
-  .meta .ltr {
-    width: 10px;
-    text-align: center;
-    font-size: 11px;
   }
   .meta .prose {
     font-family: var(--font-ui);

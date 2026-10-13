@@ -1,14 +1,15 @@
 <script lang="ts">
   import { onDestroy, onMount, tick } from "svelte";
   import { SvelteSet } from "svelte/reactivity";
-  import type { SearchFile } from "../../generated/SearchFile";
   import type { SearchLine } from "../../generated/SearchLine";
   import type { SearchSide } from "../../generated/SearchSide";
   import type { View } from "../../generated/View";
+  import { letterOfStatus } from "../../lib/changeLetter";
   import { errorText } from "../../lib/errorText";
   import { segments, trimmed } from "../../lib/foundText";
   import { basename, dirname } from "../../lib/paths";
   import { NO_HIGHLIGHTS } from "../../lib/highlights";
+  import ChangeLetter from "../../lib/ui/ChangeLetter.svelte";
   import FileIcon from "../../lib/ui/FileIcon.svelte";
   import Icon from "../../lib/ui/Icon.svelte";
   import KeyHint from "../../lib/ui/KeyHint.svelte";
@@ -66,13 +67,6 @@
 
   /** The most matches a search lists. */
   const LIMIT = 1000;
-  const STATUS_LETTER = { modified: "M", added: "A", deleted: "D", renamed: "R" } as const;
-  const STATUS_COLOR = {
-    M: "var(--old-base)",
-    A: "var(--add-text)",
-    D: "var(--del-text)",
-    R: "var(--text-2)",
-  } as const;
   const find = findInFiles;
 
   let commits = $state<{ shortId: string; subject: string; id: string }[]>([]);
@@ -332,8 +326,6 @@
   /** The 1-based number of a result's line. */
   const numberOf = (row: ResultRow) => (row.kind === "line" ? row.line.line + 1 : 0);
 
-  const letterOf = (file: SearchFile) => (file.status ? STATUS_LETTER[file.status] : undefined);
-
   /** Shown where results would be. */
   const hint = $derived.by(() => {
     if (error !== undefined) return { text: error, bad: true };
@@ -463,7 +455,6 @@
           {#snippet row(i)}
             {@const r = rows[i]}
             {#if r.kind === "file"}
-              {@const letter = letterOf(r.file)}
               {@const dir = dirname(r.file.path)}
               <button
                 class="flat head"
@@ -478,14 +469,14 @@
                 {#if dir}<span class="dir">{dir}/</span>{/if}
                 <span class="grow"></span>
                 <span class="count">{r.file.hits}</span>
-                {#if r.file.completion && letter}
+                {#if r.file.completion && r.file.status}
                   <SeenMeter
                     width={30}
                     title="{Math.round(r.file.completion.seenPercent)}% seen"
                     seen={r.file.completion.seenPercent}
                     old={r.file.completion.oldBasePercent}
                   />
-                  <span class="mono letter" style:color={STATUS_COLOR[letter]} title={r.file.status}>{letter}</span>
+                  <ChangeLetter letter={letterOfStatus(r.file.status)} title={r.file.status} />
                 {:else}
                   <span class="unchanged">unchanged</span>
                 {/if}
@@ -520,8 +511,6 @@
         view={choice.scope.type === "view" ? choice.scope.view : { type: "changeset" }}
         {revision}
         {repository}
-        status={current.file.status}
-        letter={letterOf(current.file)}
       />
     {/if}
   </div>
@@ -699,11 +688,6 @@
     font: 600 10.5px/15px var(--font-ui);
     text-align: center;
     font-variant-numeric: tabular-nums;
-  }
-  .letter {
-    width: 12px;
-    text-align: center;
-    font-size: 11.5px;
   }
   .unchanged {
     color: var(--text-3);

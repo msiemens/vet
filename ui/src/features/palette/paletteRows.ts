@@ -5,6 +5,7 @@
 import type { SymbolChange } from "../../generated/SymbolChange";
 import type { SymbolInfo } from "../../generated/SymbolInfo";
 import type { SymbolKind } from "../../generated/SymbolKind";
+import type { StatusLetter } from "../../lib/changeLetter.ts";
 import { basename } from "../../lib/paths.ts";
 import { match, type Match, type Range } from "../../lib/speedSearch.ts";
 
@@ -49,7 +50,7 @@ export interface FileCandidate {
   path: string;
   /** The changeset changes it. */
   changed: boolean;
-  status?: "M" | "A" | "D" | "R";
+  status?: StatusLetter;
   added: number;
   removed: number;
   /** How much of the changes is seen, and how much only against an old base, in percent. */

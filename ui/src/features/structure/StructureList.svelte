@@ -1,6 +1,7 @@
 <script lang="ts">
   // The rows of a file's symbols, as the Changes tree draws its changed ones: the kind glyph, the
   // name, and the letter of what the change did to it. The window and the popup both show this.
+  import { letterOfChange } from "../../lib/changeLetter";
   import { fullName } from "../../lib/symbolLabel";
   import Marked from "../../lib/ui/Marked.svelte";
   import TreeRow from "../../lib/ui/TreeRow.svelte";
@@ -28,10 +29,6 @@
     /** The pointer moved over the row at `index`. */
     onhover?: (e: MouseEvent, index: number) => void;
   } = $props();
-
-  const STATUS = { M: "var(--old-base)", A: "var(--add-text)", D: "var(--del-text)" } as const;
-  /** The letter a changed symbol ends its row with, as a file does. */
-  const LETTER = { modified: "M", added: "A", removed: "D" } as const;
 </script>
 
 <VirtualRows bind:this={list} count={rows.length} key={(i) => rows.at(i)?.key ?? ""}>
@@ -49,8 +46,7 @@
         on={keyOf(r.symbol.id) === selected}
         cur={i === cursor}
         title={fullName(r.symbol.id)}
-        status={r.change ? LETTER[r.change] : undefined}
-        statusColor={r.change && STATUS[LETTER[r.change]]}
+        status={r.change && letterOfChange(r.change)}
         statusTitle={r.change}
         tabindex={-1}
         onclick={(e) => onclick(e, i, e.target instanceof Element && !!e.target.closest(".chev"))}

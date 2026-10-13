@@ -5,9 +5,11 @@
   import type { ExcludedGroup } from "../../generated/ExcludedGroup";
   import type { ReviewedFile } from "../../state/reviewModel";
   import { dirname } from "../../lib/paths";
+  import { letterOfChange } from "../../lib/changeLetter";
   import { arrowKey } from "../../lib/foldKeys";
   import { bestMatch, type Range } from "../../lib/speedSearch";
   import { fullName } from "../../lib/symbolLabel";
+  import ChangeLetter from "../../lib/ui/ChangeLetter.svelte";
   import FileIcon from "../../lib/ui/FileIcon.svelte";
   import Icon from "../../lib/ui/Icon.svelte";
   import IconButton from "../../lib/ui/IconButton.svelte";
@@ -342,10 +344,6 @@
     rowList()?.reveal(index);
   }
 
-  const STATUS = { M: "var(--old-base)", A: "var(--add-text)", D: "var(--del-text)", R: "var(--text-2)" } as const;
-  /** The letter a changed symbol ends its row with, as a file does. */
-  const LETTER = { modified: "M", added: "A", removed: "D" } as const;
-
   /** Collapsing a folder collapses everything below it too; expanding opens only the folder. */
   function toggle(path: string, descendants: string[]) {
     if (collapsed.delete(path)) return;
@@ -531,7 +529,7 @@
         title="+{added} −{removed}, {Math.round(s.seenPercent)}% seen"
       />
     {/if}
-    <span class="mono status" style:color={s && STATUS[s.status]}>{s?.status}</span>
+    <ChangeLetter letter={s?.status} />
   </button>
 {/snippet}
 
@@ -555,9 +553,7 @@
     >
     <SymbolGlyph kind={r.symbol.kind} />
     <span class="name mono"><Marked text={r.name} ranges={hit.ranges} /></span>
-    <span class="mono status" style:color={r.change && STATUS[LETTER[r.change]]} title={r.change}
-      >{r.change ? LETTER[r.change] : ""}</span
-    >
+    <ChangeLetter letter={r.change && letterOfChange(r.change)} title={r.change} />
   </button>
 {/snippet}
 
@@ -807,12 +803,6 @@
     flex: none;
     font-size: 11px;
     color: var(--text-2);
-  }
-  .status {
-    flex: none;
-    width: 10px;
-    font-size: 11px;
-    text-align: center;
   }
   .warn {
     flex: none;

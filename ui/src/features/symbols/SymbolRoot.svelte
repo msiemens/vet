@@ -3,6 +3,7 @@
   // opens and shuts and is remembered so. An answer that lists places shows `ROWS` of them, then
   // "N more"; a root with nothing to list is one muted line.
   import type { Snippet } from "svelte";
+  import { letterOfChange } from "../../lib/changeLetter";
   import { readStored, writeStored } from "../../lib/storage";
   import FileIcon from "../../lib/ui/FileIcon.svelte";
   import Icon from "../../lib/ui/Icon.svelte";
@@ -53,8 +54,6 @@
 
   const body = $derived(load?.state === "done" && build ? build(load.value) : undefined);
 
-  const STATUS = { modified: "M", added: "A", removed: "D" } as const;
-  const STATUS_COLOR = { modified: "var(--old-base)", added: "var(--add-text)", removed: "var(--del-text)" } as const;
   const FATE = { bad: "var(--del-text)", warn: "var(--old-base)", mute: "var(--text-3)" } as const;
 
   function toggle() {
@@ -101,8 +100,7 @@
     tone={e.muted === true || e.branch === true ? "plain" : "strong"}
     gone={e.gone}
     title={e.title}
-    status={e.change && STATUS[e.change]}
-    statusColor={e.change && STATUS_COLOR[e.change]}
+    status={e.change && letterOfChange(e.change)}
     statusTitle={e.change}
     disabled={!holds(e) && !e.go}
     onclick={(event) => click(e, event)}
