@@ -2,7 +2,7 @@
 //! or leaves out.
 
 use std::io;
-use std::sync::{Arc, Mutex, PoisonError};
+use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 
 use tracing::subscriber::DefaultGuard;
 use tracing_subscriber::EnvFilter;
@@ -25,16 +25,18 @@ impl Capture {
     }
 
     pub fn text(&self) -> String {
-        String::from_utf8_lossy(&self.0.lock().unwrap_or_else(PoisonError::into_inner)).into_owned()
+        String::from_utf8_lossy(&self.bytes()).into_owned()
+    }
+
+    /// The buffer, whether or not a thread panicked while holding it.
+    fn bytes(&self) -> MutexGuard<'_, Vec<u8>> {
+        self.0.lock().unwrap_or_else(PoisonError::into_inner)
     }
 }
 
 impl io::Write for Capture {
     fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
-        self.0
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .extend_from_slice(buf);
+        self.bytes().extend_from_slice(buf);
         Ok(buf.len())
     }
 

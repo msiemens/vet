@@ -10,6 +10,7 @@ pub mod fetch;
 pub mod gc;
 pub mod ignore;
 pub mod limits;
+mod mutex;
 pub mod platform;
 pub mod ports;
 pub mod progress;

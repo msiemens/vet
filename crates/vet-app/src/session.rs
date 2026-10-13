@@ -107,6 +107,7 @@ pub use self::views::{
 use crate::acquisition::{Acquisition, BlobError};
 use crate::base;
 use crate::changeset::{BaseChoice, ChangesetId, CommitId, Source, Version, VersionChange, VersionOrigin};
+use crate::mutex::lock;
 use crate::platform::PlatformError;
 use crate::ports::{
     BranchInfo, Clock, CommitInfo, Degraded, Dirty, GitError, GitRepo, LiveStore, ReviewWrites, Scan, StoreError,
@@ -619,20 +620,12 @@ impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> L
     async fn commit_info(&self, commit: &CommitId) -> Result<CommitInfo> {
         const KEPT: usize = 64;
         let kept = |infos: &HashMap<CommitId, CommitInfo>| infos.get(commit).cloned();
-        let found = kept(
-            &self
-                .commit_infos
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner),
-        );
+        let found = kept(&lock(&self.commit_infos));
         if let Some(info) = found {
             return Ok(info);
         }
         let info = self.acquisition.git.commit_info(commit).await?;
-        let mut infos = self
-            .commit_infos
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let mut infos = lock(&self.commit_infos);
         if infos.len() >= KEPT {
             infos.clear();
         }
@@ -703,12 +696,7 @@ impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> L
     async fn merged_into_branch(&self, tip: &CommitId, into: &CommitId) -> Option<MergedAs> {
         const COUNTED: usize = 10_000;
         let key = (tip.clone(), into.clone());
-        let kept = self
-            .merges
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .get(&key)
-            .cloned();
+        let kept = lock(&self.merges).get(&key).cloned();
         if let Some(merged) = kept {
             return merged;
         }
@@ -732,7 +720,7 @@ impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> L
                 return None;
             }
         };
-        let mut merges = self.merges.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        let mut merges = lock(&self.merges);
         if merges.len() >= 16 {
             merges.clear();
         }
@@ -846,12 +834,12 @@ impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> L
     }
 
     fn set_degraded(&self, degraded: Option<Degraded>) {
-        *self.degraded.lock().unwrap_or_else(std::sync::PoisonError::into_inner) = degraded;
+        *lock(&self.degraded) = degraded;
     }
 
     /// Why the working tree is polled instead of watched, if it is; none for any other source.
     fn degraded_for(&self, source: &Source) -> Option<Degraded> {
-        let degraded = *self.degraded.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        let degraded = *lock(&self.degraded);
         degraded.filter(|_| *source == Source::WorkingTree)
     }
 

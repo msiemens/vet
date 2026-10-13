@@ -3,11 +3,13 @@
 //! request that needed the server, so the outcome is kept and announced.
 
 use std::path::Path;
-use std::sync::{Arc, Mutex, PoisonError};
+use std::sync::{Arc, Mutex};
 
 use vet_core::content::Hash;
 use vet_semantic::policy::AnalysisPolicy;
 use vet_semantic::ports::{Backend, RestoreFailure, Restored, Restorer};
+
+use crate::mutex::lock;
 
 /// The failures that currently limit the session. A project's entry is replaced
 /// when its step runs again, so fixing the project lifts the limit.
@@ -16,12 +18,12 @@ pub struct RestoreLimits(Arc<Mutex<Vec<RestoreFailure>>>);
 
 impl RestoreLimits {
     pub fn all(&self) -> Vec<RestoreFailure> {
-        self.0.lock().unwrap_or_else(PoisonError::into_inner).clone()
+        lock(&self.0).clone()
     }
 
     /// Applies the outcome of a restore; the new list if it differs from the old one.
     pub fn record(&self, restored: &Restored) -> Option<Vec<RestoreFailure>> {
-        let mut all = self.0.lock().unwrap_or_else(PoisonError::into_inner);
+        let mut all = lock(&self.0);
         let before = all.clone();
         all.retain(|f| {
             !restored

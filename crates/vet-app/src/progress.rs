@@ -6,8 +6,10 @@
 use std::collections::HashMap;
 use std::fmt::Display;
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
-use std::sync::{Arc, Mutex, PoisonError};
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
+
+use crate::mutex::lock;
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum TaskKind {
@@ -85,7 +87,7 @@ impl Tasks {
     }
 
     fn running_map(&self) -> std::sync::MutexGuard<'_, HashMap<u32, Entry>> {
-        self.0.running.lock().unwrap_or_else(PoisonError::into_inner)
+        lock(&self.0.running)
     }
 
     /// Starts a task, announcing it, and returns the handle that updates and ends it.

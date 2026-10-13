@@ -6,7 +6,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 use std::path::PathBuf;
-use std::sync::{Mutex, MutexGuard, PoisonError};
+use std::sync::{Mutex, MutexGuard};
 use std::time::Duration;
 
 use super::cli;
@@ -14,6 +14,7 @@ use super::credentials::{
     Credential, CredentialProvider, CredentialSource, CredentialValidator, Owner, Token, ValidationError,
 };
 use super::host::{PlatformKind, normalize_host};
+use crate::mutex::lock;
 use crate::ports::{Command, ProcessEvent, ProcessRunner, RunningProcess};
 
 /// How long a CLI gets to answer; `az` can take a couple of seconds.
@@ -149,7 +150,7 @@ where
     }
 
     fn state(&self) -> MutexGuard<'_, State> {
-        self.state.lock().unwrap_or_else(PoisonError::into_inner)
+        lock(&self.state)
     }
 
     /// The credential to use against `host` at `now` (unix seconds): the signed-in CLI's

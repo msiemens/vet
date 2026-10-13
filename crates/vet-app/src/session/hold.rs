@@ -8,9 +8,11 @@
 
 use std::collections::HashMap;
 use std::ops::{Deref, DerefMut};
-use std::sync::{Arc, PoisonError};
+use std::sync::Arc;
 
 use tokio::sync::MutexGuard;
+
+use crate::mutex::lock;
 
 use super::state::State;
 use crate::changeset::Source;
@@ -26,11 +28,11 @@ impl Published {
 
     /// The state as the last command left it.
     pub(super) fn read(&self) -> Arc<State> {
-        Arc::clone(&self.0.lock().unwrap_or_else(PoisonError::into_inner))
+        Arc::clone(&lock(&self.0))
     }
 
     fn publish(&self, state: &Arc<State>) {
-        let mut published = self.0.lock().unwrap_or_else(PoisonError::into_inner);
+        let mut published = lock(&self.0);
         if !Arc::ptr_eq(&published, state) {
             *published = Arc::clone(state);
         }
