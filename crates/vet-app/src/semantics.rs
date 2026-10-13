@@ -214,14 +214,15 @@ impl<G: BlobReader + Send + Sync, S: Store + Send + Sync> Texts for Content<G, S
 }
 
 /// The base and the target side as the pool serves them: each may execute
-/// project code as far as `trust` holds for the commit it is built on. The target
+/// project code as far as `trust` holds for the commit it is built on (the base
+/// shares the trust of a head the pull request is trusted at). The target
 /// is served from the live tree only when it is the live tree; a commit's tree is
 /// materialized like the base.
 fn served(trust: &Trust, sides: &SemanticSides) -> (Served, Served) {
     (
         Served {
             target: Target::Snapshot(sides.base),
-            policy: trust.policy(&sides.base_commit),
+            policy: trust.base_policy(&sides.base_commit, &sides.head),
         },
         Served {
             target: if sides.live_target {
@@ -1030,11 +1031,17 @@ mod tests {
             }),
         };
         let (base, target) = served(&pull_request(Some(CommitId("head".into()))), &sides());
-        assert!(!base.policy.allow_executing);
+        assert!(
+            base.policy.allow_executing,
+            "the base is an ancestor of the trusted head"
+        );
         assert!(target.policy.allow_executing);
 
-        let (_, target) = served(&pull_request(None), &sides());
-        assert!(!target.policy.allow_executing);
+        let (base, target) = served(&pull_request(Some(CommitId("older".into()))), &sides());
+        assert!(!base.policy.allow_executing && !target.policy.allow_executing);
+
+        let (base, target) = served(&pull_request(None), &sides());
+        assert!(!base.policy.allow_executing && !target.policy.allow_executing);
         assert_eq!(target.target, Target::Live);
     }
 
@@ -1467,6 +1474,40 @@ mod tests {
             Err(SemanticError::Pool(vet_semantic::pool::PoolError::AnalysisLimited(_)))
         ));
         assert_eq!(counters.executing_started.load(Ordering::SeqCst), 0);
+    }
+
+    #[tokio::test]
+    async fn the_diagnostics_of_an_untrusted_pull_request_are_not_judged_where_its_server_runs_its_code() {
+        let files = [("a.rs", "one\n"), ("main.go", "one\n")];
+        let (fx, semantics, _) = semantics_over(&files, &files).await;
+        let remote = RemoteKey {
+            host: "github.com".into(),
+            path: "acme/app".into(),
+        };
+        let refs = PullRequestRefs::of(&remote, 7);
+        let changed = [("a.rs", "two\n"), ("main.go", "two\n")];
+        fx.git.add_commit(&refs.head, "pr1", &changed);
+        fx.git
+            .add_commit(&format!("merge-base {}", refs.target), "m1", &changed);
+        let revision = fx
+            .session
+            .open_changeset(Source::PullRequest { remote, number: 7 })
+            .await
+            .unwrap()
+            .unwrap();
+        let go = semantics
+            .judged_diagnostics(&fx.view, revision, &RepoPath::from("main.go"))
+            .await
+            .unwrap();
+        assert!(matches!(
+            go.result,
+            Err(SemanticError::Pool(vet_semantic::pool::PoolError::AnalysisLimited(_)))
+        ));
+        let rust = semantics
+            .judged_diagnostics(&fx.view, revision, &RepoPath::from("a.rs"))
+            .await
+            .unwrap();
+        assert!(rust.result.unwrap().base.is_none());
     }
 
     #[tokio::test]

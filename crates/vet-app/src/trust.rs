@@ -60,6 +60,19 @@ impl Trust {
             }
         }
     }
+
+    /// What analysis of the base `base` of a changeset whose head is `head` may execute. The
+    /// base is an ancestor of the head, so a pull request trusted at exactly this head covers
+    /// it; otherwise the base is trusted as any other commit is.
+    pub fn base_policy(&self, base: &CommitId, head: &CommitId) -> AnalysisPolicy {
+        match &self.origin {
+            Origin::PullRequest(PullRequestTrust {
+                trusted_head: Some(trusted),
+                ..
+            }) if trusted == head => self.policy(head),
+            _ => self.policy(base),
+        }
+    }
 }
 
 #[cfg(test)]
@@ -119,5 +132,32 @@ mod tests {
             pull_request(true, false, Some("a")).policy(&commit("b")),
             AnalysisPolicy::EXECUTING
         );
+    }
+
+    #[test]
+    fn the_base_of_a_pull_request_executes_only_when_the_pull_request_is_trusted_at_its_head() {
+        let (base, head) = (commit("base"), commit("head"));
+        for (project, fork) in [(false, false), (false, true), (true, true)] {
+            assert_eq!(
+                pull_request(project, fork, Some("head")).base_policy(&base, &head),
+                AnalysisPolicy::EXECUTING,
+                "trusted at this head ({project} {fork})"
+            );
+            assert_eq!(
+                pull_request(project, fork, None).base_policy(&base, &head),
+                AnalysisPolicy::LIMITED,
+                "untrusted ({project} {fork})"
+            );
+            assert_eq!(
+                pull_request(project, fork, Some("older")).base_policy(&base, &head),
+                AnalysisPolicy::LIMITED,
+                "trusted at another head ({project} {fork})"
+            );
+        }
+        let local = Trust {
+            project: false,
+            origin: Origin::Local,
+        };
+        assert_eq!(local.base_policy(&base, &head), AnalysisPolicy::SERVERS);
     }
 }
