@@ -52,6 +52,9 @@ pub mod semantic_cache;
 /// The backend's own settings.
 pub mod settings;
 
+/// `vet_app::search::LineMatcher` over the `regex` crate.
+pub mod search;
+
 /// `RepoPath` to and from filesystem paths.
 pub(crate) mod paths;
 pub use paths::is_file_in;

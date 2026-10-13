@@ -5812,6 +5812,7 @@ dependencies = [
  "lsp-types",
  "notify",
  "octocrab",
+ "regex",
  "reqwest",
  "rustix",
  "rustls",
