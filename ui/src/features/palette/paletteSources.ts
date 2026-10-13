@@ -107,7 +107,7 @@ export function serverSymbolCandidates(
 }
 
 /** What the viewer can do about a server that could not answer. */
-export type FailureAction = "restart" | "settings" | "trust";
+export type FailureAction = "restart" | "settings";
 
 export interface ServerFailure {
   language: string;
@@ -125,7 +125,6 @@ function actionsFor(kind: UnavailableKind): FailureAction[] {
     case "serverMissing":
       return ["settings"];
     case "analysisLimited":
-      return ["trust"];
     case "unsupported":
     case "snapshotUnavailable":
       return [];

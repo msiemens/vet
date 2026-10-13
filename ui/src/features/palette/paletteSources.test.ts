@@ -128,7 +128,7 @@ void test("a language whose server failed is named by its server, with why and w
     found.map((f) => [f.server, f.message, f.actions]),
     [
       ["Pyright", "not installed", ["settings"]],
-      ["gopls", "why", ["trust"]],
+      ["gopls", "why", []],
       ["Roslyn", "why", ["restart", "settings"]],
     ],
   );

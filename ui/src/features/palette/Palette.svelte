@@ -558,11 +558,6 @@
             >Restart</button
           >
         {/if}
-        {#if f.actions.includes("trust")}
-          <button class="ctl" type="button" tabindex="-1" onclick={() => void changeset.trustPullRequest()}
-            >Trust this PR</button
-          >
-        {/if}
         {#if f.actions.includes("settings")}
           <button class="ctl" type="button" tabindex="-1" onclick={() => finish(onsettings)}>Settings</button>
         {/if}
