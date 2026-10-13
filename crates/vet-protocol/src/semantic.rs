@@ -255,7 +255,8 @@ pub struct ChangedSymbol {
 pub struct FileSymbols {
     pub revision: u32,
     pub path: String,
-    /// In source order, a removed symbol where it was on the base side.
+    /// The target side's changed symbols in source order, then the removed ones in the order of
+    /// the base side.
     pub symbols: Vec<ChangedSymbol>,
     /// Unchanged symbols that hold changed ones, in source order: the containers to show them in.
     pub context: Vec<SymbolInfo>,
@@ -270,9 +271,9 @@ pub struct FileSymbols {
 #[ts(export)]
 pub struct SymbolAt {
     pub revision: u32,
-    /// The innermost function, type or module that holds the position: the target side's symbol,
-    /// or the base side's if it exists there only. Absent outside every one of them, and where
-    /// the language server cannot list the file's symbols (`unavailable`).
+    /// The innermost symbol (a function, type, module, field or constant) that holds the position:
+    /// the target side's, or the base side's if it exists there only. Absent outside every symbol,
+    /// and where the language server cannot list the file's symbols (`unavailable`).
     pub symbol: Option<SymbolInfo>,
     /// Absent: the changeset did not change it.
     pub change: Option<SymbolChange>,

@@ -325,8 +325,8 @@ pub enum Request {
         revision: u32,
         path: String,
     },
-    /// The innermost function, type or module that holds a position of one side of the
-    /// changeset, and what became of it (derived). The position is in the text of that side,
+    /// The innermost symbol (a function, type, module, field or constant) that holds a position of
+    /// one side of the changeset, and what became of it (derived). The position is in the text of that side,
     /// 0-based lines and UTF-16 columns. A language without a usable server answers with
     /// `unavailable` set and no symbol. Fails if `revision` is no longer current. Answers with
     /// `Response::SymbolAt`.

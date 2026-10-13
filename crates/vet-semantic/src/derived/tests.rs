@@ -783,6 +783,16 @@ fn callers_are_followed_through_changed_symbols_only_and_the_unchanged_direct_on
 }
 
 #[test]
+fn a_walk_cut_by_the_depth_bound_says_so() {
+    let (fake, files, x, x_on_base) = call_fixture();
+    let bounds = Bounds { max_depth: 1, ..BOUNDS };
+    let found = block_on(calls(&fake, &NoTexts, &files, &x, Some(&x_on_base), true, bounds)).value;
+    assert_eq!(named(found.callers.iter().map(|c| &c.symbol)), ["c1"]);
+    assert_eq!(found.gaps.len(), 1, "{:?}", found.gaps);
+    assert!(found.gaps[0].contains("levels"), "{:?}", found.gaps);
+}
+
+#[test]
 fn the_callees_are_the_changed_ones_and_the_removed_ones_of_the_base() {
     let (fake, files, x, x_on_base) = call_fixture();
     let found = block_on(calls(&fake, &NoTexts, &files, &x, Some(&x_on_base), true, BOUNDS)).value;

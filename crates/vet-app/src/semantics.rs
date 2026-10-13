@@ -12,8 +12,8 @@ use std::time::Instant;
 use vet_core::content::{FileDiff, RepoPath};
 use vet_core::review::Side;
 use vet_semantic::derived::{
-    Bounds, Calls, Change, Derived, EntryPoints, FileChanges, Located, Reach, Reference, RemovalImpact, Texts, Usages,
-    calls, compared, located, reachability, removal_impact, symbol_at, usages,
+    Bounds, Calls, Change, Compared, Derived, EntryPoints, FileChanges, Located, Reach, Reference, RemovalImpact,
+    Texts, Usages, calls, compared, located, reachability, removal_impact, symbol_at, usages,
 };
 use vet_semantic::join::bounded;
 use vet_semantic::pool::{Pool, Supervision, Target};
@@ -102,6 +102,36 @@ struct Resolved {
     change: Option<Change>,
     /// The symbol on the base side, for a modified one.
     base: Option<SymbolInfo>,
+}
+
+/// The symbol `sym` of the changed `file`, whose sides' symbols are `found`: a symbol of the new
+/// path (target side), or one of the old path that the target does not have (removed, base side). A
+/// renamed file's symbols are named by the path of the side they are on.
+fn locate(file: &FileDiff, found: &Compared, sym: &Sym) -> Option<Resolved> {
+    let named = |symbols: &[SymbolInfo]| symbols.iter().find(|s| s.sym.name == sym.name).cloned();
+    let base = named(&found.base);
+    let target = named(&found.target);
+    if file.new_path.as_ref() == Some(&sym.file)
+        && let Some(symbol) = target
+    {
+        let change = (found.changes.change_of(&symbol.sym).map(|c| c.change))
+            .or_else(|| base.is_none().then_some(Change::Added));
+        return Some(Resolved {
+            symbol,
+            side: Side::Target,
+            change,
+            base: base.filter(|_| change == Some(Change::Modified)),
+        });
+    }
+    if file.old_path.as_ref() == Some(&sym.file) && named(&found.target).is_none() {
+        return base.map(|symbol| Resolved {
+            symbol,
+            side: Side::Base,
+            change: Some(Change::Removed),
+            base: None,
+        });
+    }
+    None
 }
 
 /// How many of a file's diagnostics count towards what a viewer is told: hints are not counted.
@@ -593,30 +623,7 @@ where
             .await
             .value
             .map_err(|e| SessionError::Invalid(e.to_string()))?;
-        let named = |symbols: &[SymbolInfo]| symbols.iter().find(|s| s.sym.name == sym.name).cloned();
-        let base = named(&found.base);
-        match named(&found.target).filter(|_| file.new_path.as_ref() == Some(&sym.file)) {
-            Some(symbol) => {
-                let change = (found.changes.change_of(&symbol.sym).map(|c| c.change))
-                    .or_else(|| base.is_none().then_some(Change::Added));
-                Ok(Resolved {
-                    symbol,
-                    side: Side::Target,
-                    change,
-                    base: base.filter(|_| change == Some(Change::Modified)),
-                })
-            }
-            // A symbol of the base side's file that the target does not have.
-            None if file.old_path.as_ref() == Some(&sym.file) => base
-                .map(|symbol| Resolved {
-                    symbol,
-                    side: Side::Base,
-                    change: Some(Change::Removed),
-                    base: None,
-                })
-                .ok_or_else(not_found),
-            None => Err(not_found()),
-        }
+        locate(file, &found, sym).ok_or_else(not_found)
     }
 
     /// The signature of a changed symbol, from the side it exists on: the base for a removed one.
@@ -800,6 +807,8 @@ mod tests {
         Diagnostic, LanguageServer, LaunchError, Materialized, NotMaterializable, Pos, QueryError, Readiness,
         ServerConfig, ServerIdentity, Span, Started, SymbolKind, Tree,
     };
+
+    use vet_semantic::derived::ChangedSymbol;
 
     use super::*;
     use crate::changeset::{BaseChoice, CommitId, Source};
@@ -1313,6 +1322,93 @@ mod tests {
         );
         let outside = semantics.symbol_at(&fx.view, 0, Side::Target, &at(9)).await.unwrap();
         assert_eq!(outside.result.unwrap(), None);
+    }
+
+    #[test]
+    fn a_renamed_files_symbols_are_found_by_the_path_of_their_side() {
+        let path = |p: &str| RepoPath(p.as_bytes().to_vec());
+        let named = |file: &str, name: &str| {
+            let mut info = symbol(&path(file));
+            info.sym.name = vec![name.into()];
+            info
+        };
+        let file = FileDiff {
+            old_path: Some(path("a.rs")),
+            new_path: Some(path("b.rs")),
+            old_blob: None,
+            new_blob: None,
+            hunks: vec![],
+        };
+        let (kept, gone) = (named("b.rs", "keep"), named("a.rs", "gone"));
+        let found = Compared {
+            base: vec![named("a.rs", "keep"), gone.clone()],
+            target: vec![kept.clone()],
+            changes: FileChanges {
+                symbols: vec![
+                    ChangedSymbol {
+                        symbol: kept,
+                        change: Change::Modified,
+                    },
+                    ChangedSymbol {
+                        symbol: gone,
+                        change: Change::Removed,
+                    },
+                ],
+                context: vec![],
+            },
+        };
+        let find = |at: &str, name: &str| {
+            locate(
+                &file,
+                &found,
+                &Sym {
+                    file: path(at),
+                    name: vec![name.into()],
+                },
+            )
+        };
+        let kept = find("b.rs", "keep").unwrap();
+        assert_eq!((kept.side, kept.change), (Side::Target, Some(Change::Modified)));
+        assert!(kept.base.is_some());
+        let gone = find("a.rs", "gone").unwrap();
+        assert_eq!((gone.side, gone.change), (Side::Base, Some(Change::Removed)));
+        // The old path names what the base side has and the target does not.
+        assert!(find("a.rs", "keep").is_none());
+        assert!(find("b.rs", "gone").is_none());
+    }
+
+    #[tokio::test]
+    async fn an_unchanged_files_symbols_come_from_the_server_of_the_side_asked() {
+        let (fx, semantics, counters) = semantics_over(
+            &[("a.rs", "one\n"), ("u.rs", "same\n")],
+            &[("a.rs", "two\n"), ("u.rs", "same\n")],
+        )
+        .await;
+        let at = |line| At {
+            file: RepoPath(b"u.rs".to_vec()),
+            pos: Pos { line, col: 1 },
+        };
+        for side in [Side::Base, Side::Target] {
+            let found = semantics.symbol_at(&fx.view, 0, side, &at(2)).await.unwrap();
+            let found = found.result.unwrap().unwrap();
+            assert_eq!(
+                (found.symbol.sym.name, found.change),
+                (vec!["f".to_string()], None),
+                "{side:?}"
+            );
+            let outside = semantics.symbol_at(&fx.view, 0, side, &at(9)).await.unwrap();
+            assert_eq!(outside.result.unwrap(), None, "{side:?}");
+        }
+        // Its symbols are not read from texts: nothing changed there to compare.
+        assert_eq!(counters.text_symbol_requests.load(Ordering::SeqCst), 0);
+
+        let sym = Sym {
+            file: RepoPath(b"u.rs".to_vec()),
+            name: vec!["f".into()],
+        };
+        let (info, around) = semantics.calls(&fx.view, 0, &sym).await.unwrap();
+        assert_eq!(info.sym, sym);
+        assert!(around.value.callers.is_empty() && around.value.affected.is_empty());
     }
 
     /// What the changeset did to the symbols of each of the revision's changed files with hunks.

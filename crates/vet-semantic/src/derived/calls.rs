@@ -103,28 +103,31 @@ pub async fn calls(
     let mut visited: HashSet<Sym> = HashSet::from([symbol.sym.clone()]);
     let mut pending: Vec<(SymbolInfo, Change, u32)> = Vec::new();
     let mut next = Some((symbol.clone(), 0u32));
+    let mut too_deep = false;
     loop {
-        if let Some((node, depth)) = next.take()
-            && depth < bounds.max_depth
-        {
-            let at = node.location();
-            let found = p.incoming_calls(Side::Target, &at).await;
-            match inputs.asked_at("incoming_calls", Side::Target, &at, found) {
-                Ok(found) => {
-                    let mut changed_callers = Vec::new();
-                    for caller in found {
-                        if !visited.insert(caller.sym.clone()) {
-                            continue;
+        if let Some((node, depth)) = next.take() {
+            if depth >= bounds.max_depth {
+                too_deep = true;
+            } else {
+                let at = node.location();
+                let found = p.incoming_calls(Side::Target, &at).await;
+                match inputs.asked_at("incoming_calls", Side::Target, &at, found) {
+                    Ok(found) => {
+                        let mut changed_callers = Vec::new();
+                        for caller in found {
+                            if !visited.insert(caller.sym.clone()) {
+                                continue;
+                            }
+                            match known.change(&mut inputs, Side::Target, &caller.sym).await {
+                                Some(change) => changed_callers.push((caller, change, depth + 1)),
+                                None if depth == 0 && changed => out.affected.push(caller),
+                                None => {}
+                            }
                         }
-                        match known.change(&mut inputs, Side::Target, &caller.sym).await {
-                            Some(change) => changed_callers.push((caller, change, depth + 1)),
-                            None if depth == 0 && changed => out.affected.push(caller),
-                            None => {}
-                        }
+                        pending.extend(changed_callers.into_iter().rev());
                     }
-                    pending.extend(changed_callers.into_iter().rev());
+                    Err(e) => out.gaps.push(format!("callers of {}: {e}", node.sym)),
                 }
-                Err(e) => out.gaps.push(format!("callers of {}: {e}", node.sym)),
             }
         }
         let Some((caller, change, depth)) = pending.pop() else {
@@ -140,6 +143,12 @@ pub async fn calls(
             depth: depth - 1,
         });
         next = Some((caller, depth));
+    }
+    if too_deep {
+        out.gaps.push(format!(
+            "callers more than {} levels up were not followed",
+            bounds.max_depth
+        ));
     }
 
     let at = symbol.location();
