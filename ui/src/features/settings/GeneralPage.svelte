@@ -3,7 +3,6 @@
   import { SOFT_WRAPS, type SoftWrap } from "../../lib/softWrap";
   import Segmented from "../../lib/ui/Segmented.svelte";
   import { backendSettings } from "../../state/backendSettings.svelte";
-  import { palette } from "../palette";
 
   let { softWrap, onsoftwrap }: { softWrap: SoftWrap; onsoftwrap: (wrap: SoftWrap) => void } = $props();
 
@@ -57,18 +56,6 @@
       />
       <span>days</span>
     </div>
-  </div>
-  <div class="row">
-    <div class="text">
-      <label for="double-shift">Double Shift opens Search Everywhere</label>
-      <span class="hint">Two quick taps of Shift, anywhere in the window. The key shortcuts work either way.</span>
-    </div>
-    <input
-      id="double-shift"
-      type="checkbox"
-      checked={palette.doubleShift}
-      onchange={(e) => palette.setDoubleShift(e.currentTarget.checked)}
-    />
   </div>
   {#if backendSettings.loadError}<p class="problem">{backendSettings.loadError}</p>{/if}
   {#if problem}<p class="problem" role="alert">{problem}</p>{/if}

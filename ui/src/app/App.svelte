@@ -393,7 +393,7 @@
     void session.connect().then(reveal);
     const stopMenu = mainMenu.listen();
     const stopDoubleShift = watchDoubleShift(
-      () => palette.doubleShift && !!session.repo,
+      () => !!session.repo,
       () => commands.run("palette.all"),
     );
     return () => {

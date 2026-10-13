@@ -7,7 +7,6 @@ import { type CommandContext, commands } from "../../state/commands";
 import { session } from "../../state/session.svelte";
 import { type PaletteTab, remember } from "./paletteRows";
 
-const DOUBLE_SHIFT_KEY = "vet.palette.doubleShift";
 const UNCHANGED_KEY = "vet.palette.unchanged";
 const recentKey = (repo: string) => `vet.palette.recent:${repo}`;
 
@@ -26,8 +25,6 @@ class PaletteState {
   open = $state(false);
   tab = $state<PaletteTab>("all");
   query = $state("");
-  /** Two taps of Shift open the popup. */
-  doubleShift = $state(readStored(DOUBLE_SHIFT_KEY) !== "0");
   /** The ids of the results chosen last in the open project, newest first (`recentId`). */
   recent = $state.raw<string[]>([]);
   /**
@@ -94,11 +91,6 @@ class PaletteState {
   choose(id: string) {
     this.recent = remember(this.recent, id);
     if (session.repo !== undefined) writeStored(recentKey(session.repo), JSON.stringify(this.recent));
-  }
-
-  setDoubleShift(on: boolean) {
-    this.doubleShift = on;
-    writeStored(DOUBLE_SHIFT_KEY, on ? undefined : "0");
   }
 }
 
