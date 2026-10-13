@@ -54,3 +54,4 @@ pub mod settings;
 
 /// `RepoPath` to and from filesystem paths.
 pub(crate) mod paths;
+pub use paths::is_file_in;

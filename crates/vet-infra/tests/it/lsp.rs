@@ -751,8 +751,8 @@ jobs:
 #[tokio::test]
 #[ignore = "needs yaml-language-server"]
 async fn yaml_checks_against_the_bundled_schemas_and_refuses_the_address_a_file_names() {
-    // The server's own globs skip directories that start with a dot, which temporary ones do.
-    let dir = TempDir::with_prefix("vet-yaml-").unwrap();
+    // A directory above the project whose name starts with a dot, as the ones under `~/.local` do.
+    let dir = TempDir::with_prefix(".vet-yaml-").unwrap();
     write(dir.path(), ".github/workflows/ci.yml", WORKFLOW);
     write(
         dir.path(),

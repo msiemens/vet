@@ -24,6 +24,7 @@ use vet_app::registry::{Resident, Subscribers};
 use vet_app::semantics::{Links, Semantics};
 use vet_app::session::RevisionView;
 use vet_app::settle::Settling;
+use vet_core::content::RepoPath;
 use vet_infra::budget::Budgets;
 use vet_infra::clock::{TokioClock, TokioDetach, unix_now};
 use vet_infra::git::GixRepo;
@@ -279,6 +280,12 @@ impl Wired {
             },
         )
         .reading(reading)
+        // Which server serves a file of a kind that several projects share is decided by the
+        // checkout's own files; a snapshot's layout is taken to be the checkout's.
+        .finding({
+            let root = repo.clone();
+            Arc::new(move |file: &RepoPath| vet_infra::is_file_in(&root, file))
+        })
         .supervised(Supervision {
             detach: Arc::new(TokioDetach),
             told: {

@@ -1044,6 +1044,7 @@ mod tests {
             args: vec![],
             filetypes: vec!["rs".into()],
             file_names: vec![],
+            requires: vec![],
             root_markers: vec!["Cargo.toml".into()],
             executes_project_code_during_analysis: executes,
             loads_project_on_open: false,

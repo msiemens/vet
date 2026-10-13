@@ -289,6 +289,7 @@ mod tests {
             args: vec![],
             filetypes: vec![],
             file_names: vec![],
+            requires: vec![],
             root_markers: vec![],
             executes_project_code_during_analysis: false,
             loads_project_on_open: false,

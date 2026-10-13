@@ -67,7 +67,7 @@ for i in "${!names[@]}"; do
         selected+=(-E "${filters[$i]}")
     else
         left=$(cargo nextest list "${scope[@]}" --run-ignored ignored-only --message-format oneline -E "${filters[$i]}" 2>/dev/null)
-        [[ -n $left ]] && echo "SKIPPED: ${names[$i]} is not installed; not run:" && sed 's/^/    /' <<<"$left"
+        [[ -n $left ]] && echo "SKIPPED: not installed (${names[$i]}); not run:" && sed 's/^/    /' <<<"$left"
     fi
 done
 if ((${#selected[@]})); then

@@ -69,14 +69,34 @@ pub trait Primitives {
     fn diagnostics(&self, side: Side, file: &RepoPath) -> impl Future<Output = Asked<Vec<Diagnostic>>> + Send;
 }
 
+/// Tells whether a file exists in the project, which decides what serves files of kinds that
+/// several projects share (HTML).
+pub type Finds = Arc<dyn Fn(&RepoPath) -> bool + Send + Sync>;
+
 pub struct Semantic<M: Materializer, L: ServerLauncher> {
     pool: Pool<M, L>,
     backends: Vec<Backend>,
+    finds: Finds,
 }
 
 impl<M: Materializer, L: ServerLauncher> Semantic<M, L> {
     pub fn new(pool: Pool<M, L>, backends: Vec<Backend>) -> Self {
-        Self { pool, backends }
+        Self {
+            pool,
+            backends,
+            finds: Arc::new(|_| true),
+        }
+    }
+
+    /// Looks up the files that servers require (`ServerConfig::requires`) with `finds`; without it
+    /// every one is taken to be there.
+    pub fn finding(mut self, finds: Finds) -> Self {
+        self.finds = finds;
+        self
+    }
+
+    fn backend_for(&self, file: &RepoPath) -> Option<&Backend> {
+        backend_for(&self.backends, file, &*self.finds)
     }
 
     /// Keeps at most `limit` answers of the servers for reuse; 0 keeps none.
@@ -103,7 +123,7 @@ impl<M: Materializer, L: ServerLauncher> Semantic<M, L> {
 
     /// The language of the backend serving `file`; `None`: it is unsupported.
     pub fn language_of(&self, file: &RepoPath) -> Option<&BackendId> {
-        backend_for(&self.backends, file).map(|b| &b.config().backend)
+        self.backend_for(file).map(|b| &b.config().backend)
     }
 
     /// The two sides, owning what they query with, so that work for them can outlive its caller.
@@ -168,7 +188,7 @@ impl<M: Materializer, L: ServerLauncher> Semantic<M, L> {
     /// The answer to a question about the whole tree of `served` if one is kept, found
     /// without leasing a server.
     async fn recall<T: Reused>(&self, served: &Served, file: &RepoPath, query: ProjectQuery) -> Option<Answered<T>> {
-        let backend = backend_for(&self.backends, file)?;
+        let backend = self.backend_for(file)?;
         self.pool.recall(&self.pool_key(served, backend), backend, query).await
     }
 
@@ -178,14 +198,16 @@ impl<M: Materializer, L: ServerLauncher> Semantic<M, L> {
         file: &RepoPath,
         text: &str,
     ) -> Option<Answered<Vec<SymbolInfo>>> {
-        let backend = backend_for(&self.backends, file)?;
+        let backend = self.backend_for(file)?;
         self.pool
             .recall_text_symbols(&self.pool_key(served, backend), backend, file, text)
             .await
     }
 
     async fn lease_for(&self, served: &Served, file: &RepoPath) -> Result<Lease<M, L>, SemanticError> {
-        let backend = backend_for(&self.backends, file).ok_or_else(|| SemanticError::NoBackend(file.clone()))?;
+        let backend = self
+            .backend_for(file)
+            .ok_or_else(|| SemanticError::NoBackend(file.clone()))?;
         self.lease(served, backend).await
     }
 

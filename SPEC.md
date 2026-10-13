@@ -251,7 +251,7 @@ This catches base changes **within the reviewed region only**. Semantic changes 
 | Rust | rust-analyzer (pinned) | cargo registry sources |
 | TypeScript | `typescript-language-server` (LSP adapter over tsserver) → TS7 native server (speaks LSP) | JSDoc from `.d.ts` |
 | Svelte | svelte-language-server (→ tsserver; loads the project's `svelte.config.js`) | as TS + component docs |
-| Angular | Angular Language Server (`.html` templates only; TypeScript files, inline templates included, stay with the TypeScript server) | as TS + template symbols |
+| Angular | Angular Language Server (`.html` templates only, and only below an `angular.json`: the nearest one up from the file, else no server serves the HTML; TypeScript files, inline templates included, stay with the TypeScript server) | as TS + template symbols |
 | Python | Pyright (→ `ty` if/when stable) | docstrings + typeshed |
 | C# | `roslyn-language-server` (pinned) | XML docs in NuGet packages |
 | YAML | yaml-language-server | schema descriptions (§7.5) |
@@ -279,7 +279,7 @@ Adding a language means adding a config entry plus a one-time manual check of wh
 
 **Required:** text document synchronization, since Vet feeds the server the documents it asks about; a server without it is refused loudly.
 
-**Optional, per feature:** `documentSymbol`, `definition`, `references`, `implementation`, `hover`, `callHierarchy` (incoming and outgoing), `workspace/symbol`. Diagnostics (push or pull) are always asked for: servers publish them without announcing it. A request for an operation the server did not advertise is not sent; it is answered as *not offered by this language's server* (I6) and every consumer says so where it would have shown the answer: a hover or go-to-definition says it, the Symbol panel's callers and callees say that call hierarchy is not available, a workspace symbol search reports the languages whose servers cannot be searched. A server that offers only some operations (a diagnostics-only server, a YAML server without references) still serves the rest.
+**Optional, per feature:** `documentSymbol`, `definition`, `references`, `implementation`, `hover`, `callHierarchy` (incoming and outgoing), `workspace/symbol`. Diagnostics (push or pull) are always asked for: servers publish them without announcing it. A request for an operation the server did not advertise is not sent; it is answered as *not offered by this language's server* (I6) and every consumer says so where it would have shown the answer: go-to-definition says it (a hover popup stays silent, as it does for a symbol the server knows nothing about), the Symbol panel's callers and callees say that call hierarchy is not available, a workspace symbol search reports the languages whose servers cannot be searched. A server that offers only some operations (a diagnostics-only server, a YAML server without references) still serves the rest.
 
 ### 7.2 Server pool and reuse (I2)
 

@@ -126,14 +126,16 @@ const KUBERNETES_ALL: &str = include_str!("../schemas/kubernetes-all.schema.json
 const KUBERNETES_DEFINITIONS: &str = include_str!("../schemas/kubernetes-definitions.schema.json");
 const KUBERNETES_VERSION: &str = "1.34.0";
 const KUBERNETES_BASE: &str = "https://raw.githubusercontent.com/yannh/kubernetes-json-schema/master/";
-/// Files in these folders are taken for Kubernetes manifests.
+/// Files in these folders are taken for Kubernetes manifests. The server puts `**/` before a glob
+/// and that skips every directory whose name starts with a dot, such as the ones above a project
+/// kept under `~/.local`; `*(*/|.*/)` takes any directories, dotted or not.
 const KUBERNETES_GLOBS: &[&str] = &[
-    "**/k8s/**/*.yml",
-    "**/k8s/**/*.yaml",
-    "**/kubernetes/**/*.yml",
-    "**/kubernetes/**/*.yaml",
-    "**/manifests/**/*.yml",
-    "**/manifests/**/*.yaml",
+    "*(*/|.*/)k8s/**/*.yml",
+    "*(*/|.*/)k8s/**/*.yaml",
+    "*(*/|.*/)kubernetes/**/*.yml",
+    "*(*/|.*/)kubernetes/**/*.yaml",
+    "*(*/|.*/)manifests/**/*.yml",
+    "*(*/|.*/)manifests/**/*.yaml",
 ];
 
 /// The Kubernetes file at `url`, whichever version of the schema it is for.
@@ -233,8 +235,8 @@ pub fn yaml_schemas(path: &str) -> Vec<&'static str> {
 /// Kubernetes manifests in the folders `KUBERNETES_GLOBS` name. The server picks a manifest's
 /// schema from the Kubernetes one by its kind only for files it matched itself, and only with
 /// the CRD catalog on; offline, a custom resource's schema is a request Vet refuses. Which other
-/// file has which schema is answered by [`yaml_schemas`], since the server's globs skip
-/// directories that start with a dot; the Kubernetes folders are the one set the server matches.
+/// file has which schema is answered by [`yaml_schemas`]; the Kubernetes folders are the one set
+/// the server matches.
 pub fn yaml_settings(source: SchemaSource) -> Value {
     let online = source == SchemaSource::Online;
     json!({

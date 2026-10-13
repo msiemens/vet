@@ -63,6 +63,9 @@ pub struct ServerConfig {
     /// File names that have no extension to serve by (`Dockerfile`): the name itself, or the
     /// name and a dot and anything after it (`Dockerfile.dev`).
     pub file_names: Vec<String>,
+    /// File names of which one must be in the file's directory or above it for the server to
+    /// serve the file (`angular.json` for the HTML of an Angular project); empty: always.
+    pub requires: Vec<String>,
     pub root_markers: Vec<String>,
     /// Default `true` (conservative).
     pub executes_project_code_during_analysis: bool,
@@ -91,25 +94,50 @@ impl Backend {
     }
 }
 
+/// Whether a file exists in the project (a path relative to its root).
+pub type Present<'a> = &'a dyn Fn(&RepoPath) -> bool;
+
 impl ServerConfig {
-    /// Whether the server serves `file`: by its extension, or by its name.
-    pub fn serves(&self, file: &RepoPath) -> bool {
-        if let Some(ext) = file.extension()
-            && self.filetypes.iter().any(|t| t.as_bytes() == ext)
-        {
-            return true;
-        }
+    /// Whether the server serves `file`: by its extension, or by its name, and, for a server that
+    /// needs a project of its kind, only where `present` finds one of `requires` in the file's
+    /// directory or above it.
+    pub fn serves(&self, file: &RepoPath, present: Present) -> bool {
+        let by_extension = file
+            .extension()
+            .is_some_and(|ext| self.filetypes.iter().any(|t| t.as_bytes() == ext));
         let name = file.0.rsplit(|&b| b == b'/').next().unwrap_or_default();
-        self.file_names.iter().any(|n| {
+        let by_name = self.file_names.iter().any(|n| {
             let n = n.as_bytes();
             name == n || (name.starts_with(n) && name.get(n.len()) == Some(&b'.'))
-        })
+        });
+        (by_extension || by_name) && (self.requires.is_empty() || self.in_project(file, present))
+    }
+
+    fn in_project(&self, file: &RepoPath, present: Present) -> bool {
+        let mut dir = file.0.as_slice();
+        loop {
+            dir = dir.iter().rposition(|&b| b == b'/').map_or(&[][..], |at| &dir[..at]);
+            let found = self.requires.iter().any(|marker| {
+                let mut path = dir.to_vec();
+                if !path.is_empty() {
+                    path.push(b'/');
+                }
+                path.extend_from_slice(marker.as_bytes());
+                present(&RepoPath(path))
+            });
+            if found {
+                return true;
+            }
+            if dir.is_empty() {
+                return false;
+            }
+        }
     }
 }
 
 /// The backend serving `file`. `None`: the language is unsupported.
-pub fn backend_for<'a>(backends: &'a [Backend], file: &RepoPath) -> Option<&'a Backend> {
-    backends.iter().find(|b| b.config().serves(file))
+pub fn backend_for<'a>(backends: &'a [Backend], file: &RepoPath, present: Present) -> Option<&'a Backend> {
+    backends.iter().find(|b| b.config().serves(file, present))
 }
 
 /// An operation a server may not offer. A query for one it lacks is answered with
@@ -565,11 +593,28 @@ mod tests {
             args: vec![],
             filetypes: vec!["rs".into()],
             file_names: vec![],
+            requires: vec![],
             root_markers: vec![],
             executes_project_code_during_analysis: true,
             loads_project_on_open: false,
         })
     }
+
+    fn angular() -> Backend {
+        Backend::GenericLsp(ServerConfig {
+            backend: BackendId("angular".into()),
+            binary: "ngserver".into(),
+            args: vec![],
+            filetypes: vec!["html".into()],
+            file_names: vec![],
+            requires: vec!["angular.json".into()],
+            root_markers: vec![],
+            executes_project_code_during_analysis: false,
+            loads_project_on_open: false,
+        })
+    }
+
+    const ALWAYS: Present = &|_| true;
 
     fn docker() -> Backend {
         Backend::GenericLsp(ServerConfig {
@@ -578,6 +623,7 @@ mod tests {
             args: vec![],
             filetypes: vec!["dockerfile".into()],
             file_names: vec!["Dockerfile".into()],
+            requires: vec![],
             root_markers: vec![],
             executes_project_code_during_analysis: false,
             loads_project_on_open: false,
@@ -588,16 +634,33 @@ mod tests {
     fn backend_is_chosen_by_extension() {
         let backends = [rust()];
         let path = |p: &str| RepoPath::from(p);
-        assert!(backend_for(&backends, &path("src/lib.rs")).is_some());
-        assert!(backend_for(&backends, &path("README.md")).is_none());
-        assert!(backend_for(&backends, &path("dir.rs/Makefile")).is_none());
-        assert!(backend_for(&backends, &path("rs")).is_none());
+        assert!(backend_for(&backends, &path("src/lib.rs"), ALWAYS).is_some());
+        assert!(backend_for(&backends, &path("README.md"), ALWAYS).is_none());
+        assert!(backend_for(&backends, &path("dir.rs/Makefile"), ALWAYS).is_none());
+        assert!(backend_for(&backends, &path("rs"), ALWAYS).is_none());
+    }
+
+    #[test]
+    fn html_is_served_only_below_the_nearest_angular_json() {
+        let backends = [angular()];
+        let served = |files: &[&str], file: &str| {
+            let present = |p: &RepoPath| files.iter().any(|f| f.as_bytes() == p.0.as_slice());
+            backend_for(&backends, &RepoPath::from(file), &present).is_some()
+        };
+        assert!(served(&["angular.json"], "src/app/app.html"));
+        assert!(served(&["apps/web/angular.json"], "apps/web/src/a.html"));
+        assert!(served(&["angular.json"], "index.html"));
+        assert!(!served(&["apps/web/angular.json"], "apps/api/templates/a.html"));
+        assert!(!served(&["apps/web/angular.json"], "index.html"));
+        assert!(!served(&[], "src/app/app.html"));
+        assert!(!served(&["angular.json"], "src/app/app.ts"));
     }
 
     #[test]
     fn a_file_without_an_extension_is_served_by_its_name() {
         let backends = [rust(), docker()];
-        let served = |p: &str| backend_for(&backends, &RepoPath::from(p)).map(|b| b.config().backend.0.as_str());
+        let served =
+            |p: &str| backend_for(&backends, &RepoPath::from(p), ALWAYS).map(|b| b.config().backend.0.as_str());
         assert_eq!(served("Dockerfile"), Some("docker"));
         assert_eq!(served("services/api/Dockerfile"), Some("docker"));
         assert_eq!(served("Dockerfile.dev"), Some("docker"));

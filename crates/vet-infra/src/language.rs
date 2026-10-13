@@ -130,6 +130,9 @@ pub struct Language {
     /// The names of files it serves that have no extension of their own, each with its
     /// `languageId` (see `ServerConfig::file_names`).
     pub names: &'static [(&'static str, &'static str)],
+    /// The server serves its files only where one of these is in the file's directory or above
+    /// it (see `ServerConfig::requires`). Empty: everywhere.
+    pub requires: &'static [&'static str],
     /// Files that make a directory a project of its own. Empty: the server finds its projects.
     pub root_markers: &'static [&'static str],
     /// Analysis runs project code (build scripts, proc macros, MSBuild design-time builds,
@@ -161,6 +164,7 @@ pub const RUST: Language = Language {
     args: &[],
     files: &[("rs", "rust")],
     names: &[],
+    requires: &[],
     root_markers: &["Cargo.toml"],
     executes_during_analysis: true,
     install: Install::No,
@@ -260,6 +264,7 @@ pub const TYPESCRIPT: Language = Language {
         ("cjs", "javascript"),
     ],
     names: &[],
+    requires: &[],
     root_markers: &["tsconfig.json", "jsconfig.json", "package.json"],
     executes_during_analysis: false,
     install: Install::Npm {
@@ -293,6 +298,7 @@ pub const PYTHON: Language = Language {
     args: &["--stdio"],
     files: &[("py", "python"), ("pyi", "python")],
     names: &[],
+    requires: &[],
     root_markers: &["pyproject.toml", "pyrightconfig.json", "setup.py", "setup.cfg"],
     executes_during_analysis: false,
     install: Install::Npm {
@@ -326,6 +332,7 @@ pub const CSHARP: Language = Language {
     args: &["--stdio", "--logLevel", "Warning"],
     files: &[("cs", "csharp")],
     names: &[],
+    requires: &[],
     root_markers: &[],
     executes_during_analysis: true,
     install: Install::DotnetTool {
@@ -388,6 +395,7 @@ pub const SVELTE: Language = Language {
     args: &["--stdio"],
     files: &[("svelte", "svelte")],
     names: &[],
+    requires: &[],
     root_markers: &[
         "svelte.config.js",
         "svelte.config.cjs",
@@ -434,6 +442,7 @@ pub const ANGULAR: Language = Language {
     args: &["--stdio"],
     files: &[("html", "html")],
     names: &[],
+    requires: &["angular.json"],
     root_markers: &["angular.json", "tsconfig.json", "package.json"],
     executes_during_analysis: false,
     install: Install::Npm {
@@ -468,6 +477,7 @@ pub const YAML: Language = Language {
     args: &["--stdio"],
     files: &[("yml", "yaml"), ("yaml", "yaml")],
     names: &[],
+    requires: &[],
     root_markers: &[],
     executes_during_analysis: false,
     install: Install::Npm {
@@ -498,6 +508,7 @@ pub const JSON: Language = Language {
     args: &["--stdio"],
     files: &[("json", "json"), ("jsonc", "jsonc")],
     names: &[],
+    requires: &[],
     root_markers: &[],
     executes_during_analysis: false,
     install: Install::Npm {
@@ -528,6 +539,7 @@ pub const BASH: Language = Language {
     args: &["start"],
     files: &[("sh", "shellscript"), ("bash", "shellscript")],
     names: &[],
+    requires: &[],
     root_markers: &[],
     executes_during_analysis: false,
     install: Install::Npm {
@@ -581,6 +593,7 @@ pub const DOCKERFILE: Language = Language {
     args: &["--stdio"],
     files: &[("dockerfile", "dockerfile")],
     names: &[("Dockerfile", "dockerfile"), ("Containerfile", "dockerfile")],
+    requires: &[],
     root_markers: &[],
     executes_during_analysis: false,
     install: Install::Npm {
@@ -645,6 +658,7 @@ impl Language {
             args: strings(self.args),
             filetypes: self.files.iter().map(|(ext, _)| (*ext).to_owned()).collect(),
             file_names: self.names.iter().map(|(name, _)| (*name).to_owned()).collect(),
+            requires: strings(self.requires),
             root_markers: strings(self.root_markers),
             executes_project_code_during_analysis: self.executes_during_analysis,
             loads_project_on_open: self.loads_project_on_open,

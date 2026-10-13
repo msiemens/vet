@@ -21,7 +21,7 @@ use vet_semantic::ports::{
     At, Backend, BackendId, Diagnostic, Features, Location, Materializer, Provenance, RestoreFailure, ServerLauncher,
     Severity, Sym, SymbolInfo, prefer_openable,
 };
-use vet_semantic::query::{Asked, Pair, Primitives, Semantic, SemanticError, Served};
+use vet_semantic::query::{Asked, Finds, Pair, Primitives, Semantic, SemanticError, Served};
 use vet_semantic::reuse::SemanticCache;
 use vet_semantic::signature::{Signature, signature};
 use vet_semantic::symbols::enclosing;
@@ -343,6 +343,11 @@ where
     /// Starts a server that dies while running anew once, and tells `supervision` what became of it.
     pub fn supervised(self, supervision: Supervision) -> Self {
         self.configured(|semantic| semantic.supervised(supervision))
+    }
+
+    /// Looks up the files that servers require of a project (`ServerConfig::requires`) with `finds`.
+    pub fn finding(self, finds: Finds) -> Self {
+        self.configured(|semantic| semantic.finding(finds))
     }
 
     /// Drops the answers kept in memory; the next question is asked again (or read from the store).
@@ -1230,6 +1235,7 @@ mod tests {
             args: vec![],
             filetypes: vec![extension.into()],
             file_names: vec![],
+            requires: vec![],
             root_markers: vec![],
             executes_project_code_during_analysis: id == "go",
             loads_project_on_open: false,

@@ -31,6 +31,11 @@ pub fn to_path(path: &[u8]) -> Result<&Path, PathError> {
     gix::path::try_from_byte_slice(path).map_err(|_| unrepresentable(path))
 }
 
+/// Whether `path` is a file in the checkout at `root`.
+pub fn is_file_in(root: &Path, path: &RepoPath) -> bool {
+    to_path(&path.0).is_ok_and(|relative| root.join(relative).is_file())
+}
+
 /// The `RepoPath` of `relative`, a path below the root.
 pub fn from_relative(relative: &Path) -> Result<RepoPath, PathError> {
     let mut parts: Vec<&[u8]> = Vec::new();
