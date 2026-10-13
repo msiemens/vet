@@ -74,10 +74,6 @@ impl Limits {
             weight: usize::MAX,
         }
     }
-
-    pub fn weighing(entries: usize, weight: usize) -> Self {
-        Self { entries, weight }
-    }
 }
 
 /// A computed value and what may become of it.

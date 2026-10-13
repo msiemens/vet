@@ -154,11 +154,6 @@ impl Message {
     pub fn synced(&self) -> Option<&str> {
         self.remote.as_ref().map(|r| r.synced.as_str())
     }
-
-    /// The viewer changed the text of a posted comment after the last sync.
-    pub fn edit_pending(&self) -> bool {
-        self.synced().is_some_and(|synced| synced != self.body)
-    }
 }
 
 /// A comment as the platform has it.

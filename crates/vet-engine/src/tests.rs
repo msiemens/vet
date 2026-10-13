@@ -377,7 +377,10 @@ fn the_least_recently_used_value_goes_beyond_the_entry_limit() {
 
 #[test]
 fn values_beyond_the_weight_limit_go_oldest_first() {
-    let engine = Engine::<Key>::new(Limits::weighing(100, 10));
+    let engine = Engine::<Key>::new(Limits {
+        entries: 100,
+        weight: 10,
+    });
     let probe = Arc::new(Probe::default());
     probe.open();
     let ask = |n: u8, weight: u32| {
