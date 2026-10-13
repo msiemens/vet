@@ -217,7 +217,9 @@ const placeOf = ({ location, within }: Reference): Place => ({
   external: location.external,
 });
 
-const containerOfPlace = (p: Place): string | undefined => (p.within ? partsOf(p.within).container : undefined);
+/** The type a place is grouped under: the one it is in, or itself when it is a type's own place. */
+const containerOfPlace = (p: Place): string | undefined =>
+  p.within?.kind === "type" ? partsOf(p.within).name : p.within ? partsOf(p.within).container : undefined;
 const isTestPlace = (p: Place): boolean => isTest(p.path, p.within ? containersOf(p.within.id) : []);
 
 function groupBy<T>(items: readonly T[], keyOf: (item: T) => string): T[][] {
@@ -246,8 +248,9 @@ function memberEntry(key: string, places: Place[], inGroup: boolean): Entry {
     return {
       ...common,
       glyph: "file",
-      name: fileName(first.path),
+      name: "module level",
       file: true,
+      container: inGroup ? undefined : fileName(first.path),
       title: rowTitle(null, first.path, first.at),
     };
   }

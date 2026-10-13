@@ -107,6 +107,49 @@ void test("a usage's glyph is the kind of the symbol it is in; a top-level one h
   assert.equal(affected.entries[0].glyph, "type");
 });
 
+void test("a type's own place and its members' places share one group", () => {
+  const body = usagesBody({
+    references: [
+      ref("database.py", ["TinyDB"], 74, "type"),
+      ref("database.py", ["TinyDB", "__init__"], 97),
+      ref("database.py", ["TinyDB", "table"], 110),
+      ref("table.py", ["Table", "get"], 18),
+    ],
+  } as never);
+  assert.deepEqual(
+    body.entries.map((e) => e.name),
+    ["TinyDB", "get"],
+  );
+  const [db] = body.entries;
+  assert.equal(db.count, 3);
+  assert.deepEqual(
+    db.children.map((e) => [e.name, e.lines]),
+    [
+      ["TinyDB", ":75"],
+      ["__init__", ":98"],
+      ["table", ":111"],
+    ],
+  );
+});
+
+void test("module-level usages say so instead of repeating the file's name", () => {
+  const body = usagesBody({
+    references: [ref("database.py", null, 8), ref("database.py", null, 13), ref("database.py", ["helper"], 20)],
+  } as never);
+  const [file] = body.entries;
+  assert.equal(file.name, "database.py");
+  assert.deepEqual(
+    file.children.map((e) => [e.name, e.lines]),
+    [
+      ["module level", ":9 :14"],
+      ["helper", ":21"],
+    ],
+  );
+  const alone = usagesBody({ references: [ref("database.py", null, 8)] } as never).entries[0];
+  assert.equal(alone.name, "module level");
+  assert.equal(alone.container, "database.py");
+});
+
 void test("tests sit in a branch after the production usages, not among them", () => {
   const body = usagesBody({
     references: [ref("tests/x.rs", ["check"], 3), ref("src/a.rs", ["A", "m"], 1), ref("src/c.rs", ["C", "n"], 2)],
