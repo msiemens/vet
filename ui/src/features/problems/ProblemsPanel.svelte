@@ -5,7 +5,8 @@
   import { tick, untrack } from "svelte";
   import { SvelteSet } from "svelte/reactivity";
   import type { Unavailable } from "../../generated/Unavailable";
-  import { limitedMessage, onlyStoodIn } from "../chrome";
+  import { RestoreFailureList, limitedMessage, onlyStoodIn } from "../chrome";
+  import Banner from "../../lib/ui/Banner.svelte";
   import BottomToolHeader from "../../lib/ui/BottomToolHeader.svelte";
   import EmptyState from "../../lib/ui/EmptyState.svelte";
   import FilterField from "../../lib/ui/FilterField.svelte";
@@ -103,7 +104,6 @@
   let grouping = $state<Grouping>("origin");
   let folded = $state.raw<ReadonlySet<string>>(new Set());
   let naOpen = $state(false);
-  let limitedOpen = $state(false);
   let cursor = $state(-1);
   let body = $state<HTMLElement>();
   let list = $state<VirtualRows>();
@@ -383,59 +383,54 @@
   </BottomToolHeader>
 
   {#if indexing && serverOf}
-    <div class="notice info">
-      <SeverityIcon severity="info" />
-      <div>
-        {serverOf.server} is indexing{indexing.fraction === undefined
-          ? ""
-          : ` (${Math.round(indexing.fraction * 100)}%)`}. Problems from the other files, and any that need the whole
-        project, may be missing until it is done.
+    <Banner
+      panel
+      icon
+      tone="info"
+      message="{serverOf.server} is indexing{indexing.fraction === undefined
+        ? ''
+        : ` (${Math.round(indexing.fraction * 100)}%)`}. Problems from the other files, and any that need the whole project, may be missing until it is done."
+    >
+      {#snippet extra()}
         {#if indexing.fraction !== undefined}
           <div class="bar"><ProgressBar fraction={indexing.fraction} label="{serverOf.server} indexing" /></div>
         {/if}
-      </div>
-    </div>
+      {/snippet}
+    </Banner>
   {/if}
   {#if limited}
-    <div class="notice warn">
-      <SeverityIcon severity="warning" />
-      <div>
-        {limited}{onlyStoodIn(changeset.restoreFailures) ? "" : " Errors about unresolved names may not be real."}
-        <button class="link" type="button" aria-expanded={limitedOpen} onclick={() => (limitedOpen = !limitedOpen)}
-          >{limitedOpen ? "Hide details" : "Details"}</button
-        >
-        {#if limitedOpen}
-          <ul class="failures">
-            {#each changeset.restoreFailures as failure (failure.project + failure.tool + failure.message)}
-              <li><strong>{failure.project}</strong> ({failure.tool}): <code>{failure.message}</code></li>
-            {/each}
-          </ul>
-        {/if}
-      </div>
-    </div>
+    <Banner
+      panel
+      icon
+      message="{limited}{onlyStoodIn(changeset.restoreFailures)
+        ? ''
+        : ' Errors about unresolved names may not be real.'}"
+    >
+      {#snippet details()}
+        <RestoreFailureList failures={changeset.restoreFailures} />
+      {/snippet}
+    </Banner>
   {/if}
   {#if lensNote}
-    <div class="notice info">
-      <SeverityIcon severity="info" />
-      <div>{lensNote}</div>
-    </div>
+    <Banner panel icon tone="info" message={lensNote} />
   {/if}
   {#if origins === "pending" && !waiting && !everyFileUnserved && reach.answered > 0}
-    <div class="notice info">
-      <SeverityIcon severity="info" />
-      <div>Comparing with the base to tell new problems from existing ones. They are listed by file until then.</div>
-    </div>
+    <Banner
+      panel
+      icon
+      tone="info"
+      message="Comparing with the base to tell new problems from existing ones. They are listed by file until then."
+    />
   {/if}
   {#if origins === "unknown"}
-    <div class="notice warn">
-      <SeverityIcon severity="warning" />
-      <div>
-        Cannot tell which problems are new{unknownFiles > 1 ? ` in ${unknownFiles} files` : ""}: {unknownWhy
-          ? unknownWhy.message
-          : "the base could not be analysed"}, so none of {unknownFiles > 1 ? "theirs is" : "that file's is"} marked new.
-        <button class="link" type="button" onclick={() => problems.retry()}>Retry</button>
-      </div>
-    </div>
+    <Banner
+      panel
+      icon
+      message="Cannot tell which problems are new{unknownFiles > 1 ? ` in ${unknownFiles} files` : ''}: {unknownWhy
+        ? unknownWhy.message
+        : 'the base could not be analysed'}, so none of {unknownFiles > 1 ? 'theirs is' : "that file's is"} marked new."
+      action={{ label: "Retry", onclick: () => problems.retry() }}
+    />
   {/if}
 
   <!-- The list takes the keys of its rows, which are not in the tab order. -->
@@ -617,25 +612,6 @@
   .chip[aria-pressed="false"]:hover {
     opacity: 0.9;
   }
-  .notice {
-    flex: none;
-    display: flex;
-    align-items: flex-start;
-    gap: 8px;
-    padding: 6px 12px;
-    font-size: 12px;
-    color: var(--text-2);
-    border-bottom: 1px solid var(--line-soft);
-  }
-  .notice :global(.severity-icon) {
-    margin-top: 2px;
-  }
-  .notice.warn {
-    background: color-mix(in srgb, var(--severity-warning) 12%, var(--bg-panel));
-  }
-  .notice.info {
-    background: color-mix(in srgb, var(--severity-info) 9%, var(--bg-panel));
-  }
   .bar {
     margin-top: 5px;
     width: 160px;
@@ -797,15 +773,6 @@
   }
   .waiting {
     color: var(--text-3);
-  }
-  .failures {
-    margin: 4px 0 0;
-    padding-left: 16px;
-  }
-  .failures code {
-    font-family: var(--font-mono);
-    font-size: 11px;
-    white-space: pre-wrap;
   }
   .why {
     flex: none;

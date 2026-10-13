@@ -9,6 +9,7 @@
   import Banner from "../../lib/ui/Banner.svelte";
   import { degradedMessage } from "./degradedMessage";
   import { limitedMessage } from "./limitedMessage";
+  import RestoreFailureList from "./RestoreFailureList.svelte";
   import { offBaseMessage } from "./scopeText";
   import { trustMessage } from "./trustMessage";
 
@@ -62,27 +63,7 @@
 {#if failures.length > dismissedFailures}
   <Banner message={limitedMessage(failures)} ondismiss={() => (dismissedFailures = failures.length)}>
     {#snippet details()}
-      <ul class="failures">
-        {#each failures as failure (failure.project + failure.tool + failure.message)}
-          <li>
-            <strong>{failure.project}</strong> ({failure.tool}):
-            <pre>{failure.message}</pre>
-          </li>
-        {/each}
-      </ul>
+      <RestoreFailureList {failures} />
     {/snippet}
   </Banner>
 {/if}
-
-<style>
-  .failures {
-    margin: 0;
-    padding-left: 16px;
-  }
-  .failures pre {
-    margin: 2px 0 6px;
-    font-family: var(--font-mono);
-    font-size: 11px;
-    white-space: pre-wrap;
-  }
-</style>

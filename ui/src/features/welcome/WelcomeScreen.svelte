@@ -2,6 +2,7 @@
   import { type Snippet, tick } from "svelte";
   import type { RecentProject } from "../../generated/RecentProject";
   import AppLogo from "../../lib/ui/AppLogo.svelte";
+  import Banner from "../../lib/ui/Banner.svelte";
   import Icon from "../../lib/ui/Icon.svelte";
   import Marked from "../../lib/ui/Marked.svelte";
   import PathText from "../../lib/ui/PathText.svelte";
@@ -142,12 +143,13 @@
     </div>
 
     {#if failed}
-      <div class="error" role="alert">
-        <span class="selectable">{failed.message}</span>
-        {#if recent.some((p) => p.path === failed.path)}
-          <button class="ctl" type="button" onclick={() => onforget(failed.path)}>Remove from recent</button>
-        {/if}
-      </div>
+      <Banner
+        tone="bad"
+        message={failed.message}
+        action={recent.some((p) => p.path === failed.path)
+          ? { label: "Remove from recent", onclick: () => onforget(failed.path) }
+          : undefined}
+      />
     {/if}
 
     <ScrollArea>
@@ -285,20 +287,6 @@
   .search input {
     flex: 1;
     padding-left: 30px;
-  }
-  .error {
-    flex: none;
-    box-sizing: border-box;
-    margin: 0 12px 8px;
-    display: flex;
-    flex-direction: column;
-    align-items: flex-start;
-    gap: 8px;
-    padding: 8px 10px;
-    border: 1px solid var(--del-text);
-    border-radius: var(--radius);
-    background: var(--del-bg);
-    font-size: var(--fs-ctl);
   }
   /* The scroll bar's gutter is the margin on the right. */
   .projects {

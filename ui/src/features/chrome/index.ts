@@ -6,6 +6,7 @@ export { limitedMessage, onlyStoodIn } from "./limitedMessage";
 export { toggleBottom, toggleTool } from "./toggleTool";
 export { default as Header, type Screen } from "./Header.svelte";
 export { default as MainMenuButton } from "./MainMenuButton.svelte";
+export { default as RestoreFailureList } from "./RestoreFailureList.svelte";
 export { baseNote, scopeChip } from "./scopeText";
 export { default as TitleBar } from "./TitleBar.svelte";
 export { TOOLS } from "./ToolRail.svelte";

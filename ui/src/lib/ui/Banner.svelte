@@ -1,30 +1,50 @@
 <script lang="ts">
   import type { Snippet } from "svelte";
   import IconButton from "./IconButton.svelte";
+  import SeverityIcon from "./SeverityIcon.svelte";
 
   let {
     message,
     ondismiss,
     details,
     action,
+    extra,
     tone = "warn",
+    icon = false,
+    panel = false,
   }: {
     message: string;
-    /** What it tints with: amber for a caution, red for something that failed. */
-    tone?: "warn" | "bad";
+    /** What it tints with: blue for news, amber for a caution, red for something that failed. */
+    tone?: "info" | "warn" | "bad";
+    /** The tone's icon before the message. */
+    icon?: boolean;
+    /** A notice inside a panel, a size smaller, rather than one under the header. */
+    panel?: boolean;
     /** Without it the banner stays while what it says holds. */
     ondismiss?: () => void;
     details?: Snippet;
     /** A button next to the message. */
     action?: { label: string; onclick: () => void };
+    /** Under the message. */
+    extra?: Snippet;
   } = $props();
+
+  const TONES = {
+    info: { color: "var(--severity-info)", severity: "info" },
+    warn: { color: "var(--old-base)", severity: "warning" },
+    bad: { color: "var(--del-text)", severity: "error" },
+  } as const;
 
   let expanded = $state(false);
 </script>
 
-<div class="banner" role="status" style:--tone={tone === "bad" ? "var(--del-text)" : undefined}>
+<div class="banner" class:panel role="status" style:--tone={TONES[tone].color}>
   <div class="line">
-    <span class="selectable">{message}</span>
+    {#if icon}<span class="icon"><SeverityIcon severity={TONES[tone].severity} /></span>{/if}
+    <div class="msg">
+      <span class="selectable">{message}</span>
+      {@render extra?.()}
+    </div>
     {#if action}
       <button class="flat" type="button" onclick={action.onclick}>{action.label}</button>
     {/if}
@@ -46,19 +66,29 @@
 
 <style>
   .banner {
-    --tone: var(--old-base);
     flex: none;
     padding: 4px 6px 4px 12px;
     background: color-mix(in srgb, var(--tone) 14%, var(--bg-panel));
     border-bottom: 1px solid var(--line);
     font-size: var(--fs-ctl);
   }
+  .banner.panel {
+    padding: 6px 12px;
+    border-bottom-color: var(--line-soft);
+    font-size: 12px;
+    color: var(--text-2);
+  }
   .line {
     display: flex;
     align-items: center;
     gap: 4px;
   }
-  span {
+  .icon {
+    align-self: flex-start;
+    display: inline-flex;
+    margin: 2px 4px 0 0;
+  }
+  .msg {
     margin-right: auto;
     padding-right: 10px;
   }
