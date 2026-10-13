@@ -280,6 +280,11 @@ impl Orchestrator {
         Ok(mapping::directory(&listing))
     }
 
+    pub(crate) async fn list_files(&self, project: ProjectId) -> Result<Response, String> {
+        let listing = self.ready(project).await?.session.list_files().await.map_err(message)?;
+        Ok(mapping::files(&listing))
+    }
+
     pub(crate) async fn target_line(
         &self,
         project: ProjectId,

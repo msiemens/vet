@@ -416,6 +416,7 @@ impl Orchestrator {
             } => reply(async move { self.exclude_path(project, &path, directory).await }),
             Request::Fetch { project } => reply(self.fetch(project)),
             Request::ListDirectory { project, path } => reply(async move { self.list_directory(project, &path).await }),
+            Request::ListFiles { project } => reply(self.list_files(project)),
             Request::FileText { project, view, path } => {
                 reply(async move { self.file_text(project, view, &path).await })
             }

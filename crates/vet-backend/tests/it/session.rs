@@ -836,6 +836,13 @@ impl Client {
         }
     }
 
+    async fn files(&self, project: ProjectId) -> Result<(u32, Vec<String>), String> {
+        match self.call(Request::ListFiles { project }).await? {
+            Response::Files { revision, paths } => Ok((revision, paths)),
+            other => panic!("{other:?}"),
+        }
+    }
+
     async fn file_text(&self, project: ProjectId, path: &str) -> Result<TextContent, String> {
         match self
             .call(Request::FileText {
@@ -924,6 +931,26 @@ async fn the_whole_snapshot_can_be_browsed_and_read() {
         }
     );
     assert!(client.file_text(project, "target/debug/out").await.is_err());
+}
+
+#[tokio::test]
+async fn the_flat_file_list_has_the_untracked_files_and_not_the_ignored_ones() {
+    let fx = fixture(
+        &[("src/lib.rs", "// lib\n"), ("README.md", "hello\n")],
+        &[
+            ("src/lib.rs", "// lib 2\n"),
+            ("src/new.rs", "// new\n"),
+            ("target/debug/out", "ignored\n"),
+            (".pnpm-store/v11/x", "store\n"),
+        ],
+    )
+    .await;
+    let client = Client::new(&fx.handler);
+    let project = open(&client, fx.repo.path()).await;
+
+    let (revision, paths) = client.files(project).await.unwrap();
+    assert_eq!(revision, 0);
+    assert_eq!(paths, [".gitignore", "README.md", "src/lib.rs", "src/new.rs"]);
 }
 
 /// The ranges of an encoding of highlights as (start, length, kind).

@@ -30,7 +30,30 @@ pub struct DirListing {
     pub entries: Vec<DirItem>,
 }
 
+/// The files of the target snapshot by path, in byte order.
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub struct FileListing {
+    pub revision: u32,
+    pub paths: Vec<String>,
+}
+
 impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> LiveSession<G, S> {
+    /// Every file (not a symlink or a submodule) of the target snapshot, for a search by name.
+    pub async fn list_files(&self) -> Result<FileListing> {
+        let (st, _) = self.viewing(View::Changeset).await?;
+        let paths = st
+            .target
+            .entries
+            .iter()
+            .filter(|(_, entry)| entry.kind == EntryKind::File)
+            .map(|(path, _)| String::from_utf8_lossy(&path.0).into_owned())
+            .collect();
+        Ok(FileListing {
+            revision: st.revision,
+            paths,
+        })
+    }
+
     /// The children of `path` (`""` is the root) in the target snapshot.
     pub async fn list_directory(&self, path: &str) -> Result<DirListing> {
         let (st, _) = self.viewing(View::Changeset).await?;

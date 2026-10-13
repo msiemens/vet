@@ -160,6 +160,11 @@ pub enum Response {
         revision: u32,
         entries: Vec<DirEntry>,
     },
+    /// The answer to `ListFiles`: the paths, which belong to `revision`.
+    Files {
+        revision: u32,
+        paths: Vec<String>,
+    },
     /// The answer to `FileText`, at `revision`.
     FileText {
         revision: u32,

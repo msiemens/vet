@@ -14,9 +14,9 @@ use vet_app::ports::{CommitInfo, Degraded};
 use vet_app::pull_request::PullRequestList;
 use vet_app::session::{
     BaseDiffKind, BaseDiffView, BaseView, ChangesetList, CommentAt, CommentSpot, CommitKind, CommitsView, DirEntryKind,
-    DirListing, DiscussionView, EntryInfo, FileStatus, FileView, ItemBlob, ItemView, Lifecycle, ManifestView,
-    ModeChange, NewThread, NoText, ReviewUpdateView, ReviewView, RowReview, SubmitReport, SyncNotice, TargetText,
-    ThreadView, ThreadsView, VersionView, View, VoteSent,
+    DirListing, DiscussionView, EntryInfo, FileListing, FileStatus, FileView, ItemBlob, ItemView, Lifecycle,
+    ManifestView, ModeChange, NewThread, NoText, ReviewUpdateView, ReviewView, RowReview, SubmitReport, SyncNotice,
+    TargetText, ThreadView, ThreadsView, VersionView, View, VoteSent,
 };
 use vet_app::trust::{Origin, Trust};
 use vet_core::completion::{Completion, HunkState};
@@ -616,6 +616,13 @@ pub fn directory(l: &DirListing) -> p::Response {
                 excluded: e.excluded,
             })
             .collect(),
+    }
+}
+
+pub fn files(l: &FileListing) -> p::Response {
+    p::Response::Files {
+        revision: l.revision,
+        paths: l.paths.clone(),
     }
 }
 

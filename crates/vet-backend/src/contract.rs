@@ -127,6 +127,7 @@ pub fn effect(request: &Request) -> Effect {
         | Request::Reachability { .. }
         | Request::ListServers { .. }
         | Request::ListDirectory { .. }
+        | Request::ListFiles { .. }
         | Request::FileText { .. }
         | Request::ItemBlob { .. }
         | Request::Threads { .. }
@@ -492,6 +493,7 @@ mod tests {
                 project,
                 path: String::new(),
             },
+            Request::ListFiles { project },
             Request::FileText {
                 project,
                 view,

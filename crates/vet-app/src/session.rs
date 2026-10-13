@@ -83,7 +83,7 @@ use vet_engine::{Engine, Limits};
 use self::ahead::Retained;
 pub use self::base_diff::{BaseDiffKind, BaseDiffRow, BaseDiffView};
 pub use self::blobs::NoText;
-pub use self::browse::{DirEntryKind, DirItem, DirListing};
+pub use self::browse::{DirEntryKind, DirItem, DirListing, FileListing};
 pub use self::content::{FileText, ItemBlob, MAX_ITEM_BLOB, TargetText};
 use self::derived::{Derived, Diffed};
 use self::hold::{Held, Published, Writer};

@@ -468,6 +468,12 @@ pub enum Request {
         project: ProjectId,
         path: String,
     },
+    /// The path of every file of the current target snapshot (not a symlink or a submodule; no
+    /// file a `.gitignore` leaves out), in byte order, to search them by name. Answers with
+    /// `Response::Files`.
+    ListFiles {
+        project: ProjectId,
+    },
     /// The text of any path on the target side of `view`, changed or not: the file as the
     /// changeset ends with it, or as the commit leaves it for a commit's view (an interdiff
     /// reads the changeset's). Fails if the file is not there.

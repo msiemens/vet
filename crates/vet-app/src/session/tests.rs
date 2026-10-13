@@ -2160,6 +2160,22 @@ async fn directories_list_first_in_byte_order_with_changed_below() {
 }
 
 #[tokio::test]
+async fn the_flat_listing_has_every_file_of_the_target_in_byte_order() {
+    let base = [("src/a/x.rs", "x\n"), ("src/gone.rs", "g\n"), ("Z.md", "z\n")];
+    let dirty = [
+        ("src/a/x.rs", "changed\n"),
+        ("src/new.rs", "n\n"),
+        ("Z.md", "z\n"),
+        ("a.md", "a\n"),
+    ];
+    let fx = Fixture::open(&base, &dirty).await;
+
+    let files = fx.session.list_files().await.unwrap();
+    assert_eq!(files.paths, ["Z.md", "a.md", "src/a/x.rs", "src/new.rs"]);
+    assert_eq!(files.revision, 0);
+}
+
+#[tokio::test]
 async fn deleted_and_added_files_flag_their_directories() {
     let fx = Fixture::open(
         &[("gone/f.txt", "f\n"), ("keep/k.txt", "k\n")],
