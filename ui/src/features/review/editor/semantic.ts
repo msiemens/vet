@@ -25,6 +25,7 @@ import type { Diagnostic } from "../../../generated/Diagnostic";
 import type { Position } from "../../../generated/Position";
 import type { Side } from "../../../generated/Side";
 import type { TextSpan } from "../../../generated/TextSpan";
+import { iconSvg } from "../../../lib/ui/icons";
 import type { HoverAnswer } from "../../../state/backend";
 import type { CaretRect, PickerKind } from "../../../state/pickerTypes";
 import { gotoLinks, isGotoModifier } from "./gotoLinkDom";
@@ -192,7 +193,7 @@ function drawDiagnostics(view: EditorView, stored: readonly Diagnostic[], store:
 /** The class of the mark of a diagnostic that was already there on the base. */
 const EXISTING = "vet-existing";
 
-/** The gutter's dot for a line's worst diagnostic: filled for one the change introduced, hollow for one already there. */
+/** The gutter's mark for a line's worst diagnostic, in the shape of its severity: strong for one the change introduced, faded for one already there. */
 class DiagnosticDot extends GutterMarker {
   constructor(
     private readonly severity: string,
@@ -206,9 +207,14 @@ class DiagnosticDot extends GutterMarker {
   }
 
   toDOM() {
-    const dot = document.createElement("span");
-    dot.className = `vet-diag-dot ${this.severity}${this.existing ? " existing" : ""}`;
-    return dot;
+    const mark = document.createElement("span");
+    mark.className = `vet-diag-dot ${this.severity}${this.existing ? " existing" : ""}`;
+    mark.innerHTML = iconSvg(
+      this.severity === "error" ? "error" : this.severity === "warning" ? "warning" : "info",
+      13,
+      1.8,
+    );
+    return mark;
   }
 }
 

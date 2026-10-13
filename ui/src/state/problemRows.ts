@@ -65,11 +65,24 @@ export function reviewedAt(file: FileHunks | undefined, line: number): { reviewe
 
 /** A file's diagnostics as problems, in the order of the file. */
 export function problemsOf(path: string, diagnostics: readonly Diagnostic[], file: FileHunks | undefined): Problem[] {
+  const seen = new Map<string, number>();
   return diagnostics
     .map((diagnostic) => {
       const { line, col } = diagnostic.span.start;
+      const same = [
+        path,
+        line,
+        col,
+        diagnostic.severity,
+        diagnostic.source ?? "",
+        diagnostic.code ?? "",
+        diagnostic.message,
+      ];
+      const key = same.join(":");
+      const nth = seen.get(key) ?? 0;
+      seen.set(key, nth + 1);
       return {
-        id: `${path}:${line}:${col}:${diagnostic.code ?? ""}:${diagnostic.message}`,
+        id: `${key}#${nth}`,
         path,
         line,
         level: levelOf(diagnostic),
@@ -83,7 +96,7 @@ export function problemsOf(path: string, diagnostics: readonly Diagnostic[], fil
 
 export interface Filters {
   levels: Record<Level, boolean>;
-  /** `new` lists only what the change introduced; it has no effect while origins are not known. */
+  /** `new` lists only what the change introduced; it has no effect while an origin is pending. */
   origin: "new" | "all";
   /** Only problems in hunks not seen. */
   unseenOnly: boolean;
@@ -110,12 +123,12 @@ export const narrowing = (f: Filters) =>
   f.changedOnly ||
   f.query.trim() !== "";
 
-/** The problems that pass the filters, in the order they came. `known` says whether origins are known. */
-export function filtered(problems: readonly Problem[], f: Filters, known: boolean): Problem[] {
+/** The problems that pass the filters, in the order they came. `settled` says no origin is pending. */
+export function filtered(problems: readonly Problem[], f: Filters, settled: boolean): Problem[] {
   const query = f.query.trim().toLowerCase();
   return problems.filter((p) => {
     if (!f.levels[p.level]) return false;
-    if (f.origin === "new" && known && p.origin !== "new") return false;
+    if (f.origin === "new" && settled && p.origin !== "new") return false;
     if (f.unseenOnly && p.reviewed !== "unseen") return false;
     if (f.changedOnly && !p.onChanged) return false;
     if (query) {
@@ -128,18 +141,24 @@ export function filtered(problems: readonly Problem[], f: Filters, known: boolea
 
 const byPlace = (a: Problem, b: Problem) => (a.path < b.path ? -1 : a.path > b.path ? 1 : a.line - b.line);
 
-/** New problems before the rest, then by file and line: the order of stepping through them. */
-export function inOrder(problems: readonly Problem[]): Problem[] {
-  const rank = (p: Problem) => (p.origin === "new" ? 0 : 1);
-  return [...problems].sort((a, b) => rank(a) - rank(b) || byPlace(a, b));
-}
-
-/** The problem `delta` after the one with id `from` in `list`, wrapping around; the first (last) one with none selected. */
-export function step(list: readonly Problem[], from: string | undefined, delta: 1 | -1): Problem | undefined {
-  if (!list.length) return undefined;
-  const at = list.findIndex((p) => p.id === from);
-  if (at < 0) return delta > 0 ? list[0] : list[list.length - 1];
-  return list[(at + delta + list.length) % list.length];
+/**
+ * The problem after (`delta` 1) or before the caret among `list`, one file's problems in file
+ * order, wrapping around within the file. `selected` is the one last stepped to: while the caret
+ * is still on its line the step goes on from it, so problems on one line are each reached.
+ */
+export function stepInFile(
+  list: readonly Problem[],
+  caretLine: number | undefined,
+  selected: string | undefined,
+  delta: 1 | -1,
+): Problem | undefined {
+  const n = list.length;
+  if (!n) return undefined;
+  const at = list.findIndex((p) => p.id === selected);
+  if (at >= 0 && list[at].line === caretLine) return list[(at + delta + n) % n];
+  if (caretLine === undefined) return delta > 0 ? list[0] : list[n - 1];
+  if (delta > 0) return list.find((p) => p.line > caretLine) ?? list[0];
+  return [...list].reverse().find((p) => p.line < caretLine) ?? list[n - 1];
 }
 
 export type Row =
@@ -149,8 +168,8 @@ export type Row =
 
 export interface Layout {
   grouping: Grouping;
-  /** Every problem's origin is known, so the list may be sectioned by it and rows need no origin pill. */
-  known: boolean;
+  /** No origin is pending, so the list may be sectioned by it and rows need no origin pill. */
+  settled: boolean;
   /** The keys of the groups and files that are folded. */
   folded: ReadonlySet<string>;
 }
@@ -158,14 +177,21 @@ export interface Layout {
 const LEVELS: Level[] = ["error", "warning", "info"];
 const LEVEL_TITLE: Record<Level, string> = { error: "Errors", warning: "Warnings", info: "Information and hints" };
 
-function filesOf(problems: readonly Problem[]): string[] {
-  return [...new Set(problems.map((p) => p.path))].sort();
+/** The problems by file, the files in path order. */
+function byFile(problems: readonly Problem[]): [string, Problem[]][] {
+  const files = new Map<string, Problem[]>();
+  for (const p of problems) {
+    const own = files.get(p.path);
+    if (own) own.push(p);
+    else files.set(p.path, [p]);
+  }
+  return [...files].sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0));
 }
 
 function fileRows(problems: readonly Problem[], keyPrefix: string, layout: Layout, pill: boolean): Row[] {
   const rows: Row[] = [];
-  for (const path of filesOf(problems)) {
-    const own = problems.filter((p) => p.path === path).sort(byPlace);
+  for (const [path, found] of byFile(problems)) {
+    const own = found.sort(byPlace);
     const key = `${keyPrefix}${path}`;
     const open = !layout.folded.has(key);
     rows.push({ kind: "file", key, path, count: own.length, open });
@@ -174,14 +200,15 @@ function fileRows(problems: readonly Problem[], keyPrefix: string, layout: Layou
   return rows;
 }
 
-/** The rows of the list: by origin and file (when origins are known), by file, or by severity. */
+/** The rows of the list: by origin and file (once no origin is pending), by file, or by severity. */
 export function rowsOf(problems: readonly Problem[], layout: Layout): Row[] {
-  const { grouping, known, folded } = layout;
-  if (grouping === "origin" && known) {
+  const { grouping, settled, folded } = layout;
+  if (grouping === "origin" && settled) {
     const rows: Row[] = [];
     for (const [origin, title] of [
       ["new", "New in this change"],
       ["existing", "Already there"],
+      ["unknown", "Origin unknown"],
     ] as const) {
       const own = problems.filter((p) => p.origin === origin);
       if (!own.length) continue;
@@ -206,12 +233,12 @@ export function rowsOf(problems: readonly Problem[], layout: Layout): Row[] {
     }
     return rows;
   }
-  return fileRows(problems, "f:", layout, !known || grouping === "file");
+  return fileRows(problems, "f:", layout, !settled || grouping === "file");
 }
 
 /** What the footer and the rail say of a changeset's problems. */
 export interface Counts {
-  /** New errors and warnings; with origins not known, all errors and warnings. */
+  /** Errors and warnings known to be new, and those still being compared (they may be); not those of unknown origin. */
   headline: number;
   /** The worst severity among those counted. */
   worst?: "error" | "warning";
@@ -219,16 +246,22 @@ export interface Counts {
   all: number;
   newOnes: number;
   existing: number;
+  /** Problems whose origin could not be told. */
+  unknown: number;
+  /** Information and hints, of any origin. */
+  info: number;
 }
 
-/** `known` says every origin is known: only the new problems are counted then. */
-export function countsOf(problems: readonly Problem[], known: boolean): Counts {
-  const counted = problems.filter((p) => p.level !== "info" && (!known || p.origin === "new"));
+export function countsOf(problems: readonly Problem[]): Counts {
+  const counted = problems.filter((p) => p.level !== "info" && (p.origin === "new" || p.origin === "pending"));
+  const origin = (o: Problem["origin"]) => problems.filter((p) => p.origin === o).length;
   return {
     headline: counted.length,
     worst: counted.some((p) => p.level === "error") ? "error" : counted.length ? "warning" : undefined,
     all: problems.length,
-    newOnes: problems.filter((p) => p.origin === "new").length,
-    existing: problems.filter((p) => p.origin === "existing").length,
+    newOnes: origin("new"),
+    existing: origin("existing"),
+    unknown: origin("unknown"),
+    info: problems.filter((p) => p.level === "info").length,
   };
 }

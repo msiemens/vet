@@ -244,15 +244,10 @@
   justify-content: center;
 }
 .vet-diag-dot {
-  width: 8px;
-  height: 8px;
-  box-sizing: border-box;
-  border-radius: 50%;
-  border: 1.5px solid currentColor;
-  background: currentColor;
+  display: inline-flex;
 }
 .vet-diag-dot.existing {
-  background: transparent;
+  opacity: 0.55;
 }
 .vet-diag-dot.error {
   color: var(--severity-error);

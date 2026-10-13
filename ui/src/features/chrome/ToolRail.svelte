@@ -28,12 +28,12 @@
     side = "left",
     active,
     open = true,
-    counts = {},
+    badges = {},
     bottom,
   }: {
     side?: "left" | "right";
-    /** A number on a tool's icon: what is new there. */
-    counts?: Record<string, number>;
+    /** A number on a tool's icon, with what it counts in words for a screen reader ("3 new"). */
+    badges?: Partial<Record<string, { count: number; text: string }>>;
     /** The selected tool; it stays selected while its sidebar is hidden. */
     active?: string;
     /** Whether the selected tool's sidebar is shown. */
@@ -44,12 +44,13 @@
 </script>
 
 {#snippet slot(tool: { id: string; label: string }, shown: boolean)}
-  {@const count = counts[tool.id] ?? 0}
+  {@const badge = badges[tool.id]}
+  {@const count = badge?.count ?? 0}
   {@const command = toolCommand(tool.id)}
   <span class="slot">
     <IconButton
       icon={ICONS[tool.id]}
-      label={count > 0 ? `${tool.label}, ${count} new` : tool.label}
+      label={badge && count > 0 ? `${tool.label}, ${badge.text}` : tool.label}
       title={commands.hint(command)}
       disabled={!commands.isEnabled(command)}
       active={shown}

@@ -7,10 +7,11 @@ import { untrack } from "svelte";
 import type { Unavailable } from "../generated/Unavailable";
 import { changeset } from "./changeset.svelte";
 import { Gate } from "./gate";
-import { type Counts, type FileHunks, type Problem, countsOf, inOrder, problemsOf, step } from "./problemRows";
-import { type Origins, type Summary, summarize } from "./problemsSummary";
+import type { FileDiagnostics } from "./diagnosticsBook";
+import { type Counts, type FileHunks, type Problem, countsOf, problemsOf } from "./problemRows";
+import { type Origins, type Summary, originsOf, summarize } from "./problemsSummary";
 import { queue } from "./queue.svelte";
-import { type FileDiagnostics, semantic } from "./semantic.svelte";
+import { semantic } from "./semantic.svelte";
 import { serverList } from "./serverList.svelte";
 import { languageOf } from "./serverStatus";
 import { session } from "./session.svelte";
@@ -33,7 +34,7 @@ export interface NotAnalysed {
 }
 
 class ProblemsState {
-  /** Files beyond the changeset's that the panel wants answers for (the open tabs). */
+  /** The files with a tab open, which are asked about first and also where the change leaves them alone. */
   private extra = $state.raw<readonly string[]>([]);
   private gate = new Gate(FILES_AT_ONCE);
   private run = 0;
@@ -50,7 +51,7 @@ class ProblemsState {
   readonly analysable = $derived(this.changed.filter((p) => this.served(p)));
   readonly problems: Problem[] = $derived(this.problemsOf(this.analysable));
   readonly origins: Origins = $derived(this.originsOf(this.analysable));
-  readonly counts: Counts = $derived(countsOf(this.problems, this.origins === "known"));
+  readonly counts: Counts = $derived(countsOf(this.problems));
   readonly progress = $derived.by(() => {
     const answered = this.analysable.filter((p) => semantic.files.has(p) || semantic.unavailableOf(p)).length;
     return { total: this.analysable.length, answered };
@@ -58,7 +59,8 @@ class ProblemsState {
   readonly summary: Summary | undefined = $derived(
     summarize({
       counts: this.counts,
-      origins: this.origins,
+      comparing: this.origins === "pending",
+      unknownFiles: this.unknownFiles(this.analysable).length,
       files: this.progress,
       changed: this.changedCount,
     }),
@@ -69,8 +71,9 @@ class ProblemsState {
       $effect(() => {
         const { backend } = session;
         const revision = changeset.layout?.shown.revision;
+        // The files being looked at are asked first.
         const paths =
-          this.watchers > 0 ? [...new Set([...this.analysable, ...this.extra.filter((p) => this.served(p))])] : [];
+          this.watchers > 0 ? [...new Set([...this.extra.filter((p) => this.served(p)), ...this.analysable])] : [];
         // eslint-disable-next-line @typescript-eslint/no-unused-expressions -- answers dropped are asked for again
         semantic.generation;
         untrack(() => {
@@ -90,7 +93,7 @@ class ProblemsState {
     };
   }
 
-  /** Wants answers for these files too, for as long as they are the ones wanted. */
+  /** The files with a tab open: asked about first, for as long as they are the ones open. */
   want(paths: readonly string[]) {
     if (paths.length !== this.extra.length || paths.some((p, i) => p !== this.extra[i])) this.extra = paths;
   }
@@ -132,9 +135,12 @@ class ProblemsState {
 
   /** Whether the answers for these files say which problems the change introduced. */
   originsOf(paths: readonly string[]): Origins {
-    const answers = paths.flatMap((p) => this.answerOf(p)?.answer ?? []);
-    if (!answers.length || answers.some((a) => !a.compared)) return "pending";
-    return answers.some((a) => a.originUnavailable) ? "unknown" : "known";
+    return originsOf(paths.flatMap((p) => this.answerOf(p)?.answer ?? []));
+  }
+
+  /** The files of `paths` whose problems could not be told new from existing. */
+  unknownFiles(paths: readonly string[]): string[] {
+    return paths.filter((p) => this.answerOf(p)?.answer.originUnavailable);
   }
 
   /** Why the origins are unknown, from the first file that says. */
@@ -156,26 +162,21 @@ class ProblemsState {
     });
   }
 
+  /** The files of `paths` a server can be asked about and has not answered for yet. */
+  unanswered(paths: readonly string[]): string[] {
+    return paths.filter((p) => this.served(p) && !semantic.files.has(p) && !semantic.unavailableOf(p));
+  }
+
   /** How many of `paths` a server has answered for, and how many it can be asked about. */
   progressOf(paths: readonly string[]): { answered: number; total: number } {
-    const asked = paths.filter((p) => this.served(p));
-    return {
-      total: asked.length,
-      answered: asked.filter((p) => semantic.files.has(p) || semantic.unavailableOf(p)).length,
-    };
+    const total = paths.filter((p) => this.served(p)).length;
+    return { total, answered: total - this.unanswered(paths).length };
   }
 
   /** The problem last shown, by id. */
   selected = $state<string>();
-  /** Whether the panel lists only what the change introduced; the footer's item asks for that. */
+  /** Whether the panel lists only what the change introduced. */
   origin = $state<"new" | "all">("all");
-
-  /** The problem `delta` after the selected one, new ones first and across files; it becomes the selected one. */
-  step(delta: 1 | -1): Problem | undefined {
-    const next = step(inOrder(this.problems), this.selected, delta);
-    this.selected = next?.id;
-    return next;
-  }
 
   /** Asks the base side again, after a comparison failed. */
   retry() {

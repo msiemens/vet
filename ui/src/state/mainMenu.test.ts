@@ -208,16 +208,16 @@ void test("every tool window has a key of its own, and Commits is offered only f
   assert.deepEqual(calls, ["tool commits", "tool timeline"]);
 });
 
-void test("Next and Previous Problem step through the problems and are off, with the reason, when there are none", () => {
+void test("Next and Previous Problem do nothing, and say why in the menu, where the file on view has no problems", () => {
   const some = { ...open, problems: true };
-  assert.equal(find(menu({}, some), "nav.nextProblem")?.shortcut, "F2");
-  assert.equal(find(menu({}, some), "nav.previousProblem")?.shortcut, "Shift+F2");
-  assert.equal(find(menu({}, some), "nav.nextProblem")?.enabled, undefined);
   const none = find(menu({}, { problems: false }), "nav.nextProblem");
   assert.equal(none?.enabled, false);
   assert.ok(none.reason);
+  assert.equal(find(menu({}, some), "nav.previousProblem")?.enabled, undefined);
   calls.length = 0;
   assert.equal(registry.run("nav.nextProblem", { ...open, problems: false }), false);
+  assert.equal(registry.run("nav.previousProblem", { ...open, problems: false }), false);
+  assert.deepEqual(calls, []);
   assert.equal(registry.run("nav.nextProblem", some), true);
   assert.equal(registry.run("nav.previousProblem", some), true);
   assert.deepEqual(calls, ["problem 1", "problem -1"]);

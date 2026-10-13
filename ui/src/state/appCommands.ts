@@ -42,6 +42,7 @@ export interface AppActions {
   /** Shows or hides the tool window `id`. */
   toggleTool(id: string): void;
   /** Shows the problem `delta` after the one shown, new ones first. */
+  /** Shows the problem after (before) the caret in the file on view. */
   stepProblem(delta: 1 | -1): void;
   setTheme(theme: Theme): void;
   /** Opens the comment form on the changeset as a whole. */
@@ -90,7 +91,7 @@ const NO_PROJECT = "Open a project first";
 const NO_CHANGESET = "No changeset is on view";
 const NO_REVIEW = "No review is open";
 const NO_PULL_REQUEST = "No pull request is on view";
-const NO_PROBLEMS = "The changeset has no problems";
+const NO_PROBLEMS = "The file on view has no problems";
 
 export function appCommands(a: AppActions): Command<CommandContext>[] {
   const repoOpen = (c: CommandContext) => c.repoOpen;

@@ -59,7 +59,7 @@ export interface CommandContext {
   voteBlock?: string;
   /** The changeset on view has more than one commit, so there is something to review by commit. */
   manyCommits?: boolean;
-  /** The changeset has problems to step through. */
+  /** The file on view has problems to step through. */
   problems?: boolean;
   /** The tab commands apply to: the active one, or the one a tab's context menu was opened on. */
   tab?: TabId;

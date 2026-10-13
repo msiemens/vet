@@ -277,10 +277,7 @@
         const side = TOOLS.left.some((t) => t.id === id) ? left : right;
         Object.assign(side, toggleTool(side, id));
       },
-      stepProblem: (delta) => {
-        const found = problems.step(delta);
-        if (found) void controller?.showProblem(found.path, found.line, false);
-      },
+      stepProblem: (delta) => void controller?.stepProblem(delta),
       setTheme: (t) => applyTheme((theme = t)),
       commentOnChangeset,
       postComments: () => {
@@ -349,7 +346,7 @@
     voteSeparate: !!platform.traits?.verdictSeparate,
     voteBlock,
     manyCommits: commitCount > 1,
-    problems: problems.problems.length > 0,
+    problems: controller?.problemFile !== undefined && problems.problemsOf([controller.problemFile]).length > 0,
   }));
 
   // The main menu follows the state it shows.
@@ -643,7 +640,10 @@
       <ToolRail
         active={left.tool}
         open={left.open}
-        counts={{ comments: unreadComments, problems: problems.summary?.badge ?? 0 }}
+        badges={{
+          comments: { count: unreadComments, text: `${unreadComments} new` },
+          problems: { count: problems.summary?.badge ?? 0, text: problems.summary?.badgeText ?? "" },
+        }}
         bottom={bottomTool ?? null}
       />
       <ReviewScreen
@@ -686,11 +686,11 @@
           {:else if bottomTool === "problems"}
             <ProblemsPanel
               openFiles={controller?.openPaths ?? []}
-              currentFile={controller?.activePath}
+              currentFile={controller?.problemFile}
               onshow={(p, jump) => void controller?.showProblem(p.path, p.line, jump)}
               onfile={(path) => void controller?.revealFileInChanges(path)}
               oneditor={() => controller?.focusEditor()}
-              onservers={() => showDialog("settings", "servers")}
+              oninstall={() => showDialog("settings", "servers")}
             />
           {/if}
         {/snippet}
@@ -810,7 +810,6 @@
   onproblems={() => {
     screen = "review";
     bottomTool = "problems";
-    if (problems.summary?.icon !== "busy") problems.origin = "new";
   }}
 >
   {#snippet progress()}<TaskProgress tasks={backgroundTasks.tasks} /><PlatformFooter />{/snippet}

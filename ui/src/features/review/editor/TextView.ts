@@ -104,6 +104,8 @@ export class TextView {
   private scrollbar?: Scrollbar;
   /** The reviewer was in the editor, or navigation put its caret on a line: comments go on its selection. */
   private entered = false;
+  /** The editor takes the keyboard focus when it is mounted. */
+  private focusWhenMounted = false;
   private cards: TextThreads;
   private commentable: boolean;
   /** The text the editor shows, and the hunks it draws, which a find reads. */
@@ -200,6 +202,7 @@ export class TextView {
     else if (this.hunk !== undefined) this.goToHunk(this.hunk);
     else if (this.line !== undefined) this.goToLine(this.line);
     else if (this.position) this.showLines(this.position);
+    if (this.focusWhenMounted) view.focus();
     this.refreshDiagnostics();
   }
 
@@ -511,9 +514,10 @@ export class TextView {
     view.dispatch({ selection: { anchor: from }, effects: EditorView.scrollIntoView(from, { y: "center" }) });
   }
 
-  /** Gives the keyboard focus to the editor once the text has arrived. */
+  /** Gives the keyboard focus to the editor, once the text has arrived if it has not yet. */
   focusEditor() {
-    this.view?.focus();
+    if (this.view) this.view.focus();
+    else this.focusWhenMounted = true;
   }
 
   /** Where the caret is; none until the text has arrived. */

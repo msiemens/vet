@@ -23,6 +23,8 @@ import { platform } from "../../state/platform.svelte";
 import { locationPicker } from "../../state/locationPicker.svelte";
 import { LocationSearch } from "../../state/locationSearch";
 import type { FileLayout, Frame, ViewLayout } from "../../state/reviewModel";
+import { stepInFile } from "../../state/problemRows";
+import { problems } from "../../state/problems.svelte";
 import { semantic } from "../../state/semantic.svelte";
 import { serverList } from "../../state/serverList.svelte";
 import { languageOf, withoutFeature } from "../../state/serverStatus";
@@ -57,6 +59,7 @@ import { type FilePositions, type SavedView, ViewMemory, restoredTabs } from "./
 import { keyId } from "../../state/changesetKey";
 import { threadMenu } from "../comments";
 import { type HunkPlace, stepFlagged } from "./flaggedHunks";
+import { problemTab } from "./problemTab";
 import { provideActions } from "./reviewActions";
 import type { ViewActions } from "./reviewCommands";
 import {
@@ -1345,24 +1348,52 @@ export class ReviewController {
     const id = fileTab(path);
     if (jump) {
       await this.openSource(id, path, line);
+      await tick(); // the tab's editor is attached before it takes the focus
       this.focusEditor();
       return;
     }
     const wholeChanges = this.changeset.shownCommit === undefined && !this.changeset.currentLayout()?.interdiff;
-    const changes = this.views.get(CHANGES);
-    const changesIndex = wholeChanges && changes ? changes.indexOf(path) : -1;
-    const active = this.tabs.active;
-    if (active === CHANGES && changesIndex >= 0) {
-      await changes?.goToLine(changesIndex, line, true);
-    } else if (active === id || this.tabs.open.includes(id)) {
+    const changes = () => this.views.get(CHANGES);
+    const changesIndex = wholeChanges ? (changes()?.indexOf(path) ?? -1) : -1;
+    const place = problemTab({
+      active: this.tabs.active,
+      changes: CHANGES,
+      file: id,
+      open: this.tabs.open,
+      inChanges: changesIndex >= 0,
+    });
+    if (place === "changes") {
+      await changes()?.goToLine(changesIndex, line, true);
+    } else if (place === "file") {
       this.tabs.active = id;
+      await tick(); // the tab's pane attaches and builds its view
       await this.lineInTab(id, line);
-    } else if (changesIndex >= 0) {
+    } else if (place === "changesToFront") {
       this.tabs.active = CHANGES;
-      await changes?.goToLine(changesIndex, line, true);
+      await tick();
+      await changes()?.goToLine(changesIndex, line, true);
     } else {
       await this.openLocation(id, path, line, "target");
     }
+  }
+
+  /**
+   * The file whose problems Next and Previous Problem step through: the active tab's file (the file
+   * at the top of the Changes tab), none for a tab at a commit, whose text is not the latest code.
+   */
+  get problemFile(): string | undefined {
+    const target = this.structureTarget();
+    return target && target.commit === undefined ? target.path : undefined;
+  }
+
+  /** Shows the problem after (before) the caret in `problemFile`, wrapping around within the file; the editor keeps its focus. */
+  async stepProblem(delta: 1 | -1) {
+    const target = this.structureTarget();
+    if (!target || target.commit !== undefined) return;
+    const next = stepInFile(problems.problemsOf([target.path]), target.caret()?.line, problems.selected, delta);
+    if (!next) return;
+    problems.selected = next.id;
+    await this.showProblem(next.path, next.line, false);
   }
 
   /** A file's header in a list was chosen: the Changes tab, when it is the tab on screen, shows the file. */

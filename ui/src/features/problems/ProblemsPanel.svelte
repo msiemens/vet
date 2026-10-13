@@ -12,6 +12,7 @@
   import Popover from "../../lib/ui/Popover.svelte";
   import Segmented from "../../lib/ui/Segmented.svelte";
   import Spinner from "../../lib/ui/Spinner.svelte";
+  import Splitter from "../../lib/ui/Splitter.svelte";
   import VirtualRows from "../../lib/ui/VirtualRows.svelte";
   import { changeset } from "../../state/changeset.svelte";
   import {
@@ -20,7 +21,6 @@
     type Problem,
     type Row,
     NO_FILTERS,
-    countsOf,
     filtered,
     narrowing,
     rowsOf,
@@ -38,7 +38,7 @@
     onshow,
     onfile,
     oneditor,
-    onservers,
+    oninstall,
   }: {
     /** The files with a tab open, and the file of the tab on screen. */
     openFiles: readonly string[];
@@ -49,15 +49,20 @@
     onfile: (path: string) => void;
     /** Gives the keyboard focus back to the editor. */
     oneditor: () => void;
-    /** Opens Settings at the language servers. */
-    onservers: () => void;
+    /** Opens Settings at the language servers, to install the one a file lacks. */
+    oninstall: () => void;
   } = $props();
 
   type Scope = "changed" | "open" | "file";
   type Item =
     | Row
+    | { kind: "wait"; key: string; server: string; files: string[] }
     | { kind: "na"; key: string; open: boolean; count: number }
     | { kind: "naFile"; key: string; path: string; why: Unavailable };
+
+  /** The smallest height the panel is dragged to, and the room the review above it keeps. */
+  const MIN_HEIGHT = 120;
+  const KEPT_ABOVE = 140;
 
   const LEVELS: { id: Level; title: string }[] = [
     { id: "error", title: "Errors" },
@@ -70,6 +75,9 @@
     pending: "Comparing with the base",
     unknown: "",
   } as const;
+  /** How a problem is matched with the base's, which is why one that moved or changed reads as it does. */
+  const MATCHING =
+    "Matched with the base's problems by line (as the diff moves it) and message: one that only moved is existing, one whose message changed with the code reads as new.";
   const REVIEWED = {
     seen: "Seen",
     old: "Seen against an old base",
@@ -82,6 +90,8 @@
   let grouping = $state<Grouping>("origin");
   let folded = $state.raw<ReadonlySet<string>>(new Set());
   let naOpen = $state(false);
+  let limitedOpen = $state(false);
+  let height = $state<number>();
   let cursor = $state(-1);
   let focused = $state(false);
   let root = $state<HTMLElement>();
@@ -92,22 +102,22 @@
   const scopePaths = $derived(
     scope === "changed" ? problems.changed : scope === "open" ? [...openFiles] : currentFile ? [currentFile] : [],
   );
-  // The open tabs' files are asked about even where the change leaves them alone.
+  // The files with a tab open are asked about first, even where the change leaves them alone.
   $effect(() => {
-    const wanted = scope === "changed" ? [] : scopePaths;
-    untrack(() => problems.want(wanted));
+    const open = [...openFiles];
+    untrack(() => problems.want(open));
   });
 
   const all = $derived(problems.problemsOf(scopePaths));
   const origins = $derived(problems.originsOf(scopePaths.filter((p) => problems.served(p))));
-  const known = $derived(origins === "known");
+  /** No origin is pending: each problem is new, existing or of unknown origin. */
+  const settled = $derived(origins !== "pending");
   const active = $derived({ ...filters, origin: problems.origin });
-  const shown = $derived(filtered(all, active, known));
+  const shown = $derived(filtered(all, active, settled));
   const rows = $derived(
-    rowsOf(shown, { grouping: grouping === "origin" && !known ? "file" : grouping, known, folded }),
+    rowsOf(shown, { grouping: grouping === "origin" && !settled ? "file" : grouping, settled, folded }),
   );
   const missing = $derived(problems.notAnalysed(scopePaths));
-  const counts = $derived(countsOf(all, known));
   const levelCounts = $derived({
     error: all.filter((p) => p.level === "error").length,
     warning: all.filter((p) => p.level === "warning").length,
@@ -115,16 +125,11 @@
   });
   const reach = $derived(problems.progressOf(scopePaths));
   const stale = $derived(problems.staleIn(scopePaths));
-  const items = $derived<Item[]>([
-    ...rows,
-    ...(missing.length ? [{ kind: "na" as const, key: "na", open: naOpen, count: missing.length }] : []),
-    ...(naOpen ? missing.map((m) => ({ kind: "naFile" as const, key: `na:${m.path}`, path: m.path, why: m.why })) : []),
-  ]);
-
   const waiting = $derived(reach.total > 0 && reach.answered === 0);
   const everyFileUnserved = $derived(scopePaths.length > 0 && reach.total === 0);
   const clean = $derived(!waiting && !everyFileUnserved && all.length === 0);
-
+  /** No file can be analysed, so what is not analysed is all there is to say and is shown open. */
+  const naShown = $derived(naOpen || everyFileUnserved);
   /** The server of the first file in scope, for what the notices say. */
   const serverOf = $derived.by(() => {
     const path = scopePaths.find((p) => languageOf(p, serverList.servers) !== undefined);
@@ -135,9 +140,21 @@
     const path = scopePaths.find((p) => languageOf(p, serverList.servers) !== undefined);
     return path ? serverLine(path, serverList.servers, tasks.tasks, semantic.summary(path))?.indexing : undefined;
   });
+  const unanswered = $derived(problems.unanswered(scopePaths));
+  const items = $derived<Item[]>([
+    ...rows,
+    ...(indexing && serverOf && unanswered.length
+      ? [{ kind: "wait" as const, key: "wait", server: serverOf.server, files: unanswered }]
+      : []),
+    ...(missing.length ? [{ kind: "na" as const, key: "na", open: naShown, count: missing.length }] : []),
+    ...(naShown
+      ? missing.map((m) => ({ kind: "naFile" as const, key: `na:${m.path}`, path: m.path, why: m.why }))
+      : []),
+  ]);
+
   const limited = $derived(changeset.restoreFailures.length ? limitedMessage(changeset.restoreFailures) : undefined);
+  const latest = $derived(versions.items.at(-1)?.n);
   const lensNote = $derived.by(() => {
-    const latest = versions.items.at(-1)?.n;
     const code = latest === undefined ? "the latest code" : `the latest code (v${latest})`;
     if (changeset.shownCommit !== undefined) {
       const id = changeset.commits[changeset.shownCommit]?.commit.shortId;
@@ -146,6 +163,7 @@
     return changeset.range ? `Showing the problems of ${code}. The range on view is not analysed.` : undefined;
   });
   const unknownWhy = $derived(problems.unknownWhy(scopePaths));
+  const unknownFiles = $derived(problems.unknownFiles(scopePaths).length);
   const baseId = $derived(changeset.facts?.base.commit.shortId);
 
   const keyOf = (item: Item) => (item.kind === "problem" ? `p:${item.problem.id}` : item.key);
@@ -161,7 +179,7 @@
     if (item.kind === "problem") {
       problems.selected = item.problem.id;
       onshow(item.problem, false);
-    } else if (item.kind === "naFile") {
+    } else if (item.kind === "naFile" || item.kind === "wait") {
       return;
     } else if (item.kind === "na") {
       naOpen = !naOpen;
@@ -212,11 +230,11 @@
     if (item && plain(e) && (e.key === "ArrowLeft" || e.key === "ArrowRight")) {
       take();
       const holds = (r: Item) => r.kind === "group" || r.kind === "file" || r.kind === "na";
-      const isOpen = (r: Item) => (r.kind === "na" ? naOpen : "open" in r && r.open);
+      const isOpen = (r: Item) => (r.kind === "na" ? naShown : "open" in r && r.open);
       if (e.key === "ArrowRight") {
         if (holds(item) && !isOpen(item)) single(item);
       } else if (holds(item) && isOpen(item)) single(item);
-      else if (item.kind === "problem" || item.kind === "naFile") {
+      else if (item.kind === "problem" || item.kind === "naFile" || item.kind === "wait") {
         let holder = cursor - 1;
         while (holder >= 0 && !holds(items[holder])) holder--;
         if (holder >= 0) {
@@ -269,6 +287,12 @@
     problems.origin = "all";
   }
 
+  /** The smallest and largest height the splitter above the panel gives it. */
+  const limits = (): [number, number] => [
+    MIN_HEIGHT,
+    Math.max(MIN_HEIGHT, (root?.parentElement?.clientHeight ?? 0) - KEPT_ABOVE),
+  ];
+
   function showMissing() {
     naOpen = true;
     void tick().then(() => {
@@ -286,6 +310,7 @@
       [p.diagnostic.source, p.diagnostic.code].filter(Boolean).join(" "),
       `${p.path}:${p.line + 1}`,
       ORIGIN_TITLE[p.origin],
+      p.origin === "new" || p.origin === "existing" ? MATCHING : "",
     ]
       .filter(Boolean)
       .join("\n");
@@ -293,7 +318,23 @@
   const base = (path: string) => path.slice(path.lastIndexOf("/") + 1);
 </script>
 
-<section aria-label="Problems" bind:this={root} onfocusin={focusin} onfocusout={focusout}>
+<section
+  aria-label="Problems"
+  bind:this={root}
+  style:height={height === undefined ? undefined : `${height}px`}
+  onfocusin={focusin}
+  onfocusout={focusout}
+>
+  <Splitter
+    orientation="horizontal"
+    label="Resize Problems"
+    storageKey="vet.dock.problems"
+    direction={-1}
+    current={() => root?.offsetHeight ?? MIN_HEIGHT}
+    {limits}
+    bind:size={height}
+    style="top: calc(var(--w-splitter) / -2)"
+  />
   <div class="tool">
     <Segmented
       small
@@ -331,10 +372,10 @@
         {
           id: "new",
           label: "New",
-          disabled: !known,
-          title: known ? "Only problems this change introduced" : "Not known yet",
+          disabled: !settled,
+          title: settled ? "Only problems this change introduced" : "Not known yet",
         },
-        { id: "all", label: "All", disabled: !known },
+        { id: "all", label: "All" },
       ]}
     />
     <span class="grow"></span>
@@ -364,12 +405,12 @@
       <div class="menu-sheet">
         <h5>Group by</h5>
         {#each [{ id: "origin", label: "Origin, then file" }, { id: "file", label: "File" }, { id: "severity", label: "Severity" }] as g (g.id)}
-          <label class:off={g.id === "origin" && !known}>
+          <label class:off={g.id === "origin" && !settled}>
             <input
               type="radio"
               name="problems-group"
               checked={grouping === g.id}
-              disabled={g.id === "origin" && !known}
+              disabled={g.id === "origin" && !settled}
               onchange={() => (grouping = g.id as Grouping)}
             />
             {g.label}
@@ -399,7 +440,19 @@
   {#if limited}
     <div class="notice warn">
       <Icon name="warning" size={14} />
-      <div>{limited} Errors about unresolved names may not be real.</div>
+      <div>
+        {limited} Errors about unresolved names may not be real.
+        <button class="link" type="button" aria-expanded={limitedOpen} onclick={() => (limitedOpen = !limitedOpen)}
+          >{limitedOpen ? "Hide details" : "Details"}</button
+        >
+        {#if limitedOpen}
+          <ul class="failures">
+            {#each changeset.restoreFailures as failure (failure.project + failure.tool + failure.message)}
+              <li><strong>{failure.project}</strong> ({failure.tool}): <code>{failure.message}</code></li>
+            {/each}
+          </ul>
+        {/if}
+      </div>
     </div>
   {/if}
   {#if lensNote}
@@ -418,8 +471,9 @@
     <div class="notice warn">
       <Icon name="warning" size={14} />
       <div>
-        Cannot tell which problems are new: {unknownWhy ? unknownWhy.message : "the base could not be analysed"}, so
-        none is marked new.
+        Cannot tell which problems are new{unknownFiles > 1 ? ` in ${unknownFiles} files` : ""}: {unknownWhy
+          ? unknownWhy.message
+          : "the base could not be analysed"}, so none of {unknownFiles > 1 ? "theirs is" : "that file's is"} marked new.
         <button class="link" type="button" onclick={() => problems.retry()}>Retry</button>
       </div>
     </div>
@@ -452,7 +506,10 @@
     {:else if everyFileUnserved}
       <div class="empty">
         <b>No language support for these files</b>
-        <span class="sub">Vet shows the problems a language server reports. None is available for these files.</span>
+        <span class="sub"
+          >Vet shows problems that a language server reports. None is available for {missing.length} of the changed files,
+          so none is analysed.</span
+        >
       </div>
     {/if}
     {#if items.length}
@@ -516,6 +573,11 @@
                 <span class="rv {p.reviewed}" title={REVIEWED[p.reviewed]}><i></i></span>
                 <span class="loc mono">{place(p, item.showFile)}</span>
               </button>
+            {:else if item.kind === "wait"}
+              <div class="line waiting">
+                <Spinner />
+                <span class="path">Waiting for {item.server}: {item.files.map(base).join(", ")}</span>
+              </div>
             {:else if item.kind === "na"}
               <button
                 class="flat line group"
@@ -533,10 +595,8 @@
                 <FileIcon name={base(item.path)} />
                 <span class="path"><span class="dir">{dir(item.path)}</span>{base(item.path)}</span>
                 <span class="why">{item.why.label}</span>
-                {#if item.why.kind === "serverMissing" || item.why.kind === "serverFailed"}
-                  <button class="link" type="button" onclick={onservers}
-                    >{item.why.kind === "serverMissing" ? "Install…" : "Language servers…"}</button
-                  >
+                {#if item.why.kind === "serverMissing"}
+                  <button class="link" type="button" onclick={oninstall}>Install…</button>
                 {/if}
               </div>
             {/if}
@@ -549,22 +609,22 @@
   <div class="stat">
     {#if stale}
       <Spinner />
-      <span>Updating · {reach.answered} of {reach.total} files</span>
+      <span>Updating{latest === undefined ? "" : ` for v${latest}`} · {reach.answered} of {reach.total} files</span>
     {:else}
       <span>{reach.answered} of {reach.total} files analysed</span>
     {/if}
-    {#if missing.length}
+    {#if missing.length && !everyFileUnserved}
       <span>·</span>
       <button class="link" type="button" onclick={showMissing}>{missing.length} not analysed</button>
     {/if}
     <span class="grow"></span>
-    {#if known && baseId}<span>origin: compared with base <span class="mono">{baseId}</span></span>{/if}
-    {#if counts.existing > 0 && !known}<span class="mono">{counts.all} in all</span>{/if}
+    {#if origins === "known" && baseId}<span>origin: compared with base <span class="mono">{baseId}</span></span>{/if}
   </div>
 </section>
 
 <style>
   section {
+    position: relative;
     flex: none;
     height: var(--h-problems);
     display: flex;
@@ -921,6 +981,18 @@
   .na {
     padding-left: 34px;
     color: var(--text-2);
+  }
+  .waiting {
+    color: var(--text-3);
+  }
+  .failures {
+    margin: 4px 0 0;
+    padding-left: 16px;
+  }
+  .failures code {
+    font-family: var(--font-mono);
+    font-size: 11px;
+    white-space: pre-wrap;
   }
   .why {
     flex: none;
