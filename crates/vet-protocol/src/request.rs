@@ -325,6 +325,18 @@ pub enum Request {
         revision: u32,
         path: String,
     },
+    /// Every symbol of the file `path` as `view` shows it (derived): in the changeset, a changed
+    /// file's symbols of both sides with what the change did to each (a removed symbol is listed
+    /// where it stood), any other file's from its target text; in a commit or an interdiff, the
+    /// symbols of the file as the commit leaves it (the changeset's target for an interdiff),
+    /// with no marks. A language without a usable server answers with `unavailable` set and no
+    /// symbols. Fails if `revision` is no longer current. Answers with `Response::FileOutline`.
+    FileOutline {
+        project: ProjectId,
+        view: View,
+        revision: u32,
+        path: String,
+    },
     /// The innermost symbol (a function, type, module, field or constant) that holds a position of
     /// one side of the changeset, and what became of it (derived). The position is in the text of that side,
     /// 0-based lines and UTF-16 columns. A language without a usable server answers with

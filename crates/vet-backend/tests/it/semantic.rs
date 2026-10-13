@@ -11,7 +11,7 @@ use crate::common::{Client, config, find, git, repo_with, write};
 use vet_backend::{Orchestrator, open_store};
 use vet_protocol::{
     CallFate, Event, LocationChange, Reach, Request, Response, ServerMessage, ServerState, Side, SymbolChange,
-    SymbolId, SymbolName, UnavailableKind,
+    SymbolId, SymbolName, UnavailableKind, View,
 };
 
 const BASE: &str = "\
@@ -71,6 +71,7 @@ async fn rust_semantics_through_the_protocol() {
         "[package]\nname = \"tiny\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
     );
     write(repo.path(), "src/lib.rs", BASE);
+    write(repo.path(), "src/other.rs", "pub fn steady() {}\n");
     let lock = Command::new("cargo")
         .args(["generate-lockfile", "--offline"])
         .current_dir(repo.path())
@@ -265,6 +266,46 @@ async fn rust_semantics_through_the_protocol() {
             .await
             .is_err(),
         "not a changed file"
+    );
+
+    // The whole outline: the unchanged symbols too, and the removed one where it stood.
+    let outline_of = |view, path: &str| {
+        let client = &client;
+        let request = Request::FileOutline {
+            project,
+            view,
+            revision,
+            path: path.into(),
+        };
+        async move {
+            let Response::FileOutline(outline) = client.call(request).await.unwrap() else {
+                panic!("not an outline");
+            };
+            outline
+        }
+    };
+    let outline = outline_of(View::Changeset, path).await;
+    assert_eq!(outline.unavailable, None);
+    assert_eq!(
+        (outline.symbols.iter())
+            .map(|o| (o.symbol.id.name[0].as_str(), o.change))
+            .collect::<Vec<_>>(),
+        [
+            ("gone", Some(SymbolChange::Removed)),
+            ("keep", Some(SymbolChange::Modified)),
+            ("fresh", Some(SymbolChange::Added)),
+            ("broken", Some(SymbolChange::Added)),
+            ("caller", None),
+            ("main", Some(SymbolChange::Modified)),
+        ]
+    );
+    // A file the changeset leaves alone has an outline too.
+    let other = outline_of(View::Changeset, "src/other.rs").await;
+    assert_eq!(
+        (other.symbols.iter())
+            .map(|o| (o.symbol.id.name[0].as_str(), o.change))
+            .collect::<Vec<_>>(),
+        [("steady", None)]
     );
 
     // The symbol under the cursor: changed or not, on either side.
@@ -483,6 +524,12 @@ async fn rust_semantics_through_the_protocol() {
             revision: revision + 1,
             path: path.into(),
         },
+        Request::FileOutline {
+            project,
+            view: View::Changeset,
+            revision: revision + 1,
+            path: path.into(),
+        },
         Request::Diagnostics {
             project,
             revision: revision + 1,
@@ -574,6 +621,39 @@ async fn a_language_without_a_server_degrades_and_never_fails_the_project() {
     );
     let notes = file_symbols("notes.md").await;
     assert!(notes.symbols.is_empty() && notes.gap.is_none(), "{notes:?}");
+
+    // An outline says why there is none, in every view.
+    for view in [View::Changeset, View::Commit { index: 0 }] {
+        let outline = |path: &str| {
+            let request = Request::FileOutline {
+                project,
+                view,
+                revision,
+                path: path.into(),
+            };
+            let client = &client;
+            async move {
+                let Response::FileOutline(outline) = client.call(request).await.unwrap() else {
+                    panic!("not an outline");
+                };
+                outline
+            }
+        };
+        let notes = outline("notes.md").await;
+        assert!(notes.symbols.is_empty(), "{notes:?}");
+        assert_eq!(notes.unavailable.unwrap().kind, UnavailableKind::Unsupported);
+    }
+    let python = Request::FileOutline {
+        project,
+        view: View::Changeset,
+        revision,
+        path: "a.py".into(),
+    };
+    let Response::FileOutline(python) = client.call(python).await.unwrap() else {
+        panic!("not an outline");
+    };
+    assert!(python.symbols.is_empty());
+    assert_eq!(python.unavailable.unwrap().kind, UnavailableKind::ServerMissing);
 
     // The project itself is fine.
     assert_eq!(client.revision(project).await, revision);

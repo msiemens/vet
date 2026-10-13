@@ -5,10 +5,10 @@ use ts_rs::TS;
 
 use crate::{
     Account, BackendSettings, Base, BaseDiff, BlobContent, BranchInfo, Calls, ChangesetKey, ChangesetRow, CheckLog,
-    CommitChecks, CommitInfo, CommitUnit, Diagnostic, DirEntry, FileSymbols, Highlights, Lens, LineDelta, LocationRows,
-    Locations, Manifest, ProjectId, PullRequestInfo, PullRequestRow, PullRequestSource, Reachability, RecentProject,
-    RemovalImpact, ReviewSubmitted, ReviewUpdate, ServerInfo, Side, SymbolAt, SymbolSignature, Task, TextChange,
-    TextContent, Thread, ThreadTarget, Unavailable, Usages, VersionInfo,
+    CommitChecks, CommitInfo, CommitUnit, Diagnostic, DirEntry, FileOutline, FileSymbols, Highlights, Lens, LineDelta,
+    LocationRows, Locations, Manifest, ProjectId, PullRequestInfo, PullRequestRow, PullRequestSource, Reachability,
+    RecentProject, RemovalImpact, ReviewSubmitted, ReviewUpdate, ServerInfo, Side, SymbolAt, SymbolSignature, Task,
+    TextChange, TextContent, Thread, ThreadTarget, Unavailable, Usages, VersionInfo,
 };
 
 #[derive(Clone, PartialEq, Debug, Serialize, Deserialize, TS)]
@@ -135,6 +135,7 @@ pub enum Response {
         unavailable: Option<Unavailable>,
     },
     FileSymbols(FileSymbols),
+    FileOutline(FileOutline),
     SymbolAt(SymbolAt),
     /// `None` with `unavailable` unset means the server has nothing to say.
     Signature {

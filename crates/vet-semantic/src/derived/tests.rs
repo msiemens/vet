@@ -709,6 +709,74 @@ fn a_symbol_only_one_side_has_was_added_even_if_no_hunk_is_inside_it_itself() {
     );
 }
 
+fn outlined(fake: &Fake, file: &FileDiff) -> Vec<(String, Option<Change>)> {
+    let compared = block_on(compared(fake, &NoTexts, file)).value.unwrap();
+    outline(&compared)
+        .into_iter()
+        .map(|o| (o.symbol.sym.name.join("::"), o.change))
+        .collect()
+}
+
+#[test]
+fn the_outline_lists_every_symbol_and_puts_a_removed_one_after_the_sibling_it_followed() {
+    let (fake, file) = holder_fixture();
+    assert_eq!(
+        outlined(&fake, &file),
+        [
+            ("S".to_string(), None),
+            ("S::a".to_string(), None),
+            ("S::b".to_string(), Some(Change::Modified)),
+            ("S::gone".to_string(), Some(Change::Removed)),
+        ]
+    );
+}
+
+#[test]
+fn a_removed_symbol_with_no_sibling_before_it_comes_first_in_its_holder() {
+    let mut fake = Fake::default();
+    fake.symbols.insert(
+        (Side::Base, file("r.rs")),
+        vec![
+            sym("r.rs", "first", 0, 2),
+            sym("r.rs", "S", 3, 9),
+            sym("r.rs", "S::lost", 4, 5),
+            sym("r.rs", "S::kept", 6, 8),
+            sym("r.rs", "tail", 10, 12),
+        ],
+    );
+    fake.symbols.insert(
+        (Side::Target, file("r.rs")),
+        vec![
+            sym("r.rs", "first", 0, 2),
+            sym("r.rs", "S", 3, 7),
+            sym("r.rs", "S::kept", 4, 6),
+        ],
+    );
+    let file = diff("r.rs", vec![hunk((4, 5), (4, 4)), hunk((10, 12), (8, 8))]);
+    let names: Vec<_> = outlined(&fake, &file).into_iter().map(|(n, _)| n).collect();
+    assert_eq!(names, ["first", "S", "S::lost", "S::kept", "tail"]);
+}
+
+#[test]
+fn the_outline_of_an_added_or_deleted_file_is_all_added_or_all_removed() {
+    let mut fake = Fake::default();
+    fake.symbols.insert((Side::Base, file("n.rs")), vec![]);
+    fake.symbols.insert(
+        (Side::Target, file("n.rs")),
+        vec![sym("n.rs", "Fresh", 0, 5), sym("n.rs", "Fresh::m", 1, 3)],
+    );
+    let mut added = diff("n.rs", vec![hunk((0, 0), (0, 5))]);
+    added.old_path = None;
+    assert!(outlined(&fake, &added).iter().all(|(_, c)| *c == Some(Change::Added)));
+
+    fake.symbols
+        .insert((Side::Base, file("d.rs")), vec![sym("d.rs", "Gone", 0, 5)]);
+    fake.symbols.insert((Side::Target, file("d.rs")), vec![]);
+    let mut deleted = diff("d.rs", vec![hunk((0, 5), (0, 0))]);
+    deleted.new_path = None;
+    assert_eq!(outlined(&fake, &deleted), [("Gone".to_string(), Some(Change::Removed))]);
+}
+
 /// Callers, callees and what is changed around `x`.
 ///
 /// calls:   c1 -> x, u1 -> x, c3 -> c1, u2 -> c3;  x -> n, x -> u1;  on the base x -> g

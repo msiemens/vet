@@ -4,14 +4,17 @@
 
 use std::collections::HashMap;
 
+use vet_app::semantics::Answer;
+use vet_app::session::{SessionError, View};
 use vet_core::content::RepoPath;
 use vet_core::text::Lines;
 use vet_protocol::{Response, Side};
 use vet_semantic::derived::Reference;
 use vet_semantic::ports::{At, BackendId, Location};
+use vet_semantic::query::SemanticError;
 
-use vet_mapping::core_side;
 use vet_mapping::semantic as map;
+use vet_mapping::{core_side, core_view};
 
 use super::highlight::Highlighter;
 use super::open::Booted;
@@ -241,6 +244,51 @@ impl Booted {
             path,
             &found.changes,
             found.gap,
+        )))
+    }
+
+    pub async fn file_outline(&self, view: vet_protocol::View, revision: u32, path: &str) -> Result<Response, String> {
+        let file = RepoPath::from(path);
+        let answer = match core_view(view) {
+            View::Changeset => (self.semantics)
+                .file_outline(&self.view, revision, &file)
+                .await
+                .map_err(message)?,
+            // The semantic layer holds the changeset's snapshots, not a commit's: such a view has
+            // the outline of its text, with no marks.
+            other => {
+                if self.semantics.language_of(&file).is_none() {
+                    Answer {
+                        revision,
+                        result: Err(SemanticError::NoBackend(file.clone())),
+                        provenance: None,
+                    }
+                } else {
+                    let text = self.session.target_text(other, path).await.map_err(message)?;
+                    if text.revision != revision {
+                        return Err(message(SessionError::Stale { current: text.revision }));
+                    }
+                    match text.content {
+                        Ok(text) => (self.semantics)
+                            .text_outline(&self.view, revision, &file, &text)
+                            .await
+                            .map_err(message)?,
+                        // No text to read symbols from: the file is not there at this commit.
+                        Err(_) => Answer {
+                            revision,
+                            result: Ok(Vec::new()),
+                            provenance: None,
+                        },
+                    }
+                }
+            }
+        };
+        let (found, unavailable) = map::answer(answer.result, self.language_of(&file));
+        Ok(Response::FileOutline(map::file_outline(
+            revision,
+            path,
+            &found,
+            unavailable,
         )))
     }
 

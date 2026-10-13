@@ -12,8 +12,8 @@ use std::time::Instant;
 use vet_core::content::{FileDiff, RepoPath};
 use vet_core::review::Side;
 use vet_semantic::derived::{
-    Bounds, Calls, Change, Compared, Derived, EntryPoints, FileChanges, Located, Reach, Reference, RemovalImpact,
-    Texts, Usages, calls, compared, located, reachability, removal_impact, symbol_at, usages,
+    Bounds, Calls, Change, Compared, Derived, EntryPoints, FileChanges, Located, OutlineSymbol, Reach, Reference,
+    RemovalImpact, Texts, Usages, calls, compared, located, outline, reachability, removal_impact, symbol_at, usages,
 };
 use vet_semantic::join::bounded;
 use vet_semantic::pool::{Pool, Supervision, Target};
@@ -132,6 +132,16 @@ fn locate(file: &FileDiff, found: &Compared, sym: &Sym) -> Option<Resolved> {
         });
     }
     None
+}
+
+/// The symbols `text` declares as the content of `path`, none of them marked as changed.
+async fn unmarked(p: &impl Primitives, path: &RepoPath, text: &str) -> Result<Vec<OutlineSymbol>, SemanticError> {
+    let found = p.text_symbols(path, text).await?;
+    Ok(found
+        .value
+        .into_iter()
+        .map(|symbol| OutlineSymbol { symbol, change: None })
+        .collect())
 }
 
 /// How many of a file's diagnostics count towards what a viewer is told: hints are not counted.
@@ -546,6 +556,67 @@ where
                     // A language no server handles has no symbols to know.
                     Err(SemanticError::NoBackend(_)) => none(None),
                     Err(e) => none(Some(e.to_string())),
+                })
+            }),
+        )
+        .await
+    }
+
+    /// Every symbol of the file `path` as the changeset leaves it, changed or not: a changed file's
+    /// from the texts of both sides, with the symbols it lost and what the change did to each;
+    /// any other file's from its target text, with no marks. A file no language handles has no
+    /// outline to know (`NoBackend`).
+    pub async fn file_outline(
+        &self,
+        view: &RevisionView<G, S>,
+        revision: u32,
+        path: &RepoPath,
+    ) -> Fallible<Answer<Vec<OutlineSymbol>>> {
+        self.current(
+            revision,
+            Box::pin(async move {
+                let started = Instant::now();
+                if self.language_of(path).is_none() {
+                    return Ok(Answer::of(revision, Err(SemanticError::NoBackend(path.clone()))));
+                }
+                let files = view.changed_files(revision).await?;
+                let pair = self.pair(view, revision).await?;
+                let result = match changed_file(&files, path) {
+                    Some(file) => (compared(&pair, &self.content(view), file).await.value).map(|found| outline(&found)),
+                    None => {
+                        let text = (view.side_text(revision, Side::Target, path).await?)
+                            .ok_or_else(|| SessionError::NotFound(format!("text of {}", path.to_string_lossy())))?;
+                        unmarked(&pair, path, &text).await
+                    }
+                };
+                trace::log(|| format!("outline of {}", path.to_string_lossy()), started);
+                Ok(Answer {
+                    revision,
+                    result,
+                    provenance: None,
+                })
+            }),
+        )
+        .await
+    }
+
+    /// Every symbol of `text`, the content of the file `path` in a view the semantic layer holds no
+    /// snapshots of (a commit): with no marks.
+    pub async fn text_outline(
+        &self,
+        view: &RevisionView<G, S>,
+        revision: u32,
+        path: &RepoPath,
+        text: &str,
+    ) -> Fallible<Answer<Vec<OutlineSymbol>>> {
+        self.current(
+            revision,
+            Box::pin(async move {
+                let pair = self.pair(view, revision).await?;
+                Ok(Answer {
+                    revision,
+                    result: unmarked(&pair, path, text).await,
+                    provenance: None,
                 })
             }),
         )
@@ -1312,6 +1383,45 @@ mod tests {
 
         let unchanged = semantics.file_symbols(&fx.view, 0, &path("untouched.rs")).await;
         assert!(matches!(unchanged, Err(SessionError::NotFound(_))));
+    }
+
+    #[tokio::test]
+    async fn the_outline_marks_a_changed_file_and_reads_any_other_from_its_text() {
+        let (fx, semantics, counters) = semantics_over(
+            &[("a.rs", "one\n"), ("u.rs", "same\n"), ("c.md", "one\n")],
+            &[("a.rs", "two\n"), ("u.rs", "same\n"), ("c.md", "two\n")],
+        )
+        .await;
+        let path = |p: &str| RepoPath(p.as_bytes().to_vec());
+        let marks = |found: Answer<Vec<OutlineSymbol>>| -> Vec<Option<Change>> {
+            found.result.unwrap().iter().map(|o| o.change).collect()
+        };
+
+        let changed = semantics.file_outline(&fx.view, 0, &path("a.rs")).await.unwrap();
+        assert_eq!(marks(changed), [Some(Change::Modified)]);
+        let unchanged = semantics.file_outline(&fx.view, 0, &path("u.rs")).await.unwrap();
+        assert_eq!(marks(unchanged), [None]);
+        // Both texts of a.rs and the one text of u.rs.
+        assert_eq!(counters.text_symbol_requests.load(Ordering::SeqCst), 3);
+
+        let notes = semantics.file_outline(&fx.view, 0, &path("c.md")).await.unwrap();
+        assert!(matches!(notes.result, Err(SemanticError::NoBackend(_))));
+        let missing = semantics.file_outline(&fx.view, 0, &path("gone.rs")).await;
+        assert!(matches!(missing, Err(SessionError::NotFound(_))));
+    }
+
+    #[tokio::test]
+    async fn the_outline_of_a_text_has_no_marks_and_a_stale_revision_is_refused() {
+        let (fx, semantics, _) = semantics().await;
+        let file = RepoPath(b"a.rs".to_vec());
+        let found = semantics.text_outline(&fx.view, 0, &file, "text").await.unwrap();
+        let found = found.result.unwrap();
+        assert_eq!(found.len(), 1);
+        assert_eq!(found[0].change, None);
+
+        fx.session.revisions().advance(3);
+        let stale = semantics.text_outline(&fx.view, 0, &file, "text").await;
+        assert!(matches!(stale, Err(SessionError::Stale { current: 3 })));
     }
 
     #[tokio::test]

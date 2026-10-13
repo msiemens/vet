@@ -4,6 +4,7 @@
 mod calls;
 mod changed;
 mod cursor;
+mod outline;
 mod reach;
 mod reference;
 mod removal;
@@ -21,6 +22,7 @@ use crate::query::{Asked, SemanticError};
 pub use calls::{Caller, Calls, calls};
 pub use changed::{Change, ChangedSymbol, Compared, FileChanges, Texts, compared};
 pub use cursor::{Located, symbol_at};
+pub use outline::{OutlineSymbol, outline};
 pub use reach::{EntryPoint, EntryPoints, Reach, reachability};
 pub use reference::{Reference, located};
 pub use removal::{CallSite, Fate, RemovalImpact, removal_impact};

@@ -7,8 +7,8 @@ use vet_core::content::{FileDiff, LineRange, RepoPath};
 use vet_core::review::Side;
 use vet_protocol as p;
 use vet_semantic::derived::{
-    Bounds, CallSite, Calls, Change, ChangedSymbol, Derived, Fate, FileChanges, Inputs, Located, Reach, Reference,
-    RemovalImpact, Usages,
+    Bounds, CallSite, Calls, Change, ChangedSymbol, Derived, Fate, FileChanges, Inputs, Located, OutlineSymbol, Reach,
+    Reference, RemovalImpact, Usages,
 };
 use vet_semantic::pool::{Outcome, PoolError};
 use vet_semantic::ports::{
@@ -318,6 +318,25 @@ pub fn file_symbols(revision: u32, path: &str, d: &Derived<FileChanges>, gap: Op
         context: d.value.context.iter().map(symbol).collect(),
         gap,
         inputs: inputs(&d.inputs),
+    }
+}
+
+pub fn file_outline(
+    revision: u32,
+    path: &str,
+    symbols: &[OutlineSymbol],
+    unavailable: Option<p::Unavailable>,
+) -> p::FileOutline {
+    p::FileOutline {
+        revision,
+        path: path.to_owned(),
+        symbols: (symbols.iter())
+            .map(|o| p::OutlineSymbol {
+                symbol: symbol(&o.symbol),
+                change: o.change.map(change),
+            })
+            .collect(),
+        unavailable,
     }
 }
 

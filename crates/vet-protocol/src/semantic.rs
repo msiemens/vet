@@ -277,6 +277,33 @@ pub struct FileSymbols {
     pub inputs: DerivedInputs,
 }
 
+/// A symbol of a file's outline, and what the changeset did to it.
+#[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct OutlineSymbol {
+    /// The target side's symbol, or the base side's if it exists there only.
+    pub symbol: SymbolInfo,
+    /// Absent: the changeset did not change it, or the view has no marks.
+    pub change: Option<SymbolChange>,
+}
+
+/// Every symbol of a file, changed or not (derived, §7.3).
+#[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct FileOutline {
+    pub revision: u32,
+    pub path: String,
+    /// In reading order: the symbols of the target side in source order, each removed one at the
+    /// place it had in the base. A symbol is nested in the symbol whose name is the longest
+    /// proper prefix of its own.
+    pub symbols: Vec<OutlineSymbol>,
+    /// Set when the file's symbols are unknown (no language support, a server that does not
+    /// answer): `symbols` is then empty.
+    pub unavailable: Option<Unavailable>,
+}
+
 /// The symbol a position is in, if any.
 #[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
