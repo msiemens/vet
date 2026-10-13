@@ -476,6 +476,17 @@ impl ChangesetStore for SqliteStore {
         }))
     }
 
+    async fn pinned_base(&self, repo: String, source: Source) -> Result<Option<CommitId>, StoreError> {
+        let (kind, key) = source_columns(&source);
+        let row = changeset::Entity::find()
+            .filter(changeset::Column::Repo.eq(repo))
+            .filter(changeset::Column::Kind.eq(kind))
+            .filter(changeset::Column::Key.eq(key))
+            .one(&self.reader.db)
+            .await?;
+        Ok(row.and_then(|r| r.pinned_base).map(CommitId))
+    }
+
     async fn pending_vote(&self, repo: String, source: Source) -> Result<Option<PendingVote>, StoreError> {
         let (kind, key) = source_columns(&source);
         let row = changeset::Entity::find()

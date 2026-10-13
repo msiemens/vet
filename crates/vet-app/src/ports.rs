@@ -456,6 +456,13 @@ pub trait ChangesetStore {
         repo: String,
         source: Source,
     ) -> impl Future<Output = Result<Option<PullRequestTrust>, StoreError>> + Send;
+    /// The commit the working tree is compared against while no review of it is open, pinned when
+    /// the session started browsing; `None` if none is.
+    fn pinned_base(
+        &self,
+        repo: String,
+        source: Source,
+    ) -> impl Future<Output = Result<Option<CommitId>, StoreError>> + Send;
     /// The vote of the viewer's on the pull request of `source` that waits to be sent; `None` if
     /// there is none.
     fn pending_vote(
@@ -516,6 +523,14 @@ pub trait ReviewWrites {
         repo: String,
         source: Source,
         head: PullRequestHead,
+    ) -> impl Future<Output = Result<(), StoreError>> + Send;
+    /// Pins the commit the working tree of `source` is compared against while no review of it is
+    /// open, or with `None` lets the next session pin its own. The changeset is stored if need be.
+    fn set_pinned_base(
+        &self,
+        repo: String,
+        source: Source,
+        base: Option<CommitId>,
     ) -> impl Future<Output = Result<(), StoreError>> + Send;
     /// Replaces the vote of the viewer's that waits to be sent on the pull request of `source`;
     /// `None` clears it. The changeset is stored if need be.

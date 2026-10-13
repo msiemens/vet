@@ -321,6 +321,7 @@ async fn opening_a_project_fetches_its_remotes() {
 async fn a_remote_that_fails_fails_its_task_and_the_review_goes_on() {
     let remote = Remote::new();
     std::fs::remove_dir_all(&remote.bare).unwrap();
+    write(&remote.project, "a.txt", "edited\n");
     let (handler, _data) = orchestrator(LONG).await;
     let mut client = Client::new(&handler);
     let project = client.open(&remote.project).await;
@@ -341,11 +342,20 @@ async fn a_remote_that_fails_fails_its_task_and_the_review_goes_on() {
         matches!(again, Ok(Response::Done)),
         "asking again is not an error: {again:?}"
     );
-    client.revision(project).await;
-    assert_eq!(
-        manifest(&client, project).await.files.len(),
-        0,
-        "the review still works"
+    let m = manifest(&client, project).await;
+    assert_eq!(m.files.iter().map(|f| f.path.as_str()).collect::<Vec<_>>(), ["a.txt"]);
+    let marked = client
+        .call(Request::ToggleHunk {
+            project,
+            view: View::Changeset,
+            revision: m.revision,
+            path: "a.txt".into(),
+            hunk: 0,
+        })
+        .await;
+    assert!(
+        matches!(marked, Ok(Response::Review(_))),
+        "the review still works: {marked:?}"
     );
 }
 

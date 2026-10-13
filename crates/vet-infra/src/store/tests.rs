@@ -291,6 +291,34 @@ async fn the_lens_is_remembered_per_changeset_before_and_after_a_review_of_it_st
 }
 
 #[tokio::test]
+async fn the_pinned_base_of_a_workspace_survives_a_restart_and_a_review_starting_and_is_cleared_on_its_own() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = open(&dir).await;
+    assert_eq!(
+        store.pinned_base("/repo".into(), Source::WorkingTree).await.unwrap(),
+        None
+    );
+    store
+        .writes()
+        .set_pinned_base("/repo".into(), Source::WorkingTree, Some(commit("abc123")))
+        .await
+        .unwrap();
+    review(&store, SnapshotId(h(1)), SnapshotId(h(2))).await;
+    drop(store);
+
+    let store = open(&dir).await;
+    let pinned = |repo: &str| store.pinned_base(repo.into(), Source::WorkingTree);
+    assert_eq!(pinned("/repo").await.unwrap(), Some(commit("abc123")));
+    assert_eq!(pinned("/other").await.unwrap(), None);
+    store
+        .writes()
+        .set_pinned_base("/repo".into(), Source::WorkingTree, None)
+        .await
+        .unwrap();
+    assert_eq!(pinned("/repo").await.unwrap(), None);
+}
+
+#[tokio::test]
 async fn a_pull_requests_title_is_kept_with_its_changeset_across_a_review_starting_and_a_restart() {
     let dir = tempfile::tempdir().unwrap();
     let store = open(&dir).await;

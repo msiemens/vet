@@ -16,7 +16,7 @@ use super::state::{Commits, Remapped, State, View, acknowledged, lifecycle_of};
 use super::views::{BaseView, ManifestView, ReviewUpdateView, ReviewView};
 use super::{LiveSession, Result, SessionError};
 use crate::changeset::{CommitId, Lens, Source};
-use crate::ports::{CommitInfo, GitRepo, LiveStore, ReviewWrites};
+use crate::ports::{BranchInfo, CommitInfo, GitRepo, LiveStore, ReviewWrites};
 use crate::review::SpanOrigin;
 
 /// What a manifest says about the lenses, whatever view it is of.
@@ -113,10 +113,11 @@ impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> L
         Ok(())
     }
 
-    /// What every manifest says about the lenses and the changeset as a whole.
-    pub(super) async fn lens_facts(&self, st: &State) -> Result<LensFacts> {
+    /// What every manifest says about the lenses and the changeset as a whole; `branches` are the
+    /// repository's.
+    pub(super) async fn lens_facts(&self, st: &State, branches: &[BranchInfo]) -> Result<LensFacts> {
         let git = &self.acquisition.git;
-        let base = self.base_view(st, &git.branches().await?).await?;
+        let base = self.base_view(st, branches).await?;
         let (lens, commits) = match &st.source {
             Source::WorkingTree => (Lens::Squash, 0),
             source => (
@@ -198,15 +199,16 @@ impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> L
         let git = &self.acquisition.git;
         let own = &unit.detail.info.id;
         let parent = unit.detail.parents.first().unwrap_or(own);
-        let facts = self.lens_facts(st).await?;
-        let base = BaseView::of_commit(git.commit_info(parent).await?);
+        let branches = git.branches().await?;
+        let facts = self.lens_facts(st, &branches).await?;
+        let base = BaseView::of_commit(self.commit_info(parent).await?);
         Ok(ManifestView {
             revision: st.revision,
             seq: st.seq,
             name: self.name.clone(),
             lifecycle: lifecycle_of(st),
             base,
-            target: target_view(&st.source, &st.head, &git.branches().await?),
+            target: target_view(&st.source, &st.head, &branches),
             filter: st.filter.clone(),
             completion: remapped.completion,
             delta: files.iter().map(|f| f.delta).sum(),

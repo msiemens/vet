@@ -6,9 +6,10 @@ use crate::changeset::{BaseChoice, CommitId};
 use crate::ports::History;
 use crate::pull_request::PullRequestRefs;
 
-/// What the working tree is compared against: `head` itself, wherever `HEAD` moves later.
-pub fn for_working_tree(head: &CommitId) -> (BaseChoice, CommitId) {
-    (BaseChoice::Commit { id: head.clone() }, head.clone())
+/// What the working tree is compared against: `pinned`, the `HEAD` it was opened at, wherever
+/// `HEAD` moves later.
+pub fn for_working_tree(pinned: &CommitId) -> (BaseChoice, CommitId) {
+    (BaseChoice::Commit { id: pinned.clone() }, pinned.clone())
 }
 
 /// What a branch is compared against: where it left the repository's default branch, or `tip`

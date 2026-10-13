@@ -485,6 +485,7 @@ struct Mem {
     filter: Option<ReviewFilter>,
     project_trusted: bool,
     trusted_heads: HashMap<Source, CommitId>,
+    pins: HashMap<Source, CommitId>,
 }
 
 impl Mem {
@@ -548,6 +549,9 @@ impl ChangesetStore for MemStore {
             fork: head.fork,
             trusted_head: mem.trusted_heads.get(&source).cloned(),
         }))
+    }
+    async fn pinned_base(&self, _: String, source: Source) -> StoreResult<Option<CommitId>> {
+        Ok(self.0.lock().unwrap().pins.get(&source).cloned())
     }
     async fn pending_vote(&self, _: String, source: Source) -> StoreResult<Option<PendingVote>> {
         Ok(self.0.lock().unwrap().votes.get(&source).cloned())
@@ -639,6 +643,14 @@ impl ReviewWrites for MemStore {
         self.0.lock().unwrap().heads.insert(source, head);
         Ok(())
     }
+    async fn set_pinned_base(&self, _: String, source: Source, base: Option<CommitId>) -> StoreResult<()> {
+        let mut mem = self.0.lock().unwrap();
+        match base {
+            Some(base) => mem.pins.insert(source, base),
+            None => mem.pins.remove(&source),
+        };
+        Ok(())
+    }
     async fn set_pending_vote(&self, _: String, source: Source, vote: Option<PendingVote>) -> StoreResult<()> {
         let mut mem = self.0.lock().unwrap();
         match vote {
@@ -676,6 +688,7 @@ impl ReviewWrites for MemStore {
             votes: std::mem::take(&mut mem.votes),
             project_trusted: mem.project_trusted,
             trusted_heads: std::mem::take(&mut mem.trusted_heads),
+            pins: std::mem::take(&mut mem.pins),
             started: mem.started + 1,
             base: Some(choice),
             changeset: Some((repo, source)),
@@ -1186,6 +1199,17 @@ async fn a_head_that_no_longer_builds_on_the_base_is_told_until_it_does_again() 
 }
 
 #[tokio::test]
+async fn a_head_that_left_the_base_is_told_with_the_snapshot_that_settles_after_it() {
+    let fx = Fixture::reviewing(&[("a.txt", "one\n")], &[("a.txt", "two\n")]).await;
+    move_head(&fx.git, "r2", &["r1"]);
+
+    fx.settle(&[("a.txt", "three\n")]).await;
+
+    let m = fx.session.manifest(View::Changeset).await.unwrap();
+    assert!(m.changeset_base.head_off_base);
+}
+
+#[tokio::test]
 async fn a_head_that_left_the_base_while_vet_was_closed_is_told_on_resuming() {
     let fx = Fixture::reviewing(&[("a.txt", "one\n")], &[("a.txt", "two\n")]).await;
     move_head(&fx.git, "r2", &["r1"]);
@@ -1195,6 +1219,57 @@ async fn a_head_that_left_the_base_while_vet_was_closed_is_told_on_resuming() {
     let m = session.manifest(View::Changeset).await.unwrap();
     assert!(m.changeset_base.head_off_base);
     assert_eq!(m.base.commit.id, CommitId("head".into()), "the base stays");
+}
+
+#[tokio::test]
+async fn a_version_made_after_the_agent_committed_is_at_the_new_head_and_keeps_it_reachable() {
+    let fx = Fixture::reviewing(&[("a.txt", "one\n")], &[("a.txt", "two\n")]).await;
+    move_head(&fx.git, "h2", &["head"]);
+
+    let n = fx.settle(&[("a.txt", "three\n")]).await;
+
+    let versions = fx.store.0.lock().unwrap().versions.clone();
+    assert_eq!(versions.last().unwrap().tip, CommitId("h2".into()));
+    let refs = fx.git.refs.lock().unwrap().clone();
+    assert!(
+        refs.contains(&(format!("{}/tip", versions.last().unwrap().n), CommitId("h2".into()))),
+        "{refs:?} after revision {n}"
+    );
+}
+
+#[tokio::test]
+async fn a_workspace_reopened_before_its_first_mark_keeps_the_head_it_first_opened_at() {
+    let fx = Fixture::open(&[("a.txt", "one\n")], &[("a.txt", "two\n")]).await;
+    // The agent commits while Vet is closed; nothing was marked yet.
+    move_head(&fx.git, "h2", &["head"]);
+
+    let session = fx.reopen(&[("a.txt", "two\n")]).await;
+
+    let m = session.manifest(View::Changeset).await.unwrap();
+    assert_eq!(m.base.commit.id, CommitId("head".into()));
+}
+
+#[tokio::test]
+async fn a_workspace_opened_after_a_review_was_finished_starts_from_the_head_of_then() {
+    let fx = Fixture::reviewing(&[("a.txt", "one\n")], &[("a.txt", "two\n")]).await;
+    fx.session.finish_review().await.unwrap();
+    move_head(&fx.git, "h2", &["head"]);
+    let session = fx.reopen(&[("a.txt", "two\n")]).await;
+    assert_eq!(
+        session.manifest(View::Changeset).await.unwrap().base.commit.id,
+        CommitId("h2".into())
+    );
+}
+
+#[tokio::test]
+async fn the_base_of_a_finished_review_stays_until_the_workspace_is_opened_again() {
+    let fx = Fixture::reviewing(&[("a.txt", "one\n")], &[("a.txt", "two\n")]).await;
+    fx.session.finish_review().await.unwrap();
+    move_head(&fx.git, "h2", &["head"]);
+
+    let m = fx.session.manifest(View::Changeset).await.unwrap();
+
+    assert_eq!(m.base.commit.id, CommitId("head".into()));
 }
 
 #[tokio::test]

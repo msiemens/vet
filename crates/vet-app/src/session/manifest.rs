@@ -26,7 +26,7 @@ impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> L
             Shown::Changeset => {}
         }
         let branches = self.acquisition.git.branches().await?;
-        let facts = self.lens_facts(&st).await?;
+        let facts = self.lens_facts(&st, &branches).await?;
         let changes = st.changes();
         let cov = changes.remapped.coverage();
         let acked = acknowledged(&st, &changes.diffed.diff.non_text);

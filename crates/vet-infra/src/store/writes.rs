@@ -139,6 +139,22 @@ impl ReviewWrites for ReviewWriter {
         Ok(txn.commit().await?)
     }
 
+    async fn set_pinned_base(&self, repo: String, source: Source, base: Option<CommitId>) -> Result<(), StoreError> {
+        let txn = self.db.begin().await?;
+        let id = match find_changeset(&txn, repo.clone(), &source).await? {
+            Some(id) => id,
+            None => insert_changeset(&txn, repo, &source).await?,
+        };
+        changeset::ActiveModel {
+            id: Set(id),
+            pinned_base: Set(base.map(|b| b.0)),
+            ..Default::default()
+        }
+        .update(&txn)
+        .await?;
+        Ok(txn.commit().await?)
+    }
+
     async fn set_pending_vote(
         &self,
         repo: String,

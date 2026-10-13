@@ -92,6 +92,8 @@ pub struct Wired {
     plan: Plan,
     booted: OnceCell<Result<Arc<Booted>, String>>,
     settling: Mutex<Option<AbortHandle>>,
+    /// Whether edits of the working tree wait to settle, as the subscribers were last told.
+    edits_waiting: Arc<AtomicBool>,
     fetching: Mutex<Option<AbortHandle>>,
     /// The copy of the working tree's content ahead of a review; a newer tree's replaces it.
     copying: Mutex<Option<AbortHandle>>,
@@ -111,6 +113,11 @@ impl Wired {
             .await
             .as_ref()
             .map_err(Clone::clone)
+    }
+
+    /// Whether edits of the working tree wait to settle into a snapshot.
+    pub fn edits_waiting(&self) -> bool {
+        self.edits_waiting.load(Ordering::SeqCst)
     }
 
     /// The session if it has scanned successfully already.
@@ -209,6 +216,7 @@ impl Wired {
         let task = {
             let (session, subscribers, entry) = (session.clone(), subscribers.clone(), entry.clone());
             let edit_subscribers = subscribers.clone();
+            let waiting = self.edits_waiting.clone();
             let quiet_entry = entry.clone();
             let quiet_session = session.clone();
             tokio::spawn(async move {
@@ -227,7 +235,10 @@ impl Wired {
                                 open.copy_ahead(&quiet_session);
                             }
                         },
-                        |pending| edits_pending(&edit_subscribers, id, pending),
+                        |pending| {
+                            waiting.store(pending, Ordering::SeqCst);
+                            edits_pending(&edit_subscribers, id, pending);
+                        },
                     )
                     .await;
             })
@@ -407,6 +418,7 @@ impl Orchestrator {
             },
             booted: OnceCell::new(),
             settling: Mutex::new(None),
+            edits_waiting: Arc::default(),
             fetching: Mutex::new(None),
             copying: Mutex::new(None),
             closed: AtomicBool::new(false),

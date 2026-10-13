@@ -5,7 +5,7 @@ use std::sync::{Arc, OnceLock, Weak};
 
 use vet_infra::clock::TokioClock;
 use vet_infra::git::find_root;
-use vet_protocol::ProjectId;
+use vet_protocol::{Event, ProjectId};
 
 use crate::events::Connection;
 use crate::fetch::fetch_periodically;
@@ -18,12 +18,20 @@ impl Orchestrator {
         let repo = find_root(Path::new(repo))?;
         let root = repo.to_string_lossy().into_owned();
         let entry: Arc<OnceLock<Weak<Open>>> = Arc::default();
+        let joining = events.clone();
         let (open, created) = self
             .projects
             .open(&repo, events, |id, subscribers| {
                 self.wire(id, subscribers, repo.clone(), root.clone(), entry.clone())
             })
             .await?;
+        // A connection that joins while edits wait was not there when it was told.
+        if !created && open.edits_waiting() {
+            joining.0.send(Event::EditsPending {
+                project: open.id,
+                pending: true,
+            });
+        }
         if created {
             let _ = entry.set(Arc::downgrade(&open));
             let (projects, id, grace) = (self.projects.clone(), open.id, self.config.orphan_grace);

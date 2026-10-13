@@ -90,8 +90,8 @@ impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> L
         let files = file_views(&id.compared.diffed, &st.filter, |diff, items| lens.state(diff, items));
         let git = &self.acquisition.git;
         let branches = git.branches().await?;
-        let base = super::BaseView::of_commit(git.commit_info(&id.to.base_commit).await?);
-        let facts = self.lens_facts(st).await?;
+        let base = super::BaseView::of_commit(self.commit_info(&id.to.base_commit).await?);
+        let facts = self.lens_facts(st, &branches).await?;
         let conflicts = (id.compared.hunks.values().flatten()).any(|h| h.flags.conflict);
         let old = if id.from.n == 0 {
             "the base".to_owned()

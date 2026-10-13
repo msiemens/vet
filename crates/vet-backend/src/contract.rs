@@ -158,11 +158,8 @@ pub fn effect(request: &Request) -> Effect {
         | Request::ToggleFlag { .. }
         | Request::ToggleItem { .. }
         | Request::ToggleFileSeen { .. }
-        | Request::SetFilesSeen { .. } => tested(&[ReviewChanged]),
-        Request::ReconfirmFile { .. } => untested(
-            &[ReviewChanged],
-            "needs lines seen against a base that has since moved, which only a followed branch or pull request base brings",
-        ),
+        | Request::SetFilesSeen { .. }
+        | Request::ReconfirmFile { .. } => tested(&[ReviewChanged]),
         Request::SetProjectFilter { .. } | Request::ExcludePath { .. } => tested(&[SnapshotSettled]),
         Request::SetProjectTrusted { .. } => tested(&[TargetChanged, ServersChanged]),
         Request::TrustPullRequest { .. } => untested(&[TargetChanged, ServersChanged], NEEDS_A_PLATFORM),
@@ -724,15 +721,16 @@ mod tests {
         write(p, "run.txt", "echo\n");
         write(p, "c.txt", "x\n");
         write(p, "d.txt", &text(40, &[]));
+        write(p, "e.txt", &text(40, &[]));
         git(p, &["add", "-A"]);
         git(p, &["commit", "-q", "-m", "base"]);
         git(p, &["checkout", "-q", "-b", "feature"]);
-        write(p, "e.txt", "feature\n");
-        git(p, &["add", "-A"]);
-        git(p, &["commit", "-q", "-m", "one"]);
-        write(p, "e.txt", "feature two\n");
+        write(p, "e.txt", &text(40, &[7, 8, 9]));
+        git(p, &["commit", "-q", "-a", "-m", "one"]);
+        write(p, "e.txt", &text(40, &[7, 8, 9, 30]));
         git(p, &["commit", "-q", "-a", "-m", "two"]);
-        git(p, &["checkout", "-q", "main"]);
+        // A branch of its own is checked out, so that `main` can move on in a worktree.
+        git(p, &["checkout", "-q", "-b", "work", "main"]);
         // The working tree: a hunk to mark and comment on, a mode change to acknowledge, a block
         // to comment on that turns up twice later, and lines whose base side a commit changes.
         write(p, "a.txt", &text(30, &[3]));
@@ -928,6 +926,75 @@ mod tests {
                 changeset: ChangesetKey::Branch { name: "feature".into() },
             })
             .await;
+        // The branch is rebased onto a `main` that dropped a line the branch edited, keeping the
+        // branch's version: what was seen is now seen against another base.
+        let revision = world.manifest().await.revision;
+        world
+            .ask(Request::ToggleHunk {
+                project,
+                view,
+                revision,
+                path: "e.txt".into(),
+                hunk: 0,
+            })
+            .await;
+        let elsewhere = scratch.path().join("elsewhere");
+        let dir = elsewhere.to_str().unwrap();
+        git(p, &["worktree", "add", "-q", dir, "main"]);
+        write(&elsewhere, "e.txt", &text(40, &[]).replace("line 8\n", ""));
+        git(&elsewhere, &["commit", "-q", "-a", "-m", "main drops a line"]);
+        git(p, &["worktree", "remove", "--force", dir]);
+        git(p, &["worktree", "add", "-q", dir, "feature"]);
+        git(&elsewhere, &["rebase", "-q", "-X", "theirs", "main"]);
+        git(p, &["worktree", "remove", "--force", dir]);
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(20);
+        let revision = loop {
+            world.quiet().await;
+            let manifest = world.manifest().await;
+            assert!(
+                tokio::time::Instant::now() < deadline,
+                "the base did not move: {:?} {:?}",
+                manifest.base.commit.subject,
+                manifest
+                    .files
+                    .iter()
+                    .map(|f| (&f.path, &f.review.hunks))
+                    .collect::<Vec<_>>()
+            );
+            let moved = manifest
+                .files
+                .iter()
+                .find(|f| f.path == "e.txt")
+                .is_some_and(|f| f.review.hunks.contains(&vet_protocol::HunkState::SeenAgainstOldBase));
+            if moved {
+                break manifest.revision;
+            }
+        };
+        let diff = world
+            .ask(Request::BaseDiff {
+                project,
+                revision,
+                path: "e.txt".into(),
+                hunk: 0,
+            })
+            .await;
+        assert!(matches!(diff, Response::BaseDiff(_)), "{diff:?}");
+        world
+            .drive(Request::ReconfirmFile {
+                project,
+                revision,
+                path: "e.txt".into(),
+            })
+            .await;
+        let healed = world.manifest().await;
+        assert!(
+            healed
+                .files
+                .iter()
+                .find(|f| f.path == "e.txt")
+                .is_some_and(|f| f.review.hunks[0] == vet_protocol::HunkState::Seen)
+        );
+
         world
             .drive(Request::SetLens {
                 project,

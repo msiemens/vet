@@ -197,6 +197,8 @@ pub mod changeset {
         /// The branch a pull request is merged into as the platform last said it; none for any other
         /// changeset.
         pub target_branch: Option<String>,
+        /// The commit a working tree is compared against while no review of it is open (§6.5).
+        pub pinned_base: Option<String>,
         /// The verdict of the viewer's vote that waits to be sent; none without one.
         pub vote: Option<String>,
         /// Unix seconds the vote was handed to the platform at, while Vet has not heard back.

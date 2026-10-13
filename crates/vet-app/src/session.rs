@@ -104,10 +104,11 @@ pub use self::views::{
 };
 use crate::acquisition::{Acquisition, BlobError};
 use crate::base;
-use crate::changeset::{ChangesetId, Source, Version, VersionChange, VersionOrigin};
+use crate::changeset::{BaseChoice, ChangesetId, CommitId, Source, Version, VersionChange, VersionOrigin};
 use crate::platform::PlatformError;
 use crate::ports::{
-    BranchInfo, Clock, Degraded, Dirty, GitError, GitRepo, LiveStore, ReviewWrites, Scan, StoreError, Watcher,
+    BranchInfo, Clock, CommitInfo, Degraded, Dirty, GitError, GitRepo, LiveStore, ReviewWrites, Scan, StoreError,
+    Watcher,
 };
 use crate::progress::Tasks;
 use crate::review::{ReviewId, visible_threads};
@@ -204,6 +205,8 @@ pub struct LiveSession<G, S: LiveStore> {
     lines: Engine<LinesBetween>,
     /// The diffs, interdiffs and commits the review state is remapped onto.
     derived: Arc<Derived>,
+    /// What git said of the commits the manifests name, which it does not change.
+    commit_infos: std::sync::Mutex<HashMap<CommitId, CommitInfo>>,
     /// The copies of the working tree's content into the store under way.
     ahead: Engine<Retained>,
     /// What a copy ahead of a review reads and writes through: the session's acquisition over
@@ -279,8 +282,21 @@ impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> L
         };
         let git = &acquisition.git;
         let head = git.head().await?;
-        let (base_choice, base_commit) = base::for_working_tree(&head);
-        let base = Arc::new(git.commit_snapshot(&base_commit).await?);
+        // Browsing keeps the base the tree was opened against across restarts, until a review
+        // that ends lets the next session pin its own.
+        let pinned = acquisition.store.pinned_base(repo.clone(), source.clone()).await?;
+        let (base_choice, base_commit, base) = match pinned {
+            Some(commit) => match git.commit_snapshot(&commit).await {
+                Ok(base) => {
+                    let (choice, commit) = base::for_working_tree(&commit);
+                    (choice, commit, base)
+                }
+                Err(_) => Self::pin(&acquisition, &writes, &repo, &source, &head).await?,
+            },
+            None => Self::pin(&acquisition, &writes, &repo, &source, &head).await?,
+        };
+        let base = Arc::new(base);
+        let off_base = base::head_left(git, &base_commit).await;
         // The session opens at `HEAD`, which builds on itself.
         let Scan {
             snapshot: target,
@@ -300,7 +316,7 @@ impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> L
             base_choice,
             base_commit,
             head,
-            off_base: false,
+            off_base,
             target,
             target_status: status,
             known: HashMap::new(),
@@ -311,6 +327,22 @@ impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> L
             changes: None,
         };
         Ok(Self::assemble(acquisition, name, repo, clock, state).await)
+    }
+
+    /// Pins the working tree to `head` as its base and remembers that.
+    async fn pin(
+        acquisition: &Acquisition<G, S>,
+        writes: &S::Writes,
+        repo: &str,
+        source: &Source,
+        head: &CommitId,
+    ) -> Result<(BaseChoice, CommitId, Snapshot)> {
+        let (choice, commit) = base::for_working_tree(head);
+        let base = acquisition.git.commit_snapshot(&commit).await?;
+        writes
+            .set_pinned_base(repo.to_owned(), source.clone(), Some(commit.clone()))
+            .await?;
+        Ok((choice, commit, base))
     }
 
     async fn assemble(
@@ -324,6 +356,7 @@ impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> L
         Self {
             author: author_of(&acquisition.git).await,
             derived: Arc::new(Derived::new(&acquisition.tasks)),
+            commit_infos: std::sync::Mutex::default(),
             ahead: ahead::copies(&acquisition.tasks),
             copying: acquisition.clone(),
             acquisition,
@@ -553,6 +586,12 @@ impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> L
         self.retain_anchored(&st, anchors).await?;
         self.acquisition.git.delete_changeset_refs(changeset).await?;
         st.writes().close_review(id, (self.clock)(), complete).await?;
+        if st.source == Source::WorkingTree {
+            // The next session of the workspace pins the `HEAD` it finds.
+            st.writes()
+                .set_pinned_base(self.repo.clone(), Source::WorkingTree, None)
+                .await?;
+        }
         st.review = None;
         st.recorded.clear();
         st.acks.clear();
@@ -565,12 +604,36 @@ impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> L
         Ok(complete)
     }
 
+    /// What git says of `commit`, asked once while the session lives.
+    async fn commit_info(&self, commit: &CommitId) -> Result<CommitInfo> {
+        const KEPT: usize = 64;
+        let kept = |infos: &HashMap<CommitId, CommitInfo>| infos.get(commit).cloned();
+        let found = kept(
+            &self
+                .commit_infos
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner),
+        );
+        if let Some(info) = found {
+            return Ok(info);
+        }
+        let info = self.acquisition.git.commit_info(commit).await?;
+        let mut infos = self
+            .commit_infos
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if infos.len() >= KEPT {
+            infos.clear();
+        }
+        infos.insert(commit.clone(), info.clone());
+        Ok(info)
+    }
+
     /// The base with its display facts; `branches` are the repository's.
     async fn base_view(&self, st: &State, branches: &[BranchInfo]) -> Result<BaseView> {
-        let git = &self.acquisition.git;
         let own = manifest::target_view(&st.source, &st.head, branches).branch;
         Ok(BaseView {
-            commit: git.commit_info(&st.base_commit).await?,
+            commit: self.commit_info(&st.base_commit).await?,
             contained_in: base::contained_in(&st.base_choice, &st.base_commit, &st.head, own.as_deref()),
             into: self.merged_into(st).await?,
             head_off_base: st.off_base,
@@ -583,10 +646,12 @@ impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> L
             return Ok(None);
         }
         let Some(head) = self.pull_request_head(&st.source).await? else {
+            tracing::warn!(source = ?st.source, "the target branch of the pull request is not stored");
             return Ok(None);
         };
+        // With no default branch to compare with, the target is said.
         let default = self.acquisition.git.default_branch().await?;
-        Ok(default.filter(|d| *d != head.target_branch).map(|_| head.target_branch))
+        Ok((default.as_ref() != Some(&head.target_branch)).then_some(head.target_branch))
     }
 
     /// Looks at the working tree's `HEAD` again and keeps whether it still builds on the base.
@@ -768,6 +833,13 @@ impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> L
         status: SnapshotStatus,
         settlement: Settlement,
     ) -> Result<(u32, Option<BlobError>)> {
+        // The agent commits on top of the base: the snapshot is built on the `HEAD` of now.
+        let previous_head = st.head.clone();
+        if st.source == Source::WorkingTree
+            && let Ok(head) = self.acquisition.git.head().await
+        {
+            st.head = head;
+        }
         if let (Some(review), Some(changeset)) = (&st.review, st.changeset) {
             let now = (self.clock)();
             store
@@ -783,7 +855,14 @@ impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> L
                 origin: VersionOrigin::Settled,
                 change: settlement.change.expect("worked out while the review was open"),
             };
+            let n = version.n;
             store.append_version(changeset, version).await?;
+            if st.head != previous_head {
+                self.acquisition
+                    .git
+                    .set_changeset_ref(changeset, n, "tip", &st.head)
+                    .await?;
+            }
         }
         // Older versions stay materializable (§7.2).
         self.acquisition.record_commit(snapshot.id, st.head.clone());

@@ -416,6 +416,47 @@ async fn threads_follow_edits_and_notify_every_connection() {
 }
 
 #[tokio::test]
+async fn a_connection_that_joins_while_edits_wait_is_told_so() {
+    let fx = fixture(&[("a.txt", &text(40, &[]))], &[]).await;
+    let mut first = Client::new(&fx.handler);
+    let project = open(&first, fx.repo.path()).await;
+    first.manifest(project).await;
+
+    // Edits keep coming, so that the wait outlasts the second connection's opening.
+    let root = fx.repo.path().to_owned();
+    let editing = tokio::spawn(async move {
+        for i in 0..40 {
+            write(&root, "a.txt", &text(40, &[i % 40]));
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
+    });
+    for _ in 0..50 {
+        if first.edits_pending().last() == Some(&true) {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+    assert_eq!(first.edits_pending().last(), Some(&true));
+
+    let mut second = Client::new(&fx.handler);
+    open(&second, fx.repo.path()).await;
+    assert_eq!(second.edits_pending(), [true]);
+    editing.abort();
+}
+
+#[tokio::test]
+async fn a_connection_that_joins_while_no_edits_wait_is_told_nothing() {
+    let fx = fixture(&[("a.txt", &text(40, &[]))], &[]).await;
+    let first = Client::new(&fx.handler);
+    let project = open(&first, fx.repo.path()).await;
+    first.manifest(project).await;
+
+    let mut second = Client::new(&fx.handler);
+    open(&second, fx.repo.path()).await;
+    assert!(second.edits_pending().is_empty());
+}
+
+#[tokio::test]
 async fn mark_edit_settle_remap_and_revert() {
     let base = text(40, &[]);
     let dirty = text(40, &[5]);
