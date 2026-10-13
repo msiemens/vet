@@ -14,6 +14,7 @@ void test("fates read as words, the broken one as the bad tone", () => {
 
 void test("a symbol's container is the names above it, none at the top level", () => {
   assert.equal(containerOf({ path: "a.rs", name: ["Policy", "Backoff", "next"] }), "Policy::Backoff");
+  assert.equal(containerOf({ path: "a.ts", name: ["Policy", "Backoff", "next"] }), "Policy.Backoff");
   assert.equal(containerOf({ path: "a.rs", name: ["run"] }), "");
 });
 

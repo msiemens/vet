@@ -13,6 +13,7 @@
     count,
     derived = false,
     warn = false,
+    hint,
     children,
   }: {
     /** Names the section where its state is kept. */
@@ -25,6 +26,8 @@
     derived?: boolean;
     /** The section says something to be careful about. */
     warn?: boolean;
+    /** A caveat about the answer, in a tooltip next to the title. */
+    hint?: string;
     children: Snippet<[T]>;
   } = $props();
 
@@ -47,6 +50,7 @@
       <span class="lead"><Icon name={open ? "open" : "closed"} size={10} /></span>
     {/if}
     {title}
+    {#if hint}<span class="hint" role="img" aria-label={hint} title={hint}><Icon name="info" size={12} /></span>{/if}
     {#if load?.state === "done" && count}<span class="mono n">{count(load.value)}</span>{/if}
     <span class="grow"></span>
     {#if derived}
@@ -80,6 +84,10 @@
   }
   .warn {
     color: var(--old-base);
+  }
+  .hint {
+    display: inline-flex;
+    color: var(--text-3);
   }
   .derived {
     display: inline-flex;

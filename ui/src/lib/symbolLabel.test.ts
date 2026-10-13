@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { rowLabel } from "./symbolLabel.ts";
+import { qualified, rowLabel } from "./symbolLabel.ts";
 
 void test("a row names the symbol and the innermost container, not the namespace chain", () => {
   const label = (path: string, name: string[]) => rowLabel({ path, name }, path);
@@ -13,6 +13,14 @@ void test("a row names the symbol and the innermost container, not the namespace
     context: "impl Invoice",
   });
   assert.deepEqual(label("billing/invoice.py", ["Invoice", "merge"]), { name: "merge", context: "Invoice" });
+});
+
+void test("a symbol's full name is joined as its language writes it", () => {
+  const name = ["billing", "Invoice", "merge"];
+  assert.equal(qualified({ path: "src/billing.rs", name }), "billing::Invoice::merge");
+  assert.equal(qualified({ path: "src/Billing.ts", name }), "billing.Invoice.merge");
+  assert.equal(qualified({ path: "src/Billing.cs", name }), "billing.Invoice.merge");
+  assert.equal(qualified({ path: "billing.py", name }, 2), "billing.Invoice");
 });
 
 void test("a symbol at the top level of its file is placed in the file", () => {

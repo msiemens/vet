@@ -6,7 +6,7 @@ import type { LocationRow } from "../../generated/LocationRow.ts";
 import { decodeHighlights, eachRange } from "../../lib/highlights.ts";
 import { splitQualified } from "../../lib/qualified.ts";
 import { match } from "../../lib/speedSearch.ts";
-import { rowLabel } from "../../lib/symbolLabel.ts";
+import { rowLabel, separatorOf } from "../../lib/symbolLabel.ts";
 
 export type Section = "CHANGESET" | "OTHER FILES" | "LIBRARIES";
 
@@ -147,9 +147,6 @@ export function codeRuns(row: Pick<LocationRow, "text" | "highlights" | "matchSt
   }
   return runs;
 }
-
-/** What separates a container from its member in the language of the file at `path`. */
-const separatorOf = (path: string): string => (/\.(rs|c|h|cc|cpp|cxx|hpp)$/i.test(path) ? "::" : ".");
 
 /** The type a Rust `impl` block is for (`impl Backoff for Retry` is `Retry`); any other name as it is. */
 const containerName = (container: string): string =>

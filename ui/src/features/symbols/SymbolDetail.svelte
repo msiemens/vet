@@ -10,8 +10,7 @@
   import type { SymbolInfo } from "../../generated/SymbolInfo";
   import type { Usages } from "../../generated/Usages";
   import { codeBlock } from "../../lib/codeBlock";
-  import { nameOf, rowLabel } from "../../lib/symbolLabel";
-  import Icon from "../../lib/ui/Icon.svelte";
+  import { nameOf, qualified, rowLabel } from "../../lib/symbolLabel";
   import PathText from "../../lib/ui/PathText.svelte";
   import QualifiedName from "../../lib/ui/QualifiedName.svelte";
   import type { Shown } from "../../state/symbolLoad";
@@ -90,7 +89,7 @@
     onclick={() => goTo(symbol, change)}
   >
     {#if depth}<span class="elbow">└</span>{/if}
-    <span class="mono s"><QualifiedName name={symbol.id.name.join("::")} /></span>
+    <span class="mono s"><QualifiedName name={qualified(symbol.id)} /></span>
     <span class="mono at">{placeShort(symbol.id.path, symbol.at)}</span>
     <span
       class="mono letter"
@@ -126,6 +125,7 @@
   <DerivedSection
     id="callers"
     title="Changed callers"
+    hint="Call hierarchy cannot see calls made through interfaces or virtual methods, callbacks, reflection or generated code, so callers and callees may be missing."
     load={symbols.calls}
     count={(c: Calls) => c.callers.length}
     derived
@@ -172,7 +172,7 @@
             title={place(s.id.path, s.at)}
             onclick={() => onopen(s.id.path, s.at.line, "target")}
           >
-            <span class="mono s"><QualifiedName name={s.id.name.join("::")} /></span>
+            <span class="mono s"><QualifiedName name={qualified(s.id)} /></span>
             <span class="mono at">{placeShort(s.id.path, s.at)}</span>
           </button>
         {:else}
@@ -181,12 +181,6 @@
       {/snippet}
     </DerivedSection>
   {/if}
-  <div class="callout">
-    <Icon name="derived" size={13} /><span
-      >Call hierarchy cannot see dynamic dispatch (trait objects, function pointers, virtual calls), reflection or
-      macro-generated calls. Callers and callees may be missing.</span
-    >
-  </div>
   <DerivedSection id="reach" title="Reached from" load={symbols.reach} derived>
     {#snippet children(reachability)}
       {@const reach = reachability.reach}
@@ -331,21 +325,5 @@
     font-size: 12px;
     white-space: nowrap;
     padding-right: 10px;
-  }
-  .callout {
-    display: flex;
-    gap: 8px;
-    margin: 8px 10px 4px;
-    padding: 7px 9px;
-    border: 1px dashed var(--line);
-    border-radius: var(--radius);
-    color: var(--text-2);
-    font-size: 12px;
-    line-height: 1.45;
-  }
-  .callout :global(svg) {
-    flex: none;
-    margin-top: 2px;
-    color: var(--text-3);
   }
 </style>
