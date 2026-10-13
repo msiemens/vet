@@ -28,9 +28,11 @@
 
 {#snippet label()}
   {#if onopen}
-    <button class="chip" type="button" title={chip.tip} onclick={onopen}>{chip.label}{@render dot()}</button>
+    <button class="chip" class:inside={chip.narrowed} type="button" title={chip.tip} onclick={onopen}
+      >{chip.label}{@render dot()}</button
+    >
   {:else}
-    <span class="chip static" title={chip.tip}>{chip.label}{@render dot()}</span>
+    <span class="chip static" class:inside={chip.narrowed} title={chip.tip}>{chip.label}{@render dot()}</span>
   {/if}
 {/snippet}
 
@@ -67,7 +69,7 @@
   button.chip:active {
     background: var(--press);
   }
-  .scope :global(.tag) .chip {
+  .chip.inside {
     height: 16px;
     padding: 0 4px;
   }
