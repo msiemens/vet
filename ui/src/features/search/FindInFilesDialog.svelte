@@ -18,8 +18,9 @@
   import Popover from "../../lib/ui/Popover.svelte";
   import Segmented from "../../lib/ui/Segmented.svelte";
   import VirtualRows from "../../lib/ui/VirtualRows.svelte";
-  import type { Backend, SearchResults } from "../../state/backend";
+  import type { Backend, SearchQuery, SearchResults } from "../../state/backend";
   import { commands } from "../../state/commands";
+  import type { KeptSearch } from "../../state/findSets.svelte";
   import { isMac } from "../../state/host";
   import { EscapeGate } from "./escapeGate";
   import { findInFiles } from "./FindInFiles.svelte";
@@ -46,6 +47,7 @@
     range,
     revision,
     onopen,
+    onkeep,
   }: {
     backend: Backend;
     /** The view the review shows. */
@@ -58,6 +60,8 @@
     revision: number;
     /** Shows a result; `ownTab` is asked for by the viewer. The dialog is closed already. */
     onopen: (result: OpenedResult) => void;
+    /** Keeps the results in the Find tool. The dialog is closed already. */
+    onkeep: (kept: KeptSearch) => void;
   } = $props();
 
   /** The most matches a search lists. */
@@ -110,17 +114,19 @@
     });
   });
 
+  const asked = (): SearchQuery => ({
+    scope: choice.scope,
+    pattern: { text: find.text, matchCase: find.matchCase, wholeWord: find.wholeWord, regex: find.regex },
+    mask: find.mask,
+    side: find.side,
+    onlyChanges: find.onlyChanges,
+    notSeen: find.notSeen,
+    limit: LIMIT,
+  });
+
   // The search runs as the query, the options or the changeset change; an answer to an older one is dropped.
   $effect(() => {
-    const request = {
-      scope: choice.scope,
-      pattern: { text: find.text, matchCase: find.matchCase, wholeWord: find.wholeWord, regex: find.regex },
-      mask: find.mask,
-      side: find.side,
-      onlyChanges: find.onlyChanges,
-      notSeen: find.notSeen,
-      limit: LIMIT,
-    };
+    const request = asked();
     // eslint-disable-next-line @typescript-eslint/no-unused-expressions -- the read makes the revision a dependency
     revision;
     if (!request.pattern.text) {
@@ -258,6 +264,34 @@
     });
   }
 
+  /** What the viewer can keep: the results of the query as it stands, once they are in. */
+  const keepable = $derived(!!results && !pending && error === undefined && !!find.text && results.files.length > 0);
+
+  function keep() {
+    if (!results || !keepable) return;
+    const index =
+      choice.scope.type === "view" && choice.scope.view.type === "commit" ? choice.scope.view.index : undefined;
+    const unit = index === undefined ? undefined : commits[index];
+    const kept: KeptSearch = {
+      results,
+      spec: {
+        type: "search",
+        request: asked(),
+        scope: { label: choice.label, commit: unit && { id: unit.id, shortId: unit.shortId } },
+        options: {
+          text: find.text,
+          matchCase: find.matchCase,
+          wholeWord: find.wholeWord,
+          regex: find.regex,
+          side: repository ? "target" : find.side,
+          onlyChanges: find.onlyChanges,
+        },
+      },
+    };
+    find.close();
+    onkeep(kept);
+  }
+
   /** Escape with the scope menu open closes it alone; the menu is in the title row, outside the box that reads the other keys. */
   function escapeKey(e: KeyboardEvent) {
     if (e.key !== "Escape" || !escape.press(scopeOpen)) return;
@@ -278,6 +312,11 @@
         find[toggle.key] = !find[toggle.key];
         return;
       }
+    }
+    if (e.key === "Enter" && !e.altKey && !e.shiftKey && (isMac ? e.metaKey && !e.ctrlKey : e.ctrlKey && !e.metaKey)) {
+      e.preventDefault();
+      keep();
+      return;
     }
     if (target.closest("button, [role=menuitem], [role=menuitemradio]") && e.key !== "ArrowDown" && e.key !== "ArrowUp")
       return;
@@ -409,6 +448,13 @@
         aria-pressed={find.notSeen}
         title="Only changed lines in hunks you have not marked seen"
         onclick={() => (find.notSeen = !find.notSeen)}>Not seen</button
+      >
+      <button
+        class="ctl keep"
+        type="button"
+        title="Keep these results in the Find window"
+        disabled={!keepable}
+        onclick={keep}>Open in Find window <kbd>{isMac ? "⌘" : "Ctrl+"}↵</kbd></button
       >
     </div>
     <div class="results">
@@ -599,6 +645,18 @@
     padding: 0 9px;
     border-radius: 11px;
     font-size: 11.5px;
+  }
+  .keep {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    height: 22px;
+    padding: 0 9px;
+    font-size: 11.5px;
+  }
+  .keep kbd {
+    color: var(--text-3);
+    font: 11px var(--font-mono);
   }
   .results {
     flex: 1;

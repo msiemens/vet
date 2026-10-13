@@ -14,6 +14,7 @@
   import QualifiedName from "../../lib/ui/QualifiedName.svelte";
   import { SpeedSearch } from "../../lib/ui/speedSearch.svelte";
   import SpeedSearchField from "../../lib/ui/SpeedSearchField.svelte";
+  import { isMac } from "../../state/host";
   import type { PickerView } from "../../state/pickerTypes";
   import { countText, groupRows, matchedRow, opensBelow, symbolLabel, visibleRows } from "./pickerRows";
 
@@ -108,7 +109,25 @@
     if (e.movementX !== 0 || e.movementY !== 0) cursor = at;
   }
 
+  function keep() {
+    picked = true;
+    view.onkeep?.();
+  }
+
   function onkeydown(e: KeyboardEvent) {
+    if (
+      e.key === "Enter" &&
+      (e.metaKey || e.ctrlKey) &&
+      !e.altKey &&
+      !e.shiftKey &&
+      view.onkeep &&
+      results?.rows.length
+    ) {
+      e.preventDefault();
+      e.stopPropagation();
+      keep();
+      return;
+    }
     if (search.type(e)) return;
     if (e.ctrlKey || e.altKey || e.metaKey || e.shiftKey) return;
     const take = () => {
@@ -196,6 +215,11 @@
       {#if count.cut}<span class="mono cut">{count.cut}</span>{/if}
     {/if}
     <span class="grow"></span>
+    {#if view.onkeep && results?.rows.length}
+      <button class="ctl keep" type="button" title="Keep this list in the Find window" onclick={keep}>
+        Open in Find window <kbd>{isMac ? "⌘" : "Ctrl+"}↵</kbd>
+      </button>
+    {/if}
     {#if view.body.phase !== "stopped"}
       <IconButton
         icon="filter"
@@ -330,6 +354,17 @@
   }
   .grow {
     flex: 1;
+  }
+  .keep {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    height: 24px;
+    padding: 0 8px;
+  }
+  .keep kbd {
+    color: var(--text-3);
+    font: var(--fs-mono-s) var(--font-mono);
   }
   .state {
     display: flex;

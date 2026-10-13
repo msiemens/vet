@@ -23,6 +23,8 @@ export interface Search {
   ask(signal: AbortSignal): Promise<LocationRows>;
   /** Goes to the place of `row`, where the search was asked from. */
   open(row: LocationRow): void;
+  /** Keeps the places the popup lists in the Find tool; absent where the popup offers no such thing. */
+  keep?: (answer: LocationRows) => void;
 }
 
 export interface SearchDeps {
@@ -124,7 +126,15 @@ export class LocationSearch {
       picker.close();
       search.open(rows[0]);
     } else {
-      picker.show({ ...shown, body: { phase: "results", rows, total } });
+      const { keep } = search;
+      const onkeep =
+        keep &&
+        (() => {
+          this.running = undefined;
+          picker.close();
+          keep(answer);
+        });
+      picker.show({ ...shown, onkeep, body: { phase: "results", rows, total } });
     }
   }
 }

@@ -115,6 +115,22 @@ void test("picking a place closes the popup and goes there from where the search
   assert.deepEqual(events, ["close", "open a.rs:2 from pinned tab"]);
 });
 
+void test("keeping the list closes the popup and hands over the answer that was shown, only for a search that can keep", async () => {
+  const { events, search, ask, view } = setup();
+  const rows = [row("a.rs", 1), row("a.rs", 2)];
+  await search.start({
+    ...ask(() => answer(rows, null, 340)),
+    keep: (a) => events.push(`keep ${a.rows.length} of ${a.total}`),
+  });
+  events.length = 0;
+  view()?.onkeep?.();
+  assert.deepEqual(events, ["close", "keep 2 of 340"]);
+
+  const plain = setup();
+  await plain.search.start(plain.ask(() => answer(rows)));
+  assert.equal(plain.view()?.onkeep, undefined);
+});
+
 void test("a lone place is gone to from where its own search was asked, whatever searched before", async () => {
   const { events, search, ask } = setup();
   await search.start(ask(() => answer([row("a.rs", 1)]), "first"));

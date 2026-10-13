@@ -32,6 +32,8 @@ export interface PickerView {
   body: PickerBody;
   /** Opens the row's place. */
   onpick(row: LocationRow): void;
+  /** Closes the popup and keeps its places in the Find tool; absent where that is not offered. */
+  onkeep?: () => void;
   /** Starts the server that was not running anew, and asks again. */
   onretry(): void;
   /** The popup was closed without a pick. */
