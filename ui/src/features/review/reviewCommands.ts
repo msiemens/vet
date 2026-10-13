@@ -162,6 +162,7 @@ export function viewCommands(a: ViewActions): Command<CommandContext>[] {
       label: "Jump to Source",
       binding: "F4",
       inFields: true,
+      yieldsToLists: true,
       enabled: (c) => c.diffView && c.viewMode !== "file",
       disabledReason: () => "Open the Changes tab or a changed file's diff",
       run: () => a.jumpToSource(),

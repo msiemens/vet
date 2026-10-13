@@ -1,61 +1,75 @@
 <script lang="ts">
-  // What is known about the selected symbol; every location opens its file. Signature
-  // and hover are the language server's own answers, the rest is derived (SPEC §7.3, §7.4).
-  import type { ChangedSymbol } from "../../generated/ChangedSymbol";
-  import type { Impact } from "../../generated/Impact";
+  // What is known about the symbol on show: it need not be a changed one. Every location opens its
+  // file. The signature and hover are the language server's own answers, the rest is derived
+  // (SPEC §7.3, §7.4).
+  import type { Calls } from "../../generated/Calls";
   import type { Reference } from "../../generated/Reference";
   import type { RemovalImpact } from "../../generated/RemovalImpact";
   import type { Side } from "../../generated/Side";
+  import type { SymbolChange } from "../../generated/SymbolChange";
+  import type { SymbolInfo } from "../../generated/SymbolInfo";
+  import type { Usages } from "../../generated/Usages";
   import { codeBlock } from "../../lib/codeBlock";
   import { nameOf, rowLabel } from "../../lib/symbolLabel";
+  import Icon from "../../lib/ui/Icon.svelte";
   import PathText from "../../lib/ui/PathText.svelte";
   import QualifiedName from "../../lib/ui/QualifiedName.svelte";
-  import { symbols } from "../../state/symbols.svelte";
+  import { type Shown, symbols } from "../../state/symbols.svelte";
   import DerivedSection from "./DerivedSection.svelte";
-  import { containerOf, describeFate, type OpenLocation, place } from "./symbolList";
+  import SymbolGlyph from "./SymbolGlyph.svelte";
+  import { containerOf, describeFate, type OpenLocation, place, placeShort } from "./symbolDetail";
 
-  let { symbol, onopen }: { symbol: ChangedSymbol; onopen: OpenLocation } = $props();
+  let { shown, onopen }: { shown: Shown; onopen: OpenLocation } = $props();
 
-  const id = $derived(symbol.symbol.id);
-  const signature = $derived(symbols.signature);
+  const id = $derived(shown.symbol.id);
+  const removed = $derived(shown.change === "removed");
   const FATE = { bad: "var(--del-text)", warn: "var(--old-base)", mute: "var(--text-3)" } as const;
+  const LETTER = { modified: "M", added: "A", removed: "D" } as const;
+  const WORDS = { modified: "modified", added: "added", removed: "removed" } as const;
+
+  /** A changed symbol listed in the panel: shown in the tree and opened where it is. */
+  function goTo(symbol: SymbolInfo, change: SymbolChange) {
+    symbols.choose(symbol, change, true);
+    const side: Side = change === "removed" ? "base" : "target";
+    onopen(symbol.id.path, symbol.at.line, side);
+  }
 </script>
 
 <div class="head">
-  <span class="mono name selectable">{nameOf(id)}</span>
+  <span class="nm">
+    <SymbolGlyph kind={shown.symbol.kind} />
+    <span class="mono selectable" class:gone={removed}>{nameOf(id)}</span>
+    {#if shown.change}<span class="chg">{WORDS[shown.change]}</span>{/if}
+  </span>
   {#if containerOf(id)}
-    <span class="mono qualified selectable"><QualifiedName name={containerOf(id)} /></span>
+    <span class="mono q selectable"><QualifiedName name={containerOf(id)} /></span>
   {/if}
-  <span class="mono qualified selectable"><PathText path={id.path} /></span>
-  <span class="change">{symbol.change}</span>
+  <span class="mono q selectable"><PathText path={id.path} /></span>
 </div>
 
-<section class="plain">
-  <div class="sh">Signature</div>
-  {#if !signature || signature.state === "loading"}
-    <p class="note">Loading…</p>
-  {:else if signature.state === "failed"}
-    <p class="note err">{signature.message}</p>
-  {:else if signature.value.signature}
-    <div class="block">
-      <code class="mono selectable" use:codeBlock={signature.value.signature}></code>
-    </div>
-  {:else}
-    <p class="note">{signature.value.unavailable?.message ?? "The language server has no text for it"}</p>
-  {/if}
-</section>
+<DerivedSection id="signature" title="Signature" load={symbols.signature}>
+  {#snippet children(signature)}
+    {#if signature.signature}
+      <div class="block">
+        <code class="mono selectable" use:codeBlock={signature.signature}></code>
+      </div>
+    {:else}
+      <p class="note">{signature.unavailable?.message ?? "The language server has no text for it"}</p>
+    {/if}
+  {/snippet}
+</DerivedSection>
 
 {#snippet where(reference: Reference, side: Side)}
   {@const { location, within } = reference}
   {@const at = location.span.start}
   {@const label = rowLabel(within, location.path)}
   {#if location.external}
-    <span class="tw dim" title={place(location.path, at)}
-      ><span class="mono s">{label.name}</span><span class="at">outside the repository</span></span
+    <span class="drow dim" title={place(location.path, at)}
+      ><span class="mono s">{label.name}</span><span class="mono at">outside the repository</span></span
     >
   {:else}
     <button
-      class="flat tw"
+      class="flat drow"
       type="button"
       title={place(location.path, at)}
       onclick={() => onopen(location.path, at.line, side)}
@@ -65,8 +79,29 @@
   {/if}
 {/snippet}
 
-{#if symbol.change === "removed"}
+{#snippet symbolRow(symbol: SymbolInfo, change: SymbolChange, depth: number)}
+  <button
+    class="flat drow"
+    class:gone={change === "removed"}
+    type="button"
+    style:padding-left="{26 + depth * 12}px"
+    title={place(symbol.id.path, symbol.at)}
+    onclick={() => goTo(symbol, change)}
+  >
+    {#if depth}<span class="elbow">└</span>{/if}
+    <span class="mono s"><QualifiedName name={symbol.id.name.join("::")} /></span>
+    <span class="mono at">{placeShort(symbol.id.path, symbol.at)}</span>
+    <span
+      class="mono letter"
+      style:color="var(--{change === 'added' ? 'add-text' : change === 'removed' ? 'del-text' : 'old-base'})"
+      >{LETTER[change]}</span
+    >
+  </button>
+{/snippet}
+
+{#if removed}
   <DerivedSection
+    id="remaining"
     title="Remaining references"
     load={symbols.removal}
     count={(r: RemovalImpact) => r.callSites.length}
@@ -87,53 +122,88 @@
     {/snippet}
   </DerivedSection>
 {:else}
-  <DerivedSection title="Callers" load={symbols.impact} count={(i: Impact) => i.callers.length} derived>
-    {#snippet children(impact)}
-      {#if impact.gaps.length}<p class="note">Incomplete: {impact.gaps.join("; ")}</p>{/if}
-      <ul>
-        {#each impact.callers as c, i (i)}
-          {@const label = rowLabel(c.id, c.id.path)}
-          <li>
-            <button
-              class="flat tw"
-              type="button"
-              title={place(c.id.path, c.at)}
-              onclick={() => onopen(c.id.path, c.at.line, "target")}
-            >
-              <span class="mono s">{label.name}</span><span class="mono at">{label.context}</span>
-            </button>
-          </li>
-        {/each}
-      </ul>
+  <DerivedSection
+    id="callers"
+    title="Changed callers"
+    load={symbols.calls}
+    count={(c: Calls) => c.callers.length}
+    derived
+  >
+    {#snippet children(calls)}
+      {#if calls.gaps.length}<p class="note">Incomplete: {calls.gaps.join("; ")}</p>{/if}
+      {#each calls.callers as c, i (i)}
+        {@render symbolRow(c.symbol, c.change, c.depth)}
+      {:else}
+        <p class="note">None</p>
+      {/each}
     {/snippet}
   </DerivedSection>
-  <DerivedSection title="References" load={symbols.impact} count={(i: Impact) => i.references.length} derived>
-    {#snippet children(impact)}
-      <ul>
-        {#each impact.references as r, i (i)}
-          <li>{@render where(r, "target")}</li>
-        {/each}
-      </ul>
+  <DerivedSection
+    id="callees"
+    title="Changed callees"
+    load={symbols.calls}
+    count={(c: Calls) => c.callees.length}
+    derived
+  >
+    {#snippet children(calls)}
+      {#each calls.callees as c, i (i)}
+        {@render symbolRow(c.symbol, c.change, 0)}
+      {:else}
+        <p class="note">None</p>
+      {/each}
     {/snippet}
   </DerivedSection>
-  <DerivedSection title="Reached from" load={symbols.reach} derived>
+  {#if shown.change}
+    <DerivedSection
+      id="affected"
+      title="Possibly affected"
+      load={symbols.calls}
+      count={(c: Calls) => c.affected.length}
+      derived
+      warn
+    >
+      {#snippet children(calls)}
+        <p class="note">Unchanged direct callers; their behaviour may differ now.</p>
+        {#each calls.affected as s, i (i)}
+          <button
+            class="flat drow"
+            type="button"
+            title={place(s.id.path, s.at)}
+            onclick={() => onopen(s.id.path, s.at.line, "target")}
+          >
+            <span class="mono s"><QualifiedName name={s.id.name.join("::")} /></span>
+            <span class="mono at">{placeShort(s.id.path, s.at)}</span>
+          </button>
+        {:else}
+          <p class="note">None</p>
+        {/each}
+      {/snippet}
+    </DerivedSection>
+  {/if}
+  <div class="callout">
+    <Icon name="derived" size={13} /><span
+      >Call hierarchy cannot see dynamic dispatch (trait objects, function pointers, virtual calls), reflection or
+      macro-generated calls. Callers and callees may be missing.</span
+    >
+  </div>
+  <DerivedSection id="reach" title="Reached from" load={symbols.reach} derived>
     {#snippet children(reachability)}
       {@const reach = reachability.reach}
       {#if reach.type === "reached"}
-        <!-- the backend's path runs from the changed symbol to the entry point -->
+        <!-- the backend's path runs from the symbol to the entry point -->
         <ol>
           {#each [...reach.path].reverse() as step, i (i)}
             {@const label = rowLabel(step, step.path)}
             <li>
               <button
-                class="flat tw"
+                class="flat drow"
                 type="button"
                 style:padding-left="{26 + i * 10}px"
                 title={step.path}
                 onclick={() => onopen(step.path, undefined, "target")}
               >
-                {#if i > 0}<span class="at">└</span>{/if}<span class="mono s">{label.name}</span><span class="mono at"
-                  >{label.context}</span
+                {#if i > 0}<span class="elbow">└</span>{/if}<span class="mono s">{label.name}</span><span
+                  class="mono at">{label.context}</span
                 >
               </button>
             </li>
@@ -146,6 +216,18 @@
       {/if}
     {/snippet}
   </DerivedSection>
+  <DerivedSection id="usages" title="Usages" load={symbols.usages} count={(u: Usages) => u.references.length} derived>
+    {#snippet children(usages)}
+      {#if usages.gap}<p class="note">References could not be listed: {usages.gap}</p>{/if}
+      <ul>
+        {#each usages.references as r, i (i)}
+          <li>{@render where(r, "target")}</li>
+        {:else}
+          {#if !usages.gap}<li class="note">None</li>{/if}
+        {/each}
+      </ul>
+    {/snippet}
+  </DerivedSection>
 {/if}
 
 <style>
@@ -156,21 +238,26 @@
     padding: 8px 10px;
     border-bottom: 1px solid var(--line-soft);
   }
-  .name {
+  .nm {
+    display: flex;
+    align-items: center;
+    gap: 6px;
     font-size: var(--fs-ctl);
     font-weight: 500;
   }
-  .qualified {
+  .q {
+    display: flex;
     font-size: var(--fs-mono-s);
     color: var(--text);
   }
-  .change {
+  .chg {
     font-size: 11px;
+    font-weight: 400;
     color: var(--text-3);
   }
-  section.plain {
-    border-bottom: 1px solid var(--line-soft);
-    padding-bottom: 6px;
+  .gone {
+    text-decoration: line-through;
+    color: var(--text-2);
   }
   .block {
     padding: 0 10px 4px 26px;
@@ -190,36 +277,74 @@
     align-items: center;
     gap: 6px;
   }
-  .tw {
+  li.note {
+    padding-left: 26px;
+  }
+  .drow {
     display: flex;
     align-items: center;
     gap: 6px;
     flex: 1;
     min-width: 0;
+    width: 100%;
     height: var(--h-row);
     padding: 0 10px 0 26px;
+    box-sizing: border-box;
     white-space: nowrap;
     font-size: var(--fs-ctl);
     text-align: left;
   }
-  button.tw {
-    width: 100%;
+  span.drow {
+    width: auto;
   }
   .dim {
     color: var(--text-3);
   }
   .s {
+    display: flex;
+    min-width: 0;
     font-size: var(--fs-mono-s);
     overflow: hidden;
     text-overflow: ellipsis;
   }
   .at {
+    margin-left: auto;
     font-size: 11px;
     color: var(--text-3);
+  }
+  .elbow {
+    font-size: 11px;
+    color: var(--text-3);
+  }
+  .drow.gone .s {
+    text-decoration: line-through;
+    color: var(--text-2);
+  }
+  .letter {
+    flex: none;
+    width: 10px;
+    font-size: 11px;
+    text-align: center;
   }
   .verdict {
     font-size: 12px;
     white-space: nowrap;
     padding-right: 10px;
+  }
+  .callout {
+    display: flex;
+    gap: 8px;
+    margin: 8px 10px 4px;
+    padding: 7px 9px;
+    border: 1px dashed var(--line);
+    border-radius: var(--radius);
+    color: var(--text-2);
+    font-size: 12px;
+    line-height: 1.45;
+  }
+  .callout :global(svg) {
+    flex: none;
+    margin-top: 2px;
+    color: var(--text-3);
   }
 </style>

@@ -1,6 +1,6 @@
 <script lang="ts">
   import { tick, untrack } from "svelte";
-  import { SvelteSet } from "svelte/reactivity";
+  import { SvelteMap, SvelteSet } from "svelte/reactivity";
   import type { DirEntry } from "../../generated/DirEntry";
   import type { ReviewedFile } from "../../state/reviewModel";
   import { dirname } from "../../lib/paths";
@@ -12,14 +12,20 @@
   import { ListNav } from "../../lib/ui/listNav";
   import Marked from "../../lib/ui/Marked.svelte";
   import PathText from "../../lib/ui/PathText.svelte";
+  import ProgressBar from "../../lib/ui/ProgressBar.svelte";
   import type { CommitUnit } from "../../generated/CommitUnit";
   import { SpeedSearch } from "../../lib/ui/speedSearch.svelte";
   import SpeedSearchField from "../../lib/ui/SpeedSearchField.svelte";
+  import Spinner from "../../lib/ui/Spinner.svelte";
   import VirtualRows from "../../lib/ui/VirtualRows.svelte";
   import { commands } from "../../state/commands";
+  import { keyOf } from "../../state/symbolKey";
+  import { symbols } from "../../state/symbols.svelte";
+  import { SymbolGlyph } from "../symbols";
   import { AllFiles } from "./AllFiles.svelte";
   import type { AllRow } from "./allFilesRows";
   import CommitList from "./CommitList.svelte";
+  import { arrowKey, closedKey, fileSymbolRows, type SymbolRow } from "./symbolRows";
   import { type Row, buildRows, buildTree, filterRows, summarize } from "./tree";
 
   let {
@@ -36,6 +42,7 @@
     oncommit,
     onselect,
     onopen,
+    onopensymbol,
     onmenu,
   }: {
     /** Which tool window this is: the changed files, every file, or the commits with the files of the one on view. */
@@ -63,6 +70,8 @@
     onselect: (path: string) => void;
     /** Double click or Enter. */
     onopen: (path: string) => void;
+    /** Double click, Enter or F4 on a changed symbol: its definition (the base side's for a removed one). */
+    onopensymbol: (row: SymbolRow) => void;
     /** Context menu on a file or folder row, at the pointer position. */
     onmenu: (path: string, dir: boolean, x: number, y: number) => void;
   } = $props();
@@ -96,14 +105,19 @@
   });
   // The highlighted row: an index into the rows shown, -1 for none. While searching it is the row Enter opens.
   let cursor = $state(-1);
-  /** A single click or Space: a file's place in the review, a folder open or shut. */
+  /**
+   * A single click or Space: a file's place in the review, a changed symbol on show in the panel, a
+   * folder or a holder of symbols open or shut.
+   */
   function pick(row: Row | AllRow) {
     if (row.kind === "file") onselect(row.path);
+    else if (row.kind === "symbol" && row.change !== undefined) symbols.choose(row.symbol, row.change);
     else toggleRow(row);
   }
-  /** A double click or Enter: the file in a tab of its own; a folder opens or shuts. */
+  /** A double click or Enter: the file in a tab of its own, a changed symbol's definition; a folder opens or shuts. */
   function openRow(row: Row | AllRow) {
     if (row.kind === "file") onopen(row.path);
+    else if (row.kind === "symbol" && row.change !== undefined) onopensymbol(row);
     else toggleRow(row);
   }
   let body = $state<HTMLElement>();
@@ -117,8 +131,27 @@
   });
   $effect(() => () => rowNav.cancel());
 
+  /** Whether a click was on the chevron, which opens or shuts what is below the row without choosing it. */
+  const onChevron = (e: MouseEvent) => e.target instanceof Element && !!e.target.closest(".chev");
+
   function clickFile(e: MouseEvent, path: string, index: number) {
+    if (onChevron(e) && hasSymbols(path)) {
+      cursor = index;
+      body?.focus({ preventScroll: true });
+      toggleFile(path);
+      return;
+    }
     if (e.detail !== 0) pressed = path;
+    rowNav.click(e, index);
+  }
+
+  function clickSymbol(e: MouseEvent, row: SymbolRow, index: number) {
+    if (onChevron(e) && row.holds) {
+      cursor = index;
+      body?.focus({ preventScroll: true });
+      toggleSymbol(row);
+      return;
+    }
     rowNav.click(e, index);
   }
 
@@ -129,7 +162,8 @@
   }
 
   function toggleRow(row: Row | AllRow) {
-    if ("key" in row) all.toggle(row.key);
+    if (row.kind === "symbol") toggleSymbol(row);
+    else if ("key" in row) all.toggle(row.key);
     else if (row.kind === "dir") toggle(row.path, row.descendants);
   }
 
@@ -176,8 +210,45 @@
 
   const collapsed = new SvelteSet<string>();
   const unfolded: ReadonlySet<string> = new Set();
+  const closedNone: ReadonlySet<string> = new Set();
   const tree = $derived(buildTree(paths));
-  const rows = $derived(buildRows(tree, collapsed));
+
+  // The files show their symbols all or none, as the header's button last chose; a file the viewer
+  // opened or shut since follows that, and so does a file the changeset gains later.
+  let openAll = $state(false);
+  const fileOpen = new SvelteMap<string, boolean>();
+  const isOpen = (path: string) => fileOpen.get(path) ?? openAll;
+  /** The holders of symbols that are shut, by `closedKey`. */
+  const closedSymbols = new SvelteSet<string>();
+
+  const loaded = (path: string) => {
+    const file = symbols.files.get(path);
+    return file?.state === "done" ? file : undefined;
+  };
+  const hasSymbols = (path: string) => !!loaded(path)?.symbols.length;
+  const symbolsOf = (open: (path: string) => boolean, closed: ReadonlySet<string>) =>
+    tool === "changes"
+      ? (path: string, depth: number) => {
+          const file = open(path) ? loaded(path) : undefined;
+          return file ? fileSymbolRows(path, file.symbols, file.context, depth, closed) : [];
+        }
+      : undefined;
+
+  const rows = $derived(buildRows(tree, collapsed, symbolsOf(isOpen, closedSymbols)));
+  const foldable = $derived(tool === "changes" ? paths.filter(hasSymbols) : []);
+  const allOpen = $derived(foldable.length > 0 && foldable.every(isOpen));
+
+  const toggleFile = (path: string) => fileOpen.set(path, !isOpen(path));
+  const toggleSymbol = (row: SymbolRow) => {
+    const key = closedKey(row.path, row.key);
+    if (!closedSymbols.delete(key)) closedSymbols.add(key);
+  };
+  /** Opens every file that has symbols and every holder in them, or shuts the files. */
+  function toggleAll() {
+    openAll = !allOpen;
+    fileOpen.clear();
+    if (openAll) closedSymbols.clear();
+  }
   // The list function does not change for a mounted tree.
   // svelte-ignore state_referenced_locally
   const all = new AllFiles(list);
@@ -186,7 +257,16 @@
   // search of "All files" can only filter the folders loaded so far.
   const search = new SpeedSearch();
   const searchedChanges = $derived(
-    search.active && scope === "changes" ? filterRows(buildRows(tree, unfolded), search.query) : undefined,
+    search.active && scope === "changes"
+      ? filterRows(
+          buildRows(
+            tree,
+            unfolded,
+            symbolsOf(() => true, closedNone),
+          ),
+          search.query,
+        )
+      : undefined,
   );
   const searchedAll = $derived(search.active && scope === "all" ? filterRows(all.rows, search.query) : undefined);
   const shownChanges = $derived(searchedChanges?.rows ?? rows);
@@ -217,7 +297,33 @@
     if (scope === "all" && revision !== undefined) untrack(() => all.reset(revision));
   });
 
+  // The cursor went into a changed symbol: its file opens and its row comes into view. The tree keeps its focus.
+  $effect(() => {
+    const request = symbols.reveal;
+    // Also when the file's symbols arrive after the cursor was in one.
+    const arrived = request && loaded(request.path);
+    if (request && arrived && tool === "changes" && request.n !== revealed)
+      untrack(() => void revealSymbol(request.path, keyOf(request.symbol.id), request.n));
+  });
+  /** The last request of the cursor that found its row. */
+  let revealed = 0;
+
+  async function revealSymbol(path: string, id: string, n: number) {
+    search.clear();
+    cursor = -1;
+    for (let dir = dirname(path); dir; dir = dirname(dir)) collapsed.delete(dir);
+    fileOpen.set(path, true);
+    for (const key of [...closedSymbols]) if (key.startsWith(`${path}\0`)) closedSymbols.delete(key);
+    await tick();
+    const index = shown().findIndex((r) => r.kind === "symbol" && r.change !== undefined && keyOf(r.symbol.id) === id);
+    if (index < 0) return;
+    revealed = n;
+    rowList()?.reveal(index);
+  }
+
   const STATUS = { M: "var(--old-base)", A: "var(--add-text)", D: "var(--del-text)", R: "var(--text-2)" } as const;
+  /** The letter a changed symbol ends its row with, as a file does. */
+  const LETTER = { modified: "M", added: "A", removed: "D" } as const;
 
   /** Collapsing a folder collapses everything below it too; expanding opens only the folder. */
   function toggle(path: string, descendants: string[]) {
@@ -259,6 +365,34 @@
     rowList()?.reveal(cursor);
   }
 
+  const plain = (e: KeyboardEvent) => !e.altKey && !e.ctrlKey && !e.metaKey && !e.shiftKey;
+
+  /** ← and → open, shut and move through files with symbols and symbols, F4 opens a symbol; answers whether the key was one. */
+  function changesKey(e: KeyboardEvent): boolean {
+    if (cursor < 0 || cursor >= shownChanges.length) return false;
+    const row = shownChanges[cursor];
+    if (e.key === "F4") {
+      if (row.kind !== "symbol" || row.change === undefined) return false;
+      onopensymbol(row);
+      return true;
+    }
+    if (e.key !== "ArrowLeft" && e.key !== "ArrowRight") return false;
+    const step = arrowKey(
+      shownChanges,
+      cursor,
+      e.key === "ArrowLeft" ? "left" : "right",
+      (r) => (r.kind === "symbol" ? r.holds : r.kind === "file" && hasSymbols(r.path)),
+      (r) => (r.kind === "symbol" ? !closedSymbols.has(closedKey(r.path, r.key)) : isOpen(r.path)),
+    );
+    if (!step) return false;
+    if ("move" in step) {
+      cursor = step.move;
+      rowList()?.reveal(cursor);
+    } else if (step.toggle.kind === "symbol") toggleSymbol(step.toggle);
+    else toggleFile(step.toggle.path);
+    return true;
+  }
+
   function onkeydown(e: KeyboardEvent) {
     if (search.active && !e.altKey && !e.ctrlKey && !e.metaKey) {
       const key = e.key;
@@ -280,6 +414,11 @@
         void tick().then(() => revealPath(path));
         return;
       }
+    }
+    if (!search.active && tool === "changes" && plain(e) && changesKey(e)) {
+      e.preventDefault();
+      e.stopPropagation();
+      return;
     }
     const was = search.active;
     if (!search.type(e)) {
@@ -331,6 +470,8 @@
   {@const file = fileOf(path)}
   {@const s = file && summarize(file)}
   {@const flagged = file?.completion.flaggedHunks ?? 0}
+  {@const analysis = tool === "changes" ? symbols.files.get(path) : undefined}
+  {@const open = search.active || isOpen(path)}
   <button
     class="flat tw"
     class:on={path === (pressed ?? selected)}
@@ -344,9 +485,19 @@
     onclick={(e) => clickFile(e, path, index)}
     oncontextmenu={(e) => menu(e, path, false)}
   >
-    <span class="chev"></span>
+    <span class="chev">
+      {#if analysis?.state === "done" && analysis.symbols.length}<Icon name={open ? "open" : "closed"} size={10} />{/if}
+    </span>
     <FileIcon {name} />
     <span class="name"><Marked text={name} ranges={hit.ranges} /></span>
+    {#if analysis?.state === "loading"}
+      <Spinner label="Analysing the symbols" />
+    {:else if analysis?.state === "failed"}
+      <span class="warn" title={analysis.message}><Icon name="warning" size={11} /></span>
+    {:else if analysis?.state === "done" && analysis.symbols.length && !open}
+      {@const n = analysis.symbols.length}
+      <span class="mono x" title="{n} changed {n === 1 ? 'symbol' : 'symbols'}">{n}</span>
+    {/if}
     {#if s?.mode}<span class="mono x" title="File mode changed">{s.mode}</span>{/if}
     {#if s && file}
       {@const { added, removed } = file.delta}
@@ -363,12 +514,51 @@
   </button>
 {/snippet}
 
+{#snippet symbolRow(index: number, r: SymbolRow, hit: Hit)}
+  {@const changed = r.change !== undefined}
+  {@const shut = !search.active && closedSymbols.has(closedKey(r.path, r.key))}
+  <button
+    class="flat tw sym"
+    class:ctx={!changed}
+    class:gone={r.change === "removed"}
+    class:on={changed && !!symbols.selected && keyOf(symbols.selected.symbol.id) === keyOf(r.symbol.id)}
+    class:cur={hit.cursor}
+    type="button"
+    tabindex="-1"
+    title={r.symbol.id.name.join("::")}
+    style:padding-left="calc(8px + {r.depth} * var(--w-indent))"
+    onclick={(e) => clickSymbol(e, r, index)}
+  >
+    <span class="chev"
+      >{#if r.holds}<Icon name={shut ? "closed" : "open"} size={10} />{/if}</span
+    >
+    <SymbolGlyph kind={r.symbol.kind} />
+    <span class="name mono"><Marked text={r.name} ranges={hit.ranges} /></span>
+    <span class="mono status" style:color={r.change && STATUS[LETTER[r.change]]} title={r.change}
+      >{r.change ? LETTER[r.change] : ""}</span
+    >
+  </button>
+{/snippet}
+
 <nav aria-label={TITLES[tool]} bind:this={nav}>
   <div class="sh sh-bar">
     <span>{TITLES[tool]}</span>
     {#if tool === "commits"}<span class="mono n">{commits.length}</span>{/if}
     <span class="grow"></span>
     {#if tool === "changes"}
+      {#if symbols.progress.done < symbols.progress.total}
+        <span class="mono n" title="Files whose changed symbols are found, of the files to analyse"
+          >symbols {symbols.progress.done}/{symbols.progress.total}</span
+        >
+      {/if}
+      <IconButton
+        icon={allOpen ? "collapseAll" : "expandAll"}
+        label={allOpen ? "Collapse all" : "Expand all symbols"}
+        disabled={!foldable.length}
+        size={22}
+        iconSize={14}
+        onclick={toggleAll}
+      />
       <span class="mono n end">{changes}</span>
     {:else if tool === "all"}
       <IconButton
@@ -382,6 +572,11 @@
       />
     {/if}
   </div>
+  {#if tool === "changes" && symbols.progress.done < symbols.progress.total}
+    <div class="progress">
+      <ProgressBar fraction={symbols.progress.done / symbols.progress.total} label="Symbols found" />
+    </div>
+  {/if}
   {#if tool === "commits"}
     <div class="commits" style:height="{listHeight}px">
       {#if commits.length}
@@ -412,7 +607,8 @@
         count={shownChanges.length + (hasExcluded ? 1 : 0)}
         key={(i) => {
           const r = shownChanges.at(i);
-          return r ? r.path + r.kind : "excluded";
+          if (!r) return "excluded";
+          return r.kind === "symbol" ? closedKey(r.path, r.key) + r.kind : r.path + r.kind;
         }}
       >
         {#snippet row(i)}
@@ -439,6 +635,8 @@
               () => toggle(r.path, r.descendants),
               hit,
             )}
+          {:else if r?.kind === "symbol"}
+            {@render symbolRow(i, r, { cursor: i === cursor, ranges: hits?.get(r) })}
           {:else if r}
             {@render fileRow(i, r.path, r.name, r.depth, { cursor: i === cursor, ranges: hits?.get(r) })}
           {/if}
@@ -569,6 +767,37 @@
     flex: none;
     width: 10px;
     font-size: 11px;
+    text-align: center;
+  }
+  .warn {
+    flex: none;
+    display: inline-flex;
+    color: var(--old-base);
+  }
+  .progress {
+    flex: none;
+  }
+  /* A symbol's name is code; a holder the change left alone is muted, a removed symbol struck through. */
+  .sym .name {
+    font-family: var(--font-mono);
+    font-size: var(--fs-mono-s);
+  }
+  .sym.ctx {
+    color: var(--text-3);
+  }
+  .sym.ctx :global(.kind) {
+    opacity: 0.6;
+  }
+  .sym.gone .name {
+    text-decoration: line-through;
+    color: var(--text-2);
+  }
+  .sym.gone :global(.kind) {
+    opacity: 0.6;
+  }
+  .sym.on .name,
+  .sym.on .chev {
+    color: inherit;
   }
   .excluded {
     padding-left: 8px;

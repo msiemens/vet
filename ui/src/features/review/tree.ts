@@ -8,6 +8,7 @@ import type { ModeChange } from "../../generated/ModeChange";
 import { basename, compactChain, dirname } from "../../lib/paths.ts";
 import { match, type Range } from "../../lib/speedSearch.ts";
 import type { FileLayout, ReviewedFile } from "../../state/reviewModel.ts";
+import type { SymbolRow } from "./symbolRows.ts";
 
 export interface DirRow {
   kind: "dir";
@@ -27,7 +28,7 @@ export interface FileRow {
   depth: number;
 }
 
-export type Row = DirRow | FileRow;
+export type Row = DirRow | FileRow | SymbolRow;
 
 /** What a file row shows besides its name: it changes with review updates. */
 export interface FileSummary {
@@ -104,10 +105,10 @@ export function summarize(file: ReviewedFile): FileSummary {
 
 /**
  * The rows of a speed search over `rows` (a tree in display order, its folders open): those whose
- * name matches `query`, and the folders above them, whatever their names. `hits` has the matches'
- * ranges to highlight.
+ * name matches `query`, and the rows that hold them (folders, files with symbols, symbols), whatever
+ * their names. `hits` has the matches' ranges to highlight.
  */
-export function filterRows<R extends { kind: "dir" | "file"; depth: number; name: string }>(
+export function filterRows<R extends { depth: number; name: string }>(
   rows: readonly R[],
   query: string,
 ): { rows: R[]; hits: Map<R, Range[]> } {
@@ -119,7 +120,7 @@ export function filterRows<R extends { kind: "dir" | "file"; depth: number; name
     const row = rows[i];
     const found = match(query, row.name);
     if (found) hits.set(row, found.ranges);
-    const keep = !!found || (row.kind === "dir" && !!below[row.depth + 1]);
+    const keep = !!found || !!below[row.depth + 1];
     below.length = row.depth + 1;
     below[row.depth] = keep || !!below[row.depth];
     if (keep) kept.push(row);
@@ -127,15 +128,25 @@ export function filterRows<R extends { kind: "dir" | "file"; depth: number; name
   return { rows: kept.reverse(), hits };
 }
 
-/** The visible rows; the contents of `collapsed` directories are left out. */
-export function buildRows(root: DirNode, collapsed: ReadonlySet<string>): Row[] {
+/**
+ * The visible rows; the contents of `collapsed` directories are left out. `symbols` gives the rows
+ * of a file's symbols, from the depth they start at, to show below its row.
+ */
+export function buildRows(
+  root: DirNode,
+  collapsed: ReadonlySet<string>,
+  symbols?: (path: string, depth: number) => SymbolRow[],
+): Row[] {
   const rows: Row[] = [];
   const walk = (dir: DirNode, depth: number) => {
     for (const d of dir.dirs) {
       rows.push({ kind: "dir", path: d.path, name: d.name, depth, descendants: d.below });
       if (!collapsed.has(d.path)) walk(d, depth + 1);
     }
-    for (const path of dir.files) rows.push({ kind: "file", path, name: basename(path), depth });
+    for (const path of dir.files) {
+      rows.push({ kind: "file", path, name: basename(path), depth });
+      if (symbols) rows.push(...symbols(path, depth + 1));
+    }
   };
   walk(root, 0);
   return rows;

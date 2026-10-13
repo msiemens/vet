@@ -1,82 +1,51 @@
 <script lang="ts">
-  import type { ChangedSymbol } from "../../generated/ChangedSymbol";
+  // The Symbol tool window: the details of the symbol on show.
   import ScrollArea from "../../lib/ui/ScrollArea.svelte";
-  import Splitter from "../../lib/ui/Splitter.svelte";
   import { symbols } from "../../state/symbols.svelte";
   import SymbolDetail from "./SymbolDetail.svelte";
-  import SymbolList from "./SymbolList.svelte";
-  import type { OpenLocation } from "./symbolList";
+  import type { OpenLocation } from "./symbolDetail";
 
   /** The panel shows what `symbols` holds; the owner says where a location opens. */
-  let { onopen, onjump }: { onopen: OpenLocation; onjump: (symbol: ChangedSymbol) => void } = $props();
-
-  const MIN_LIST = 90;
-  const MIN_DETAIL = 80;
-  let panel = $state<HTMLElement>();
-  let top = $state<HTMLElement>();
-  let listHeight = $state<number>();
+  let { onopen }: { onopen: OpenLocation } = $props();
 </script>
 
-<aside aria-label="Symbol" bind:this={panel}>
-  <div
-    class="top"
-    bind:this={top}
-    style:flex={listHeight === undefined ? undefined : `none`}
-    style:height={listHeight === undefined ? undefined : `${listHeight}px`}
-  >
-    <SymbolList {onjump} />
-  </div>
-  <div class="divider">
-    <Splitter
-      orientation="horizontal"
-      label="Resize the symbol list"
-      storageKey="vet.symbols.listHeight"
-      direction={1}
-      current={() => top?.offsetHeight ?? 0}
-      limits={() => [MIN_LIST, Math.max(MIN_LIST, (panel?.clientHeight ?? 400) - MIN_DETAIL)]}
-      bind:size={listHeight}
-      style="top: -2px"
-    />
-  </div>
-  <div class="detail">
-    <ScrollArea>
-      {#if symbols.selected}
-        <SymbolDetail symbol={symbols.selected} {onopen} />
-      {:else}
-        <p class="empty">No symbol selected</p>
-      {/if}
-    </ScrollArea>
-  </div>
+<aside aria-label="Symbol">
+  <div class="sh sh-bar"><span>Symbol</span></div>
+  <ScrollArea>
+    {#if symbols.selected}
+      <SymbolDetail shown={symbols.selected} {onopen} />
+    {:else}
+      <div class="empty">
+        <b>No symbol selected</b>
+        <span>
+          Changed symbols are listed under their files in Changes. Select one there, or put the cursor in a function,
+          type or module in an editor.
+        </span>
+      </div>
+    {/if}
+  </ScrollArea>
 </aside>
 
 <style>
   aside {
     flex: 1;
     min-width: 0;
+    min-height: 0;
     display: flex;
     flex-direction: column;
     overflow: hidden;
   }
-  .top {
-    display: flex;
-    flex-direction: column;
-    flex: 0 1 40%;
-    min-height: 90px;
-  }
-  /* The list's own bottom border is the line; the splitter straddles it. */
-  .divider {
-    flex: none;
-    position: relative;
-    height: 0;
-  }
-  .detail {
-    flex: 1;
-    min-height: 0;
-    display: flex;
-    flex-direction: column;
-  }
   .empty {
-    margin: 12px 10px;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    padding: 14px 12px;
     color: var(--text-3);
+    font-size: var(--fs-ctl);
+    line-height: 1.5;
+  }
+  .empty b {
+    color: var(--text-2);
+    font-weight: 600;
   }
 </style>

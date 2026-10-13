@@ -1,20 +1,26 @@
-// The Symbol panel's state: the changeset's changed symbols, the selected one and the
-// answers about it. The backend derives them (SPEC §7.3, I5); this loads and holds them,
-// each one on its own, since an impact query may take a server's cold start. The changed
-// symbols belong to a revision of the open repository: the store follows both.
+// The Symbol tool's state: the changed symbols of each changed file, which the Changes tree shows
+// under their files, and the symbol on show, with the answers about it. The backend derives them
+// (SPEC §7.3, I5); this loads and holds them. The symbols belong to a revision of the open
+// repository, and each file's arrive as its analysis ends. The symbol on show is the one the
+// reviewer chose last: a row of the tree, or the symbol the cursor of an editor is in.
 
 import { untrack } from "svelte";
+import { SvelteMap } from "svelte/reactivity";
+import type { Calls } from "../generated/Calls";
 import type { ChangedSymbol } from "../generated/ChangedSymbol";
-import type { ChangedSymbols } from "../generated/ChangedSymbols";
-import type { Impact } from "../generated/Impact";
 import type { Reachability } from "../generated/Reachability";
 import type { RemovalImpact } from "../generated/RemovalImpact";
+import type { Side } from "../generated/Side";
+import type { SymbolChange } from "../generated/SymbolChange";
+import type { SymbolInfo } from "../generated/SymbolInfo";
 import type { SymbolSignature } from "../generated/SymbolSignature";
 import type { Unavailable } from "../generated/Unavailable";
+import type { Usages } from "../generated/Usages";
 import { isAbort } from "../lib/abort";
 import { errorText } from "../lib/errorText";
 import type { Backend } from "./backend";
 import { changeset } from "./changeset.svelte";
+import { CursorFollow } from "./cursorFollow";
 import { session } from "./session.svelte";
 import { keyOf } from "./symbolKey";
 
@@ -26,123 +32,246 @@ export interface Signature {
   unavailable?: Unavailable;
 }
 
+/** What the analysis of one changed file found. */
+export type FileLoad =
+  | { state: "loading" }
+  | { state: "done"; symbols: ChangedSymbol[]; context: SymbolInfo[] }
+  | { state: "failed"; message: string };
+
+/** The symbol on show. */
+export interface Shown {
+  symbol: SymbolInfo;
+  /** Absent: the changeset did not change it. */
+  change?: SymbolChange;
+}
+
+/** Files analysed at once. */
+const FILES_AT_ONCE = 4;
+/** How long the cursor rests before the symbol it is in is looked up. */
+const CURSOR_MS = 150;
+
+/** Where an editor's cursor is. */
+interface CursorPlace {
+  revision: number;
+  side: Side;
+  path: string;
+  line: number;
+  col: number;
+}
+
 class SymbolsState {
-  changed = $state.raw<Load<ChangedSymbols>>();
-  selected = $state.raw<ChangedSymbol>();
-  /** The file the review shows; the list scrolls to it. */
+  /** The analysis of each changed file with text hunks, as of the revision loaded. */
+  files = new SvelteMap<string, FileLoad>();
+  /** The files of the revision whose analysis ended, of those it asks for. */
+  progress = $state.raw({ done: 0, total: 0 });
+  /** The file the review shows; its analysis comes first. */
   file = $state<string>();
-  /** Only the current file's symbols are listed. */
-  currentOnly = $state(false);
-  // The selected symbol's answers: impact and reachability for an added or modified one,
-  // removal impact for a removed one.
+  selected = $state.raw<Shown>();
+  /** Asks the tree to show the selected changed symbol under its file `path`; `n` makes a repeated ask a new one. */
+  reveal = $state.raw<{ symbol: SymbolInfo; path: string; n: number }>();
+  // The selected symbol's answers: the target side's calls and usages and its reach, or a removed
+  // symbol's remaining references.
   signature = $state.raw<Load<Signature>>();
-  impact = $state.raw<Load<Impact>>();
+  calls = $state.raw<Load<Calls>>();
+  usages = $state.raw<Load<Usages>>();
   reach = $state.raw<Load<Reachability>>();
   removal = $state.raw<Load<RemovalImpact>>();
 
   private backend?: Backend;
   private revision?: number;
-  // A reply of an older request is dropped.
-  private listRun = 0;
-  private detailRun = 0;
+  private paths: readonly string[] = [];
+  // Aborts the analysis of the files of an older load.
+  private loading?: AbortController;
+  private loadRun = 0;
   // The requests about the selected symbol; aborted when the selection moves.
   private asking?: AbortController;
+  private detailRun = 0;
+  private revealed = 0;
+  private cursor = new CursorFollow<CursorPlace, Awaited<ReturnType<Backend["symbolAt"]>>>({
+    ms: CURSOR_MS,
+    key: (p) => JSON.stringify([p.revision, p.side, p.path, p.line, p.col]),
+    ask: (p, signal) => this.requireBackend().symbolAt(p.revision, p.side, p.path, p.line, p.col, signal),
+    apply: (answer) => {
+      if (answer.symbol) this.followed({ symbol: answer.symbol, change: answer.change ?? undefined });
+      else this.clearSelection();
+    },
+    fail: () => {
+      // The next move asks again; what is on show stays.
+    },
+  });
 
   constructor() {
     $effect.root(() => {
       $effect(() => {
         const { backend, repo } = session;
-        const revision = changeset.layout?.shown.revision;
+        const layout = changeset.layout;
+        // The semantic layer has the changeset's snapshots: not a commit's, and of a range only its latest end.
+        const analysable = changeset.shownCommit === undefined && layout?.interdiff?.markable !== false;
+        const revision = layout?.shown.revision;
+        const paths = layout?.files.filter((f) => f.hunks.length > 0).map((f) => f.path);
         untrack(() => {
-          if (repo === undefined || revision === undefined) this.reset();
-          else if (backend) void this.load(backend, revision);
+          if (repo === undefined || revision === undefined || !analysable || !paths) this.reset();
+          else if (backend) this.load(backend, revision, paths);
         });
       });
     });
     // What was asked while the connection was down may have failed.
     session.onResync((backend) => {
-      if (this.backend === backend && this.revision !== undefined) void this.load(backend, this.revision, true);
+      if (this.backend === backend) this.reload();
     });
     // A server installed or reconfigured may answer for files it had no answer for.
     session.onConnect((backend) =>
       backend.onEvent((event) => {
         if (event.type !== "serversChanged" || event.project !== backend.project) return;
-        if (this.backend === backend && this.revision !== undefined) void this.load(backend, this.revision, true);
+        if (this.backend === backend) this.reload();
       }),
     );
   }
 
-  /** Back to nothing: no repository is open, or no changeset is known yet. */
+  private requireBackend(): Backend {
+    if (!this.backend) throw new Error("no repository is open");
+    return this.backend;
+  }
+
+  /** Back to nothing: no repository is open, or no changeset to analyse is on view. */
   private reset() {
-    this.listRun++;
+    this.loadRun++;
+    this.loading?.abort();
     this.backend = this.revision = undefined;
-    this.changed = undefined;
+    this.paths = [];
+    this.files.clear();
+    this.progress = { done: 0, total: 0 };
+    this.cursor.reset();
     this.clearSelection();
   }
 
-  /**
-   * Loads the changed symbols of `revision`, keeping the selection if its symbol is still changed. Those of the
-   * revision loaded already are loaded again only when `again`.
-   */
-  private async load(backend: Backend, revision: number, again = false) {
-    if (!again && this.backend === backend && this.revision === revision) return;
-    this.backend = backend;
-    this.revision = revision;
-    const run = ++this.listRun;
-    this.changed = { state: "loading" };
-    let loaded: Load<ChangedSymbols>;
-    try {
-      loaded = { state: "done", value: await backend.changedSymbols(revision) };
-    } catch (error) {
-      // The changeset moved on: the load of its new revision replaces this one.
-      if (isAbort(error)) return;
-      loaded = { state: "failed", message: errorText(error) };
-    }
-    if (run !== this.listRun) return;
-    this.changed = loaded;
-    const previous = this.selected && keyOf(this.selected.symbol.id);
-    const kept =
-      loaded.state === "done" ? loaded.value.symbols.find((s) => keyOf(s.symbol.id) === previous) : undefined;
-    if (kept) this.select(kept);
-    else this.clearSelection();
+  private reload() {
+    if (this.backend && this.revision !== undefined) this.load(this.backend, this.revision, this.paths);
   }
 
-  select(symbol: ChangedSymbol) {
-    const { backend, revision } = this;
-    if (!backend || revision === undefined) return;
+  /**
+   * Analyses the files of `revision`, a few at a time, the file the review shows first. The files of
+   * an earlier load stay as they were until their new analysis arrives.
+   */
+  private load(backend: Backend, revision: number, paths: readonly string[]) {
+    const moved = this.backend !== backend || this.revision !== revision;
+    this.backend = backend;
+    this.revision = revision;
+    this.paths = paths;
+    const run = ++this.loadRun;
+    this.loading?.abort();
+    const { signal } = (this.loading = new AbortController());
+    const wanted = new Set(paths);
+    for (const path of [...this.files.keys()]) if (!wanted.has(path)) this.files.delete(path);
+    for (const path of paths) if (!this.files.has(path)) this.files.set(path, { state: "loading" });
+    this.progress = { done: 0, total: paths.length };
+    if (moved) {
+      this.cursor.reset();
+      this.refresh();
+    }
+
+    const queue = [...paths];
+    const next = () => {
+      const first = this.file === undefined ? -1 : queue.indexOf(this.file);
+      return first < 0 ? queue.shift() : queue.splice(first, 1)[0];
+    };
+    const worker = async () => {
+      for (let path = next(); path !== undefined; path = next()) {
+        let loaded: FileLoad;
+        try {
+          const r = await backend.fileSymbols(revision, path, signal);
+          loaded = r.gap
+            ? { state: "failed", message: r.gap }
+            : { state: "done", symbols: r.symbols, context: r.context };
+        } catch (error) {
+          // The changeset moved on: the load of its new revision replaces this one.
+          if (isAbort(error) || run !== this.loadRun) return;
+          loaded = { state: "failed", message: errorText(error) };
+        }
+        if (run !== this.loadRun) return;
+        this.files.set(path, loaded);
+        this.progress = { done: this.progress.done + 1, total: this.progress.total };
+      }
+    };
+    for (let i = 0; i < Math.min(FILES_AT_ONCE, paths.length); i++) void worker();
+  }
+
+  /** The symbol the review is to show was chosen: a row of the tree, or with `reveal` a symbol listed elsewhere. */
+  choose(symbol: SymbolInfo, change?: SymbolChange, reveal = false) {
+    this.cursor.reset();
+    const shown = { symbol, change };
+    this.select(shown);
+    if (reveal) this.showInTree(shown);
+  }
+
+  /** The cursor of an editor is at a position of `side`'s text of `path` as of `revision`. */
+  follow(revision: number, side: Side, path: string, line: number, col: number) {
+    this.cursor.move({ revision, side, path, line, col });
+  }
+
+  /** Puts `shown` on show, unless it is. Answers whether it was not. */
+  private select(shown: Shown): boolean {
+    const now = this.selected;
+    if (now && keyOf(now.symbol.id) === keyOf(shown.symbol.id) && now.change === shown.change) return false;
+    this.selected = shown;
+    this.refresh();
+    return true;
+  }
+
+  /** The symbol is where the cursor is: if it is a changed one, the tree shows its row. */
+  private followed(shown: Shown) {
+    if (this.select(shown)) this.showInTree(shown);
+  }
+
+  private showInTree(shown: Shown) {
+    if (shown.change === undefined) return;
+    // A removed symbol of a renamed file has the file's old path.
+    const { path } = shown.symbol.id;
+    const file = changeset.layout?.files.find((f) => f.path === path || f.oldPath === path);
+    this.reveal = { symbol: shown.symbol, path: file?.path ?? path, n: ++this.revealed };
+  }
+
+  clearSelection() {
+    this.leaveSelection();
+    this.selected = this.signature = this.calls = this.usages = this.reach = this.removal = undefined;
+  }
+
+  /** Asks again for what is shown about the selected symbol. */
+  private refresh() {
+    const { backend, revision, selected } = this;
     const run = this.leaveSelection();
+    if (!selected || !backend || revision === undefined) return;
     const { signal } = (this.asking = new AbortController());
-    this.selected = symbol;
-    const { id } = symbol.symbol;
-    this.impact = this.reach = this.removal = undefined;
+    const { id } = selected.symbol;
+    this.signature = this.calls = this.usages = this.reach = this.removal = undefined;
     this.signature = this.start(
       run,
       () => backend.signature(revision, id, signal),
       (l) => (this.signature = l),
     );
-    if (symbol.change === "removed") {
+    if (selected.change === "removed") {
       this.removal = this.start(
         run,
         () => backend.removalImpact(revision, id, signal),
         (l) => (this.removal = l),
       );
-    } else {
-      this.impact = this.start(
-        run,
-        () => backend.impact(revision, id, signal),
-        (l) => (this.impact = l),
-      );
-      this.reach = this.start(
-        run,
-        () => backend.reachability(revision, id, signal),
-        (l) => (this.reach = l),
-      );
+      return;
     }
-  }
-
-  clearSelection() {
-    this.leaveSelection();
-    this.selected = this.signature = this.impact = this.reach = this.removal = undefined;
+    this.calls = this.start(
+      run,
+      () => backend.symbolCalls(revision, id, signal),
+      (l) => (this.calls = l),
+    );
+    this.usages = this.start(
+      run,
+      () => backend.symbolUsages(revision, id, signal),
+      (l) => (this.usages = l),
+    );
+    this.reach = this.start(
+      run,
+      () => backend.reachability(revision, id, signal),
+      (l) => (this.reach = l),
+    );
   }
 
   /** Cancels the requests about the selected symbol, in the backend too; returns the number of the next selection. */

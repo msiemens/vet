@@ -30,6 +30,7 @@
   import { editorMenu, fileHeaderMenu, tabMenu, treeMenu } from "./reviewCommands";
   import CommitHeader from "./CommitHeader.svelte";
   import { exposeRendered } from "./devHook";
+  import type { SymbolRow } from "./symbolRows";
   import { CHANGES, kindOf, pathOf, subjectOf, tabOf } from "./tabModel";
   import TabStrip from "./TabStrip.svelte";
   import ViewControls from "./ViewControls.svelte";
@@ -107,7 +108,7 @@
     return kindOf(tabs.active) === "changes" || (path !== undefined && !!changeset.file(path));
   });
   const fileOf = (path: string) => changeset.reviewed(path);
-  // The Symbol panel lists the file the review shows (the active file tab, else the one selected in the tree) first.
+  // The symbols of the file the review shows (the active file tab, else the one selected in the tree) are found first.
   $effect(() => {
     symbols.file = highlighted;
   });
@@ -187,6 +188,10 @@
     void controller.revealInChanges(path);
   }
 
+  function openSymbol(row: SymbolRow) {
+    if (row.change) void controller.jumpToSymbol({ symbol: row.symbol, change: row.change });
+  }
+
   /** Inside an editor the app's own menu replaces the webview's, except in a text field. It acts on the editor clicked. */
   function paneMenu(e: MouseEvent) {
     const target = e.target instanceof Element ? e.target : undefined;
@@ -222,6 +227,7 @@
         oncommit={(index) => void changeset.showCommit(index)}
         onselect={select}
         onopen={(path) => void controller.openSource(path)}
+        onopensymbol={openSymbol}
         onmenu={(path, dir, x, y) => openMenu(treeMenu(dir), x, y, { target: { path, dir } })}
       />
     {/if}

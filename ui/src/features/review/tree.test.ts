@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import type { FileChange } from "../../generated/FileChange.ts";
 import type { ModeChange } from "../../generated/ModeChange.ts";
+import type { SymbolRow } from "./symbolRows.ts";
 import { buildRows, buildTree, filterRows, summarize } from "./tree.ts";
 
 const labels = (paths: string[], collapsed: string[] = []) =>
@@ -102,6 +103,36 @@ void test("a match reports its ranges for highlighting", () => {
     [0, 1],
     [4, 5],
   ]);
+});
+
+void test("symbols show below their file's row, and a search for one keeps the file and holders above it", () => {
+  const symbol = (path: string, name: string, depth: number): SymbolRow => ({
+    kind: "symbol",
+    path,
+    key: name,
+    name,
+    depth,
+    symbol: {} as SymbolRow["symbol"],
+    holds: false,
+  });
+  const symbols = (path: string, depth: number) =>
+    path === "ui/src/review/FileTree.svelte"
+      ? [symbol(path, "Policy", depth), symbol(path, "next_delay", depth + 1)]
+      : [];
+  const rows = buildRows(buildTree(searchPaths), new Set(), symbols);
+  assert.deepEqual(
+    rows.filter((r) => r.path === "ui/src/review/FileTree.svelte").map((r) => r.kind),
+    ["file", "symbol", "symbol"],
+  );
+  const result = filterRows(rows, "delay");
+  assert.deepEqual(
+    result.rows.map((r) => `${r.depth}:${r.name}`),
+    ["0:ui/src", "1:review", "2:FileTree.svelte", "3:Policy", "4:next_delay"],
+  );
+  assert.deepEqual(
+    result.rows.filter((r) => result.hits.has(r)).map((r) => r.name),
+    ["next_delay"],
+  );
 });
 
 void test("a file's mode badge follows the backend's classification of its mode item", () => {

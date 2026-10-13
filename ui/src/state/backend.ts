@@ -8,7 +8,7 @@ import type { BaseChoice } from "../generated/BaseChoice";
 import type { BaseDiff } from "../generated/BaseDiff";
 import type { BlobContent } from "../generated/BlobContent";
 import type { BranchInfo } from "../generated/BranchInfo";
-import type { ChangedSymbols } from "../generated/ChangedSymbols";
+import type { Calls } from "../generated/Calls";
 import type { ChangesetKey } from "../generated/ChangesetKey";
 import type { ChangesetRow } from "../generated/ChangesetRow";
 import type { CheckLog } from "../generated/CheckLog";
@@ -20,7 +20,7 @@ import type { Diagnostic } from "../generated/Diagnostic";
 import type { DirEntry } from "../generated/DirEntry";
 import type { EditChoice } from "../generated/EditChoice";
 import type { Event as ServerEvent } from "../generated/Event";
-import type { Impact } from "../generated/Impact";
+import type { FileSymbols } from "../generated/FileSymbols";
 import type { Lens } from "../generated/Lens";
 import type { LineDelta } from "../generated/LineDelta";
 import type { LocationRows } from "../generated/LocationRows";
@@ -40,6 +40,7 @@ import type { ReviewUpdate } from "../generated/ReviewUpdate";
 import type { SemanticLocation } from "../generated/SemanticLocation";
 import type { ServerInfo } from "../generated/ServerInfo";
 import type { Side } from "../generated/Side";
+import type { SymbolAt } from "../generated/SymbolAt";
 import type { SymbolId } from "../generated/SymbolId";
 import type { SymbolSignature } from "../generated/SymbolSignature";
 import type { Task } from "../generated/Task";
@@ -48,6 +49,7 @@ import type { Thread } from "../generated/Thread";
 import type { ThreadStatus } from "../generated/ThreadStatus";
 import type { ThreadTarget } from "../generated/ThreadTarget";
 import type { Unavailable } from "../generated/Unavailable";
+import type { Usages } from "../generated/Usages";
 import type { VersionInfo } from "../generated/VersionInfo";
 import type { View } from "../generated/View";
 import { type Address, Connection, type Dialer, type LinkState } from "./connection";
@@ -582,13 +584,32 @@ export class Backend {
     return expect(await this.conn.request({ type: "restartServer", project: this.pid, language }), "servers").servers;
   }
 
-  /** The symbols the changeset touches, as of `revision` (the manifest's; a stale one is rejected). */
-  async changedSymbols(revision: number, signal?: AbortSignal): Promise<ChangedSymbols> {
-    const request = { type: "changedSymbols", project: this.pid, revision } as const;
-    return expect(await this.semantic(revision, request, signal), "changedSymbols");
+  /**
+   * What the changeset did to the symbols of the changed file `path`, as of `revision` (the
+   * manifest's; a stale one is rejected).
+   */
+  async fileSymbols(revision: number, path: string, signal?: AbortSignal): Promise<FileSymbols> {
+    const request = { type: "fileSymbols", project: this.pid, revision, path } as const;
+    return expect(await this.semantic(revision, request, signal), "fileSymbols");
   }
 
-  /** The declaration of a changed symbol; `signature` is unset if the server has nothing, `unavailable` says why. */
+  /**
+   * The innermost function, type or module at a 0-based line and UTF-16 column of `side`'s text,
+   * and what became of it; `symbol` is unset outside every one.
+   */
+  async symbolAt(
+    revision: number,
+    side: Side,
+    path: string,
+    line: number,
+    col: number,
+    signal?: AbortSignal,
+  ): Promise<SymbolAt> {
+    const request = { type: "symbolAt", project: this.pid, revision, side, path, line, col } as const;
+    return expect(await this.semantic(revision, request, signal), "symbolAt");
+  }
+
+  /** The declaration of a symbol; `signature` is unset if the server has nothing, `unavailable` says why. */
   async signature(
     revision: number,
     symbol: SymbolId,
@@ -599,10 +620,16 @@ export class Backend {
     return { signature: r.signature ?? undefined, unavailable: r.unavailable ?? undefined };
   }
 
-  /** References and callers of an added or modified changed symbol; may take a while on a cold server. */
-  async impact(revision: number, symbol: SymbolId, signal?: AbortSignal): Promise<Impact> {
-    const request = { type: "impact", project: this.pid, revision, symbol } as const;
-    return expect(await this.semantic(revision, request, signal), "impact");
+  /** The changed callers and callees of a symbol of the target side; may take a while on a cold server. */
+  async symbolCalls(revision: number, symbol: SymbolId, signal?: AbortSignal): Promise<Calls> {
+    const request = { type: "calls", project: this.pid, revision, symbol } as const;
+    return expect(await this.semantic(revision, request, signal), "calls");
+  }
+
+  /** The references to a symbol of the target side. */
+  async symbolUsages(revision: number, symbol: SymbolId, signal?: AbortSignal): Promise<Usages> {
+    const request = { type: "usages", project: this.pid, revision, symbol } as const;
+    return expect(await this.semantic(revision, request, signal), "usages");
   }
 
   /** What became of the references to a removed changed symbol. */

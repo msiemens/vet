@@ -554,10 +554,7 @@
         onready={(c) => void (controller = c)}
         onclose={() => (controller = undefined)}
       >
-        {#snippet side(tool)}{#if tool === "symbol"}<SymbolPanel
-              onopen={openLocation}
-              onjump={(symbol) => void controller?.jumpToSymbol(symbol)}
-            />{/if}{/snippet}
+        {#snippet side(tool)}{#if tool === "symbol"}<SymbolPanel onopen={openLocation} />{/if}{/snippet}
         {#snippet bottom({ selected, select })}
           {#if timelineOpen}
             <TimelinePanel
