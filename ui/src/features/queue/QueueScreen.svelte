@@ -189,7 +189,7 @@
         {@const author = authorOf(row)}
         {@const comments = commentCount(row)}
         <button
-          class="flat row"
+          class="flat pick row"
           class:on={id === onViewId}
           class:cur={index === highlighted}
           type="button"
@@ -291,13 +291,6 @@
     flex: 1;
     min-width: 0;
     padding-left: 26px;
-  }
-  .row.on {
-    background: var(--toggle);
-  }
-  /* The highlighted row, which Space and Enter act on, while the list has the focus. */
-  :global([data-list]:focus-within) .row.cur {
-    background: var(--select);
   }
   .title,
   .source {

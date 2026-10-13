@@ -485,8 +485,8 @@
               <!-- The row is chosen by the keys of the dialog; a click only chooses it too. -->
               <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
               <div
-                class="line {r.line.kind}"
-                class:sel={i === at}
+                class="pick line {r.line.kind}"
+                class:cur={i === at}
                 data-state={r.line.hunk === undefined ? undefined : r.file.states[r.line.hunk]}
                 onclick={() => select(i)}
                 ondblclick={(e) => open(r, e.altKey)}
@@ -699,9 +699,6 @@
   }
   .line:hover {
     box-shadow: inset 0 0 0 100px var(--hover);
-  }
-  .line.sel {
-    background: var(--select);
   }
   .line[data-state="seen"]::before,
   .line[data-state="seenAgainstOldBase"]::before {

@@ -35,7 +35,7 @@
   <div class="list" role="listbox" aria-label="Commits">
     {#each rows as row, index (commits[index].commit.id)}
       <button
-        class="flat row"
+        class="flat pick row"
         class:on={index === selected}
         class:clean={row.clean}
         type="button"

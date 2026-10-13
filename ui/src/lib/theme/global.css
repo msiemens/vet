@@ -121,15 +121,28 @@ button {
 :is(.flat, .tool, .ctl):disabled {
   opacity: 0.5;
 }
-:is(.flat, .tool, .ctl):is(.on, [aria-pressed="true"]) {
+:is(.flat, .tool, .ctl):not(.pick):is(.on, [aria-pressed="true"]) {
   background: var(--toggle);
   color: var(--accent);
 }
-:is(.flat, .tool, .ctl):enabled:is(.on, [aria-pressed="true"]):hover {
+:is(.flat, .tool, .ctl):not(.pick):enabled:is(.on, [aria-pressed="true"]):hover {
   background: var(--toggle-hover);
 }
-:is(.flat, .tool, .ctl):enabled:is(.on, [aria-pressed="true"]):active {
+:is(.flat, .tool, .ctl):not(.pick):enabled:is(.on, [aria-pressed="true"]):active {
   background: var(--toggle-press);
+}
+
+/* `.pick`: a row of a list. `.on` is the selected row, on the selection background with its text as
+   it was; `.cur` is the row the keys act on, which a list (`[data-list]`) shows only while it holds the
+   focus. */
+.pick.on {
+  background: var(--toggle);
+}
+.pick.on:not(:disabled):hover {
+  background: var(--toggle-hover);
+}
+.pick.cur:is(:not([data-list] *), [data-list]:focus-within *) {
+  background: var(--select);
 }
 
 /* `.link`: an action in a line of text, drawn as text; underlined on hover, with no hover background. */

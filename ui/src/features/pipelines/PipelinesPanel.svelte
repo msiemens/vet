@@ -257,11 +257,10 @@
                 >
               </div>
             {:else if item.kind === "job"}
-              <div class="row" role="treeitem" aria-selected={item.job.id === job}>
+              <div class="pick row" class:on={item.job.id === job} role="treeitem" aria-selected={item.job.id === job}>
                 <TreeRow
                   depth={1}
                   open={undefined}
-                  on={item.job.id === job}
                   cur={cursor === index}
                   title={item.job.name}
                   onclick={(e) => nav.click(e, index)}

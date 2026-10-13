@@ -347,7 +347,7 @@
 {#snippet result(row: Row, index: number)}
   {@const item = row.item}
   <button
-    class="r"
+    class="pick r"
     class:cur={index === at}
     class:off={item.kind === "action" && item.off}
     type="button"
@@ -420,7 +420,7 @@
     {@render result(e.row, index)}
   {:else if e.type === "more"}
     <button
-      class="r more"
+      class="pick r more"
       class:cur={index === at}
       type="button"
       tabindex="-1"
@@ -437,7 +437,7 @@
     </button>
   {:else}
     <button
-      class="r"
+      class="pick r"
       class:cur={index === at}
       class:off={findOff !== ""}
       type="button"
@@ -709,9 +709,6 @@
     font: inherit;
     text-align: left;
     white-space: nowrap;
-  }
-  .r.cur {
-    background: var(--select);
   }
   .r.off {
     color: var(--text-3);

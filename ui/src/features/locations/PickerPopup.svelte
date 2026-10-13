@@ -254,7 +254,7 @@
       {#if flat}
         {#each shown as row, at (`${row.path}:${row.line}:${row.col}`)}
           <button
-            class="two"
+            class="pick two"
             class:cur={at === cursor}
             data-at={at}
             type="button"
@@ -297,7 +297,7 @@
             </div>
           {:else}
             <button
-              class="hit"
+              class="pick hit"
               class:cur={item.at === cursor}
               data-at={item.at}
               type="button"
@@ -415,9 +415,6 @@
   }
   .two + .two {
     border-top: 1px solid var(--line-soft);
-  }
-  .cur {
-    background: var(--select);
   }
   .hit > :global(.dot) {
     margin-right: 8px;

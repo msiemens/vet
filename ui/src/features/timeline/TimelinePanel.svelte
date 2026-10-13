@@ -103,8 +103,8 @@
           {#each rows as row (row.n)}
             <li>
               <button
-                class="flat row"
-                class:shown={row.shown}
+                class="flat pick row"
+                class:on={row.shown}
                 type="button"
                 aria-current={row.shown ? "true" : undefined}
                 onclick={(e) => choose(row.n, e.shiftKey)}
@@ -158,7 +158,7 @@
           {#each files as file (file.path)}
             <li>
               <button
-                class="flat file"
+                class="flat pick file"
                 class:on={file.path === selected}
                 type="button"
                 onclick={() => onselect(file.path)}
@@ -205,12 +205,8 @@
   .row {
     font-size: var(--fs-ctl);
   }
-  .row.shown {
+  .row.on {
     box-shadow: inset 3px 0 var(--accent);
-    background: color-mix(in srgb, var(--accent) 16%, transparent);
-  }
-  .row.shown:hover {
-    background: color-mix(in srgb, var(--accent) 22%, transparent);
   }
   .row.base {
     display: grid;
@@ -283,9 +279,6 @@
     text-align: left;
     font-size: var(--fs-ctl);
     border-radius: 0;
-  }
-  .file.on {
-    background: color-mix(in srgb, var(--accent) 20%, transparent);
   }
   .path {
     flex: 1;

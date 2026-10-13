@@ -127,7 +127,8 @@
       >
         {#each rows as row (row.language)}
           <button
-            class="flat row"
+            class="flat pick row"
+            class:on={row === selected}
             type="button"
             role="option"
             aria-selected={row === selected}

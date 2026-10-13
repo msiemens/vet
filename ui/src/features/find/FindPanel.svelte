@@ -66,8 +66,6 @@
   );
   const version = $derived(set?.ran.version);
 
-  let focused = $state(false);
-  let root = $state<HTMLElement>();
   let body = $state<HTMLElement>();
   let list = $state<VirtualRows>();
   let field = $state<HTMLInputElement>();
@@ -162,15 +160,6 @@
     if (nav.keydown(e)) take();
   }
 
-  function focusin() {
-    focused = true;
-  }
-
-  function focusout(e: FocusEvent) {
-    if (e.relatedTarget instanceof Node && root?.contains(e.relatedTarget)) return;
-    focused = false;
-  }
-
   // The places of a set that went stale are asked for where they are now.
   $effect(() => {
     const current = set;
@@ -200,7 +189,7 @@
       : `${s.spec.type === "search" ? s.spec.scope.label : "All changes"}${s.ran.version !== undefined && (s.spec.type === "usages" || s.spec.scope.label === "All changes") ? ` v${s.ran.version}` : ""}`;
 </script>
 
-<section aria-label="Find" bind:this={root} onfocusin={focusin} onfocusout={focusout}>
+<section aria-label="Find">
   <BottomToolHeader title="Find" count={set && countOf(set)} {onclose}>
     {#snippet controls()}
       {#if set}
@@ -323,9 +312,9 @@
               {#if item?.kind === "file"}
                 {@const f = item.file}
                 <button
-                  class="flat line head"
-                  class:sel={i === cursor}
-                  class:cur={focused && i === cursor}
+                  class="flat pick line head"
+                  class:on={i === cursor}
+                  class:cur={i === cursor}
                   type="button"
                   tabindex="-1"
                   title={f.path}
@@ -350,9 +339,9 @@
                 {@const move = set.moves.get(p.id)}
                 {@const old = moved.has(p.file.path) && !move?.kept}
                 <button
-                  class="flat line place"
-                  class:sel={i === cursor}
-                  class:cur={focused && i === cursor}
+                  class="flat pick line place"
+                  class:on={i === cursor}
+                  class:cur={i === cursor}
                   class:old
                   class:fresh={set.fresh.has(p.id)}
                   type="button"
@@ -700,15 +689,6 @@
     color: var(--text-3);
     font-size: 10.5px;
     line-height: 14px;
-  }
-  .sel {
-    background: color-mix(in srgb, var(--accent) 12%, transparent);
-  }
-  section:focus-within .sel {
-    background: color-mix(in srgb, var(--accent) 22%, transparent);
-  }
-  .cur {
-    background: var(--select);
   }
   .stat {
     flex: none;

@@ -104,8 +104,6 @@
   let naOpen = $state(false);
   let limitedOpen = $state(false);
   let cursor = $state(-1);
-  let focused = $state(false);
-  let root = $state<HTMLElement>();
   let body = $state<HTMLElement>();
   let list = $state<VirtualRows>();
   let field = $state<HTMLInputElement>();
@@ -283,13 +281,7 @@
   }
 
   function focusin() {
-    focused = true;
     if (cursor < 0) cursor = items.findIndex((i) => i.kind === "problem" && i.problem.id === problems.selected);
-  }
-
-  function focusout(e: FocusEvent) {
-    if (e.relatedTarget instanceof Node && root?.contains(e.relatedTarget)) return;
-    focused = false;
   }
 
   function click(e: MouseEvent, index: number) {
@@ -326,7 +318,7 @@
   const base = (path: string) => path.slice(path.lastIndexOf("/") + 1);
 </script>
 
-<section aria-label="Problems" bind:this={root} onfocusin={focusin} onfocusout={focusout}>
+<section aria-label="Problems" onfocusin={focusin}>
   <BottomToolHeader title="Problems" count={problems.summary?.badge ?? 0} {onclose}>
     {#snippet controls()}
       <Segmented
@@ -497,8 +489,8 @@
           {#if item}
             {#if item.kind === "group"}
               <button
-                class="flat line group"
-                class:cur={focused && i === cursor}
+                class="flat pick line group"
+                class:cur={i === cursor}
                 class:new={item.tone === "new"}
                 type="button"
                 tabindex="-1"
@@ -513,8 +505,8 @@
               </button>
             {:else if item.kind === "file"}
               <button
-                class="flat line filehead"
-                class:cur={focused && i === cursor}
+                class="flat pick line filehead"
+                class:cur={i === cursor}
                 type="button"
                 tabindex="-1"
                 onclick={(e) => click(e, i)}
@@ -527,9 +519,9 @@
             {:else if item.kind === "problem"}
               {@const p = item.problem}
               <button
-                class="flat line problem"
-                class:cur={focused && i === cursor}
-                class:sel={p.id === problems.selected}
+                class="flat pick line problem"
+                class:cur={i === cursor}
+                class:on={p.id === problems.selected}
                 class:old={p.origin === "existing"}
                 class:inset={item.showFile}
                 type="button"
@@ -558,8 +550,8 @@
               </div>
             {:else if item.kind === "na"}
               <button
-                class="flat line group"
-                class:cur={focused && i === cursor}
+                class="flat pick line group"
+                class:cur={i === cursor}
                 type="button"
                 tabindex="-1"
                 onclick={(e) => click(e, i)}
@@ -569,7 +561,7 @@
                 <span class="n">{item.count}</span>
               </button>
             {:else}
-              <div class="line na" class:cur={focused && i === cursor}>
+              <div class="pick line na" class:cur={i === cursor}>
                 <FileIcon name={base(item.path)} />
                 <span class="path"><span class="dir">{dir(item.path)}</span>{base(item.path)}</span>
                 <span class="why">{item.why.label}</span>
@@ -830,15 +822,6 @@
     border-radius: 1px;
     background: var(--text-3);
     opacity: 0.7;
-  }
-  .sel {
-    background: color-mix(in srgb, var(--accent) 12%, transparent);
-  }
-  section:focus-within .sel {
-    background: color-mix(in srgb, var(--accent) 22%, transparent);
-  }
-  .cur {
-    background: var(--select);
   }
   .na {
     padding-left: 34px;

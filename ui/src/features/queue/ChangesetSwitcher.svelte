@@ -64,7 +64,7 @@
   async function move(by: number) {
     cursor = Math.max(0, Math.min(cursor + by, shown.length - 1));
     await tick();
-    list?.querySelector(".cursor")?.scrollIntoView({ block: "nearest" });
+    list?.querySelector(".cur")?.scrollIntoView({ block: "nearest" });
   }
 
   function pick(index: number) {
@@ -127,9 +127,9 @@
         {@const comments = commentCount(row)}
         <li>
           <button
-            class="flat row"
+            class="flat pick row"
             class:on={id === onViewId}
-            class:cursor={index === Math.min(cursor, shown.length - 1)}
+            class:cur={index === Math.min(cursor, shown.length - 1)}
             type="button"
             tabindex="-1"
             onclick={() => pick(index)}
@@ -228,12 +228,6 @@
     box-sizing: border-box;
     border-radius: var(--radius);
     text-align: left;
-  }
-  .row.on {
-    background: var(--toggle);
-  }
-  .row.cursor:not(.on) {
-    background: var(--hover);
   }
   .line {
     display: flex;

@@ -24,6 +24,7 @@
   import { SpeedSearch } from "../../lib/ui/speedSearch.svelte";
   import SpeedSearchField from "../../lib/ui/SpeedSearchField.svelte";
   import Spinner from "../../lib/ui/Spinner.svelte";
+  import TreeRow from "../../lib/ui/TreeRow.svelte";
   import VirtualRows from "../../lib/ui/VirtualRows.svelte";
   import { commands } from "../../state/commands";
   import { keyOf } from "../../state/symbolKey";
@@ -468,7 +469,7 @@
   entry?: DirEntry,
 )}
   <button
-    class="flat tw dir"
+    class="flat pick tw dir"
     class:dim={entry?.excluded}
     class:cur={hit.cursor}
     type="button"
@@ -493,7 +494,7 @@
   {@const analysis = tool === "changes" ? symbols.files.get(path) : undefined}
   {@const open = search.active || isOpen(path)}
   <button
-    class="flat tw"
+    class="flat pick tw"
     class:on={path === (pressed ?? selected)}
     class:dim={entry?.excluded}
     class:cur={hit.cursor}
@@ -537,25 +538,23 @@
 {#snippet symbolRow(index: number, r: SymbolRow, hit: Hit)}
   {@const changed = r.change !== undefined}
   {@const shut = !search.active && closedSymbols.has(closedKey(r.path, r.key))}
-  <button
-    class="flat tw sym"
-    class:ctx={!changed}
-    class:gone={r.change === "removed"}
-    class:on={changed && !!symbols.selected && keyOf(symbols.selected.symbol.id) === keyOf(r.symbol.id)}
-    class:cur={hit.cursor}
-    type="button"
-    tabindex="-1"
+  <TreeRow
+    depth={r.depth}
+    open={r.holds ? !shut : undefined}
+    tone={changed ? "strong" : "soft"}
+    mono
+    gone={r.change === "removed"}
+    on={changed && !!symbols.selected && keyOf(symbols.selected.symbol.id) === keyOf(r.symbol.id)}
+    cur={hit.cursor}
     title={fullName(r.symbol.id)}
-    style:padding-left="calc(8px + {r.depth} * var(--w-indent))"
+    status={r.change && letterOfChange(r.change)}
+    statusTitle={r.change}
+    tabindex={-1}
     onclick={(e) => clickSymbol(e, r, index)}
   >
-    <span class="chev"
-      >{#if r.holds}<Icon name={shut ? "closed" : "open"} size={10} />{/if}</span
-    >
-    <SymbolGlyph kind={r.symbol.kind} />
-    <span class="name mono"><Marked text={r.name} ranges={hit.ranges} /></span>
-    <ChangeLetter letter={r.change && letterOfChange(r.change)} title={r.change} />
-  </button>
+    {#snippet glyph()}<SymbolGlyph kind={r.symbol.kind} />{/snippet}
+    <Marked text={r.name} ranges={hit.ranges} />
+  </TreeRow>
 {/snippet}
 
 <nav aria-label={TITLES[tool]} bind:this={nav}>
@@ -773,10 +772,6 @@
   .flagged .name {
     color: var(--warn);
   }
-  /* The highlighted row, which Space and Enter act on, while the list has the focus. */
-  .body:focus-within .cur {
-    background: var(--select);
-  }
   /* A fixed column, so names line up whether or not a row has a chevron. */
   .chev {
     flex: none;
@@ -811,28 +806,6 @@
   }
   .progress {
     flex: none;
-  }
-  /* A symbol's name is code; a holder the change left alone is muted, a removed symbol struck through. */
-  .sym .name {
-    font-family: var(--font-mono);
-    font-size: var(--fs-mono-s);
-  }
-  .sym.ctx {
-    color: var(--text-3);
-  }
-  .sym.ctx :global(.kind) {
-    opacity: 0.6;
-  }
-  .sym.gone .name {
-    text-decoration: line-through;
-    color: var(--text-2);
-  }
-  .sym.gone :global(.kind) {
-    opacity: 0.6;
-  }
-  .sym.on .name,
-  .sym.on .chev {
-    color: inherit;
   }
   .excluded {
     padding-left: 8px;

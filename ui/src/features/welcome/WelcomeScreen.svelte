@@ -88,7 +88,9 @@
     </div>
     <ul>
       <li>
-        <button class="flat item on" type="button" aria-current="page"><Icon name="files" size={16} />Projects</button>
+        <button class="flat pick item on" type="button" aria-current="page"
+          ><Icon name="files" size={16} />Projects</button
+        >
       </li>
       <li>
         <button
@@ -153,7 +155,7 @@
         {#each found as { project, name, nameRanges, pathRanges }, i (project.path)}
           <li role="option" aria-selected={i === current}>
             <button
-              class="flat row"
+              class="flat pick row"
               class:on={i === current}
               type="button"
               tabindex="-1"
@@ -330,11 +332,6 @@
   .path {
     display: flex;
     font-size: var(--fs-mono-s);
-  }
-  /* The selection is a highlight, not a toggled control: its text keeps the text colour. */
-  .row.on,
-  .item.on {
-    color: var(--text);
   }
   .when {
     flex: none;

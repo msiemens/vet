@@ -57,7 +57,7 @@
 </script>
 
 <button
-  class="flat tw {tone}"
+  class="flat pick tw {tone}"
   class:wrap
   class:gone
   class:on
@@ -147,16 +147,5 @@
   }
   .gone :global(.kind) {
     opacity: 0.6;
-  }
-  .on {
-    background: var(--toggle);
-    color: var(--accent);
-  }
-  .on .name,
-  .on .chev {
-    color: inherit;
-  }
-  .cur {
-    background: var(--select);
   }
 </style>

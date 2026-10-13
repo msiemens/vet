@@ -51,7 +51,7 @@
   async function move(by: number) {
     cursor = Math.max(0, Math.min(current + by, stops - 1));
     await tick();
-    list?.querySelector(".cursor")?.scrollIntoView({ block: "nearest" });
+    list?.querySelector(".cur")?.scrollIntoView({ block: "nearest" });
   }
 
   function choose(project: string) {
@@ -105,9 +105,9 @@
       {#each found as { project, name: projectName, nameRanges, pathRanges }, i (project.path)}
         <li>
           <button
-            class="flat row"
+            class="flat pick row"
             class:on={project.path === path}
-            class:cursor={i === current}
+            class:cur={i === current}
             type="button"
             tabindex="-1"
             title={project.path}
@@ -132,8 +132,8 @@
     {#if canPick}
       <div class="foot">
         <button
-          class="flat"
-          class:cursor={onOpenRow}
+          class="flat pick"
+          class:cur={onOpenRow}
           type="button"
           tabindex="-1"
           title={commands.hint("file.open")}
@@ -190,12 +190,6 @@
     border-radius: var(--radius-sheet);
     text-align: left;
   }
-  .row.on {
-    background: var(--toggle);
-  }
-  .row.cursor:not(.on) {
-    background: var(--hover);
-  }
   .text {
     flex: 1;
     min-width: 0;
@@ -242,9 +236,6 @@
     padding: 0 8px;
     border-radius: var(--radius-sheet);
     font-size: var(--fs-ctl);
-  }
-  .foot button.cursor {
-    background: var(--hover);
   }
   .key {
     color: var(--text-3);

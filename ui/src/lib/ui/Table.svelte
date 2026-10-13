@@ -211,9 +211,6 @@
   .ruled :global(.row) {
     border-bottom: 1px solid var(--line-soft);
   }
-  .table :global(.row[aria-selected="true"]) {
-    background: var(--toggle);
-  }
   .cell {
     position: relative;
     align-self: stretch;

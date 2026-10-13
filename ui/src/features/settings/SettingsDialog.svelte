@@ -58,8 +58,12 @@
   <div class="layout">
     <nav aria-label="Settings pages">
       {#each PAGES as p (p.id)}
-        <button type="button" aria-current={page === p.id ? "page" : undefined} onclick={() => (page = p.id)}
-          >{p.label}</button
+        <button
+          class="flat pick"
+          class:on={page === p.id}
+          type="button"
+          aria-current={page === p.id ? "page" : undefined}
+          onclick={() => (page = p.id)}>{p.label}</button
         >
       {/each}
     </nav>
@@ -110,19 +114,9 @@
   nav button {
     height: 26px;
     padding: 0 10px;
-    border: 0;
     border-radius: var(--radius);
-    background: transparent;
-    color: var(--text);
-    font: inherit;
     font-size: var(--fs-ctl);
     text-align: left;
-  }
-  nav button:hover {
-    background: var(--hover);
-  }
-  nav button[aria-current="page"] {
-    background: var(--toggle);
   }
   /* Less on the right, where the scroll bar's gutter adds its own. */
   .page {
