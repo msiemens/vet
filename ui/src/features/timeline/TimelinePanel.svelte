@@ -2,9 +2,9 @@
   import type { CommitInfo } from "../../generated/CommitInfo";
   import type { LineDelta } from "../../generated/LineDelta";
   import type { VersionInfo } from "../../generated/VersionInfo";
+  import BottomToolHeader from "../../lib/ui/BottomToolHeader.svelte";
   import CiStatus from "../../lib/ui/CiStatus.svelte";
   import Icon from "../../lib/ui/Icon.svelte";
-  import IconButton from "../../lib/ui/IconButton.svelte";
   import PathText from "../../lib/ui/PathText.svelte";
   import ScrollArea from "../../lib/ui/ScrollArea.svelte";
   import Table from "../../lib/ui/Table.svelte";
@@ -74,19 +74,22 @@
 {/snippet}
 
 <section aria-label="Timeline" tabindex="-1" data-escapes-scope>
-  <header>
-    <span class="title">Timeline <span class="count">{versions.length}</span></span>
-    <span class="summary">{timelineSummary(shown, versions.at(-1)?.n)}</span>
-    <span class="grow"></span>
-    <button
-      class="ctl"
-      type="button"
-      title="Show the pushes after the version you last reviewed"
-      disabled={!since}
-      onclick={() => onrange(since)}>Since my review</button
-    >
-    <IconButton icon="minus" label="Collapse the timeline" size={22} iconSize={14} onclick={onclose} />
-  </header>
+  <BottomToolHeader
+    title="Timeline"
+    count={versions.length}
+    summary={timelineSummary(shown, versions.at(-1)?.n)}
+    {onclose}
+  >
+    {#snippet controls()}
+      <button
+        class="ctl"
+        type="button"
+        title="Show the pushes after the version you last reviewed"
+        disabled={!since}
+        onclick={() => onrange(since)}>Since my review</button
+      >
+    {/snippet}
+  </BottomToolHeader>
   <div class="body">
     <div class="versions">
       <Table
@@ -185,24 +188,6 @@
     border-top: 1px solid var(--line);
     background: var(--bg-panel);
   }
-  header {
-    flex: none;
-    display: flex;
-    align-items: center;
-    height: 34px;
-    padding: 0 8px 0 14px;
-    border-bottom: 1px solid var(--line-soft);
-    font-weight: 600;
-    color: var(--text-2);
-  }
-  .count {
-    margin-left: 4px;
-    font-weight: 400;
-    color: var(--text-3);
-  }
-  .grow {
-    flex: 1;
-  }
   .body {
     flex: 1;
     min-height: 0;
@@ -253,10 +238,6 @@
     box-sizing: border-box;
     border: 1.5px solid var(--accent);
     border-radius: 50%;
-  }
-  .summary {
-    margin-left: 10px;
-    font-weight: 400;
   }
   .subject {
     color: var(--text-3);
