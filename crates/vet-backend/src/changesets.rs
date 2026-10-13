@@ -19,7 +19,7 @@ use crate::{Live, Open, Orchestrator, message, start_servers_in_background};
 
 impl Orchestrator {
     pub(crate) async fn list_changesets(&self, project: ProjectId) -> Result<Response, String> {
-        let list = self.ready(project).await?.session.changesets().await.map_err(message)?;
+        let list = self.asking(project, async |session| session.changesets().await).await?;
         Ok(mapping::changesets(&list))
     }
 
@@ -96,12 +96,8 @@ impl Orchestrator {
     ) -> Result<Response, String> {
         let source = mapping::core_changeset_key(changeset)?;
         let lines = self
-            .ready(project)
-            .await?
-            .session
-            .lines_of(&source)
-            .await
-            .map_err(message)?;
+            .asking(project, async |session| session.lines_of(&source).await)
+            .await?;
         Ok(mapping::changeset_lines(lines))
     }
 
@@ -126,12 +122,19 @@ impl Orchestrator {
         Ok(mapping::checks(&found, error.as_ref()))
     }
 
-    pub(crate) async fn check_log(&self, project: ProjectId, run: String) -> Result<Response, String> {
+    /// The repository of the pull request on view and the client of its platform; fails if the
+    /// changeset on view is no pull request.
+    async fn hosted_pull_request_client(&self, project: ProjectId) -> Result<(RemoteKey, Hosting), String> {
         let remote = self
             .hosted_pull_request(project)
             .await?
             .ok_or("the changeset on view is not a pull request")?;
         let hosting = Hosting::of(remote.kind(), &self.github, &self.azure_devops);
+        Ok((remote, hosting))
+    }
+
+    pub(crate) async fn check_log(&self, project: ProjectId, run: String) -> Result<Response, String> {
+        let (remote, hosting) = self.hosted_pull_request_client(project).await?;
         let log = hosting.check_log(&remote, &run).await.map_err(|error| {
             self.refused(&error, &remote.account());
             message(error)
@@ -140,11 +143,7 @@ impl Orchestrator {
     }
 
     pub(crate) async fn pipeline_steps(&self, project: ProjectId, check: String) -> Result<Response, String> {
-        let remote = self
-            .hosted_pull_request(project)
-            .await?
-            .ok_or("the changeset on view is not a pull request")?;
-        let hosting = Hosting::of(remote.kind(), &self.github, &self.azure_devops);
+        let (remote, hosting) = self.hosted_pull_request_client(project).await?;
         let steps = hosting.steps(&remote, &check).await.map_err(|error| {
             self.refused(&error, &remote.account());
             message(error)
@@ -157,11 +156,7 @@ impl Orchestrator {
         project: ProjectId,
         action: vet_protocol::PipelineAction,
     ) -> Result<Response, String> {
-        let remote = self
-            .hosted_pull_request(project)
-            .await?
-            .ok_or("the changeset on view is not a pull request")?;
-        let hosting = Hosting::of(remote.kind(), &self.github, &self.azure_devops);
+        let (remote, hosting) = self.hosted_pull_request_client(project).await?;
         let done = hosting
             .pipeline_action(&remote, &mapping::pipeline_action(action))
             .await;

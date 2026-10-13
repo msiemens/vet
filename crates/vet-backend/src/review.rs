@@ -6,7 +6,7 @@ use std::sync::Arc;
 
 use vet_app::changeset::Source;
 use vet_app::search::SearchFilters;
-use vet_app::session::SearchQuery;
+use vet_app::session::{Outcome, ReviewUpdateView, SearchQuery, SessionError, View};
 use vet_core::filter::FileMask;
 use vet_infra::search::RegexMatcher;
 use vet_mapping as mapping;
@@ -15,7 +15,7 @@ use vet_protocol::{Event, ProjectId, Response};
 use crate::announce::{announce_start, review_changed};
 use crate::events::settled;
 use crate::open::Ready;
-use crate::{Orchestrator, message, start_servers_in_background};
+use crate::{Live, Orchestrator, message, start_servers_in_background};
 
 impl Orchestrator {
     pub(crate) async fn finish_review(&self, project: ProjectId) -> Result<Response, String> {
@@ -28,12 +28,12 @@ impl Orchestrator {
     }
 
     pub(crate) async fn versions(&self, project: ProjectId) -> Result<Response, String> {
-        let versions = self.ready(project).await?.session.versions().await.map_err(message)?;
+        let versions = self.asking(project, async |session| session.versions().await).await?;
         Ok(mapping::versions(&versions))
     }
 
     pub(crate) async fn commits(&self, project: ProjectId) -> Result<Response, String> {
-        let list = self.ready(project).await?.session.commits().await.map_err(message)?;
+        let list = self.asking(project, async |session| session.commits().await).await?;
         Ok(mapping::commits(&list))
     }
 
@@ -70,12 +70,10 @@ impl Orchestrator {
         path: &str,
     ) -> Result<Response, String> {
         let text = self
-            .ready(project)
-            .await?
-            .session
-            .file_text(mapping::core_view(view), path)
-            .await
-            .map_err(message)?;
+            .asking(project, async |session| {
+                session.file_text(mapping::core_view(view), path).await
+            })
+            .await?;
         Ok(self.highlighter.file_contents(path, text).await)
     }
 
@@ -86,12 +84,10 @@ impl Orchestrator {
         path: &str,
     ) -> Result<Response, String> {
         let text = self
-            .ready(project)
-            .await?
-            .session
-            .target_text(mapping::core_view(view), path)
-            .await
-            .map_err(message)?;
+            .asking(project, async |session| {
+                session.target_text(mapping::core_view(view), path).await
+            })
+            .await?;
         Ok(self.highlighter.file_text(path, &text).await)
     }
 
@@ -114,13 +110,23 @@ impl Orchestrator {
             limit: limit as usize,
         };
         let result = self
-            .ready(project)
-            .await?
-            .session
-            .search(&query)
-            .await
-            .map_err(message)?;
+            .asking(project, async |session| session.search(&query).await)
+            .await?;
         Ok(mapping::search_results(&result))
+    }
+
+    /// Makes a mark in `view` with `mark`, and tells the subscribers what it changed.
+    async fn marked(
+        &self,
+        project: ProjectId,
+        view: vet_protocol::View,
+        mark: impl AsyncFnOnce(&Live, View) -> Result<Outcome<ReviewUpdateView>, SessionError>,
+    ) -> Result<Response, String> {
+        let open = self.ready(project).await?;
+        let view = mapping::core_view(view);
+        let update = mark(&open.session, view).await.map_err(message)?;
+        announce_start(&open, update.started);
+        Ok(Response::Review(review_changed(&open, view, &update).await))
     }
 
     pub(crate) async fn toggle_hunk(
@@ -131,15 +137,10 @@ impl Orchestrator {
         path: &str,
         hunk: u32,
     ) -> Result<Response, String> {
-        let open = self.ready(project).await?;
-        let view = mapping::core_view(view);
-        let update = open
-            .session
-            .toggle_hunk(revision, view, path, hunk)
-            .await
-            .map_err(message)?;
-        announce_start(&open, update.started);
-        Ok(Response::Review(review_changed(&open, view, &update).await))
+        self.marked(project, view, async |session, view| {
+            session.toggle_hunk(revision, view, path, hunk).await
+        })
+        .await
     }
 
     pub(crate) async fn toggle_flag(
@@ -150,15 +151,10 @@ impl Orchestrator {
         path: &str,
         hunk: u32,
     ) -> Result<Response, String> {
-        let open = self.ready(project).await?;
-        let view = mapping::core_view(view);
-        let update = open
-            .session
-            .toggle_flag(revision, view, path, hunk)
-            .await
-            .map_err(message)?;
-        announce_start(&open, update.started);
-        Ok(Response::Review(review_changed(&open, view, &update).await))
+        self.marked(project, view, async |session, view| {
+            session.toggle_flag(revision, view, path, hunk).await
+        })
+        .await
     }
 
     pub(crate) async fn toggle_item(
@@ -169,15 +165,12 @@ impl Orchestrator {
         path: &str,
         kind: vet_protocol::NonTextKind,
     ) -> Result<Response, String> {
-        let open = self.ready(project).await?;
-        let view = mapping::core_view(view);
-        let update = open
-            .session
-            .toggle_item(revision, view, path, mapping::core_non_text_kind(kind))
-            .await
-            .map_err(message)?;
-        announce_start(&open, update.started);
-        Ok(Response::Review(review_changed(&open, view, &update).await))
+        self.marked(project, view, async |session, view| {
+            session
+                .toggle_item(revision, view, path, mapping::core_non_text_kind(kind))
+                .await
+        })
+        .await
     }
 
     pub(crate) async fn toggle_file_seen(
@@ -187,15 +180,10 @@ impl Orchestrator {
         revision: u32,
         path: &str,
     ) -> Result<Response, String> {
-        let open = self.ready(project).await?;
-        let view = mapping::core_view(view);
-        let update = open
-            .session
-            .toggle_file_seen(revision, view, path)
-            .await
-            .map_err(message)?;
-        announce_start(&open, update.started);
-        Ok(Response::Review(review_changed(&open, view, &update).await))
+        self.marked(project, view, async |session, view| {
+            session.toggle_file_seen(revision, view, path).await
+        })
+        .await
     }
 
     pub(crate) async fn set_files_seen(
@@ -242,12 +230,8 @@ impl Orchestrator {
         hunk: u32,
     ) -> Result<Response, String> {
         let diff = self
-            .ready(project)
-            .await?
-            .session
-            .base_diff(revision, path, hunk)
-            .await
-            .map_err(message)?;
+            .asking(project, async |session| session.base_diff(revision, path, hunk).await)
+            .await?;
         Ok(mapping::base_diff(&diff))
     }
 
@@ -261,18 +245,18 @@ impl Orchestrator {
         side: vet_protocol::Side,
     ) -> Result<Response, String> {
         let blob = self
-            .ready(project)
-            .await?
-            .session
-            .item_blob(
-                revision,
-                mapping::core_view(view),
-                path,
-                mapping::core_non_text_kind(kind),
-                mapping::core_side(side),
-            )
-            .await
-            .map_err(message)?;
+            .asking(project, async |session| {
+                session
+                    .item_blob(
+                        revision,
+                        mapping::core_view(view),
+                        path,
+                        mapping::core_non_text_kind(kind),
+                        mapping::core_side(side),
+                    )
+                    .await
+            })
+            .await?;
         Ok(mapping::item_blob(blob))
     }
 
@@ -324,17 +308,13 @@ impl Orchestrator {
 
     pub(crate) async fn list_directory(&self, project: ProjectId, path: &str) -> Result<Response, String> {
         let listing = self
-            .ready(project)
-            .await?
-            .session
-            .list_directory(path)
-            .await
-            .map_err(message)?;
+            .asking(project, async |session| session.list_directory(path).await)
+            .await?;
         Ok(mapping::directory(&listing))
     }
 
     pub(crate) async fn list_files(&self, project: ProjectId) -> Result<Response, String> {
-        let listing = self.ready(project).await?.session.list_files().await.map_err(message)?;
+        let listing = self.asking(project, async |session| session.list_files().await).await?;
         Ok(mapping::files(&listing))
     }
 
@@ -346,12 +326,8 @@ impl Orchestrator {
         lines: &[u32],
     ) -> Result<Response, String> {
         let lines = self
-            .ready(project)
-            .await?
-            .session
-            .map_lines(from, path, lines)
-            .await
-            .map_err(message)?;
+            .asking(project, async |session| session.map_lines(from, path, lines).await)
+            .await?;
         Ok(Response::MappedLines {
             lines: lines
                 .into_iter()
@@ -373,12 +349,12 @@ impl Orchestrator {
         line: u32,
     ) -> Result<Response, String> {
         let line = self
-            .ready(project)
-            .await?
-            .session
-            .line_in_target(revision, mapping::core_view(view), mapping::core_side(side), path, line)
-            .await
-            .map_err(message)?;
+            .asking(project, async |session| {
+                session
+                    .line_in_target(revision, mapping::core_view(view), mapping::core_side(side), path, line)
+                    .await
+            })
+            .await?;
         Ok(Response::TargetLine { revision, line })
     }
 }

@@ -6,10 +6,11 @@
 //! first; the others wait for it. Meanwhile the scan reports as a task.
 
 use std::collections::HashMap;
+use std::fmt::Display;
 use std::ops::Deref;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex, OnceLock, PoisonError, Weak};
+use std::sync::{Arc, Mutex, MutexGuard, OnceLock, PoisonError, Weak};
 use std::time::{Duration, SystemTime};
 
 use tokio::sync::OnceCell;
@@ -78,6 +79,31 @@ struct Plan {
     entry: Arc<OnceLock<Weak<Open>>>,
 }
 
+/// The guard of `mutex`, whether or not a thread panicked while holding it: what these locks guard
+/// is a map of connection states or the handle of a task, never left half-written.
+fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
+    mutex.lock().unwrap_or_else(PoisonError::into_inner)
+}
+
+/// The latest background task of one kind that a project runs: a newer one replaces the older and
+/// stops it.
+#[derive(Default)]
+struct TaskSlot(Mutex<Option<AbortHandle>>);
+
+impl TaskSlot {
+    fn keep(&self, task: AbortHandle) {
+        if let Some(older) = lock(&self.0).replace(task) {
+            older.abort();
+        }
+    }
+
+    fn stop(&self) {
+        if let Some(task) = lock(&self.0).take() {
+            task.abort();
+        }
+    }
+}
+
 /// What one open project runs on.
 pub struct Wired {
     /// The background work of the project, announced to its subscribers.
@@ -92,12 +118,12 @@ pub struct Wired {
     connections: Mutex<HashMap<String, PlatformConnection>>,
     plan: Plan,
     booted: OnceCell<Result<Arc<Booted>, String>>,
-    settling: Mutex<Option<AbortHandle>>,
+    settling: TaskSlot,
     /// Whether edits of the working tree wait to settle, as the subscribers were last told.
     edits_waiting: Arc<AtomicBool>,
-    fetching: Mutex<Option<AbortHandle>>,
+    fetching: TaskSlot,
     /// The copy of the working tree's content ahead of a review; a newer tree's replaces it.
-    copying: Mutex<Option<AbortHandle>>,
+    copying: TaskSlot,
     closed: AtomicBool,
     trees: Arc<KeptTrees>,
     /// The answers of the language servers kept between launches.
@@ -133,19 +159,17 @@ impl Wired {
 
     /// Records how syncing with `host` went and answers how it went before.
     pub fn set_connection(&self, host: &str, now: PlatformConnection) -> Option<PlatformConnection> {
-        let mut all = self.connections.lock().unwrap_or_else(PoisonError::into_inner);
-        all.insert(host.to_owned(), now)
+        lock(&self.connections).insert(host.to_owned(), now)
     }
 
     /// How syncing with `host` went last, if it was tried.
     pub fn connection(&self, host: &str) -> Option<PlatformConnection> {
-        let all = self.connections.lock().unwrap_or_else(PoisonError::into_inner);
-        all.get(host).cloned()
+        lock(&self.connections).get(host).cloned()
     }
 
     /// Hands over the task that fetches periodically, which ends with the session.
     pub fn keep_fetching(&self, task: AbortHandle) {
-        *self.fetching.lock().unwrap_or_else(PoisonError::into_inner) = Some(task);
+        self.fetching.keep(task);
     }
 
     /// Copies the working tree's content into the store in the background, so the first mark
@@ -157,17 +181,12 @@ impl Wired {
                 tracing::warn!(error = %e, "could not copy the working tree's content ahead of a review");
             }
         });
-        let mut copying = self.copying.lock().unwrap_or_else(PoisonError::into_inner);
-        if let Some(older) = copying.replace(task.abort_handle()) {
-            older.abort();
-        }
+        self.copying.keep(task.abort_handle());
     }
 
     /// Stops the copy of an older tree, unless a mark is waiting for it.
     fn stop_copying(&self) {
-        if let Some(older) = self.copying.lock().unwrap_or_else(PoisonError::into_inner).take() {
-            older.abort();
-        }
+        self.copying.stop();
     }
 
     async fn boot(&self) -> Result<Arc<Booted>, String> {
@@ -244,7 +263,7 @@ impl Wired {
                     .await;
             })
         };
-        *self.settling.lock().unwrap_or_else(PoisonError::into_inner) = Some(task.abort_handle());
+        self.settling.keep(task.abort_handle());
 
         // The semantic lane reads the same repository and store through handles of its own, so
         // what it reads draws on its budget and never on the review's.
@@ -314,15 +333,9 @@ impl Wired {
 impl Resident for Wired {
     async fn shut(&self) {
         self.closed.store(true, Ordering::SeqCst);
-        if let Some(fetching) = self.fetching.lock().unwrap_or_else(PoisonError::into_inner).take() {
-            fetching.abort();
-        }
-        if let Some(settling) = self.settling.lock().unwrap_or_else(PoisonError::into_inner).take() {
-            settling.abort();
-        }
-        if let Some(copying) = self.copying.lock().unwrap_or_else(PoisonError::into_inner).take() {
-            copying.abort();
-        }
+        self.fetching.stop();
+        self.settling.stop();
+        self.copying.stop();
         if let Some(Ok(booted)) = self.booted.get() {
             booted.semantics.shutdown().await;
         }
@@ -371,6 +384,17 @@ impl Orchestrator {
             open,
             booted,
         })
+    }
+
+    /// What `ask` makes of the live session of the project `id`, once its first scan is done; a
+    /// failure of either is the message of the response.
+    pub(crate) async fn asking<T, E: Display>(
+        &self,
+        id: ProjectId,
+        ask: impl AsyncFnOnce(&Live) -> Result<T, E>,
+    ) -> Result<T, String> {
+        let ready = self.ready(id).await?;
+        ask(&ready.session).await.map_err(message)
     }
 
     /// The background work of the project running now. Needs no scan.
@@ -424,10 +448,10 @@ impl Orchestrator {
                 entry,
             },
             booted: OnceCell::new(),
-            settling: Mutex::new(None),
+            settling: TaskSlot::default(),
             edits_waiting: Arc::default(),
-            fetching: Mutex::new(None),
-            copying: Mutex::new(None),
+            fetching: TaskSlot::default(),
+            copying: TaskSlot::default(),
             closed: AtomicBool::new(false),
             trees: self.trees.clone(),
             answers: self.answers.clone(),

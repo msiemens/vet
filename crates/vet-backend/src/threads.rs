@@ -10,10 +10,9 @@ use crate::{Orchestrator, message};
 
 impl Orchestrator {
     pub(crate) async fn threads(&self, project: ProjectId, view: vet_protocol::View) -> Result<Response, String> {
-        let threads = (self.ready(project).await?.session)
-            .threads(mapping::core_view(view))
-            .await
-            .map_err(message)?;
+        let threads = self
+            .asking(project, async |session| session.threads(mapping::core_view(view)).await)
+            .await?;
         Ok(mapping::threads(&threads))
     }
 
@@ -25,10 +24,13 @@ impl Orchestrator {
         path: &str,
         at: vet_protocol::CommentAt,
     ) -> Result<Response, String> {
-        let spot = (self.ready(project).await?.session)
-            .comment_target(revision, mapping::core_view(view), path, mapping::core_comment_at(at))
-            .await
-            .map_err(message)?;
+        let spot = self
+            .asking(project, async |session| {
+                session
+                    .comment_target(revision, mapping::core_view(view), path, mapping::core_comment_at(at))
+                    .await
+            })
+            .await?;
         Ok(mapping::comment_spot(&spot))
     }
 
