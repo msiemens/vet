@@ -25,6 +25,7 @@ import { serverList } from "../../state/serverList.svelte";
 import { languageOf, withoutImplementations } from "../../state/serverStatus";
 import { session } from "../../state/session.svelte";
 import { type Shown, isCurrent } from "../../state/shown";
+import { symbols } from "../../state/symbols.svelte";
 import { threads } from "../../state/threads.svelte";
 import { rangeKey } from "../../state/timelineRange";
 import type { Thread } from "../../generated/Thread";
@@ -171,6 +172,9 @@ export class ReviewController {
       },
       diagnostics: (revision, path) =>
         this.analysable("target") ? semantic.diagnostics(revision, path) : Promise.resolve([]),
+      cursor: (revision, side, path, line, col) => {
+        if (this.analysable(side)) symbols.follow(revision, side, path, line, col);
+      },
     };
     semantic.reset(); // the controller belongs to one repository's screen
     const offReview = changeset.subscribe((paths) => this.refreshReview(paths));

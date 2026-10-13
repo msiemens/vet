@@ -29,6 +29,8 @@ export interface SemanticHooks {
   locations(kind: PickerKind, side: Side, path: string, at: TextPosition, subject: Subject): void;
   /** The target-side diagnostics of the file, empty if there are none or the server is unavailable. */
   diagnostics(path: string): Promise<Diagnostic[]>;
+  /** The reviewer put the cursor at the position; the owner shows the symbol it is in. */
+  cursor(side: Side, path: string, line: number, col: number): void;
 }
 
 /** The same, for a view that does not know its revision. */
@@ -45,6 +47,7 @@ export function bindRevision(source: SemanticSource, revision: number): Semantic
     definition: (side, path, line, col) => source.definition(revision, side, path, line, col),
     locations: (kind, side, path, at, subject) => source.locations(revision, kind, side, path, at, subject),
     diagnostics: (path) => source.diagnostics(revision, path),
+    cursor: (side, path, line, col) => source.cursor(revision, side, path, line, col),
   };
 }
 
@@ -304,10 +307,23 @@ export function focusedEditor(active: Element | null) {
   };
 }
 
-/** Hover and Mod+click on `side` of `path`, plus the diagnostics gutter on the target side. */
+/** Tells the owner where the reviewer puts the cursor; a selection made by code (a reveal) is not the reviewer's. */
+function cursorMoves(path: string, side: Side, hooks: SemanticHooks): Extension {
+  return EditorView.updateListener.of((u) => {
+    const moved = u.transactions.some(
+      (tr) => tr.selection && ["select", "input", "delete", "move"].some((event) => tr.isUserEvent(event)),
+    );
+    if (!moved) return;
+    const { line, col } = at(u.view, u.state.selection.main.head);
+    hooks.cursor(side, path, line, col);
+  });
+}
+
+/** Hover, Mod+click and the cursor on `side` of `path`, plus the diagnostics gutter on the target side. */
 export function semanticExtensions(path: string, side: Side, hooks: SemanticHooks): Extension[] {
   return [
     targetField,
+    cursorMoves(path, side, hooks),
     // A side by side pane clips what it contains; the tooltips of diagnostics live in the body.
     tooltips({ parent: document.body }),
     hoverPopups(wordUnderPointer, (anchor, signal, view) =>
