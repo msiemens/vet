@@ -32,7 +32,7 @@ use crate::limits::RestoreLimits;
 use crate::ports::{BlobRead, BlobReader, GitRepo, LiveStore, Store};
 use crate::revisions::Revisions;
 use crate::session::{RevisionView, SemanticSides, SessionError};
-use crate::trust::{Trust, analysis_policy};
+use crate::trust::Trust;
 
 /// Servers kept warm per session: base and target of each language.
 const POOL_CAPACITY: usize = 8;
@@ -162,7 +162,6 @@ where
     revisions: Arc<Revisions>,
     /// Kept current by the launcher's restorer (`Limiting`).
     limits: RestoreLimits,
-    trust: Trust,
 }
 
 /// The file contents of both sides of a revision, as the acquisition keeps them.
@@ -195,7 +194,7 @@ fn served(trust: &Trust, sides: &SemanticSides) -> (Served, Served) {
     (
         Served {
             target: Target::Snapshot(sides.base),
-            policy: analysis_policy(trust, &sides.base_commit),
+            policy: trust.policy(&sides.base_commit),
         },
         Served {
             target: if sides.live_target {
@@ -203,7 +202,7 @@ fn served(trust: &Trust, sides: &SemanticSides) -> (Served, Served) {
             } else {
                 Target::Snapshot(sides.target)
             },
-            policy: analysis_policy(trust, &sides.head),
+            policy: trust.policy(&sides.head),
         },
     )
 }
@@ -274,14 +273,12 @@ where
     M: Materializer,
 {
     /// `materializer` serves the session's snapshots as directories and
-    /// `live_root` is the worktree the target side is served from. `trust`
-    /// decides which sides may have their servers execute project code.
+    /// `live_root` is the worktree the target side is served from.
     pub fn new(
         materializer: M,
         launcher: L,
         live_root: std::path::PathBuf,
         backends: Vec<Backend>,
-        trust: Trust,
         links: Links,
     ) -> Self {
         let pool = Pool::new(materializer, launcher, live_root, POOL_CAPACITY);
@@ -290,7 +287,6 @@ where
             texts: None,
             revisions: links.revisions,
             limits: links.limits,
-            trust,
         }
     }
 
@@ -343,7 +339,8 @@ where
     }
 
     async fn pair(&self, view: &RevisionView<G, S>, revision: u32) -> Fallible<Pair<M, L>> {
-        let (base, target) = served(&self.trust, &view.semantic_sides(revision).await?);
+        let sides = view.semantic_sides(revision).await?;
+        let (base, target) = served(&view.trust(&sides.source).await?, &sides);
         Ok(self.semantic.pair(base, target))
     }
 
@@ -813,6 +810,7 @@ mod tests {
     use super::*;
     use crate::changeset::{BaseChoice, CommitId, Source};
     use crate::session::tests::{FakeGit, Fixture, MemStore};
+    use crate::trust::{Origin, PullRequestTrust};
 
     fn sides() -> SemanticSides {
         SemanticSides {
@@ -821,6 +819,7 @@ mod tests {
             target: SnapshotId(Hash([2; 32])),
             head: CommitId("head".into()),
             live_target: true,
+            source: Source::WorkingTree,
         }
     }
 
@@ -850,17 +849,25 @@ mod tests {
 
     #[test]
     fn a_side_built_on_an_untrusted_commit_refuses_executing_servers() {
-        let (base, target) = served(&Trust::Local, &sides());
+        let local = Trust {
+            project: false,
+            origin: Origin::Local,
+        };
+        let (base, target) = served(&local, &sides());
         assert!(base.policy.allow_executing && target.policy.allow_executing);
 
-        let trust = Trust::Contributor {
-            trusted_head: Some(CommitId("head".into())),
+        let pull_request = |trusted_head| Trust {
+            project: false,
+            origin: Origin::PullRequest(PullRequestTrust {
+                fork: true,
+                trusted_head,
+            }),
         };
-        let (base, target) = served(&trust, &sides());
+        let (base, target) = served(&pull_request(Some(CommitId("head".into()))), &sides());
         assert!(!base.policy.allow_executing);
         assert!(target.policy.allow_executing);
 
-        let (_, target) = served(&Trust::Contributor { trusted_head: None }, &sides());
+        let (_, target) = served(&pull_request(None), &sides());
         assert!(!target.policy.allow_executing);
         assert_eq!(target.target, Target::Live);
     }
@@ -1083,7 +1090,6 @@ mod tests {
             FakeLauncher(counters.clone()),
             "/live".into(),
             vec![backend("rust", "rs"), backend("python", "py"), backend("go", "go")],
-            Trust::Local,
             Links {
                 revisions: fx.session.revisions(),
                 limits: RestoreLimits::default(),
@@ -1530,7 +1536,6 @@ mod tests {
                 FakeLauncher(counters.clone()),
                 "/live".into(),
                 vec![backend("rust", "rs"), backend("python", "py"), backend("go", "go")],
-                Trust::Local,
                 Links {
                     revisions: fx.session.revisions(),
                     limits: RestoreLimits::default(),
@@ -1607,7 +1612,6 @@ mod tests {
                     FakeLauncher(counters.clone()),
                     "/live".into(),
                     vec![backend("rust", "rs")],
-                    Trust::Local,
                     Links {
                         revisions: fx.session.revisions(),
                         limits: RestoreLimits::default(),

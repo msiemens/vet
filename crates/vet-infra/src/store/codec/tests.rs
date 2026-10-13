@@ -521,6 +521,8 @@ fn changeset_model(vote: Option<&PendingVote>) -> changeset::Model {
         lens: None,
         title: None,
         draft: false,
+        fork: false,
+        trusted_head: None,
         vote: row.vote.unwrap(),
         vote_posting_since: row.vote_posting_since.unwrap(),
         vote_error: row.vote_error.unwrap(),

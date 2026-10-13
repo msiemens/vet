@@ -37,7 +37,7 @@ mod tests {
 
     use super::*;
 
-    const POLICY: AnalysisPolicy = AnalysisPolicy { allow_executing: false };
+    const POLICY: AnalysisPolicy = AnalysisPolicy::LIMITED;
 
     fn snapshot(n: u8) -> SnapshotId {
         SnapshotId(Hash([n; 32]))

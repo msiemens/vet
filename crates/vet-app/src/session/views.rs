@@ -183,6 +183,8 @@ pub struct SemanticSides {
     /// The target is the live tree, so its servers read the worktree; otherwise it is a
     /// commit's tree, served from a materialized snapshot like the base.
     pub live_target: bool,
+    /// The changeset the revision is of, which its trust depends on.
+    pub source: Source,
 }
 
 /// The result of a request that can start the review.

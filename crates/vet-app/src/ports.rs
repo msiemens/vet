@@ -16,6 +16,7 @@ use vet_semantic::ports::{BackendId, ServerConfig};
 use crate::changeset::{BaseChoice, ChangesetId, CommitId, Lens, Source, Version};
 use crate::platform::{Credential, PlatformKind, PullRequestHead};
 use crate::review::{ChangesetThread, NonTextAck, Review, ReviewId, ReviewSummary, SpanId, SpanOrigin};
+use crate::trust::PullRequestTrust;
 
 /// Monotonic milliseconds.
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Debug)]
@@ -463,6 +464,13 @@ pub trait ChangesetStore {
         repo: String,
         source: Source,
     ) -> impl Future<Output = Result<Option<PullRequestHead>, StoreError>> + Send;
+    /// Where the pull request of `source` is from and the head the viewer trusted it at; `None` if
+    /// the platform's data on it was never stored.
+    fn pull_request_trust(
+        &self,
+        repo: String,
+        source: Source,
+    ) -> impl Future<Output = Result<Option<PullRequestTrust>, StoreError>> + Send;
     /// The vote of the viewer's on the pull request of `source` that waits to be sent; `None` if
     /// there is none.
     fn pending_vote(
@@ -490,6 +498,9 @@ pub trait ReviewStore {
     /// The review filter of the repository at `repo`, a project setting that
     /// applies to every changeset of it; the default if none was stored.
     fn filter(&self, repo: String) -> impl Future<Output = Result<ReviewFilter, StoreError>> + Send;
+    /// Whether the repository at `repo` is marked trusted (§7.5), a project setting; it is not
+    /// unless it was.
+    fn project_trusted(&self, repo: String) -> impl Future<Output = Result<bool, StoreError>> + Send;
     /// The base last chosen for the working tree of the repository at `repo`, which a session
     /// that is browsing starts out with; none if it was never chosen.
     fn browsing_base(&self, repo: String) -> impl Future<Output = Result<Option<BaseChoice>, StoreError>> + Send;
@@ -566,6 +577,15 @@ pub trait ReviewWrites {
         complete: bool,
     ) -> impl Future<Output = Result<(), StoreError>> + Send;
     fn set_filter(&self, repo: String, filter: ReviewFilter) -> impl Future<Output = Result<(), StoreError>> + Send;
+    fn set_project_trusted(&self, repo: String, trusted: bool) -> impl Future<Output = Result<(), StoreError>> + Send;
+    /// Records the head commit the pull request of `source` is trusted at, or with `None` that it
+    /// is trusted at none. The changeset is stored if need be.
+    fn set_pull_request_trusted_head(
+        &self,
+        repo: String,
+        source: Source,
+        head: Option<CommitId>,
+    ) -> impl Future<Output = Result<(), StoreError>> + Send;
     fn set_browsing_base(
         &self,
         repo: String,

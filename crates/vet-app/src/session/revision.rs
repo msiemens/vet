@@ -19,6 +19,7 @@ use super::{LiveSession, Result};
 use crate::acquisition::Acquisition;
 use crate::changeset::Source;
 use crate::ports::{GitRepo, LiveStore};
+use crate::trust::{Origin, PullRequestTrust, Trust};
 
 /// The text diff of a revision.
 pub struct ChangedFiles(Arc<Diffed>);
@@ -35,6 +36,8 @@ pub struct RevisionView<G, S> {
     published: Arc<Published>,
     derived: Arc<Derived>,
     acquisition: Arc<Acquisition<G, S>>,
+    /// The repository root, which with a source is the key a changeset is stored under.
+    repo: String,
 }
 
 impl<G, S> Clone for RevisionView<G, S> {
@@ -43,6 +46,7 @@ impl<G, S> Clone for RevisionView<G, S> {
             published: Arc::clone(&self.published),
             derived: Arc::clone(&self.derived),
             acquisition: Arc::clone(&self.acquisition),
+            repo: self.repo.clone(),
         }
     }
 }
@@ -54,11 +58,29 @@ impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> L
             published: Arc::clone(&self.published),
             derived: Arc::clone(&self.derived),
             acquisition: Arc::clone(&self.acquisition),
+            repo: self.repo.clone(),
         }
     }
 }
 
 impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> RevisionView<G, S> {
+    /// What decides how far analysis of the changeset of `source` may execute project code: the
+    /// project's trust and, for a pull request, what is stored of it.
+    pub async fn trust(&self, source: &Source) -> Result<Trust> {
+        let store = &self.acquisition.store;
+        let project = store.project_trusted(self.repo.clone()).await?;
+        let origin = match source {
+            Source::PullRequest { .. } => Origin::PullRequest(
+                store
+                    .pull_request_trust(self.repo.clone(), source.clone())
+                    .await?
+                    .unwrap_or_else(PullRequestTrust::unknown),
+            ),
+            Source::WorkingTree | Source::Branch { .. } => Origin::Local,
+        };
+        Ok(Trust { project, origin })
+    }
+
     /// What knows the origin of the session's snapshots, for serving them to a
     /// language-server pool and reading their files.
     pub fn acquisition(&self) -> Arc<Acquisition<G, S>> {
@@ -76,6 +98,7 @@ impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> R
             target: st.target.id,
             head: st.head.clone(),
             live_target: st.source == Source::WorkingTree,
+            source: st.source.clone(),
         })
     }
 

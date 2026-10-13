@@ -16,3 +16,4 @@ mod restart;
 mod restore;
 mod semantic;
 mod session;
+mod trust;

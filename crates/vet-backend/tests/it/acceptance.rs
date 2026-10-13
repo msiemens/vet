@@ -712,7 +712,7 @@ fn is_case_sensitive(dir: &Path) -> bool {
     names == 2
 }
 
-const POLICY: AnalysisPolicy = AnalysisPolicy { allow_executing: false };
+const POLICY: AnalysisPolicy = AnalysisPolicy::LIMITED;
 
 fn kept_trees(data: &Path) -> Arc<KeptTrees> {
     let none: Arc<dyn Referenced> = Arc::new(HashSet::<SnapshotId>::new);

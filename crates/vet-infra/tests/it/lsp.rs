@@ -94,7 +94,7 @@ async fn rust_analyzer_answers_the_primitive_queries() {
             dir.path(),
             Tree::Live,
             &config::rust_analyzer(),
-            AnalysisPolicy { allow_executing: true },
+            AnalysisPolicy::EXECUTING,
         )
         .await
         .expect("rust-analyzer starts and has every required capability")
@@ -201,7 +201,7 @@ async fn typescript_language_server_answers_the_primitive_queries() {
             dir.path(),
             Tree::Immutable,
             &config::typescript(),
-            AnalysisPolicy { allow_executing: false },
+            AnalysisPolicy::LIMITED,
         )
         .await
         .expect("typescript-language-server starts and has every required capability")
@@ -286,7 +286,7 @@ export class Widget {
             dir.path(),
             Tree::Immutable,
             &config::typescript(),
-            AnalysisPolicy { allow_executing: false },
+            AnalysisPolicy::LIMITED,
         )
         .await
         .expect("typescript-language-server starts and has every required capability")
@@ -359,7 +359,7 @@ pub static VALUE: std::sync::LazyLock<u32> = std::sync::LazyLock::new(|| helper(
             dir.path(),
             Tree::Live,
             &config::rust_analyzer(),
-            AnalysisPolicy { allow_executing: true },
+            AnalysisPolicy::EXECUTING,
         )
         .await
         .expect("rust-analyzer starts and has every required capability")
@@ -419,12 +419,7 @@ handler = lambda: helper()
 ";
     std::fs::write(dir.path().join("m.py"), src).unwrap();
     let server = LspLauncher::new(BinaryLocator, NoRestore)
-        .start(
-            dir.path(),
-            Tree::Immutable,
-            &config::pyright(),
-            AnalysisPolicy { allow_executing: false },
-        )
+        .start(dir.path(), Tree::Immutable, &config::pyright(), AnalysisPolicy::LIMITED)
         .await
         .expect("pyright starts and has every required capability")
         .server;
@@ -504,7 +499,7 @@ public class W
             dir.path(),
             Tree::Immutable,
             &config::roslyn(),
-            AnalysisPolicy { allow_executing: true },
+            AnalysisPolicy::EXECUTING,
         )
         .await
         .expect("roslyn starts")
@@ -566,12 +561,7 @@ async fn roslyn_answers_a_hover_on_a_newly_opened_file() {
 
     for tree in [Tree::Immutable, Tree::Live] {
         let server = LspLauncher::new(BinaryLocator, NoRestore)
-            .start(
-                dir.path(),
-                tree,
-                &config::roslyn(),
-                AnalysisPolicy { allow_executing: true },
-            )
+            .start(dir.path(), tree, &config::roslyn(), AnalysisPolicy::EXECUTING)
             .await
             .expect("roslyn starts")
             .server;
@@ -607,7 +597,7 @@ async fn typescript_pushed_diagnostics_are_found_for_a_path_the_server_spells_di
             &project,
             Tree::Immutable,
             &config::typescript(),
-            AnalysisPolicy { allow_executing: false },
+            AnalysisPolicy::LIMITED,
         )
         .await
         .expect("typescript-language-server starts")
@@ -653,7 +643,7 @@ async fn typescript_namespaces_are_counted_as_modules() {
             dir.path(),
             Tree::Immutable,
             &config::typescript(),
-            AnalysisPolicy { allow_executing: false },
+            AnalysisPolicy::LIMITED,
         )
         .await
         .expect("typescript-language-server starts and has every required capability")
@@ -696,7 +686,7 @@ async fn rust_analyzer_modules_are_counted_as_modules() {
             dir.path(),
             Tree::Live,
             &config::rust_analyzer(),
-            AnalysisPolicy { allow_executing: true },
+            AnalysisPolicy::EXECUTING,
         )
         .await
         .expect("rust-analyzer starts and has every required capability")

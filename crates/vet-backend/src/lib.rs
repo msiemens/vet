@@ -23,6 +23,7 @@ mod semantic;
 mod servers;
 mod sync;
 mod threads;
+mod trust;
 
 use std::path::Path;
 use std::pin::Pin;
@@ -407,6 +408,8 @@ impl Orchestrator {
             } => reply(async move { self.item_blob(project, view, revision, &path, kind, side).await }),
             Request::SetBase { project, base } => reply(self.set_base(project, base)),
             Request::SetProjectFilter { project, filter } => reply(self.set_project_filter(project, filter)),
+            Request::SetProjectTrusted { project, trusted } => reply(self.set_project_trusted(project, trusted)),
+            Request::TrustPullRequest { project } => reply(self.trust_pull_request(project)),
             Request::ExcludePath {
                 project,
                 path,

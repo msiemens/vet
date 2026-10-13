@@ -75,7 +75,11 @@ impl fmt::Display for PoolError {
             Self::NotMaterializable(e) => write!(f, "snapshot cannot be materialized: {e}"),
             Self::Launch(e) => e.fmt(f),
             Self::Stopped(why) => write!(f, "the language server stopped unexpectedly and stays stopped: {why}"),
-            Self::AnalysisLimited(b) => write!(f, "analysis limited: {} may execute project code", b.0),
+            Self::AnalysisLimited(b) => write!(
+                f,
+                "analysis limited: {} may execute project code, which this pull request is not trusted for",
+                b.0
+            ),
         }
     }
 }
@@ -1045,8 +1049,8 @@ mod tests {
 
     #[test]
     fn untrusted_policy_refuses_executing_backends_only() {
-        let untrusted = AnalysisPolicy { allow_executing: false };
-        let trusted = AnalysisPolicy { allow_executing: true };
+        let untrusted = AnalysisPolicy::LIMITED;
+        let trusted = AnalysisPolicy::EXECUTING;
         assert!(matches!(
             admit(&backend(true), untrusted),
             Err(PoolError::AnalysisLimited(_))
@@ -1364,7 +1368,7 @@ mod tests {
         PoolKey {
             target: Target::Snapshot(SnapshotId(Hash([n; 32]))),
             backend: BackendId("rust".into()),
-            policy: AnalysisPolicy { allow_executing: true },
+            policy: AnalysisPolicy::EXECUTING,
         }
     }
 
@@ -1518,7 +1522,7 @@ mod tests {
             ),
             (
                 "the analysis policy",
-                |_, key, _| key.policy = AnalysisPolicy { allow_executing: false },
+                |_, key, _| key.policy = AnalysisPolicy::LIMITED,
                 &WHOLE_TREE,
             ),
             ("the text", |_, _, ask| ask.text = "fn b() {}", &["text_symbols"]),
@@ -2289,7 +2293,7 @@ mod tests {
     fn refused_backend_starts_nothing() {
         let (pool, counters) = pool(2);
         let key = PoolKey {
-            policy: AnalysisPolicy { allow_executing: false },
+            policy: AnalysisPolicy::LIMITED,
             ..snapshot_key(1)
         };
         let result = block_on(pool.lease(&key, &backend(true)));

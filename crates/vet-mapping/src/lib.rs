@@ -18,6 +18,7 @@ use vet_app::session::{
     ModeChange, NewThread, NoText, ReviewUpdateView, ReviewView, RowReview, SubmitReport, SyncNotice, TargetText,
     ThreadView, ThreadsView, VersionView, View, VoteSent,
 };
+use vet_app::trust::{Origin, Trust};
 use vet_core::completion::{Completion, HunkState};
 use vet_core::content::{EntryKind, Hunk, LineDelta, LineRange, NonTextKind, RepoPath};
 use vet_core::filter::ReviewFilter;
@@ -565,7 +566,26 @@ pub fn check_log(log: &CheckLog) -> p::Response {
     })
 }
 
-pub fn manifest(project: p::ProjectId, m: &ManifestView, restore_failures: &[RestoreFailure]) -> p::Manifest {
+/// What analysis of the changeset on view may execute, given the commit its target is built on.
+pub fn analysis_trust(trust: &Trust, head: &CommitId) -> p::AnalysisTrust {
+    p::AnalysisTrust {
+        project: trust.project,
+        pull_request: match &trust.origin {
+            Origin::Local => None,
+            Origin::PullRequest(pull_request) => Some(p::PullRequestTrust {
+                fork: pull_request.fork,
+                trusted: trust.policy(head).allow_executing_restores,
+            }),
+        },
+    }
+}
+
+pub fn manifest(
+    project: p::ProjectId,
+    m: &ManifestView,
+    restore_failures: &[RestoreFailure],
+    trust: p::AnalysisTrust,
+) -> p::Manifest {
     p::Manifest {
         project,
         revision: m.revision,
@@ -592,6 +612,7 @@ pub fn manifest(project: p::ProjectId, m: &ManifestView, restore_failures: &[Res
             Degraded::WatchLimit => p::WatchDegraded::WatchLimit,
         }),
         restore_failures: semantic::restore_failures(restore_failures),
+        trust,
         interdiff: m.interdiff.as_ref().map(|i| p::InterdiffInfo {
             from: i.from,
             to: i.to,

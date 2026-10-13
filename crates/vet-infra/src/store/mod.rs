@@ -32,10 +32,11 @@ use sea_orm::{
     TransactionTrait,
 };
 use sea_orm_migration::MigratorTrait;
-use vet_app::changeset::{BaseChoice, ChangesetId, Lens, Source, Version};
+use vet_app::changeset::{BaseChoice, ChangesetId, CommitId, Lens, Source, Version};
 use vet_app::platform::PullRequestHead;
 use vet_app::ports::{ChangesetStore, LiveStore, ReviewStore, Store, StoreError, ThreadStore};
 use vet_app::review::{ChangesetThread, Review, ReviewId};
+use vet_app::trust::PullRequestTrust;
 use vet_core::content::{BlobId, Hash, Snapshot, SnapshotId, SnapshotStatus};
 use vet_core::filter::ReviewFilter;
 use vet_core::merkle::{self, TreeNode};
@@ -454,7 +455,23 @@ impl ChangesetStore for SqliteStore {
             Some(PullRequestHead {
                 title: r.title?,
                 draft: r.draft,
+                fork: r.fork,
             })
+        }))
+    }
+
+    async fn pull_request_trust(&self, repo: String, source: Source) -> Result<Option<PullRequestTrust>, StoreError> {
+        let (kind, key) = source_columns(&source);
+        let row = changeset::Entity::find()
+            .filter(changeset::Column::Repo.eq(repo))
+            .filter(changeset::Column::Kind.eq(kind))
+            .filter(changeset::Column::Key.eq(key))
+            .one(&self.reader.db)
+            .await?;
+        // The platform's data on the pull request is stored together with its title.
+        Ok(row.filter(|r| r.title.is_some()).map(|r| PullRequestTrust {
+            fork: r.fork,
+            trusted_head: r.trusted_head.map(CommitId),
         }))
     }
 
@@ -547,6 +564,13 @@ impl ReviewStore for SqliteStore {
             .all(&db)
             .await?;
         Ok(filter_from(row.hide_binary, items)?)
+    }
+
+    async fn project_trusted(&self, repo: String) -> Result<bool, StoreError> {
+        Ok(project_trust::Entity::find_by_id(repo)
+            .one(&self.reader.db)
+            .await?
+            .is_some())
     }
 
     async fn browsing_base(&self, repo: String) -> Result<Option<BaseChoice>, StoreError> {

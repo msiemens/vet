@@ -115,7 +115,7 @@ fn read(root: &Path, name: &str) -> Vec<u8> {
     std::fs::read(root.join(name)).unwrap()
 }
 
-const POLICY: AnalysisPolicy = AnalysisPolicy { allow_executing: false };
+const POLICY: AnalysisPolicy = AnalysisPolicy::LIMITED;
 
 fn trees(data: &Path) -> Arc<KeptTrees> {
     let none: Arc<dyn Referenced> = Arc::new(HashSet::<SnapshotId>::new);
@@ -183,7 +183,7 @@ async fn a_tree_outlives_its_guard_and_a_new_launch_finds_it_without_the_snapsho
         Arc::new(Acquisition::new(GixRepo::new(dir.path()), MemStore::default())),
         trees(data.path()),
     )
-    .materialize(opened.base.id, AnalysisPolicy { allow_executing: true })
+    .materialize(opened.base.id, AnalysisPolicy::EXECUTING)
     .await;
     assert!(matches!(executing, Err(NotMaterializable::Other(_))));
 }

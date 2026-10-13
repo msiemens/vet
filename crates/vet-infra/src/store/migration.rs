@@ -56,6 +56,7 @@ fn statements() -> Vec<String> {
         project_base::Entity,
         project_filter::Entity,
         project_filter_item::Entity,
+        project_trust::Entity,
         anchor::Entity,
         span::Entity,
         ack::Entity,

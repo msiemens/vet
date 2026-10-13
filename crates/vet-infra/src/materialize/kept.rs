@@ -146,10 +146,9 @@ struct Key {
 impl Key {
     fn new(snapshot: SnapshotId, policy: AnalysisPolicy) -> Self {
         let hex = snapshot.0.to_hex();
-        let policy = if policy.allow_executing { "exec" } else { "noexec" };
         Self {
             snapshot,
-            name: format!("{}-{policy}", &hex[..NAME_HEX]),
+            name: format!("{}-{}", &hex[..NAME_HEX], policy.tag()),
         }
     }
 
@@ -651,7 +650,7 @@ mod tests {
 
     use super::*;
 
-    const POLICY: AnalysisPolicy = AnalysisPolicy { allow_executing: false };
+    const POLICY: AnalysisPolicy = AnalysisPolicy::LIMITED;
     const DAY: Duration = Duration::from_secs(24 * 3600);
 
     fn snapshot(n: u8) -> SnapshotId {
@@ -732,10 +731,7 @@ mod tests {
         let root = built.lease.tree().to_owned();
         drop(built);
         assert_eq!(trees.kept(snapshot(1), POLICY).await, Some(root));
-        assert_eq!(
-            trees.kept(snapshot(1), AnalysisPolicy { allow_executing: true }).await,
-            None
-        );
+        assert_eq!(trees.kept(snapshot(1), AnalysisPolicy::EXECUTING).await, None);
         assert_eq!(trees.kept(snapshot(2), POLICY).await, None);
         assert_eq!(trees.clear().await.removed, 1, "looking took no lock");
         assert_eq!(trees.kept(snapshot(1), POLICY).await, None);
@@ -748,7 +744,7 @@ mod tests {
         let trees = trees(data.path());
         let plain = acquire(&trees, 1, 1).await;
         let executing = trees
-            .acquire(snapshot(1), AnalysisPolicy { allow_executing: true }, fill(1))
+            .acquire(snapshot(1), AnalysisPolicy::EXECUTING, fill(1))
             .await
             .unwrap();
         assert!(executing.built);

@@ -163,6 +163,8 @@ pub fn effect(request: &Request) -> Effect {
         Request::SetBase { .. } | Request::SetProjectFilter { .. } | Request::ExcludePath { .. } => {
             tested(&[SnapshotSettled])
         }
+        Request::SetProjectTrusted { .. } => tested(&[TargetChanged, ServersChanged]),
+        Request::TrustPullRequest { .. } => untested(&[TargetChanged, ServersChanged], NEEDS_A_PLATFORM),
         // When a remote was fetched. A pull request on view whose head moved settles
         // (`SnapshotSettled`), one the platform names differently says `TargetChanged`, and its
         // sync announces as `SyncThreads` does.
@@ -481,6 +483,8 @@ mod tests {
                 project,
                 filter: ReviewFilter::default(),
             },
+            Request::SetProjectTrusted { project, trusted: true },
+            Request::TrustPullRequest { project },
             Request::ExcludePath {
                 project,
                 path: path(),
@@ -899,6 +903,7 @@ mod tests {
             ..ReviewFilter::default()
         };
         world.drive(Request::SetProjectFilter { project, filter }).await;
+        world.drive(Request::SetProjectTrusted { project, trusted: true }).await;
         world
             .drive(Request::ExcludePath {
                 project,

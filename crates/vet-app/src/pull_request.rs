@@ -848,14 +848,16 @@ mod tests {
             ready,
             PullRequestHead {
                 title: "PR 7".to_owned(),
-                draft: false
+                draft: false,
+                fork: false
             }
         );
         assert_eq!(
             draft,
             PullRequestHead {
                 title: format!("PR {DRAFT}"),
-                draft: true
+                draft: true,
+                fork: false
             }
         );
     }

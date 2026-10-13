@@ -3,8 +3,12 @@
 //! location: every tool keeps its default, which is the user's own cache and so
 //! shared across snapshots and with the user's builds.
 //!
-//! No command runs project code: not a build script, not a package's install
-//! script, not a build backend.
+//! Unless the policy lets restores execute (`allow_executing_restores`, a trusted
+//! project or PR, §7.5), no command runs project code: not a build script, not a
+//! package's install script, not a build backend. The commands below are those
+//! of the fetch-only restore; an executing one drops the flags that prevent
+//! execution (`--ignore-scripts`, `--ignore-pnpmfile`, `--mode=skip-build`,
+//! `YARN_ENABLE_SCRIPTS=false`, uv's `--no-build`).
 //!
 //! | Language | Command | Cache (tool default) |
 //! |---|---|---|
@@ -15,7 +19,7 @@
 //! | Yarn berry | `yarn install --immutable --mode=skip-build` | Yarn cache |
 //! | Python with `uv.lock` | `uv sync --frozen --no-build --no-install-project --no-python-downloads` | uv cache |
 //! | Python otherwise | `uv venv`, then `uv pip install --no-build -r requirements.txt -r pyproject.toml` | uv cache |
-//! | C# | `dotnet restore` (runs MSBuild, so only where executing is allowed) | NuGet global packages folder |
+//! | C# | `dotnet restore` (runs MSBuild, so only where executing restores is allowed) | NuGet global packages folder |
 //!
 //! Every project of the tree is restored where its manifest is, except the
 //! members of a workspace (Cargo, pnpm, npm, Yarn, uv): their root's install
@@ -215,7 +219,10 @@ impl ToolRestorer {
         self
     }
 
-    async fn plan(&self, root: &Path, language: &'static Language) -> Plan {
+    /// The steps that restore `root` under `policy`: which flags they carry depends on whether
+    /// the restore may execute project code.
+    async fn plan(&self, root: &Path, language: &'static Language, policy: AnalysisPolicy) -> Plan {
+        let executing = policy.allow_executing_restores;
         let mut plan = Plan::default();
         if language.restore == Restore::Dotnet {
             Self::csharp(&self.semantic_io, root, &mut plan).await;
@@ -234,8 +241,8 @@ impl ToolRestorer {
             .blocking(move || {
                 match language.restore {
                     Restore::Cargo => Self::rust(&root, &files, &mut plan),
-                    Restore::Javascript => Self::javascript(&root, &files, &mut plan),
-                    Restore::Python => Self::python(&root, &files, &mut plan),
+                    Restore::Javascript => Self::javascript(&root, &files, executing, &mut plan),
+                    Restore::Python => Self::python(&root, &files, executing, &mut plan),
                     Restore::Dotnet => {}
                 }
                 plan
@@ -256,18 +263,21 @@ impl ToolRestorer {
         }
     }
 
-    fn javascript(root: &Path, files: &[PathBuf], plan: &mut Plan) {
+    fn javascript(root: &Path, files: &[PathBuf], executing: bool, plan: &mut Plan) {
         let all = discover::candidates(files, &["package.json"]);
         let workspaces = discover::js_workspaces(root, &all);
         let roots = discover::without_members(all.clone(), &workspaces);
         for dir in plan.bounded(roots, "npm") {
-            let mut step = javascript_step(&root.join(&dir), &dir);
+            let mut step = javascript_step(&root.join(&dir), &dir, executing);
             step.covers = discover::members(&all, &workspaces, &dir);
             plan.steps.push(step);
         }
     }
 
-    fn python(root: &Path, files: &[PathBuf], plan: &mut Plan) {
+    fn python(root: &Path, files: &[PathBuf], executing: bool, plan: &mut Plan) {
+        // `--no-build` refuses every source distribution, `-e` and local path, so no build
+        // backend or `setup.py` runs; what needs one fails and is reported.
+        let no_build: &[&str] = if executing { &[] } else { &["--no-build"] };
         let dirs = discover::candidates(files, &["pyproject.toml", "requirements.txt"]);
         let workspaces = discover::uv_workspaces(root, &dirs);
         let dirs = discover::without_members(dirs, &workspaces);
@@ -279,13 +289,9 @@ impl ToolRestorer {
                 .ok()
                 .and_then(|t| t.parse::<toml::Table>().ok());
             if pyproject.is_some() && has("uv.lock") {
-                let mut args = vec![
-                    "sync",
-                    "--frozen",
-                    "--no-build",
-                    "--no-install-project",
-                    "--no-python-downloads",
-                ];
+                let mut args = vec!["sync", "--frozen"];
+                args.extend(no_build);
+                args.extend(["--no-install-project", "--no-python-downloads"]);
                 // A workspace root only installs its own package otherwise.
                 if workspaces.iter().any(|w| w.dir() == dir) {
                     args.push("--all-packages");
@@ -296,9 +302,7 @@ impl ToolRestorer {
                 continue;
             }
             // Without a lock there is nothing to resolve from but the declared
-            // requirements. `uv pip install` reads them statically and `--no-build`
-            // refuses every source distribution, `-e` and local path, so no build
-            // backend or `setup.py` runs; what needs one fails and is reported.
+            // requirements, which `uv pip install` reads statically.
             let mut requirements = Vec::new();
             if has("requirements.txt") {
                 requirements.push("requirements.txt");
@@ -319,7 +323,8 @@ impl ToolRestorer {
                 "uv",
                 &["venv", &venv, "--allow-existing", "--no-python-downloads"],
             ));
-            let mut args = vec!["pip", "install", "--python", &venv, "--no-build"];
+            let mut args = vec!["pip", "install", "--python", &venv];
+            args.extend(no_build);
             args.extend(requirements.iter().flat_map(|r| ["-r", r]));
             plan.steps.push(Step::new(&dir, "uv", &args));
         }
@@ -375,7 +380,7 @@ impl ToolRestorer {
 
 /// The JavaScript package manager of the project in `abs`: `packageManager` in
 /// `package.json` first (what Corepack enforces), else the lockfile present.
-fn javascript_step(abs: &Path, project: &Path) -> Step {
+fn javascript_step(abs: &Path, project: &Path, executing: bool) -> Step {
     enum Manager {
         Pnpm,
         Npm,
@@ -408,32 +413,43 @@ fn javascript_step(abs: &Path, project: &Path) -> Step {
         _ if has("yarn.lock") => Manager::Yarn { berry: berry() },
         _ => Manager::Npm,
     };
+    // What keeps an install from running the project's code; an executing restore leaves it out.
+    let inert = |flags: &'static [&'static str]| if executing { &[][..] } else { flags };
     let mut step = match manager {
         // pnpm runs the repository's `.pnpmfile.cjs` hooks during an install.
-        Manager::Pnpm if has("pnpm-lock.yaml") => Step::new(
-            project,
-            "pnpm",
-            &["install", "--frozen-lockfile", "--ignore-scripts", "--ignore-pnpmfile"],
-        ),
-        Manager::Pnpm => Step::new(project, "pnpm", &["install", "--ignore-scripts", "--ignore-pnpmfile"]),
-        Manager::Npm if has("package-lock.json") || has("npm-shrinkwrap.json") => {
-            Step::new(project, "npm", &["ci", "--ignore-scripts"])
+        Manager::Pnpm => {
+            let mut args = vec!["install"];
+            if has("pnpm-lock.yaml") {
+                args.push("--frozen-lockfile");
+            }
+            args.extend(inert(&["--ignore-scripts", "--ignore-pnpmfile"]));
+            Step::new(project, "pnpm", &args)
         }
-        Manager::Npm => Step::new(project, "npm", &["install", "--ignore-scripts"]),
+        Manager::Npm => {
+            let locked = has("package-lock.json") || has("npm-shrinkwrap.json");
+            let mut args = vec![if locked { "ci" } else { "install" }];
+            args.extend(inert(&["--ignore-scripts"]));
+            Step::new(project, "npm", &args)
+        }
         Manager::Yarn { berry: false } => {
-            let mut args = vec!["install", "--ignore-scripts", "--non-interactive"];
+            let mut args = vec!["install"];
+            args.extend(inert(&["--ignore-scripts"]));
+            args.push("--non-interactive");
             if has("yarn.lock") {
                 args.push("--frozen-lockfile");
             }
             Step::new(project, "yarn", &args)
         }
         Manager::Yarn { berry: true } => {
-            let mut args = vec!["install", "--mode=skip-build"];
+            let mut args = vec!["install"];
+            args.extend(inert(&["--mode=skip-build"]));
             if has("yarn.lock") {
                 args.push("--immutable");
             }
             let mut step = Step::new(project, "yarn", &args);
-            step.env.push(("YARN_ENABLE_SCRIPTS".into(), "false".into()));
+            if !executing {
+                step.env.push(("YARN_ENABLE_SCRIPTS".into(), "false".into()));
+            }
             step.env.push(("YARN_ENABLE_TELEMETRY".into(), "0".into()));
             step
         }
@@ -587,7 +603,7 @@ impl ToolRestorer {
     /// plan could not restore. A record made under other inputs is not reused.
     fn inputs(&self, plan: &Plan, steps: &[&Step], tools: &[(String, String)], policy: AnalysisPolicy) -> Hash {
         let mut digest = Digest::default();
-        digest.field(if policy.allow_executing { "exec" } else { "noexec" });
+        digest.field(policy.tag());
         digest.field("environment");
         for (key, value) in &self.env {
             digest.field(key).field(value);
@@ -722,7 +738,9 @@ struct Standing<'p> {
 
 /// The steps the policy lets run.
 fn allowed(plan: &Plan, policy: AnalysisPolicy) -> impl Iterator<Item = &Step> {
-    plan.steps.iter().filter(move |s| policy.allow_executing || !s.executes)
+    plan.steps
+        .iter()
+        .filter(move |s| policy.allow_executing_restores || !s.executes)
 }
 
 impl Restorer for ToolRestorer {
@@ -730,7 +748,7 @@ impl Restorer for ToolRestorer {
         let Some(language) = language::by_id(&backend.config().backend.0) else {
             return Restored::default();
         };
-        let plan = self.plan(root, language).await;
+        let plan = self.plan(root, language, policy).await;
         match Layout::of_tree(root) {
             Some(layout) => self.restore_kept(&layout, root, language, &plan, policy).await,
             None => self.execute(root, language, &plan, policy).await.0,
@@ -740,7 +758,7 @@ impl Restorer for ToolRestorer {
     async fn recorded(&self, root: &Path, backend: &Backend, policy: AnalysisPolicy) -> Option<Hash> {
         let language = language::by_id(&backend.config().backend.0)?;
         let layout = Layout::of_tree(root)?;
-        let plan = self.plan(root, language).await;
+        let plan = self.plan(root, language, policy).await;
         let standing = self.standing(&layout, root, language, &plan, policy).await;
         standing.record.map(|record| record.fingerprint())
     }
@@ -773,9 +791,13 @@ mod tests {
     }
 
     /// `project: command` of each step, and the plan's own failures.
-    async fn planned(files: &[(&str, &str)], language: &str) -> (Vec<String>, Vec<RestoreFailure>) {
+    async fn planned_under(
+        files: &[(&str, &str)],
+        language: &str,
+        policy: AnalysisPolicy,
+    ) -> (Vec<String>, Vec<RestoreFailure>) {
         let dir = tree(files);
-        let plan = ToolRestorer::new().plan(dir.path(), lang(language)).await;
+        let plan = ToolRestorer::new().plan(dir.path(), lang(language), policy).await;
         let steps = plan.steps.iter();
         (
             steps
@@ -785,10 +807,18 @@ mod tests {
         )
     }
 
-    async fn commands(files: &[(&str, &str)], language: &str) -> Vec<String> {
-        let (steps, failures) = planned(files, language).await;
+    async fn planned(files: &[(&str, &str)], language: &str) -> (Vec<String>, Vec<RestoreFailure>) {
+        planned_under(files, language, NO_EXEC).await
+    }
+
+    async fn commands_under(files: &[(&str, &str)], language: &str, policy: AnalysisPolicy) -> Vec<String> {
+        let (steps, failures) = planned_under(files, language, policy).await;
         assert!(failures.is_empty(), "{failures:?}");
         steps
+    }
+
+    async fn commands(files: &[(&str, &str)], language: &str) -> Vec<String> {
+        commands_under(files, language, NO_EXEC).await
     }
 
     #[tokio::test]
@@ -919,7 +949,11 @@ mod tests {
     async fn a_yarn_release_checked_into_the_repository_counts_as_executing() {
         async fn executes(rc: &str, content: &str) -> bool {
             let dir = tree(&[("package.json", "{}"), ("yarn.lock", ""), (rc, content)]);
-            ToolRestorer::new().plan(dir.path(), lang("typescript")).await.steps[0].executes
+            ToolRestorer::new()
+                .plan(dir.path(), lang("typescript"), NO_EXEC)
+                .await
+                .steps[0]
+                .executes
         }
         assert!(executes(".yarnrc.yml", "yarnPath: .yarn/releases/yarn-4.js\n").await);
         assert!(executes(".yarnrc.yml", "plugins:\n  - path: p.cjs\n").await);
@@ -996,7 +1030,7 @@ mod tests {
         let create = format!("uv venv {venv} --allow-existing --no-python-downloads");
 
         std::fs::write(dir.path().join("requirements.txt"), "").unwrap();
-        let plan = restorer.plan(dir.path(), lang("python")).await;
+        let plan = restorer.plan(dir.path(), lang("python"), NO_EXEC).await;
         assert_eq!(
             steps(&plan),
             [
@@ -1006,7 +1040,7 @@ mod tests {
         );
 
         std::fs::write(dir.path().join("pyproject.toml"), "[project]\nname = \"p\"\n").unwrap();
-        let plan = restorer.plan(dir.path(), lang("python")).await;
+        let plan = restorer.plan(dir.path(), lang("python"), NO_EXEC).await;
         assert_eq!(
             steps(&plan),
             [
@@ -1018,10 +1052,10 @@ mod tests {
         // Tool configuration alone has nothing to install; Poetry's own format is reported.
         std::fs::remove_file(dir.path().join("requirements.txt")).unwrap();
         std::fs::write(dir.path().join("pyproject.toml"), "[tool.ruff]\nline-length = 100\n").unwrap();
-        let plan = restorer.plan(dir.path(), lang("python")).await;
+        let plan = restorer.plan(dir.path(), lang("python"), NO_EXEC).await;
         assert!(plan.steps.is_empty() && plan.failures.is_empty());
         std::fs::write(dir.path().join("pyproject.toml"), "[tool.poetry]\nname = \"p\"\n").unwrap();
-        let plan = restorer.plan(dir.path(), lang("python")).await;
+        let plan = restorer.plan(dir.path(), lang("python"), NO_EXEC).await;
         assert!(plan.steps.is_empty());
         assert_eq!(plan.failures.len(), 1);
         assert!(plan.failures[0].message.contains("Poetry"), "{:?}", plan.failures);
@@ -1046,19 +1080,92 @@ mod tests {
     #[tokio::test]
     async fn csharp_restores_what_the_server_loads_and_only_where_executing_is_allowed() {
         let dir = tree(&[("App.csproj", ""), ("Program.cs", "")]);
-        let plan = ToolRestorer::new().plan(dir.path(), lang("csharp")).await;
+        let plan = ToolRestorer::new().plan(dir.path(), lang("csharp"), NO_EXEC).await;
         assert_eq!(plan.steps.len(), 1);
         assert!(plan.steps[0].executes && plan.steps[0].args[0] == "restore");
 
-        // Not allowed: nothing runs, so not even a missing `dotnet` is reported.
-        let restored = ToolRestorer::new()
-            .restore(
-                dir.path(),
-                &backend("csharp"),
-                AnalysisPolicy { allow_executing: false },
-            )
-            .await;
-        assert_eq!(restored, Restored::default());
+        // Not allowed: nothing runs, so not even a missing `dotnet` is reported. Servers that
+        // may execute project code do not make the restore one that may.
+        for policy in [AnalysisPolicy::LIMITED, AnalysisPolicy::SERVERS] {
+            let restored = ToolRestorer::new()
+                .restore(dir.path(), &backend("csharp"), policy)
+                .await;
+            assert_eq!(restored, Restored::default());
+        }
+    }
+
+    #[tokio::test]
+    async fn an_executing_restore_drops_the_flags_that_keep_project_code_from_running() {
+        let exec = AnalysisPolicy::EXECUTING;
+        let js = async |files: &[(&str, &str)]| commands_under(files, "typescript", exec).await;
+        assert_eq!(
+            js(&[("package.json", ""), ("pnpm-lock.yaml", "")]).await,
+            [".: pnpm install --frozen-lockfile"]
+        );
+        assert_eq!(
+            js(&[("package.json", ""), ("package-lock.json", "")]).await,
+            [".: npm ci"]
+        );
+        assert_eq!(js(&[("package.json", "")]).await, [".: npm install"]);
+        assert_eq!(
+            js(&[("package.json", ""), ("yarn.lock", "")]).await,
+            [".: yarn install --non-interactive --frozen-lockfile"]
+        );
+        assert_eq!(
+            js(&[("package.json", "{}"), ("yarn.lock", "__metadata:")]).await,
+            [".: yarn install --immutable"]
+        );
+        // Yarn berry's switch for scripts is an environment variable.
+        let dir = tree(&[("package.json", "{}"), ("yarn.lock", "__metadata:")]);
+        let berry = async |policy| {
+            let plan = ToolRestorer::new().plan(dir.path(), lang("typescript"), policy).await;
+            plan.steps[0]
+                .env
+                .contains(&("YARN_ENABLE_SCRIPTS".into(), "false".into()))
+        };
+        assert!(berry(NO_EXEC).await);
+        assert!(!berry(exec).await);
+
+        let sync = commands_under(
+            &[("pyproject.toml", "[project]\nname = \"p\"\n"), ("uv.lock", "")],
+            "python",
+            exec,
+        )
+        .await;
+        assert_eq!(sync, [".: uv sync --frozen --no-install-project --no-python-downloads"]);
+        let pip = commands_under(&[("requirements.txt", "")], "python", exec).await;
+        assert!(
+            pip[1].ends_with(" -r requirements.txt") && !pip[1].contains("--no-build"),
+            "{pip:?}"
+        );
+
+        // Servers that may execute do not make the install one that does.
+        let servers = commands_under(&[("package.json", "")], "typescript", AnalysisPolicy::SERVERS).await;
+        assert_eq!(servers, [".: npm install --ignore-scripts"]);
+    }
+
+    #[tokio::test]
+    async fn a_kept_tree_restored_under_one_policy_is_not_the_record_of_another() {
+        let (_dir, root) = kept(&[("package.json", "{}")]);
+        let tools = Arc::new(FakeTools::default());
+        let typescript = backend("typescript");
+        for policy in [NO_EXEC, AnalysisPolicy::SERVERS, AnalysisPolicy::EXECUTING] {
+            let before = tools.runs().len();
+            restorer(&tools).restore(&root, &typescript, policy).await;
+            assert_eq!(
+                tools.runs().len(),
+                before + 1,
+                "{policy:?} reused another policy's record"
+            );
+        }
+        assert_eq!(
+            tools.runs(),
+            [
+                "npm install --ignore-scripts",
+                "npm install --ignore-scripts",
+                "npm install"
+            ]
+        );
     }
 
     /// Runs nothing: records what was asked, and answers the way it is told to.
@@ -1142,7 +1249,7 @@ mod tests {
         (dir, root)
     }
 
-    const NO_EXEC: AnalysisPolicy = AnalysisPolicy { allow_executing: false };
+    const NO_EXEC: AnalysisPolicy = AnalysisPolicy::LIMITED;
 
     fn restorer(tools: &Arc<FakeTools>) -> ToolRestorer {
         ToolRestorer::new().with_tools(tools.clone())
@@ -1199,9 +1306,7 @@ mod tests {
             "another layout of manifests"
         );
         assert_eq!(
-            restorer(&tools)
-                .recorded(&root, &rust, AnalysisPolicy { allow_executing: true })
-                .await,
+            restorer(&tools).recorded(&root, &rust, AnalysisPolicy::EXECUTING).await,
             None,
             "another policy"
         );

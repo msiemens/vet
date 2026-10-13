@@ -213,6 +213,8 @@ pub struct Manifest {
     /// (§7.5). `Event::RestoreFailed` updates it.
     #[serde(default)]
     pub restore_failures: Vec<RestoreFailure>,
+    /// What analysis of the changeset may execute (§7.5). `TargetChanged` updates it.
+    pub trust: AnalysisTrust,
     /// Set for the manifest of an interdiff view.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
@@ -225,6 +227,31 @@ pub struct Manifest {
     pub changeset_files: u32,
     /// The completion of the changeset as a whole, whatever view this manifest is of.
     pub changeset_completion: Completion,
+}
+
+/// What may execute project code when the changeset on view is analysed (§7.5).
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct AnalysisTrust {
+    /// The project (the repository) is marked trusted.
+    pub project: bool,
+    /// Set when the changeset is a pull request.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub pull_request: Option<PullRequestTrust>,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct PullRequestTrust {
+    /// The head is in a repository other than the one the pull request is opened against,
+    /// or that is not known.
+    pub fork: bool,
+    /// Analysis of the pull request's current head may execute project code. A new push
+    /// ends what "Trust this PR" granted.
+    pub trusted: bool,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Serialize, Deserialize, TS)]

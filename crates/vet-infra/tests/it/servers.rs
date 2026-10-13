@@ -102,7 +102,7 @@ async fn typescript_installs_and_uses_the_project_typescript() {
             project.path(),
             Tree::Immutable,
             &config::typescript(),
-            AnalysisPolicy { allow_executing: false },
+            AnalysisPolicy::LIMITED,
         )
         .await
         .expect("the installed server starts and has every required capability")
@@ -145,12 +145,7 @@ async fn csharp_installs_and_starts() {
 
     let launcher = LspLauncher::new(servers(&setup), NoRestore);
     let server = launcher
-        .start(
-            project.path(),
-            Tree::Live,
-            &config::roslyn(),
-            AnalysisPolicy { allow_executing: true },
-        )
+        .start(project.path(), Tree::Live, &config::roslyn(), AnalysisPolicy::EXECUTING)
         .await
         .expect("the installed server starts and has every required capability")
         .server;
@@ -222,7 +217,7 @@ async fn csharp_resolves_packages_in_a_copy_that_took_the_working_trees_restore_
     install(&setup, donor.path(), "csharp").await;
 
     let restorer = ToolRestorer::new().reusing(donor.path().to_owned());
-    let policy = AnalysisPolicy { allow_executing: true };
+    let policy = AnalysisPolicy::EXECUTING;
     let backend = config::roslyn();
     for dir in [donor.path(), copy.path()] {
         let restored = restorer.restore(dir, &backend, policy).await;
@@ -269,7 +264,7 @@ async fn python_installs_and_starts() {
             project.path(),
             Tree::Immutable,
             &config::pyright(),
-            AnalysisPolicy { allow_executing: false },
+            AnalysisPolicy::LIMITED,
         )
         .await
         .expect("the installed server starts and has every required capability")

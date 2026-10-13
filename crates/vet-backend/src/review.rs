@@ -42,7 +42,8 @@ impl Orchestrator {
         let open = self.ready(project).await?;
         let view = open.session.manifest(mapping::core_view(view)).await.map_err(message)?;
         let failures = open.semantics.restore_failures();
-        let mut manifest = mapping::manifest(project, &view, &failures);
+        let (trust, head) = open.session.trust().await.map_err(message)?;
+        let mut manifest = mapping::manifest(project, &view, &failures, mapping::analysis_trust(&trust, &head));
         if matches!(view.target.source, Source::PullRequest { .. })
             && let Some(head) = open
                 .session

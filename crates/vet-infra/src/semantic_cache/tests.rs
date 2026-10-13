@@ -36,7 +36,7 @@ fn hover_key(n: u8) -> Key {
 fn basis() -> Basis {
     Basis {
         snapshot: SnapshotId(Hash([2; 32])),
-        policy: AnalysisPolicy { allow_executing: true },
+        policy: AnalysisPolicy::EXECUTING,
         restore: Restore::Recorded(Hash([3; 32])),
     }
 }
@@ -186,7 +186,7 @@ async fn every_input_of_a_key_is_part_of_where_its_answer_is_kept() {
         project(|s, _, _| s.fingerprint = Hash([9; 32])),
         project(|s, _, _| s.backend = BackendId("python".into())),
         project(|_, b, _| b.snapshot = SnapshotId(Hash([9; 32]))),
-        project(|_, b, _| b.policy = AnalysisPolicy { allow_executing: false }),
+        project(|_, b, _| b.policy = AnalysisPolicy::LIMITED),
         project(|_, b, _| b.restore = Restore::Recorded(Hash([9; 32]))),
         project(|_, _, q| *q = ProjectQuery::Hover(at("a.rs", 2, 2))),
         project(|_, _, q| *q = ProjectQuery::Hover(at("a.rs", 1, 3))),

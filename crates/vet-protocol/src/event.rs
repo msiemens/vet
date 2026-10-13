@@ -51,7 +51,8 @@ pub enum Event {
     LensChanged { project: ProjectId, lens: Lens },
     /// What the manifest says of the target changed without a new revision: how the
     /// platform names the pull request on view (its title, whether it is a draft), as a
-    /// fetch of it found. Fetch the manifest again.
+    /// fetch of it found, or what analysis may execute (`SetProjectTrusted`,
+    /// `TrustPullRequest`). Fetch the manifest again.
     TargetChanged { project: ProjectId },
     /// What `ListChangesets` and `ListPullRequests` list may have changed: a fetch moved
     /// branches or pull request heads, or a review finished. List again.

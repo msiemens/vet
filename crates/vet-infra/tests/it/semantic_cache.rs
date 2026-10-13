@@ -59,7 +59,7 @@ fn key(question: &Question) -> Key {
             server: server(*version),
             basis: Basis {
                 snapshot: SnapshotId(Hash([*snapshot; 32])),
-                policy: AnalysisPolicy { allow_executing: true },
+                policy: AnalysisPolicy::EXECUTING,
                 restore: Restore::Recorded(Hash([5; 32])),
             },
             query: ProjectQuery::Hover(At {

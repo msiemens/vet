@@ -201,7 +201,7 @@ fn project(query: ProjectQuery) -> Key {
         server: server(),
         basis: Basis {
             snapshot: SnapshotId(Hash([2; 32])),
-            policy: AnalysisPolicy { allow_executing: false },
+            policy: AnalysisPolicy::LIMITED,
             restore: Restore::Recorded(Hash([3; 32])),
         },
         query,

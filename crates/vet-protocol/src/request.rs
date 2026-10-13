@@ -437,6 +437,22 @@ pub enum Request {
         project: ProjectId,
         filter: ReviewFilter,
     },
+    /// Marks the repository `project` has open as trusted, or not (§7.5): a project setting, as
+    /// the review filter is. A trusted project's changesets are analysed with restores and
+    /// language servers that execute project code (pull requests from a fork excepted).
+    /// Servers restart under the new policy: every subscriber, including the requester, gets
+    /// `TargetChanged` (fetch the manifest again, whose `trust` says) and `ServersChanged`.
+    /// Answers with `Response::Done`.
+    SetProjectTrusted {
+        project: ProjectId,
+        trusted: bool,
+    },
+    /// Trusts the pull request on view at its current head commit, so its analysis may execute
+    /// project code until it is pushed to. Announces like `SetProjectTrusted`. Fails if the
+    /// changeset on view is no pull request. Answers with `Response::Done`.
+    TrustPullRequest {
+        project: ProjectId,
+    },
     /// Adds the file at `path`, or with `directory` everything below the folder at `path`
     /// (`a/b` without a trailing slash), to the excluded globs of the repository's review
     /// filter and persists it, like `SetProjectFilter`. Answers with `Response::Done`.

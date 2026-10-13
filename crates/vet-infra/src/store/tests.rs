@@ -304,6 +304,7 @@ async fn a_pull_requests_title_is_kept_with_its_changeset_across_a_review_starti
     let head = |title: &str, draft| PullRequestHead {
         title: title.into(),
         draft,
+        fork: false,
     };
     assert_eq!(
         store.pull_request_head("/repo".into(), pull_request(7)).await.unwrap(),
@@ -356,6 +357,79 @@ async fn a_pull_requests_title_is_kept_with_its_changeset_across_a_review_starti
         store.pull_request_head("/repo".into(), pull_request(7)).await.unwrap(),
         Some(head("Add caching to the API", false))
     );
+}
+
+#[tokio::test]
+async fn trust_is_kept_per_project_and_per_pull_request_across_a_restart() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = open(&dir).await;
+    let pull_request = |number| Source::PullRequest {
+        remote: RemoteKey {
+            host: "github.com".into(),
+            path: "acme/app".into(),
+        },
+        number,
+    };
+    let named = |fork| PullRequestHead {
+        title: "Add caching".into(),
+        draft: false,
+        fork,
+    };
+    let writes = store.writes();
+    assert!(!store.project_trusted("/a".into()).await.unwrap());
+    writes.set_project_trusted("/a".into(), true).await.unwrap();
+    assert!(store.project_trusted("/a".into()).await.unwrap());
+    assert!(!store.project_trusted("/b".into()).await.unwrap());
+
+    // The trust of a pull request is unknown until the platform has named it.
+    assert_eq!(
+        store.pull_request_trust("/a".into(), pull_request(7)).await.unwrap(),
+        None
+    );
+    writes
+        .set_pull_request_head("/a".into(), pull_request(7), named(true))
+        .await
+        .unwrap();
+    writes
+        .set_pull_request_trusted_head("/a".into(), pull_request(7), Some(commit("c1")))
+        .await
+        .unwrap();
+    drop(writes);
+    drop(store);
+
+    let store = open(&dir).await;
+    assert!(store.project_trusted("/a".into()).await.unwrap());
+    let trust = |number| store.pull_request_trust("/a".into(), pull_request(number));
+    assert_eq!(
+        trust(7).await.unwrap(),
+        Some(PullRequestTrust {
+            fork: true,
+            trusted_head: Some(commit("c1"))
+        })
+    );
+    assert_eq!(trust(8).await.unwrap(), None);
+
+    // Naming the pull request again does not undo what was trusted; untrusting does.
+    store
+        .writes()
+        .set_pull_request_head("/a".into(), pull_request(7), named(false))
+        .await
+        .unwrap();
+    assert_eq!(
+        trust(7).await.unwrap(),
+        Some(PullRequestTrust {
+            fork: false,
+            trusted_head: Some(commit("c1"))
+        })
+    );
+    store
+        .writes()
+        .set_pull_request_trusted_head("/a".into(), pull_request(7), None)
+        .await
+        .unwrap();
+    store.writes().set_project_trusted("/a".into(), false).await.unwrap();
+    assert_eq!(trust(7).await.unwrap().unwrap().trusted_head, None);
+    assert!(!store.project_trusted("/a".into()).await.unwrap());
 }
 
 #[tokio::test]

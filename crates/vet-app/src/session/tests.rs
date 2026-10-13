@@ -29,6 +29,7 @@ use crate::ports::{
 };
 use crate::pull_request::PullRequestRefs;
 use crate::review::{ChangesetThread, NonTextAck, RecordedSpan, Review, ReviewId, ReviewSummary, SpanId, SpanOrigin};
+use crate::trust::PullRequestTrust;
 
 const REPO: &str = "/repo";
 
@@ -491,6 +492,8 @@ struct Mem {
     next_message: u64,
     filter: Option<ReviewFilter>,
     browsing_base: Option<BaseChoice>,
+    project_trusted: bool,
+    trusted_heads: HashMap<Source, CommitId>,
 }
 
 impl Mem {
@@ -548,6 +551,13 @@ impl ChangesetStore for MemStore {
     async fn pull_request_head(&self, _: String, source: Source) -> StoreResult<Option<PullRequestHead>> {
         Ok(self.0.lock().unwrap().heads.get(&source).cloned())
     }
+    async fn pull_request_trust(&self, _: String, source: Source) -> StoreResult<Option<PullRequestTrust>> {
+        let mem = self.0.lock().unwrap();
+        Ok(mem.heads.get(&source).map(|head| PullRequestTrust {
+            fork: head.fork,
+            trusted_head: mem.trusted_heads.get(&source).cloned(),
+        }))
+    }
     async fn pending_vote(&self, _: String, source: Source) -> StoreResult<Option<PendingVote>> {
         Ok(self.0.lock().unwrap().votes.get(&source).cloned())
     }
@@ -600,6 +610,9 @@ impl ReviewStore for MemStore {
     }
     async fn filter(&self, _: String) -> StoreResult<ReviewFilter> {
         Ok(self.0.lock().unwrap().filter.clone().unwrap_or_default())
+    }
+    async fn project_trusted(&self, _: String) -> StoreResult<bool> {
+        Ok(self.0.lock().unwrap().project_trusted)
     }
     async fn browsing_base(&self, _: String) -> StoreResult<Option<BaseChoice>> {
         Ok(self.0.lock().unwrap().browsing_base.clone())
@@ -674,6 +687,8 @@ impl ReviewWrites for MemStore {
             lens: mem.lens.take(),
             heads: std::mem::take(&mut mem.heads),
             votes: std::mem::take(&mut mem.votes),
+            project_trusted: mem.project_trusted,
+            trusted_heads: std::mem::take(&mut mem.trusted_heads),
             started: mem.started + 1,
             base: Some(choice),
             changeset: Some((repo, source)),
@@ -690,6 +705,23 @@ impl ReviewWrites for MemStore {
     }
     async fn set_filter(&self, _: String, filter: ReviewFilter) -> StoreResult<()> {
         self.0.lock().unwrap().filter = Some(filter);
+        Ok(())
+    }
+    async fn set_project_trusted(&self, _: String, trusted: bool) -> StoreResult<()> {
+        self.0.lock().unwrap().project_trusted = trusted;
+        Ok(())
+    }
+    async fn set_pull_request_trusted_head(
+        &self,
+        _: String,
+        source: Source,
+        head: Option<CommitId>,
+    ) -> StoreResult<()> {
+        let mut mem = self.0.lock().unwrap();
+        match head {
+            Some(head) => mem.trusted_heads.insert(source, head),
+            None => mem.trusted_heads.remove(&source),
+        };
         Ok(())
     }
     async fn set_browsing_base(&self, _: String, choice: BaseChoice) -> StoreResult<()> {

@@ -189,6 +189,11 @@ pub mod changeset {
         /// A pull request the platform last said is a draft.
         #[sea_orm(default_value = false)]
         pub draft: bool,
+        /// A pull request whose source branch the platform last said is in a fork's repository.
+        #[sea_orm(default_value = false)]
+        pub fork: bool,
+        /// The head commit the viewer trusted a pull request at (§7.5); none while it is not trusted.
+        pub trusted_head: Option<String>,
         /// The verdict of the viewer's vote that waits to be sent; none without one.
         pub vote: Option<String>,
         /// Unix seconds the vote was handed to the platform at, while Vet has not heard back.
@@ -299,6 +304,24 @@ pub mod project_filter {
         #[sea_orm(primary_key, auto_increment = false)]
         pub repo: String,
         pub hide_binary: bool,
+    }
+
+    #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]
+    pub enum Relation {}
+
+    impl ActiveModelBehavior for ActiveModel {}
+}
+
+/// A repository marked trusted (§7.5), keyed by the repository root like changesets are. The
+/// row's presence is the value.
+pub mod project_trust {
+    use sea_orm::entity::prelude::*;
+
+    #[derive(Clone, Debug, PartialEq, DeriveEntityModel)]
+    #[sea_orm(table_name = "project_trust")]
+    pub struct Model {
+        #[sea_orm(primary_key, auto_increment = false)]
+        pub repo: String,
     }
 
     #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]

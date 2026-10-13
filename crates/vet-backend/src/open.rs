@@ -24,7 +24,6 @@ use vet_app::registry::{Resident, Subscribers};
 use vet_app::semantics::{Links, Semantics};
 use vet_app::session::RevisionView;
 use vet_app::settle::Settling;
-use vet_app::trust::Trust;
 use vet_infra::budget::Budgets;
 use vet_infra::clock::{TokioClock, TokioDetach, unix_now};
 use vet_infra::git::GixRepo;
@@ -260,7 +259,6 @@ impl Wired {
                 .reporting(self.tasks.clone()),
             repo.clone(),
             backends.to_vec(),
-            Trust::Local,
             Links {
                 revisions: session.revisions(),
                 limits,

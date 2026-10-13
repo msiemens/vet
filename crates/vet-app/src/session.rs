@@ -64,6 +64,7 @@ mod source;
 mod state;
 mod sync;
 mod threads;
+mod trust;
 mod versions;
 mod views;
 

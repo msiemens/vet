@@ -33,9 +33,12 @@ fn env(key: &str, dir: &Path) -> Vec<(String, String)> {
 }
 
 async fn restore(restorer: &ToolRestorer, root: &Path, backend: &Backend, allow_executing: bool) -> Restored {
-    let restored = restorer
-        .restore(root, backend, AnalysisPolicy { allow_executing })
-        .await;
+    let policy = if allow_executing {
+        AnalysisPolicy::EXECUTING
+    } else {
+        AnalysisPolicy::LIMITED
+    };
+    let restored = restorer.restore(root, backend, policy).await;
     assert!(restored.failures.is_empty(), "{:?}", restored.failures);
     restored
 }
@@ -100,6 +103,27 @@ async fn npm_installs_from_the_lockfile_without_running_scripts() {
 }
 
 #[tokio::test]
+#[ignore = "downloads packages; needs npm"]
+async fn an_executing_npm_restore_runs_the_install_scripts() {
+    let (project, cache) = (tempfile::tempdir().unwrap(), tempfile::tempdir().unwrap());
+    write(
+        project.path(),
+        "package.json",
+        r#"{"name":"p","version":"1.0.0","dependencies":{"picocolors":"1.1.1"},"scripts":{"postinstall":"node -e \"require('fs').writeFileSync('script-ran','')\""}}"#,
+    );
+    run(
+        project.path(),
+        "npm",
+        &["install", "--package-lock-only", "--ignore-scripts"],
+    );
+
+    let restorer = ToolRestorer::with_env(env("npm_config_cache", cache.path()));
+    restore(&restorer, project.path(), &config::typescript(), true).await;
+    assert!(project.path().join("node_modules/picocolors/package.json").is_file());
+    assert!(project.path().join("script-ran").is_file());
+}
+
+#[tokio::test]
 #[ignore = "downloads packages; needs npm and typescript-language-server"]
 async fn a_copy_with_the_same_lockfile_links_the_working_trees_node_modules_and_resolves_into_them() {
     let (donor, copy, cache) = (
@@ -147,7 +171,7 @@ async fn a_copy_with_the_same_lockfile_links_the_working_trees_node_modules_and_
             copy.path(),
             Tree::Immutable,
             &config::typescript(),
-            AnalysisPolicy { allow_executing: false },
+            AnalysisPolicy::LIMITED,
         )
         .await
         .expect("typescript-language-server starts")
@@ -173,11 +197,7 @@ async fn a_copy_with_the_same_lockfile_links_the_working_trees_node_modules_and_
     std::fs::remove_file(&linked).unwrap();
     let reusing = ToolRestorer::with_env(env("npm_config_cache", cache.path())).reusing(donor.path().to_owned());
     let restored = reusing
-        .restore(
-            copy.path(),
-            &config::typescript(),
-            AnalysisPolicy { allow_executing: false },
-        )
+        .restore(copy.path(), &config::typescript(), AnalysisPolicy::LIMITED)
         .await;
     assert_eq!(restored.failures.len(), 1, "{restored:?}");
     assert_eq!(restored.failures[0].tool, "npm");
@@ -347,11 +367,7 @@ async fn uv_installs_requirements_txt_into_a_venv_and_never_builds_a_source_pack
         &format!("{}\n", local.path().display()),
     );
     let restored = restorer
-        .restore(
-            local.path(),
-            &config::pyright(),
-            AnalysisPolicy { allow_executing: false },
-        )
+        .restore(local.path(), &config::pyright(), AnalysisPolicy::LIMITED)
         .await;
     assert_eq!(restored.failures.len(), 1, "{restored:?}");
     assert_eq!(restored.failures[0].tool, "uv");

@@ -114,13 +114,7 @@ pub(super) fn address(key: &Key) -> Option<(Address, Kind)> {
         Key::Project { server, basis, query } => {
             digest.field("project");
             identity(&mut digest, server);
-            digest
-                .field(&basis.snapshot.0.to_hex())
-                .field(if basis.policy.allow_executing {
-                    "executing"
-                } else {
-                    "inert"
-                });
+            digest.field(&basis.snapshot.0.to_hex()).field(basis.policy.tag());
             let Restore::Recorded(restore) = basis.restore else {
                 return None;
             };

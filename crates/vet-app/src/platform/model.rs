@@ -271,6 +271,8 @@ pub struct PullRequestListing {
 pub struct PullRequestHead {
     pub title: String,
     pub draft: bool,
+    /// The source branch is in a fork's repository (§7.5).
+    pub fork: bool,
 }
 
 impl PullRequestHead {
@@ -278,6 +280,7 @@ impl PullRequestHead {
         Self {
             title: pull_request.title.clone(),
             draft: pull_request.draft,
+            fork: pull_request.fork.is_some(),
         }
     }
 }

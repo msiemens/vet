@@ -1,7 +1,7 @@
 //! `vet_app::ports::ReviewWrites` on the one write connection.
 
 use sea_orm::{ActiveModelTrait, ColumnTrait, DbErr, EntityTrait, QueryFilter, Set, TransactionTrait};
-use vet_app::changeset::{BaseChoice, ChangesetId, Lens, Source, Version};
+use vet_app::changeset::{BaseChoice, ChangesetId, CommitId, Lens, Source, Version};
 use vet_app::platform::PullRequestHead;
 use vet_app::ports::{ReviewWrites, StoreError};
 use vet_app::review::{NonTextAck, ReviewId, ReviewSummary, SpanId, SpanOrigin};
@@ -109,6 +109,28 @@ impl ReviewWrites for ReviewWriter {
             id: Set(id),
             title: Set(Some(head.title)),
             draft: Set(head.draft),
+            fork: Set(head.fork),
+            ..Default::default()
+        }
+        .update(&txn)
+        .await?;
+        Ok(txn.commit().await?)
+    }
+
+    async fn set_pull_request_trusted_head(
+        &self,
+        repo: String,
+        source: Source,
+        head: Option<CommitId>,
+    ) -> Result<(), StoreError> {
+        let txn = self.db.begin().await?;
+        let id = match find_changeset(&txn, repo.clone(), &source).await? {
+            Some(id) => id,
+            None => insert_changeset(&txn, repo, &source).await?,
+        };
+        changeset::ActiveModel {
+            id: Set(id),
+            trusted_head: Set(head.map(|h| h.0)),
             ..Default::default()
         }
         .update(&txn)
@@ -201,6 +223,15 @@ impl ReviewWrites for ReviewWriter {
         let txn = self.db.begin().await?;
         project_filter::Entity::delete_by_id(repo.clone()).exec(&txn).await?;
         write_filter(&txn, &repo, &filter).await?;
+        Ok(txn.commit().await?)
+    }
+
+    async fn set_project_trusted(&self, repo: String, trusted: bool) -> Result<(), StoreError> {
+        let txn = self.db.begin().await?;
+        project_trust::Entity::delete_by_id(repo.clone()).exec(&txn).await?;
+        if trusted {
+            project_trust::ActiveModel { repo: Set(repo) }.insert(&txn).await?;
+        }
         Ok(txn.commit().await?)
     }
 
