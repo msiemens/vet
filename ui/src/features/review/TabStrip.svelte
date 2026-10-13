@@ -5,8 +5,8 @@
   import FileIcon from "../../lib/ui/FileIcon.svelte";
   import Icon from "../../lib/ui/Icon.svelte";
   import Tab from "../../lib/ui/Tab.svelte";
-  import { commands } from "../../state/commands";
-  import { type TabId, commitOf, kindOf, needsCommitName, pathOf, scrollToReveal, subjectOf } from "./tabModel";
+  import { type TabId, commands } from "../../state/commands";
+  import { commitOf, needsCommitName, pathOf, scrollToReveal } from "./tabModel";
   import type { Tabs } from "./Tabs.svelte";
 
   /**
@@ -28,8 +28,7 @@
   } = $props();
 
   /** Closing a tab is the Close Tab command, with the tab as its subject. */
-  const closing = (id: TabId) =>
-    commands.context({ tab: { kind: kindOf(id), path: subjectOf(id), commit: commitOf(id) } });
+  const closing = (id: TabId) => commands.context({ tab: id });
 
   /** What a file tab's tooltip says: the path, and for a tab at a commit the commit in full. */
   function titleOf(id: TabId, path: string): string {

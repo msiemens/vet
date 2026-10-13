@@ -10,9 +10,7 @@ import {
   pathOf,
   scrollToReveal,
   settleMode,
-  subjectOf,
   tabAfter,
-  tabOf,
 } from "./tabModel.ts";
 
 void test("a file opened at a commit is another tab than the file, and the id tells both back", () => {
@@ -20,10 +18,8 @@ void test("a file opened at a commit is another tab than the file, and the id te
   const pinned = fileTab("src/a.rs", sha);
   assert.notEqual(pinned, fileTab("src/a.rs"));
   assert.notEqual(pinned, fileTab("src/a.rs", "b".repeat(40)));
-  assert.equal(tabOf("file", "src/a.rs", sha), pinned);
   assert.equal(kindOf(pinned), "file");
   assert.equal(pathOf(pinned), "src/a.rs");
-  assert.equal(subjectOf(pinned), "src/a.rs");
   assert.equal(commitOf(pinned), sha);
   assert.equal(commitOf(fileTab("src/a.rs")), undefined);
   // A path with colons is still the file's.
@@ -39,8 +35,7 @@ void test("the commit is named in the tabs of a file open more than once, and on
   );
 });
 
-void test("a file has one tab id whatever asks for it, and the id tells the path back", () => {
-  assert.equal(tabOf("file", "src/a.rs"), fileTab("src/a.rs"));
+void test("a file's tab id tells the path back", () => {
   assert.equal(pathOf(fileTab("src/a.rs")), "src/a.rs");
   assert.equal(kindOf(fileTab("src/a.rs")), "file");
   // A path with a colon is still one file's.

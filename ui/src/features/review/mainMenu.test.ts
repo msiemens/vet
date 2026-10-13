@@ -55,7 +55,7 @@ const working: Partial<CommandContext> = {
   changesetOpen: true,
   diffView: true,
   hunk: 0,
-  tab: { kind: "file", path: "a.rs" },
+  tab: "file:a.rs",
   tabCount: 3,
   viewMode: "unified",
   viewModes: ["unified", "split", "file"],
@@ -190,7 +190,7 @@ void test("the review's keys run on the Review screen and not while the Queue sc
     ["Next Tab", { key: "ArrowRight", code: "ArrowRight", altKey: true }, "stepTab 1"],
     ["File Text", { key: "#", code: "Digit3", altKey: true, shiftKey: true }, "setViewMode file"],
   ];
-  const withTab = { ...working, tab: { kind: "changes" as const } };
+  const withTab = { ...working, tab: "changes" as const };
   for (const [name, init, call] of keys) {
     calls.length = 0;
     assert.equal(registryFor("Ctrl", { ...withTab, queueShown: true }).dispatch(press(init)), false, name);

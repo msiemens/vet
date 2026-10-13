@@ -5,7 +5,8 @@
 import { readStored, writeStored } from "../../lib/storage.ts";
 import type { Mode, ViewMode } from "../../lib/viewMode.ts";
 import type { HunkAnchor, PanePosition, ScrollPosition } from "./editor/ChangesetView.ts";
-import { CHANGES, type TabId, commitOf, isFileTab, isStale, kindOf } from "./tabModel.ts";
+import type { TabId } from "../../state/commands.ts";
+import { CHANGES, commitOf, isFileTab, isStale, kindOf } from "./tabModel.ts";
 
 /** The two panes of a file tab: its diff and its text each keep their own position. */
 export interface FilePositions {

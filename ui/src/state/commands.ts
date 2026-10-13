@@ -13,6 +13,9 @@ import { isMac } from "./host";
 
 export type TabKind = "changes" | "file" | "log";
 
+/** What identifies a tab: `pin:<commit id>:<path>` is a file's tab that stays at a commit. */
+export type TabId = "changes" | `file:${string}` | `pin:${string}` | `log:${string}`;
+
 /** The editor that has the focus. */
 export interface FocusedEditor {
   /** Which text it shows: the target, or the base of a side-by-side view. */
@@ -54,12 +57,8 @@ export interface CommandContext {
   voteBlock?: string;
   /** The changeset on view has more than one commit, so there is something to review by commit. */
   manyCommits?: boolean;
-  /**
-   * The tab commands apply to: the active one, or the one a tab's context menu was opened on. `path`
-   * is what the tab shows: a file's path, or for a log tab the check run it is the log of; `commit`
-   * is the full id of the commit a file's tab stays at.
-   */
-  tab?: { kind: TabKind; path?: string; commit?: string };
+  /** The tab commands apply to: the active one, or the one a tab's context menu was opened on. */
+  tab?: TabId;
   /** How many tabs are open. */
   tabCount?: number;
   /** What the active tab shows: a diff in a mode, or a file's text; none for a log. */

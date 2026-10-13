@@ -5,7 +5,8 @@
 
 import { SvelteMap } from "svelte/reactivity";
 import type { Mode, ViewMode } from "../../lib/viewMode";
-import { CHANGES, type TabId, fileTab, isStale, logTab, tabAfter } from "./tabModel";
+import type { TabId } from "../../state/commands";
+import { CHANGES, fileTab, isStale, logTab, tabAfter } from "./tabModel";
 
 /** How a log tab is named. */
 export interface LogTabInfo {

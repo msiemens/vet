@@ -43,8 +43,8 @@ const files: FileActions = {
   excludePath: (path, dir) => calls.push(`exclude ${path} ${dir}`),
   reviewOnly: (path) => calls.push(`only ${path}`),
   setFolderSeen: (path, seen) => calls.push(`seen ${path} ${seen}`),
-  closeTab: (kind, path) => calls.push(`close ${kind} ${path}`),
-  closeOtherTabs: (kind, path) => calls.push(`closeOthers ${kind} ${path}`),
+  closeTab: (tab) => calls.push(`close ${tab}`),
+  closeOtherTabs: (tab) => calls.push(`closeOthers ${tab}`),
   stepTab: (delta) => calls.push(`tab ${delta}`),
   revealFile: () => (calls.push("reveal"), treeShown),
 };
@@ -57,7 +57,7 @@ function setup(context: Partial<CommandContext> = {}, mod: "Ctrl" | "Meta" = "Ct
   return registry;
 }
 
-const inChanges: Partial<CommandContext> = { diffView: true, tab: { kind: "changes" } };
+const inChanges: Partial<CommandContext> = { diffView: true, tab: "changes" };
 
 function key(
   init: Partial<KeyEventLike> & { inField?: boolean; inList?: boolean },
@@ -165,9 +165,9 @@ void test("[ and ] go to the previous and next commit, and only while reviewing 
 
 void test("F4 jumps to source from a diff and not from a file's text, and only when there is a caret", () => {
   const f4 = () => key({ key: "F4", code: "F4" });
-  const inText = { diffView: true, viewMode: "file", tab: { kind: "file", path: "a.rs" } } as const;
+  const inText = { diffView: true, viewMode: "file", tab: "file:a.rs" } as const;
   assert.equal(setup(inText).dispatch(f4()), false);
-  assert.equal(setup({ diffView: true, viewMode: "split", tab: { kind: "file", path: "a.rs" } }).dispatch(f4()), true);
+  assert.equal(setup({ diffView: true, viewMode: "split", tab: "file:a.rs" }).dispatch(f4()), true);
   const r = setup(inChanges);
   caretFinds = false;
   const event = f4();
@@ -299,7 +299,7 @@ void test("a tab's menu cannot close the Changes tab, and closes the others arou
     const context = r.context({ tab });
     return { context, items: resolveMenu(r, tabMenu, context) };
   };
-  const changes = menuOf({ kind: "changes" });
+  const changes = menuOf("changes");
   assert.deepEqual(
     changes.items.map((i) => [i.id, i.enabled]),
     [
@@ -310,39 +310,49 @@ void test("a tab's menu cannot close the Changes tab, and closes the others arou
     ],
   );
   assert.ok(changes.items[0].reason);
-  const file = menuOf({ kind: "file", path: "a.rs" });
+  const file = menuOf("file:a.rs");
   r.run("tab.close", file.context);
   r.run("tab.closeOthers", file.context);
   r.run("path.copy", file.context);
-  assert.deepEqual(calls, ["close file a.rs", "closeOthers file a.rs", "copy a.rs"]);
+  assert.deepEqual(calls, ["close file:a.rs", "closeOthers file:a.rs", "copy a.rs"]);
   assert.equal(r.run("tab.close", changes.context), false);
 });
 
+void test("a tab pinned to a commit is closed, and kept by Close Other Tabs, as itself and not as the file's other tab", () => {
+  const pinned = `pin:${"a".repeat(40)}:a.rs` as const;
+  const r = setup({ tabCount: 4, tab: "file:a.rs" });
+  const context = r.context({ tab: pinned });
+  r.run("tab.close", context);
+  r.run("tab.closeOthers", context);
+  r.run("path.copy", context);
+  assert.deepEqual(calls, [`close ${pinned}`, `closeOthers ${pinned}`, "copy a.rs"]);
+});
+
 void test("Mod+W closes the active tab on both platforms, never the Changes tab, and leaves a text field its key", () => {
-  const inFile = { tab: { kind: "file", path: "a.rs" }, tabCount: 2 } as const;
+  const inFile = { tab: "file:a.rs", tabCount: 2 } as const;
   const ctrlW = (init: Parameters<typeof key>[0] = {}) => key({ key: "w", code: "KeyW", ctrlKey: true, ...init });
   const cmdW = (init: Parameters<typeof key>[0] = {}) => key({ key: "w", code: "KeyW", metaKey: true, ...init });
   assert.equal(setup(inFile).dispatch(ctrlW()), true);
-  assert.deepEqual(calls, ["close file a.rs"]);
+  assert.deepEqual(calls, ["close file:a.rs"]);
   assert.equal(setup(inFile, "Meta").dispatch(cmdW()), true);
-  assert.deepEqual(calls, ["close file a.rs"]);
+  assert.deepEqual(calls, ["close file:a.rs"]);
 
   assert.equal(setup(inFile, "Meta").dispatch(ctrlW()), false);
   assert.equal(setup(inFile).dispatch(ctrlW({ inField: true })), false);
   assert.deepEqual(calls, []);
 
   const changes = ctrlW();
-  assert.equal(setup({ tab: { kind: "changes" }, tabCount: 2 }).dispatch(changes), false);
+  assert.equal(setup({ tab: "changes", tabCount: 2 }).dispatch(changes), false);
   assert.equal(changes.prevented, false);
   assert.deepEqual(calls, []);
 });
 
 void test("Close Other Tabs is offered only when another tab could be closed", () => {
   const offered = (context: Partial<CommandContext>) => setup(context).isEnabled("tab.closeOthers");
-  assert.equal(offered({ tab: { kind: "file", path: "a.rs" }, tabCount: 2 }), false);
-  assert.equal(offered({ tab: { kind: "file", path: "a.rs" }, tabCount: 3 }), true);
-  assert.equal(offered({ tab: { kind: "changes" }, tabCount: 1 }), false);
-  assert.equal(offered({ tab: { kind: "changes" }, tabCount: 2 }), true);
+  assert.equal(offered({ tab: "file:a.rs", tabCount: 2 }), false);
+  assert.equal(offered({ tab: "file:a.rs", tabCount: 3 }), true);
+  assert.equal(offered({ tab: "changes", tabCount: 1 }), false);
+  assert.equal(offered({ tab: "changes", tabCount: 2 }), true);
 });
 
 void test("Previous and Next Tab are Alt+Left and Alt+Right on Windows and ⇧⌘[ and ⇧⌘] on macOS, with more than one tab", () => {
@@ -376,24 +386,24 @@ void test("Previous and Next Tab are Alt+Left and Alt+Right on Windows and ⇧�
 });
 
 void test("a view mode is available where the active tab offers it, and says why not otherwise", () => {
-  const changed = setup({ tab: { kind: "file", path: "a.rs" }, viewModes: ["unified", "split", "file"] });
+  const changed = setup({ tab: "file:a.rs", viewModes: ["unified", "split", "file"] });
   for (const mode of ["unified", "split", "file"]) assert.equal(changed.run(`view.mode.${mode}`), true);
   assert.deepEqual(calls, ["mode unified", "mode split", "mode file"]);
 
-  const unchanged = setup({ tab: { kind: "file", path: "a.rs" }, viewModes: ["file"] });
+  const unchanged = setup({ tab: "file:a.rs", viewModes: ["file"] });
   assert.equal(unchanged.run("view.mode.file"), true);
   assert.equal(unchanged.run("view.mode.split"), false);
   assert.deepEqual(calls, ["mode file"]);
   assert.match(unchanged.disabledReason("view.mode.split") ?? "", /unchanged/);
 
-  const changes = setup({ tab: { kind: "changes" }, viewModes: ["unified", "split"] });
+  const changes = setup({ tab: "changes", viewModes: ["unified", "split"] });
   assert.equal(changes.isEnabled("view.mode.unified"), true);
   assert.equal(changes.isEnabled("view.mode.file"), false);
   assert.ok(changes.disabledReason("view.mode.file"));
 
   assert.equal(setup({ viewModes: [] }).isEnabled("view.mode.unified"), false);
 
-  const covered = setup({ queueShown: true, tab: { kind: "changes" }, viewModes: ["unified", "split"] });
+  const covered = setup({ queueShown: true, tab: "changes", viewModes: ["unified", "split"] });
   assert.equal(covered.isEnabled("view.mode.split"), false);
 });
 

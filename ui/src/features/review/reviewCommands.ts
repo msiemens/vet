@@ -4,7 +4,8 @@
 import type { Command } from "../../lib/commands.ts";
 import type { MenuSpec } from "../../lib/commandMenu.ts";
 import { type ViewMode, modeCommand } from "../../lib/viewMode.ts";
-import type { CommandContext, TabKind } from "../../state/commands.ts";
+import type { CommandContext, TabId } from "../../state/commands.ts";
+import { CHANGES, kindOf, pathOf } from "./tabModel.ts";
 
 /** What the keyboard commands do in the active tab's view. */
 export interface ViewActions {
@@ -199,7 +200,9 @@ export function viewCommands(a: ViewActions): Command<CommandContext>[] {
       binding,
       enabled: (c) => !!c.viewModes?.includes(id),
       disabledReason: (c) =>
-        id !== "file" && c.tab?.kind === "file" ? "This file is unchanged: it has no diff" : unavailable,
+        id !== "file" && c.tab !== undefined && kindOf(c.tab) === "file"
+          ? "This file is unchanged: it has no diff"
+          : unavailable,
       run: () => a.setViewMode(id),
     })),
   ]);
@@ -212,9 +215,9 @@ export interface FileActions {
   reviewOnly(path: string): void;
   /** Marks every changed file below the folder seen, or takes every mark back. */
   setFolderSeen(path: string, seen: boolean): void;
-  closeTab(kind: Exclude<TabKind, "changes">, path: string, commit?: string): void;
+  closeTab(tab: TabId): void;
   /** Closes every tab but the Changes tab and this one, which gets the focus. */
-  closeOtherTabs(kind: TabKind, path?: string, commit?: string): void;
+  closeOtherTabs(tab: TabId): void;
   /** Focuses the tab `delta` places from the active one, wrapping around. */
   stepTab(delta: number): void;
   /** Shows the file the review is at in the file tree; answers whether a tree is there to show it. */
@@ -223,7 +226,7 @@ export interface FileActions {
 
 export function fileCommands(a: FileActions): Command<CommandContext>[] {
   // A log tab has no path: what it shows is a check run.
-  const pathOf = (c: CommandContext) => c.target?.path ?? (c.tab?.kind === "log" ? undefined : c.tab?.path);
+  const subjectPath = (c: CommandContext) => c.target?.path ?? (c.tab === undefined ? undefined : pathOf(c.tab));
   // The paths' commands also serve the queue's rows; tabs and the tree do not.
   const gated = (commands: Command<CommandContext>[]) => {
     const tabs = onReviewScreen(commands.filter((c) => /^(tab|view)\./.test(c.id)));
@@ -233,9 +236,9 @@ export function fileCommands(a: FileActions): Command<CommandContext>[] {
     {
       id: "path.copy",
       label: "Copy Path",
-      enabled: (c) => pathOf(c) !== undefined,
+      enabled: (c) => subjectPath(c) !== undefined,
       run: (c) => {
-        const path = pathOf(c);
+        const path = subjectPath(c);
         if (path === undefined) return false;
         a.copyText(path);
       },
@@ -281,22 +284,22 @@ export function fileCommands(a: FileActions): Command<CommandContext>[] {
       label: "Close Tab",
       binding: "Mod-w",
       accelerator: "Cmd+W",
-      enabled: (c) => c.tab?.kind !== undefined && c.tab.kind !== "changes",
+      enabled: (c) => c.tab !== undefined && c.tab !== CHANGES,
       disabledReason: (c) => (c.tab ? "The Changes tab cannot be closed" : "No tab is open"),
       run: (c) => {
-        if (!c.tab || c.tab.kind === "changes" || c.tab.path === undefined) return false;
-        a.closeTab(c.tab.kind, c.tab.path, c.tab.commit);
+        if (!c.tab || c.tab === CHANGES) return false;
+        a.closeTab(c.tab);
       },
     },
     {
       id: "tab.closeOthers",
       label: "Close Other Tabs",
       // What stays is the Changes tab and the tab itself.
-      enabled: (c) => c.tab !== undefined && (c.tabCount ?? 0) > (c.tab.kind === "changes" ? 1 : 2),
+      enabled: (c) => c.tab !== undefined && (c.tabCount ?? 0) > (c.tab === CHANGES ? 1 : 2),
       disabledReason: () => "No other tab can be closed",
       run: (c) => {
         if (!c.tab) return false;
-        a.closeOtherTabs(c.tab.kind, c.tab.path, c.tab.commit);
+        a.closeOtherTabs(c.tab);
       },
     },
     {

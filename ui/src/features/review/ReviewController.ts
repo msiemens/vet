@@ -42,7 +42,7 @@ import type { ThreadListeners } from "./editor/threadLayer";
 import { bindRevision, focusedEditor } from "./editor/semantic";
 import type { SoftWrap } from "../../lib/softWrap";
 import type { Mode, ViewMode } from "../../lib/viewMode";
-import { type CommandContext, commands } from "../../state/commands";
+import { type CommandContext, type TabId, commands } from "../../state/commands";
 import { type TextActions, TextView } from "./editor/TextView";
 import { type FilePositions, type SavedView, ViewMemory, restoredTabs } from "./changesetViews";
 import { keyId } from "../../state/changesetKey";
@@ -50,19 +50,7 @@ import { threadMenu } from "../comments";
 import { type HunkPlace, stepFlagged } from "./flaggedHunks";
 import { provideActions } from "./reviewActions";
 import type { ViewActions } from "./reviewCommands";
-import {
-  CHANGES,
-  type TabId,
-  commitOf,
-  fileTab,
-  hasDiff,
-  kindOf,
-  logTab,
-  modesOf,
-  pathOf,
-  settleMode,
-  subjectOf,
-} from "./tabModel";
+import { CHANGES, commitOf, fileTab, hasDiff, kindOf, logTab, modesOf, pathOf, settleMode } from "./tabModel";
 import { Tabs } from "./Tabs.svelte";
 
 /** Space types in a field and presses a focused control; it marks the current item only when none of those has the focus. */
@@ -442,7 +430,7 @@ export class ReviewController {
     const editor = focusedEditor(document.activeElement);
     const file = editor?.path ?? path;
     return {
-      tab: { kind: kindOf(id), path: subjectOf(id), commit: commitOf(id) },
+      tab: id,
       tabCount: this.tabs.open.length,
       viewMode: this.activeMode,
       viewModes: modesOf(kindOf(id), this.fileChanged(id)),

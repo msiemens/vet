@@ -2,11 +2,8 @@
 // one that is at no commit), whatever it shows of the file; the view mode (a diff in a mode, or the
 // file's text) is the tab's state.
 
-import type { TabKind } from "../../state/commands.ts";
+import type { TabId, TabKind } from "../../state/commands.ts";
 import type { Mode, ViewMode } from "../../lib/viewMode.ts";
-
-/** `pin:<commit id>:<path>` is a file's tab that stays at a commit. */
-export type TabId = "changes" | `file:${string}` | `pin:${string}` | `log:${string}`;
 
 export const CHANGES: TabId = "changes";
 
@@ -15,10 +12,6 @@ export const fileTab = (path: string, commit?: string): TabId =>
   commit === undefined ? `file:${path}` : `pin:${commit}:${path}`;
 /** The tab of the log of the check run `run`. */
 export const logTab = (run: string): TabId => `log:${run}`;
-
-/** The tab of a kind (and, but for the Changes tab, what it shows: a file, or a check run for a log). */
-export const tabOf = (kind: TabKind, subject?: string, commit?: string): TabId =>
-  kind === "changes" || subject === undefined ? CHANGES : kind === "file" ? fileTab(subject, commit) : logTab(subject);
 
 export const isFileTab = (id: TabId): boolean => id.startsWith("file:") || id.startsWith("pin:");
 
@@ -37,10 +30,6 @@ export const pathOf = (id: TabId): string | undefined => {
 /** The full id of the commit a file tab stays at; none for any other tab. */
 export const commitOf = (id: TabId): string | undefined =>
   id.startsWith("pin:") ? id.slice("pin:".length, id.indexOf(":", "pin:".length)) : undefined;
-
-/** What a tab shows, to name it to `tabOf`: the path of a file tab, the run of a log; none for the Changes tab. */
-export const subjectOf = (id: TabId): string | undefined =>
-  id === CHANGES ? undefined : (pathOf(id) ?? id.slice(id.indexOf(":") + 1));
 
 /** Whether the file of the pinned tab `id` is open in another tab too, so its commit has to be told apart by name. */
 export const needsCommitName = (open: readonly TabId[], id: TabId): boolean => {

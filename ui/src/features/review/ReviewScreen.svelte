@@ -32,7 +32,7 @@
   import { exposeRendered } from "./devHook";
   import type { SymbolRow } from "./symbolRows";
   import CommitStrip from "./CommitStrip.svelte";
-  import { CHANGES, commitOf, kindOf, pathOf, subjectOf, tabOf } from "./tabModel";
+  import { CHANGES, commitOf, kindOf, pathOf } from "./tabModel";
   import TabStrip from "./TabStrip.svelte";
   import ViewControls from "./ViewControls.svelte";
 
@@ -127,8 +127,8 @@
         const shown = changeset.currentShown();
         if (shown) void changeset.setDirectorySeen(shown, path, seen);
       },
-      closeTab: (kind, path, commit) => tabs.close(tabOf(kind, path, commit)),
-      closeOtherTabs: (kind, path, commit) => tabs.closeOthers(tabOf(kind, path, commit)),
+      closeTab: (tab) => tabs.close(tab),
+      closeOtherTabs: (tab) => tabs.closeOthers(tab),
       stepTab: (delta) => tabs.step(delta),
       revealFile: () => {
         if (!tree) return false;
@@ -245,8 +245,7 @@
         files={changeset.shownFiles}
         {commit}
         unitOf={(id) => controller.commitUnit(id)}
-        onmenu={(id, x, y) =>
-          openMenu(tabMenu, x, y, { tab: { kind: kindOf(id), path: subjectOf(id), commit: commitOf(id) } })}
+        onmenu={(id, x, y) => openMenu(tabMenu, x, y, { tab: id })}
       />
     {/if}
     <span class="grow"></span>
