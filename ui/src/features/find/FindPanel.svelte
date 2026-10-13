@@ -6,6 +6,7 @@
   import { SvelteSet } from "svelte/reactivity";
   import FileIcon from "../../lib/ui/FileIcon.svelte";
   import Icon from "../../lib/ui/Icon.svelte";
+  import BottomToolHeader from "../../lib/ui/BottomToolHeader.svelte";
   import Banner from "../../lib/ui/Banner.svelte";
   import Chip from "../../lib/ui/Chip.svelte";
   import IconButton from "../../lib/ui/IconButton.svelte";
@@ -26,8 +27,11 @@
     onopen,
     oneditor,
     oninfiles,
+    onclose,
   }: {
     backend: Backend;
+    /** Hides the tool. */
+    onclose: () => void;
     /** Opens a place where it was found; `ownTab` asks for the file's own tab. */
     onopen: (set: FindSet, place: Place, ownTab: boolean) => void;
     /** Gives the keyboard focus back to the editor. */
@@ -194,6 +198,66 @@
 </script>
 
 <section aria-label="Find" bind:this={root} onfocusin={focusin} onfocusout={focusout}>
+  <BottomToolHeader title="Find" count={set && countOf(set)} {onclose}>
+    {#snippet controls()}
+      {#if set}
+        <span class:hot={stale}>
+          {#if set.phase === "running"}
+            <IconButton icon="stop" label="Stop" size={22} iconSize={12} onclick={() => findSets.stop(set)} />
+          {:else}
+            <IconButton
+              icon="refresh"
+              label="Rerun"
+              title="Rerun  {navigator.platform.includes('Mac') ? '⌘' : 'Ctrl+'}R"
+              size={22}
+              iconSize={14}
+              onclick={() => findSets.rerun(set)}
+            />
+          {/if}
+        </span>
+        <Chip
+          title="Only places in the changeset"
+          active={set.filters.changeset}
+          onclick={() => (set.filters.changeset = !set.filters.changeset)}>Changeset</Chip
+        >
+        <Chip
+          title="Only places in hunks not seen"
+          active={set.filters.notSeen}
+          onclick={() => (set.filters.notSeen = !set.filters.notSeen)}>Not seen</Chip
+        >
+        <span class="grow"></span>
+        <span
+          class="view"
+          title={set.spec.type === "search" && set.spec.scope.commit
+            ? "Reads the text as that commit has it"
+            : "Line numbers are of the text the set ran on"}
+        >
+          {#if set.commit}<Icon name="commit" size={12} />{/if}
+          <span class:mono={set.commit}>{chipLabel(set)}</span>
+        </span>
+        <label class="filter">
+          <Icon name="search" size={13} />
+          <input
+            bind:this={field}
+            bind:value={set.filters.query}
+            type="text"
+            placeholder="Filter"
+            aria-label="Filter results"
+            spellcheck="false"
+            {onkeydown}
+          />
+        </label>
+        <IconButton
+          icon="preview"
+          label="Preview of the code"
+          size={22}
+          iconSize={14}
+          active={findSets.preview}
+          onclick={() => (findSets.preview = !findSets.preview)}
+        />
+      {/if}
+    {/snippet}
+  </BottomToolHeader>
   <div class="strip" role="tablist" aria-label="Result sets">
     {#each findSets.sets as s (s.id)}
       <FindTab
@@ -209,63 +273,6 @@
   </div>
 
   {#if set}
-    <div class="tool">
-      <span class:hot={stale}>
-        {#if set.phase === "running"}
-          <IconButton icon="stop" label="Stop" size={22} iconSize={12} onclick={() => findSets.stop(set)} />
-        {:else}
-          <IconButton
-            icon="refresh"
-            label="Rerun"
-            title="Rerun  {navigator.platform.includes('Mac') ? '⌘' : 'Ctrl+'}R"
-            size={22}
-            iconSize={14}
-            onclick={() => findSets.rerun(set)}
-          />
-        {/if}
-      </span>
-      <Chip
-        title="Only places in the changeset"
-        active={set.filters.changeset}
-        onclick={() => (set.filters.changeset = !set.filters.changeset)}>Changeset</Chip
-      >
-      <Chip
-        title="Only places in hunks not seen"
-        active={set.filters.notSeen}
-        onclick={() => (set.filters.notSeen = !set.filters.notSeen)}>Not seen</Chip
-      >
-      <span class="grow"></span>
-      <span
-        class="view"
-        title={set.spec.type === "search" && set.spec.scope.commit
-          ? "Reads the text as that commit has it"
-          : "Line numbers are of the text the set ran on"}
-      >
-        {#if set.commit}<Icon name="commit" size={12} />{/if}
-        <span class:mono={set.commit}>{chipLabel(set)}</span>
-      </span>
-      <label class="filter">
-        <Icon name="search" size={13} />
-        <input
-          bind:this={field}
-          bind:value={set.filters.query}
-          type="text"
-          placeholder="Filter"
-          aria-label="Filter results"
-          spellcheck="false"
-          {onkeydown}
-        />
-      </label>
-      <IconButton
-        icon="preview"
-        label="Preview of the code"
-        size={22}
-        iconSize={14}
-        active={findSets.preview}
-        onclick={() => (findSets.preview = !findSets.preview)}
-      />
-    </div>
-
     {#if stale}
       <Banner message={staleText([...moved])} action={{ label: "Rerun", onclick: () => findSets.rerun(set) }} />
     {:else if set.rerun && set.phase === "done"}
@@ -470,17 +477,6 @@
     height: var(--h-tab);
     overflow-x: auto;
     scrollbar-width: none;
-    border-bottom: 1px solid var(--line-soft);
-  }
-  .tool {
-    flex: none;
-    display: flex;
-    align-items: center;
-    flex-wrap: wrap;
-    gap: 4px 8px;
-    padding: 4px 8px;
-    min-height: 32px;
-    box-sizing: border-box;
     border-bottom: 1px solid var(--line-soft);
   }
   .grow {

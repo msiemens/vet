@@ -804,6 +804,7 @@
             <FindPanel
               backend={session.backend}
               onopen={openPlace}
+              onclose={() => (bottomTool = undefined)}
               oneditor={() => controller?.focusEditor()}
               oninfiles={(text) => openFindInFiles({ query: text })}
             />
