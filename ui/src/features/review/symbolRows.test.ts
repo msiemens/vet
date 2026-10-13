@@ -55,6 +55,17 @@ void test("a changed holder is a symbol in its own right and holds the changed s
   assert.deepEqual(shape(rows), [" mod tests added", "  caps added"]);
 });
 
+void test("a symbol nests in the innermost holder its name gives", () => {
+  const rows = fileSymbolRows(
+    PATH,
+    [changed(["Policy", "Backoff", "next"], 12, "modified")],
+    [info(["Policy"], 5), info(["Policy", "Backoff"], 8)],
+    1,
+    new Set(),
+  );
+  assert.deepEqual(shape(rows), [" Policy (holder)", "  Backoff (holder)", "   next modified"]);
+});
+
 void test("what is in a closed holder is left out", () => {
   const all = [changed(["Policy", "next"], 10, "modified")];
   const context = [info(["Policy"], 5)];
@@ -95,4 +106,13 @@ void test("← shuts an open row, else moves a symbol to the row that holds it",
   assert.deepEqual(arrowKey(tree, 2, "left", holds, open), { move: 1 });
   assert.deepEqual(arrowKey(tree, 1, "left", holds, open), { move: 0 });
   assert.equal(arrowKey(tree, 3, "left", holds, open), undefined);
+});
+
+void test("← from a symbol skips its siblings to the row that holds it", () => {
+  const rows = [
+    { kind: "file", depth: 1, open: true, holds: true },
+    { kind: "symbol", depth: 2, open: false, holds: false },
+    { kind: "symbol", depth: 2, open: false, holds: false },
+  ];
+  assert.deepEqual(arrowKey(rows, 2, "left", holds, open), { move: 0 });
 });
