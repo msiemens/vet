@@ -139,6 +139,36 @@ export function filtered(problems: readonly Problem[], f: Filters, settled: bool
   });
 }
 
+/** Why the list shows no problem. */
+export type Empty =
+  /** The filters, the origin switch included, hide `hidden` problems of the scope, and only clearing them shows any. */
+  | { kind: "hidden"; hidden: number }
+  /** Only the New switch hides the scope's problems, all of which the base has too. */
+  | { kind: "onlyExisting"; existing: number }
+  /** Some file of the scope has not answered, so none is not known yet. */
+  | { kind: "partial" }
+  | { kind: "none" };
+
+/** What to say where `shown` is empty; nothing where the list has problems. */
+export function emptyOf(input: {
+  all: readonly Problem[];
+  shown: readonly Problem[];
+  filters: Filters;
+  settled: boolean;
+  /** Files of the scope still to be answered. */
+  unanswered: number;
+}): Empty | undefined {
+  const { all, shown, filters, settled, unanswered } = input;
+  if (shown.length) return undefined;
+  if (!all.length) return unanswered ? { kind: "partial" } : { kind: "none" };
+  const onlyOrigin =
+    filters.origin === "new" &&
+    settled &&
+    !narrowing({ ...filters, origin: "all" }) &&
+    all.every((p) => p.origin === "existing");
+  return onlyOrigin ? { kind: "onlyExisting", existing: all.length } : { kind: "hidden", hidden: all.length };
+}
+
 const byPlace = (a: Problem, b: Problem) => (a.path < b.path ? -1 : a.path > b.path ? 1 : a.line - b.line);
 
 /**
@@ -202,7 +232,9 @@ function fileRows(problems: readonly Problem[], keyPrefix: string, layout: Layou
 
 /** The rows of the list: by origin and file (once no origin is pending), by file, or by severity. */
 export function rowsOf(problems: readonly Problem[], layout: Layout): Row[] {
-  const { grouping, settled, folded } = layout;
+  const { grouping, folded } = layout;
+  // A problem still being compared has no origin group to sit in, so it is never left out.
+  const settled = layout.settled && !problems.some((p) => p.origin === "pending");
   if (grouping === "origin" && settled) {
     const rows: Row[] = [];
     for (const [origin, title] of [

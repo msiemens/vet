@@ -20,8 +20,8 @@
     type Problem,
     type Row,
     NO_FILTERS,
+    emptyOf,
     filtered,
-    narrowing,
     rowsOf,
   } from "../../state/problemRows";
   import { problems } from "../../state/problems.svelte";
@@ -121,7 +121,11 @@
   const stale = $derived(problems.staleIn(scopePaths));
   const waiting = $derived(reach.total > 0 && reach.answered === 0);
   const everyFileUnserved = $derived(scopePaths.length > 0 && reach.total === 0);
-  const clean = $derived(!waiting && !everyFileUnserved && all.length === 0);
+  const unanswered = $derived(problems.unanswered(scopePaths));
+  const empty = $derived(
+    everyFileUnserved ? undefined : emptyOf({ all, shown, filters: active, settled, unanswered: unanswered.length }),
+  );
+  const scopeName = $derived({ changed: "the changed files", open: "open files", file: "this file" }[scope]);
   /** No file can be analysed, so what is not analysed is all there is to say and is shown open. */
   const naShown = $derived(naOpen || everyFileUnserved);
   /** The server of the first file in scope, for what the notices say. */
@@ -134,7 +138,6 @@
     const path = scopePaths.find((p) => languageOf(p, serverList.servers) !== undefined);
     return path ? serverLine(path, serverList.servers, tasks.tasks, semantic.summary(path))?.indexing : undefined;
   });
-  const unanswered = $derived(problems.unanswered(scopePaths));
   const items = $derived<Item[]>([
     ...rows,
     ...(indexing && serverOf && unanswered.length
@@ -329,7 +332,7 @@
         aria-pressed={filters.levels[level.id]}
         onclick={() => (filters.levels[level.id] = !filters.levels[level.id])}
       >
-        <span class={level.id}><Icon name={level.id} size={14} /></span>
+        <span class="ico {level.id}"><Icon name={level.id} size={14} /></span>
         {levelCounts[level.id]}
       </button>
     {/each}
@@ -461,19 +464,31 @@
       </div>
     {:else if everyFileUnserved && !missing.length}
       <div class="empty"><b>Nothing to analyse here</b></div>
-    {:else if clean && !missing.length}
+    {:else if empty?.kind === "none"}
       <div class="empty">
         <span class="ok"><Icon name="check" size={22} stroke={1.8} /></span>
-        <b>No problems</b>
-        <span class="sub">{reach.answered} analysed file{reach.answered === 1 ? "" : "s"} have none.</span>
+        <b>No problems in {scopeName}</b>
+        {#if reach.answered}
+          <span class="sub">{reach.answered} analysed {reach.answered === 1 ? "file" : "files"} checked.</span>
+        {/if}
       </div>
-    {:else if !rows.length && !clean && !waiting && !everyFileUnserved}
+    {:else if empty?.kind === "partial"}
       <div class="empty">
-        <b>No problems match</b>
+        <b>No problems so far in {scopeName}</b>
+        <span class="sub">{reach.answered} of {reach.total} files analysed.</span>
+      </div>
+    {:else if empty?.kind === "onlyExisting"}
+      <div class="empty">
+        <b>No new problems in {scopeName}</b>
         <span class="sub"
-          >{narrowing(active) ? "A filter hides all of them." : "Nothing in this scope."}
-          <button class="link" type="button" onclick={clearFilters}>Clear filters</button></span
+          >{empty.existing} existing ·
+          <button class="link" type="button" onclick={() => (problems.origin = "all")}>Show all</button></span
         >
+      </div>
+    {:else if empty?.kind === "hidden"}
+      <div class="empty">
+        <b>{empty.hidden} {empty.hidden === 1 ? "problem" : "problems"} hidden by the filters</b>
+        <span class="sub"><button class="link" type="button" onclick={clearFilters}>Clear filters</button></span>
       </div>
     {:else if everyFileUnserved}
       <div class="empty">
@@ -500,7 +515,7 @@
               >
                 <span class="chev"><Icon name={item.open ? "open" : "closed"} size={10} /></span>
                 {#if item.tone === "error" || item.tone === "warning" || item.tone === "info"}
-                  <span class={item.tone}><Icon name={item.tone} size={14} /></span>
+                  <span class="ico {item.tone}"><Icon name={item.tone} size={14} /></span>
                 {/if}
                 <span>{item.title}</span>
                 <span class="n" class:strong={item.tone === "new"}>{item.count}</span>
@@ -637,6 +652,10 @@
   }
   .chip[aria-pressed="false"]:hover {
     opacity: 0.9;
+  }
+  .ico {
+    flex: none;
+    display: inline-flex;
   }
   .error {
     color: var(--severity-error);

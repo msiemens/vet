@@ -7,6 +7,7 @@ import {
   type Problem,
   NO_FILTERS,
   countsOf,
+  emptyOf,
   filtered,
   problemsOf,
   reviewedAt,
@@ -220,6 +221,33 @@ void test("files whose origin is unknown get a group of their own after the othe
       ["Origin unknown", 1],
     ],
   );
+});
+
+void test("a problem still being compared is listed even where the other origins are settled", () => {
+  const list = [at("a.rs", 3, { origin: "pending" }), at("a.rs", 5, { origin: "existing" })];
+  const rows = rowsOf(list, { grouping: "origin", settled: true, folded: new Set() });
+  assert.equal(rows.filter((r) => r.kind === "problem").length, 2);
+});
+
+void test("the empty list says why: hidden by the filters, only by New, none yet, or none", () => {
+  const existing = [at("a.rs", 1, { origin: "existing" }), at("a.rs", 2, { origin: "existing" })];
+  const none = (filters: Filters, all: Problem[], unanswered = 0, settled = true) =>
+    emptyOf({ all, shown: filtered(all, filters, settled), filters, settled, unanswered });
+  const onlyNew: Filters = { ...NO_FILTERS, origin: "new" };
+
+  assert.equal(none(NO_FILTERS, [at("a.rs", 1)]), undefined, "a list with problems has no empty state");
+  assert.deepEqual(none(onlyNew, existing), { kind: "onlyExisting", existing: 2 });
+  assert.deepEqual(none({ ...onlyNew, changedOnly: true }, existing), { kind: "hidden", hidden: 2 });
+  assert.deepEqual(none({ ...NO_FILTERS, query: "zzz" }, existing), { kind: "hidden", hidden: 2 });
+  assert.deepEqual(none(onlyNew, [...existing, at("b.rs", 1, { origin: "unknown" })]), { kind: "hidden", hidden: 3 });
+  assert.deepEqual(none(NO_FILTERS, []), { kind: "none" });
+  assert.deepEqual(
+    none({ ...NO_FILTERS, query: "zzz" }, []),
+    { kind: "none" },
+    "filters hide nothing of an empty scope",
+  );
+  assert.deepEqual(none(onlyNew, []), { kind: "none" });
+  assert.deepEqual(none(NO_FILTERS, [], 2), { kind: "partial" });
 });
 
 void test("the headline counts errors and warnings that are new or may be, not those of unknown origin", () => {
