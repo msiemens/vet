@@ -35,15 +35,21 @@ export const nameOf = (id: SymbolId): string => plainName(id.path, id.name[id.na
 export const containersOf = (id: SymbolId): string[] => id.name.slice(0, -1).map((n) => plainName(id.path, n));
 
 /**
- * A symbol in a row: its name with the container it is in (`Device.Create`, `Retry::new`), else its
- * name alone. The namespaces and modules around it are left out, and the container is its innermost one.
+ * A symbol in a row as two parts: its name, and the innermost container it is in (`Device`,
+ * `Retry`), if there is one. The namespaces and modules around it are left out.
  */
-export function shortLabel({ id, modules }: SymbolName): string {
+export function partsOf({ id, modules }: SymbolName): { name: string; container?: string } {
   const last = id.name.length - 1;
   const name = implTarget(nameOf(id));
   // A container that is a module or namespace is where the symbol is, not what it is in.
-  if (last < 1 || last - 1 < modules) return name;
-  return `${implTarget(plainName(id.path, id.name[last - 1]))}${separatorOf(id.path)}${name}`;
+  if (last < 1 || last - 1 < modules) return { name };
+  return { name, container: implTarget(plainName(id.path, id.name[last - 1])) };
+}
+
+/** A symbol in a row: its name with the container it is in (`Device.Create`, `Retry::new`), else its name alone. */
+export function shortLabel(symbol: SymbolName): string {
+  const { name, container } = partsOf(symbol);
+  return container === undefined ? name : `${container}${separatorOf(symbol.id.path)}${name}`;
 }
 
 /** What a row says of a place: its symbol, else the name of its file. */

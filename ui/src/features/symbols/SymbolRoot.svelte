@@ -1,0 +1,299 @@
+<script lang="ts" generics="T">
+  // One root of the Symbol panel's tree: a titled answer that is loading, failed or shown, which
+  // opens and shuts and is remembered so. An answer that lists places shows `ROWS` of them, then
+  // "N more"; a root with nothing to list is one muted line.
+  import type { Snippet } from "svelte";
+  import { readStored, writeStored } from "../../lib/storage";
+  import Icon from "../../lib/ui/Icon.svelte";
+  import TreeRow from "../../lib/ui/TreeRow.svelte";
+  import type { Load } from "../../state/symbols.svelte";
+  import { SvelteSet } from "svelte/reactivity";
+  import SymbolGlyph from "./SymbolGlyph.svelte";
+  import { type Body, type Entry, ROWS, type Target } from "./symbolTree";
+
+  let {
+    id,
+    title,
+    load,
+    build,
+    children,
+    ongo,
+    warn = false,
+    hint,
+    find,
+  }: {
+    /** Names the root where its state is kept. */
+    id: string;
+    title: string;
+    load?: Load<T>;
+    /** Lists the answer's places as rows. */
+    build?: (value: T) => Body;
+    /** Draws the answer itself, when it lists no places. */
+    children?: Snippet<[T]>;
+    /** A row was clicked. */
+    ongo?: (target: Target) => void;
+    /** The root says something to be careful about. */
+    warn?: boolean;
+    /** A caveat about the answer, in a tooltip next to the title. */
+    hint?: string;
+    /** Opens the places in the Find window; a button in the title line. */
+    find?: { label: string; unavailable?: string };
+  } = $props();
+
+  const KEY = "vet.symbols.section.";
+  // The root keeps the state it was first shown with.
+  // svelte-ignore state_referenced_locally
+  let shown = $state(readStored(KEY + id) !== "shut");
+  // Rows the reviewer opened or shut against what they start as, and lists asked to show all.
+  const flipped = new SvelteSet<string>();
+  const all = new SvelteSet<string>();
+
+  const body = $derived(load?.state === "done" && build ? build(load.value) : undefined);
+
+  const STATUS = { modified: "M", added: "A", removed: "D" } as const;
+  const STATUS_COLOR = { modified: "var(--old-base)", added: "var(--add-text)", removed: "var(--del-text)" } as const;
+  const FATE = { bad: "var(--del-text)", warn: "var(--old-base)", mute: "var(--text-3)" } as const;
+
+  function toggle() {
+    shown = !shown;
+    writeStored(KEY + id, shown ? undefined : "shut");
+  }
+
+  const holds = (e: Entry) => e.children.length > 0 && !e.fixed;
+  const isOpen = (e: Entry) => holds(e) && flipped.has(e.key) !== (e.open ?? false);
+
+  function fold(e: Entry) {
+    if (flipped.has(e.key)) flipped.delete(e.key);
+    else flipped.add(e.key);
+  }
+
+  function click(e: Entry, event: MouseEvent) {
+    const chevron = event.target instanceof Element && !!event.target.closest(".chev");
+    if (holds(e) && (chevron || !e.go)) fold(e);
+    else if (e.go) ongo?.(e.go);
+  }
+</script>
+
+{#snippet list(entries: readonly Entry[], depth: number, cap: string | undefined)}
+  {@const rows = cap === undefined || all.has(cap) ? entries : entries.slice(0, ROWS)}
+  {#each rows as e (e.key)}
+    {@render row(e, depth)}
+  {/each}
+  {#if cap !== undefined && rows.length < entries.length}
+    <button
+      class="flat more"
+      type="button"
+      style:padding-left="calc(8px + {depth} * var(--w-indent) + var(--w-chev) + 6px)"
+      onclick={() => all.add(cap)}>{entries.length - rows.length} more</button
+    >
+  {/if}
+{/snippet}
+
+{#snippet row(e: Entry, depth: number)}
+  {@const open = isOpen(e)}
+  <TreeRow
+    wrap
+    {depth}
+    open={holds(e) ? open : undefined}
+    tone={e.muted === true || e.branch === true ? "plain" : "strong"}
+    gone={e.gone}
+    title={e.title}
+    status={e.change && STATUS[e.change]}
+    statusColor={e.change && STATUS_COLOR[e.change]}
+    statusTitle={e.change}
+    disabled={!holds(e) && !e.go}
+    onclick={(event) => click(e, event)}
+  >
+    {#snippet glyph()}
+      {#if e.glyph === "file"}
+        <span class="file"><Icon name="file" size={12} /></span>
+      {:else if e.glyph}
+        <SymbolGlyph kind={e.glyph} />
+      {/if}
+    {/snippet}
+    <span class="id" class:code={!e.file && !e.branch}>{e.name}</span>{#if e.container}<span class="ctr"
+        >{e.container}</span
+      >{/if}{#if e.sub}<span class="sub">{e.sub}</span>{/if}
+    {#snippet trailing()}
+      {#if e.loc}<span class="loc">{e.loc}</span>{/if}
+      {#if e.lines}<span class="ln">{e.lines}</span>{/if}
+      {#if e.fate}<span class="fate" style:color={FATE[e.fate.tone]}>{e.fate.label}</span>{/if}
+      {#if holds(e) && !open}<span class="mono cnt">{e.count}</span>{/if}
+    {/snippet}
+  </TreeRow>
+  {#if e.fixed === true || open}
+    {@render list(e.children, depth + 1, e.branch ? e.key : undefined)}
+  {/if}
+{/snippet}
+
+{#if body?.quiet}
+  <div class="quiet">{body.quiet}</div>
+{:else}
+  <section>
+    <div class="rt">
+      <button class="flat tog" type="button" aria-expanded={shown} onclick={toggle}>
+        <span class="chev"><Icon name={shown ? "open" : "closed"} size={10} /></span>
+        {#if warn}<span class="warn"><Icon name="warning" size={12} /></span>{/if}
+        {title}
+        {#if hint}<span class="hint" role="img" aria-label={hint} title={hint}><Icon name="info" size={12} /></span
+          >{/if}
+        {#if body?.count !== undefined}<span class="n">{body.count}</span>
+        {:else if body?.meta}<span class="n">{body.meta}</span>{/if}
+      </button>
+      {#if find}
+        <button
+          class="flat find"
+          type="button"
+          title={find.unavailable ?? find.label}
+          aria-label={find.label}
+          disabled={find.unavailable !== undefined}
+        >
+          <Icon name="search" size={12} />
+        </button>
+      {/if}
+    </div>
+    {#if shown}
+      {#if !load || load.state === "loading"}
+        <p class="note">Loading…</p>
+      {:else if load.state === "failed"}
+        <p class="note err">{load.message}</p>
+      {:else if body}
+        {#each body.notes as note (note.text)}
+          <p class="note" class:gap={note.warn}>{note.text}</p>
+        {/each}
+        {@render list(body.entries, 0, "")}
+        {@render list(body.tail, 0, undefined)}
+      {:else if children}
+        {@render children(load.value)}
+      {/if}
+    {/if}
+  </section>
+{/if}
+
+<style>
+  .rt {
+    display: flex;
+    align-items: center;
+    border-top: 1px solid var(--line-soft);
+    padding-right: 6px;
+  }
+  .tog {
+    flex: 1;
+    min-width: 0;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    height: var(--h-ctl);
+    padding: 0 4px 0 8px;
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--text-2);
+    text-align: left;
+  }
+  .chev {
+    flex: none;
+    width: var(--w-chev);
+    display: inline-flex;
+    justify-content: center;
+  }
+  .n {
+    font-weight: 400;
+    color: var(--text-3);
+    font-variant-numeric: tabular-nums;
+  }
+  .warn {
+    display: inline-flex;
+    color: var(--old-base);
+  }
+  .hint {
+    display: inline-flex;
+    color: var(--text-3);
+  }
+  .find {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 22px;
+    height: 22px;
+    border-radius: var(--radius);
+    color: var(--text-3);
+  }
+  .quiet {
+    display: flex;
+    align-items: center;
+    min-height: var(--h-ctl);
+    padding: 0 10px 0 28px;
+    border-top: 1px solid var(--line-soft);
+    color: var(--text-3);
+    font-size: 12px;
+  }
+  .note {
+    margin: 0;
+    padding: 2px 10px 4px 28px;
+    line-height: 1.4;
+  }
+  .note.gap {
+    color: var(--old-base);
+  }
+  .file {
+    flex: none;
+    width: 14px;
+    height: 16px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    color: var(--text-3);
+  }
+  .id.code {
+    font: var(--fs-mono-s) / 16px var(--font-mono);
+  }
+  .ctr {
+    display: inline-block;
+    margin-left: 6px;
+    font-size: 11px;
+    line-height: 14px;
+    color: var(--text-3);
+  }
+  .sub {
+    display: block;
+    font-size: 11px;
+    color: var(--text-3);
+  }
+  .loc {
+    display: none;
+    flex: none;
+    font-size: 11px;
+    color: var(--text-3);
+  }
+  .ln {
+    flex: none;
+    font-size: 11px;
+    color: var(--text-3);
+    font-variant-numeric: tabular-nums;
+  }
+  .cnt {
+    flex: none;
+    font-size: 11px;
+    color: var(--text-2);
+  }
+  .fate {
+    flex: none;
+    font-size: 11px;
+  }
+  .more {
+    display: flex;
+    align-items: center;
+    width: 100%;
+    min-height: var(--h-row);
+    padding-right: 10px;
+    box-sizing: border-box;
+    text-align: left;
+    color: var(--accent);
+    font-size: 12px;
+  }
+  @container (min-width: 440px) {
+    .loc {
+      display: block;
+    }
+  }
+</style>

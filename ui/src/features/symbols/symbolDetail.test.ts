@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { containerOf, describeFate, rowTitle } from "./symbolDetail.ts";
+import { describeFate, headOf, rowTitle } from "./symbolDetail.ts";
 
 void test("fates read as words, the broken one as the bad tone", () => {
   assert.equal(describeFate({ type: "likelyBroken" }).tone, "bad");
@@ -12,10 +12,15 @@ void test("fates read as words, the broken one as the bad tone", () => {
   assert.equal(describeFate({ type: "unknown", reason: "no server" }).detail, "no server");
 });
 
-void test("a symbol's container is the names above it, none at the top level", () => {
-  assert.equal(containerOf({ path: "a.rs", name: ["Policy", "Backoff", "next"] }), "Policy::Backoff");
-  assert.equal(containerOf({ path: "a.ts", name: ["Policy", "Backoff", "next"] }), "Policy.Backoff");
-  assert.equal(containerOf({ path: "a.rs", name: ["run"] }), "");
+void test("the head names the types around a symbol and, apart, its namespaces", () => {
+  const at = (path: string, name: string[], modules: number) => headOf({ id: { path, name }, modules });
+  assert.deepEqual(at("a.rs", ["Policy", "Backoff", "next"], 0), { container: "Policy::Backoff", namespace: "" });
+  assert.deepEqual(at("a.ts", ["Policy", "Backoff", "next"], 0), { container: "Policy.Backoff", namespace: "" });
+  assert.deepEqual(at("a.cs", ["Acme", "Devices", "Factory", "Create"], 2), {
+    container: "Factory",
+    namespace: "Acme.Devices",
+  });
+  assert.deepEqual(at("a.rs", ["run"], 0), { container: "", namespace: "" });
 });
 
 void test("a row's tooltip gives the whole name, then where it is with a 1-based line", () => {
