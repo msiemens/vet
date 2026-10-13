@@ -92,7 +92,7 @@ pub use self::lens::{CommitKind, CommitUnitView, CommitsView};
 use self::lines::LinesBetween;
 pub use self::listing::{ChangesetList, ChangesetRow, Divergence, RowReview};
 pub use self::revision::{ChangedFiles, RevisionView};
-pub use self::search::{SearchFile, SearchQuery, SearchResult, SearchScope};
+pub use self::search::{MAX_HITS, SearchFile, SearchQuery, SearchResult, SearchScope};
 use self::source::Stored;
 pub use self::state::View;
 use self::state::{OpenReview, Shown, State, lifecycle_of};

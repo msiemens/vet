@@ -72,8 +72,18 @@ pub struct FoundLine {
     pub text: String,
     /// Where `text` starts in the line, in UTF-16 units.
     pub text_start: u32,
-    /// The matches as columns of the line, in UTF-16 units, in order.
+    /// The matches as columns of the line, in UTF-16 units, in order; those inside `text`.
     pub hits: Vec<(u32, u32)>,
+    /// How many matches the line has, those outside `text` too.
+    pub total: u32,
+}
+
+impl FoundLine {
+    /// Keeps the first `n` matches of the line.
+    pub fn keep(&mut self, n: u32) {
+        self.hits.truncate(n as usize);
+        self.total = self.total.min(n);
+    }
 }
 
 /// The most characters of a line that a result carries.
@@ -81,10 +91,29 @@ const MAX_TEXT: usize = 400;
 /// Characters kept before the first match of a line that is cut.
 const LEAD: usize = 60;
 
-/// The text split into lines the way hunks count them: at `\n`, a final break starting one more
-/// line, and a `\r` before the break not part of the line.
+/// The text split into lines the way an editor splits its document: at `\r\n`, `\r` and `\n`, a final
+/// break starting one more line.
 fn lines_of(text: &str) -> Vec<&str> {
-    text.split('\n').map(|l| l.strip_suffix('\r').unwrap_or(l)).collect()
+    let bytes = text.as_bytes();
+    let mut lines = Vec::new();
+    let (mut start, mut at) = (0, 0);
+    while at < bytes.len() {
+        match bytes[at] {
+            b'\n' => {
+                lines.push(&text[start..at]);
+                at += 1;
+                start = at;
+            }
+            b'\r' => {
+                lines.push(&text[start..at]);
+                at += if bytes.get(at + 1) == Some(&b'\n') { 2 } else { 1 };
+                start = at;
+            }
+            _ => at += 1,
+        }
+    }
+    lines.push(&text[start..]);
+    lines
 }
 
 /// Whether a line of this kind in a hunk in this state is looked at.
@@ -197,6 +226,7 @@ fn found_line(
         kind,
         line,
         hunk,
+        total: hits.len() as u32,
         text: text[start_byte..end_byte].to_owned(),
         text_start: start,
         hits: columns
@@ -210,6 +240,7 @@ fn found_line(
 mod tests {
     use vet_core::content::LineRange;
 
+    use super::LineKind::{Added, Context, Removed};
     use super::*;
 
     /// Finds every occurrence of a substring.
@@ -260,7 +291,6 @@ mod tests {
 
     #[test]
     fn a_diff_lists_context_once_and_a_hunks_removed_lines_before_its_added_ones() {
-        use LineKind::*;
         let found = run(ALL, Sides::Both, &[HunkState::Unseen]);
         assert_eq!(
             shape(&found),
@@ -272,7 +302,6 @@ mod tests {
 
     #[test]
     fn the_side_narrows_the_search_and_a_context_line_stays_on_both() {
-        use LineKind::*;
         let target = SearchFilters {
             side: SearchSide::Target,
             ..ALL
@@ -293,7 +322,6 @@ mod tests {
 
     #[test]
     fn only_changes_drops_the_context_and_the_target_alone_has_no_removed_lines() {
-        use LineKind::*;
         let only = SearchFilters {
             only_changes: true,
             ..ALL
@@ -348,5 +376,27 @@ mod tests {
         assert_eq!(f.text_start, 500 - LEAD as u32);
         assert_eq!(f.hits, [(500, 505)]);
         assert_eq!(&f.text[LEAD..LEAD + 5], "delay");
+    }
+
+    #[test]
+    fn matches_outside_the_cut_of_a_long_line_still_count() {
+        let line = format!("delay{}delay", "x".repeat(900));
+        let found = search_text("", &line, &[], &[], &Substring("delay"), ALL, Sides::TargetOnly);
+        assert_eq!(found[0].hits.len(), 1);
+        assert_eq!(found[0].total, 2);
+    }
+
+    #[test]
+    fn lines_break_at_crlf_cr_and_lf_as_an_editor_counts_them() {
+        let found = search_text(
+            "",
+            "one\rdelay\r\nthree\ndelay",
+            &[],
+            &[],
+            &Substring("delay"),
+            ALL,
+            Sides::TargetOnly,
+        );
+        assert_eq!(shape(&found), [(Context, 1), (Context, 3)]);
     }
 }

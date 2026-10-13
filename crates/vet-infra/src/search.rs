@@ -90,6 +90,38 @@ mod tests {
         assert_eq!(hits(&p, "ab abc cd xcd"), [0..2, 7..9]);
     }
 
+    /// The same queries are run by the find bar's matcher (`ui/src/lib/search/query.test.ts`): what a
+    /// plain query finds must not depend on which of the two runs it. Each row: text, [match case,
+    /// whole word, regex], a line, and the text of the matches.
+    #[test]
+    fn plain_queries_find_what_the_find_bars_matcher_finds() {
+        type Row = (&'static str, [bool; 3], &'static str, &'static [&'static str]);
+        let rows: [Row; 10] = [
+            (
+                "über",
+                [false, true, false],
+                "über Über überall xüber über",
+                &["über", "Über", "über"],
+            ),
+            ("Straße", [true, true, false], "Straße Straßen", &["Straße"]),
+            ("é", [false, true, false], "café é", &["é"]),
+            ("delay", [false, true, false], "max_delay delay delays", &["delay"]),
+            ("ÜBER", [false, false, false], "über", &["über"]),
+            ("ab|cd", [true, true, true], "ab abc cd xcd", &["ab", "cd"]),
+            ("日本", [false, true, false], "日本語 日本", &["日本"]),
+            ("a.b", [true, false, false], "a.b axb", &["a.b"]),
+            ("a b", [false, true, false], "a b, a bc", &["a b"]),
+            (".foo", [false, true, false], "x.foo .foo", &[".foo"]),
+        ];
+        for (text, [match_case, whole_word, regex], line, expected) in rows {
+            let found: Vec<&str> = hits(&pattern(text, match_case, whole_word, regex), line)
+                .into_iter()
+                .map(|r| &line[r])
+                .collect();
+            assert_eq!(found, expected, "{text:?} in {line:?}");
+        }
+    }
+
     #[test]
     fn empty_matches_and_an_empty_pattern_find_nothing() {
         assert_eq!(
