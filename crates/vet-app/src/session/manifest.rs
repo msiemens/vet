@@ -120,13 +120,12 @@ pub(super) fn excluded_groups(changes: &Diffed, st: &State) -> Vec<ExcludedGroup
     // Why the review leaves a file out, given the rules that the filter in force and the project's
     // name for it: the project's own rule wins over the narrowing.
     let why = |named: Option<Exclusion>, project_named: Option<Exclusion>| {
-        if project.is_none() {
-            named.map(ExcludedBy::Rule)
+        let named = named?;
+        Some(if project.is_none() {
+            ExcludedBy::Rule(named)
         } else {
-            project_named
-                .map(ExcludedBy::Rule)
-                .or(named.map(|_| ExcludedBy::Narrowing))
-        }
+            project_named.map_or(ExcludedBy::Narrowing, ExcludedBy::Rule)
+        })
     };
     let mut by_path: BTreeMap<&RepoPath, (ExcludedBy, LineDelta)> = BTreeMap::new();
     for d in &changes.diff.files {

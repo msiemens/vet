@@ -1943,6 +1943,41 @@ async fn a_review_narrowed_to_something_else_lists_the_rest_as_left_out_by_the_n
 }
 
 #[tokio::test]
+async fn a_narrowing_that_brings_back_what_the_project_hides_lists_none_of_it_as_left_out() {
+    let fx = fixture(
+        &[("src/a.rs", "1\n"), ("docs/b.md", "1\n")],
+        &[("src/a.rs", "2\n"), ("docs/b.md", "2\n")],
+    )
+    .await;
+    let mut client = Client::new(&fx.handler);
+    let project = open(&client, fx.repo.path()).await;
+    let filter = ReviewFilter {
+        roots: vec!["src".into()],
+        ..Default::default()
+    };
+    client.set_filter(project, &filter).await.unwrap();
+    client.settled().await;
+    let m = client.manifest(project).await;
+    assert_eq!(excluded(&m), [(ExcludedBy::OutsideRoots, 1, vec!["docs/b.md"])]);
+
+    let lifted = ReviewFilter {
+        roots: vec![],
+        ..filter
+    };
+    client
+        .call(Request::NarrowReview {
+            project,
+            filter: Some(lifted),
+        })
+        .await
+        .unwrap();
+    client.settled().await;
+    let m = client.manifest(project).await;
+    assert_eq!(paths(&m), ["docs/b.md", "src/a.rs"]);
+    assert_eq!(excluded(&m), []);
+}
+
+#[tokio::test]
 async fn excluding_a_path_while_narrowed_keeps_the_narrowing_out_of_the_project_filter() {
     let fx = fixture(
         &[("src/a.rs", "1\n"), ("lib/b.rs", "1\n")],
