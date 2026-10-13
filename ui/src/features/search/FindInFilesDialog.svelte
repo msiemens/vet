@@ -9,20 +9,20 @@
   import { segments, trimmed } from "../../lib/foundText";
   import { basename, dirname } from "../../lib/paths";
   import { NO_HIGHLIGHTS } from "../../lib/highlights";
-  import Dialog from "../../lib/ui/Dialog.svelte";
   import FileIcon from "../../lib/ui/FileIcon.svelte";
   import Icon from "../../lib/ui/Icon.svelte";
+  import KeyHint from "../../lib/ui/KeyHint.svelte";
   import Menu from "../../lib/ui/Menu.svelte";
   import type { MenuItem } from "../../lib/ui/menuItem";
   import Meter from "../../lib/ui/Meter.svelte";
   import Popover from "../../lib/ui/Popover.svelte";
+  import PopupShell from "../../lib/ui/PopupShell.svelte";
   import Segmented from "../../lib/ui/Segmented.svelte";
   import VirtualRows from "../../lib/ui/VirtualRows.svelte";
   import type { Backend, SearchQuery, SearchResults } from "../../state/backend";
   import { commands } from "../../state/commands";
   import type { KeptSearch } from "../../state/findSets.svelte";
   import { isMac } from "../../state/host";
-  import { EscapeGate } from "./escapeGate";
   import { findInFiles } from "./FindInFiles.svelte";
   import { LatestRun } from "./latestRun";
   import ResultPreview from "./ResultPreview.svelte";
@@ -85,7 +85,6 @@
   let input = $state<HTMLInputElement>();
   let list = $state<VirtualRows>();
   const latest = new LatestRun<SearchResults>();
-  const escape = new EscapeGate();
 
   const choices = $derived(
     scopeChoices({ view, files, range, commits: commits.map(({ shortId, subject }) => ({ shortId, subject })) }),
@@ -292,14 +291,13 @@
     onkeep(kept);
   }
 
-  /** Escape with the scope menu open closes it alone; the menu is in the title row, outside the box that reads the other keys. */
+  /** Escape with the scope menu open closes it alone, before the popup reads the key. */
   function escapeKey(e: KeyboardEvent) {
-    if (e.key !== "Escape" || !escape.press(scopeOpen)) return;
+    if (e.key !== "Escape" || !scopeOpen) return;
     e.preventDefault();
     e.stopPropagation();
     scopeOpen = false;
     input?.focus();
-    setTimeout(() => escape.settle());
   }
 
   function keydown(e: KeyboardEvent) {
@@ -318,6 +316,7 @@
       keep();
       return;
     }
+    if (target.closest(".mask")) return;
     if (target.closest("button, [role=menuitem], [role=menuitemradio]") && e.key !== "ArrowDown" && e.key !== "ArrowUp")
       return;
     if (e.key === "ArrowDown" || e.key === "ArrowUp") {
@@ -328,10 +327,6 @@
       e.preventDefault();
       open(current, e.altKey);
     }
-  }
-
-  function close() {
-    if (escape.cancel()) find.close();
   }
 
   /** The 1-based number of a result's line. */
@@ -358,73 +353,76 @@
   }
 </script>
 
-{#snippet bar()}
-  <span class="in">In</span>
-  <Popover bind:open={scopeOpen} align="right">
-    {#snippet trigger(toggle)}
+{#snippet head()}
+  <div class="top">
+    <b class="title">Find in Files</b>
+    <span class="grow"></span>
+    <span class="in">In</span>
+    <Popover bind:open={scopeOpen} align="right">
+      {#snippet trigger(toggle)}
+        <button
+          class="scope"
+          type="button"
+          title="Where to search"
+          aria-haspopup="menu"
+          aria-expanded={scopeOpen}
+          onclick={toggle}
+        >
+          <span class="label">{choice.label}</span>
+          <span class="detail">{choice.detail}</span>
+          <Icon name="open" size={10} />
+        </button>
+      {/snippet}
+      <Menu items={scopeItems} onselect={chooseScope} />
+    </Popover>
+    <input
+      class="field mask"
+      class:bad={maskError}
+      type="text"
+      value={find.mask}
+      placeholder="File mask  *.rs, !tests/**"
+      aria-label="File mask"
+      title="Globs separated by commas; ! leaves a file out"
+      spellcheck="false"
+      autocomplete="off"
+      oninput={(e) => (find.mask = e.currentTarget.value)}
+    />
+  </div>
+{/snippet}
+
+{#snippet trailing()}
+  <span class="toggles">
+    {#each toggles as t (t.key)}
       <button
-        class="scope"
+        class="flat toggle"
+        class:word={t.key === "wholeWord"}
         type="button"
-        title="Where to search"
-        aria-haspopup="menu"
-        aria-expanded={scopeOpen}
-        onclick={toggle}
+        aria-pressed={find[t.key]}
+        title={t.key === "regex"
+          ? `${commands.tooltip(t.id, t.name)}. Rust syntax here; the find bar uses JavaScript's`
+          : commands.tooltip(t.id, t.name)}
+        onclick={() => (find[t.key] = !find[t.key])}>{t.label}</button
       >
-        <span class="label">{choice.label}</span>
-        <span class="detail">{choice.detail}</span>
-        <Icon name="open" size={10} />
-      </button>
-    {/snippet}
-    <Menu items={scopeItems} onselect={chooseScope} />
-  </Popover>
-  <input
-    class="field mask"
-    class:bad={maskError}
-    type="text"
-    value={find.mask}
-    placeholder="File mask  *.rs, !tests/**"
-    aria-label="File mask"
-    title="Globs separated by commas; ! leaves a file out"
-    spellcheck="false"
-    autocomplete="off"
-    oninput={(e) => (find.mask = e.currentTarget.value)}
-  />
+    {/each}
+  </span>
 {/snippet}
 
 <svelte:window onkeydowncapture={escapeKey} />
 
-<Dialog title="Find in Files" width="840px" height="640px" padded={false} closeButton={false} onclose={close} {bar}>
-  <!-- The keys of the controls inside are read here. -->
-  <!-- svelte-ignore a11y_no_static_element_interactions -->
-  <div class="box" onkeydown={keydown}>
-    <div class="query">
-      <span class="glyph"><Icon name="search" size={15} /></span>
-      <input
-        bind:this={input}
-        class:bad={error !== undefined && !maskError}
-        type="text"
-        value={find.text}
-        placeholder="Search text"
-        aria-label="Search text"
-        spellcheck="false"
-        autocomplete="off"
-        oninput={(e) => (find.text = e.currentTarget.value)}
-      />
-      <span class="toggles">
-        {#each toggles as t (t.key)}
-          <button
-            class="flat toggle"
-            class:word={t.key === "wholeWord"}
-            type="button"
-            aria-pressed={find[t.key]}
-            title={t.key === "regex"
-              ? `${commands.tooltip(t.id, t.name)}. Rust syntax here; the find bar uses JavaScript's`
-              : commands.tooltip(t.id, t.name)}
-            onclick={() => (find[t.key] = !find[t.key])}>{t.label}</button
-          >
-        {/each}
-      </span>
-    </div>
+<PopupShell
+  wide
+  scroll={false}
+  label="Search text"
+  placeholder="Search text"
+  invalid={error !== undefined && !maskError}
+  onclose={() => find.close()}
+  onkeydown={keydown}
+  bind:value={find.text}
+  bind:input
+  {head}
+  {trailing}
+>
+  <div class="box">
     <div class="filters">
       <span class="summary">{summary}</span>
       <span class="grow"></span>
@@ -528,14 +526,14 @@
         letter={letterOf(current.file)}
       />
     {/if}
-    <div class="keys">
-      <span><kbd>↑</kbd> <kbd>↓</kbd> choose</span>
-      <span><kbd>Enter</kbd> open</span>
-      <span><kbd>{isMac ? "⌥" : "Alt+"}Enter</kbd> its own tab</span>
-      <span><kbd>Esc</kbd> close</span>
-    </div>
   </div>
-</Dialog>
+  {#snippet foot()}
+    <KeyHint keys="↑↓">choose</KeyHint>
+    <KeyHint keys="↵">open</KeyHint>
+    <KeyHint keys="{isMac ? '⌥' : 'Alt+'}↵">its own tab</KeyHint>
+    <KeyHint keys="esc">close</KeyHint>
+  {/snippet}
+</PopupShell>
 
 <style>
   .in {
@@ -576,38 +574,25 @@
     width: 190px;
     height: 24px;
   }
-  .mask.bad,
-  .query input.bad {
+  .mask.bad {
     color: var(--del-text);
   }
-  .box {
-    display: flex;
-    flex-direction: column;
-    height: 100%;
-    min-height: 0;
-    border-radius: inherit;
-  }
-  .query {
+  .top {
     display: flex;
     align-items: center;
-    gap: 10px;
-    height: 42px;
-    flex: none;
+    gap: 8px;
+    height: var(--h-panel-tabs);
     padding: 0 12px;
-    border-bottom: 1px solid var(--line-soft);
   }
-  .glyph {
-    display: inline-flex;
-    color: var(--text-3);
+  .title {
+    font-size: var(--fs-ctl);
+    font-weight: 600;
   }
-  .query input {
+  .box {
     flex: 1;
-    min-width: 0;
-    border: 0;
-    outline: none;
-    background: transparent;
-    color: var(--text);
-    font: 15px var(--font-ui);
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
   }
   .toggles {
     display: inline-flex;
@@ -746,7 +731,7 @@
     box-shadow: inset 0 0 0 100px var(--hover);
   }
   .line.sel {
-    background: var(--toggle);
+    background: var(--select);
   }
   .line[data-state="seen"]::before,
   .line[data-state="seenAgainstOldBase"]::before {
@@ -790,14 +775,5 @@
     background: var(--find);
     color: inherit;
     border-radius: 2px;
-  }
-  .keys {
-    display: flex;
-    gap: 16px;
-    flex: none;
-    padding: 6px 12px;
-    border-top: 1px solid var(--line-soft);
-    color: var(--text-3);
-    font-size: 11.5px;
   }
 </style>

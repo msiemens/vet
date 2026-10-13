@@ -2,14 +2,16 @@
   // Search Everywhere: one popup under the header for names (files, symbols, changesets, comment
   // threads, actions), with a tab for each kind. Arrow keys move, Tab or Ctrl+Tab changes the tab, Enter chooses,
   // Shift+Enter shows a changed file or symbol in All changes, Escape closes.
-  import { onDestroy, onMount, tick, untrack } from "svelte";
+  import { tick, untrack } from "svelte";
   import { bindingOf, matches } from "../../lib/keymap";
   import { splitPath } from "../../lib/paths";
   import { highlightRuns, sliceRanges, type Range } from "../../lib/speedSearch";
   import DiffBar from "../../lib/ui/DiffBar.svelte";
   import FileIcon from "../../lib/ui/FileIcon.svelte";
   import Icon from "../../lib/ui/Icon.svelte";
+  import KeyHint from "../../lib/ui/KeyHint.svelte";
   import Meter from "../../lib/ui/Meter.svelte";
+  import PopupShell from "../../lib/ui/PopupShell.svelte";
   import Spinner from "../../lib/ui/Spinner.svelte";
   import { changeset } from "../../state/changeset.svelte";
   import { keyId } from "../../state/changesetKey";
@@ -67,14 +69,8 @@
   const NEXT_TAB = bindingOf("Ctrl-Tab", isMac ? "Meta" : "Ctrl").label;
 
   let cursor = $state(0);
-  let root = $state<HTMLElement>();
   let list = $state<HTMLElement>();
   let input = $state<HTMLInputElement>();
-  let before: Element | null = null;
-  // A click that began before the popup was there is not one outside it: the button that opens it.
-  let shownAt = 0;
-  // What was clicked outside took the focus itself.
-  let clickedAway = false;
 
   const files = $derived(
     fileCandidates(
@@ -217,16 +213,6 @@
     return queue.watch();
   });
 
-  onMount(() => {
-    shownAt = performance.now();
-    before = document.activeElement;
-    input?.focus();
-  });
-  // The focus goes back to where it was, unless a click went elsewhere; a choice that moves it does so after.
-  onDestroy(() => {
-    if (!clickedAway && before instanceof HTMLElement && before.isConnected) before.focus({ preventScroll: true });
-  });
-
   async function move(to: number) {
     cursor = Math.max(0, Math.min(entries.length - 1, to));
     await tick();
@@ -316,10 +302,6 @@
     }
     if (e.ctrlKey || e.altKey || e.metaKey) return;
     switch (e.key) {
-      case "Escape":
-        take();
-        palette.close();
-        break;
       case "ArrowDown":
         take();
         void move(at + 1);
@@ -348,14 +330,6 @@
     return path.split("/").slice(-2).join("/");
   }
 </script>
-
-<svelte:window
-  onclick={(e) => {
-    if (e.timeStamp < shownAt || !root || root.contains(e.target as Node)) return;
-    clickedAway = true;
-    palette.close();
-  }}
-/>
 
 {#snippet marked(text: string, ranges: readonly Range[] | undefined)}
   {#each highlightRuns(text, ranges ?? []) as run, i (i)}{#if run.hit}<mark>{run.text}</mark
@@ -490,62 +464,62 @@
   {/if}
 {/snippet}
 
-<div class="surface palette" role="dialog" aria-label="Search everywhere" tabindex="-1" bind:this={root} {onkeydown}>
-  <div class="tabs" role="tablist" aria-label="Search in">
-    {#each TABS as tab (tab.id)}
+<PopupShell
+  label="Search everywhere"
+  placeholder="Search files, symbols, changesets, threads and actions"
+  onclose={() => palette.close()}
+  bind:value={palette.query}
+  bind:input
+  bind:body={list}
+  {onkeydown}
+>
+  {#snippet head()}
+    <div class="tabs" role="tablist" aria-label="Search in">
+      {#each TABS as tab (tab.id)}
+        <button
+          class="tab"
+          type="button"
+          role="tab"
+          tabindex="-1"
+          aria-selected={palette.tab === tab.id}
+          onclick={() => {
+            palette.tab = tab.id;
+            input?.focus();
+          }}
+        >
+          {tab.label}{#if built.counts}
+            <span class="count">{built.counts[tab.id]}</span>{/if}
+        </button>
+      {/each}
+      <span class="grow"></span>
       <button
-        class="tab"
+        class="flat tog"
         type="button"
-        role="tab"
         tabindex="-1"
-        aria-selected={palette.tab === tab.id}
+        aria-pressed={palette.unchanged}
+        disabled={!TOGGLES.includes(palette.tab)}
+        title={TOGGLES.includes(palette.tab)
+          ? "Also search the files the changeset does not change"
+          : "Applies to All, Files and Symbols"}
         onclick={() => {
-          palette.tab = tab.id;
+          palette.setUnchanged(!palette.unchanged);
           input?.focus();
         }}
       >
-        {tab.label}{#if built.counts}
-          <span class="count">{built.counts[tab.id]}</span>{/if}
+        <span class="cb"
+          >{#if palette.unchanged}<Icon name="check" size={9} stroke={3.2} />{/if}</span
+        >Unchanged files
       </button>
-    {/each}
-    <span class="grow"></span>
-    <button
-      class="flat tog"
-      type="button"
-      tabindex="-1"
-      aria-pressed={palette.unchanged}
-      disabled={!TOGGLES.includes(palette.tab)}
-      title={TOGGLES.includes(palette.tab)
-        ? "Also search the files the changeset does not change"
-        : "Applies to All, Files and Symbols"}
-      onclick={() => {
-        palette.setUnchanged(!palette.unchanged);
-        input?.focus();
-      }}
-    >
-      <span class="cb"
-        >{#if palette.unchanged}<Icon name="check" size={9} stroke={3.2} />{/if}</span
-      >Unchanged files
-    </button>
-  </div>
-  <div class="query">
-    <Icon name="search" size={14} stroke={1.7} />
-    <input
-      bind:this={input}
-      bind:value={palette.query}
-      type="text"
-      spellcheck="false"
-      autocomplete="off"
-      aria-label="Search everywhere"
-      placeholder="Search files, symbols, changesets, threads and actions"
-    />
+    </div>
+  {/snippet}
+  {#snippet trailing()}
     {#if pinned}
       <span class="at-chip" title="Files open in a tab pinned to this commit"
         ><Icon name="gitCommit" size={11} stroke={1.8} />at {pinned}</span
       >
     {/if}
-  </div>
-  <div class="list" role="listbox" aria-label="Results" bind:this={list}>
+  {/snippet}
+  <div role="listbox" aria-label="Results">
     {#each built.groups as group, gi (gi)}
       {#if group.label}
         <div class="group">
@@ -600,12 +574,12 @@
       </div>
     {/if}
   </div>
-  <div class="foot">
-    <span><b>↑↓</b> move</span>
-    <span><b>↵</b> open</span>
-    <span><b>⇧↵</b> show in All changes</span>
-    <span><b>{NEXT_TAB}</b> next tab</span>
-    <span><b>esc</b> close</span>
+  {#snippet foot()}
+    <KeyHint keys="↑↓">move</KeyHint>
+    <KeyHint keys="↵">open</KeyHint>
+    <KeyHint keys="⇧↵">show in All changes</KeyHint>
+    <KeyHint keys={NEXT_TAB}>next tab</KeyHint>
+    <KeyHint keys="esc">close</KeyHint>
     <span class="grow"></span>
     {#if hint}
       <span>{hint}</span>
@@ -615,34 +589,16 @@
           changes{/if}
       </span>
     {/if}
-  </div>
-</div>
+  {/snippet}
+</PopupShell>
 
 <style>
-  .palette {
-    position: fixed;
-    z-index: 1000;
-    top: calc(var(--h-header) + 6px);
-    left: 50%;
-    transform: translateX(-50%);
-    display: flex;
-    flex-direction: column;
-    width: min(var(--w-palette), calc(100vw - 16px));
-    max-height: min(var(--h-palette), calc(100vh - var(--h-header) - 40px));
-    box-sizing: border-box;
-    overflow: hidden;
-    font-size: var(--fs);
-    color: var(--text);
-    background: var(--bg-editor);
-  }
   .tabs {
     display: flex;
     align-items: stretch;
     gap: 2px;
     height: var(--h-panel-tabs);
     padding: 0 8px 0 6px;
-    border-bottom: 1px solid var(--line-soft);
-    flex: none;
   }
   .tab {
     display: inline-flex;
@@ -721,27 +677,6 @@
     color: var(--text-3);
     font: var(--fs-mono-s) var(--font-mono);
   }
-  .query {
-    display: flex;
-    align-items: center;
-    gap: 10px;
-    height: var(--h-palette-field);
-    padding: 0 12px;
-    border-bottom: 1px solid var(--line-soft);
-    color: var(--text-3);
-    flex: none;
-  }
-  .query input {
-    flex: 1;
-    min-width: 0;
-    height: 100%;
-    padding: 0;
-    border: 0;
-    outline: 0;
-    background: transparent;
-    color: var(--text);
-    font: 14px var(--font-ui);
-  }
   .at-chip {
     display: inline-flex;
     align-items: center;
@@ -754,12 +689,6 @@
     color: var(--accent);
     font: var(--fs-mono-s) var(--font-mono);
     white-space: nowrap;
-  }
-  .list {
-    flex: 1;
-    min-height: 0;
-    overflow-y: auto;
-    padding-bottom: 6px;
   }
   .group {
     display: flex;
@@ -876,24 +805,6 @@
     gap: 8px;
     flex-wrap: wrap;
     justify-content: center;
-  }
-  .foot {
-    display: flex;
-    align-items: center;
-    gap: 14px;
-    height: var(--h-palette-foot);
-    padding: 0 12px;
-    border-top: 1px solid var(--line-soft);
-    background: var(--bg-panel);
-    font-size: 11.5px;
-    color: var(--text-3);
-    white-space: nowrap;
-    overflow: hidden;
-    flex: none;
-  }
-  .foot b {
-    font: 500 var(--fs-mono-s) var(--font-mono);
-    color: var(--text-2);
   }
   .where {
     display: inline-flex;

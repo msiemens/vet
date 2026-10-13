@@ -156,6 +156,9 @@
   /* Search Everywhere: the popup, a result and the line of keys under the list. */
   --w-palette: 680px;
   --h-palette: 520px;
+  /* Find in Files, the same popup with a preview beside its results. */
+  --w-palette-wide: 840px;
+  --h-palette-wide: 640px;
   --h-palette-row: 27px;
   --h-palette-field: 38px;
   --h-palette-foot: 26px;
