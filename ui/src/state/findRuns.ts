@@ -50,6 +50,19 @@ export function relocated(place: Place, moved: { line: number; kept: boolean } |
   return moved.kept ? { ...place, line: moved.line } : { ...place, line: moved.line, col: 0, width: 0 };
 }
 
+/**
+ * What the preview of a place draws its rows from. A file that changed since the run no longer
+ * has the hunks the place was found in, so a target line of it is shown as plain text around the
+ * line; a base line, and any line of a file that did not change, keep the hunks they were found in.
+ */
+export function previewBasis(
+  place: Place,
+  fileChanged: boolean,
+): Pick<Place["file"], "hunks" | "states"> & Pick<Place, "kind"> {
+  if (fileChanged && place.side === "target") return { hunks: [], states: [], kind: "context" };
+  return { hunks: place.file.hunks, states: place.file.states, kind: place.kind };
+}
+
 /** The lines of a file's target-side places to ask for, each once, in order. */
 export function linesToLocate(places: readonly Place[], path: string): number[] {
   const lines = places.filter((p) => p.file.path === path && p.side === "target").map((p) => p.line);

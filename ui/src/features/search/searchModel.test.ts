@@ -2,6 +2,8 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import type { SearchFile } from "../../generated/SearchFile.ts";
 import type { SearchLine } from "../../generated/SearchLine.ts";
+import { previewBasis } from "../../state/findRuns.ts";
+import type { Place } from "../../state/foundPlace.ts";
 import {
   previewRows,
   resolveScope,
@@ -128,6 +130,21 @@ void test("a preview of the target alone has no removed lines and keeps its line
     rows.map((r) => r.newNo),
     [3, 4, 5],
   );
+});
+
+void test("a row of a file that changed since the run still has a preview, as plain text around its line", () => {
+  // The hunks and the kind are those of the text the row was found in; the text is the file's now.
+  const found = {
+    path: "a.rs",
+    side: "target" as const,
+    kind: "added" as const,
+    file: { hunks, states: [] },
+  } as unknown as Place;
+  const input = { base, target, span: 1, withBase: false, line: 4 };
+  const stale = previewBasis(found, true);
+  assert.deepEqual(shape(previewRows({ ...input, hunks: stale.hunks, kind: stale.kind })), ["c:c", "c:d*", "c:e"]);
+  // Drawn from the hunks it was found in, the line is not in the rows at all and the preview waits forever.
+  assert.deepEqual(previewRows({ ...input, hunks, kind: "added" }), []);
 });
 
 void test("a preview's line starts count a line break as the editor does, one unit", () => {

@@ -13,7 +13,7 @@ import type { SearchLineKind } from "../generated/SearchLineKind.ts";
 import type { Side } from "../generated/Side.ts";
 import { codeRuns, libraryLabel, segments, trimmed } from "../lib/foundText.ts";
 import { NO_HIGHLIGHTS } from "../lib/highlights.ts";
-import { MODULE_LEVEL, fullName, placeLabel } from "../lib/symbolLabel.ts";
+import { fullName, placeLabel } from "../lib/symbolLabel.ts";
 
 /** The state of the hunk a place is in: seen, seen against an old base, not seen, or no hunk. */
 export type Review = "seen" | "old" | "unseen" | "none";
@@ -168,7 +168,7 @@ export function placesFromRows(
       text: row.text,
       hits: [{ from: col, to: col + width }],
       runs: codeRuns(row),
-      within: row.within ? placeLabel(row.within, row.path) : MODULE_LEVEL,
+      within: placeLabel(row.within),
       withinTitle: row.within ? fullName(row.within.id) : undefined,
       review: row.hunk === undefined ? "none" : reviewOf(file.states[row.hunk]),
       changed: inHunk,

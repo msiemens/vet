@@ -17,7 +17,7 @@
   import type { Backend } from "../../state/backend";
   import { type FindSet, findSets } from "../../state/findSets.svelte";
   import { type Item, narrowing, itemsOf, visible } from "../../state/findRows";
-  import { relocated } from "../../state/findRuns";
+  import { previewBasis, relocated } from "../../state/findRuns";
   import { type Place, letterOf } from "../../state/foundPlace";
   import { basename, dirname } from "../../lib/paths";
   import { MODULE_LEVEL } from "../../lib/symbolLabel";
@@ -394,6 +394,7 @@
         {/if}
       </div>
       {#if findSets.preview && chosen && !(set.phase === "failed" || set.phase === "stopped")}
+        {@const basis = previewBasis(chosen, moved.has(chosen.file.path))}
         <div class="preview">
           {#if moved.has(chosen.file.path)}
             <div class="pvn">
@@ -410,8 +411,8 @@
               path: chosen.file.path,
               status: chosen.file.status,
               completion: chosen.file.completion,
-              hunks: chosen.file.hunks,
-              states: chosen.file.states,
+              hunks: basis.hunks,
+              states: basis.states,
               lines: set.places
                 .filter((p) => p.file === chosen.file)
                 .map((p) => ({
@@ -422,7 +423,7 @@
                   hits: [...p.hits],
                 })),
             }}
-            line={relocated(chosen, set.moves.get(chosen.id))}
+            line={{ ...relocated(chosen, set.moves.get(chosen.id)), kind: basis.kind }}
             view={set.spec.type === "search" && set.spec.request.scope.type === "view"
               ? set.spec.request.scope.view
               : { type: "changeset" }}

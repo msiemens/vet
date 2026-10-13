@@ -73,9 +73,7 @@ void test("the whole name keeps the namespace, as its language writes it, withou
   assert.equal(fullName({ path: "src/lib.rs", name: ["billing", "core", "free"] }), "billing::core::free");
 });
 
-void test("a place without a symbol is its file, whatever the separators of its path", () => {
-  assert.equal(placeLabel(null, "src/billing/util.py"), "util.py");
-  assert.equal(placeLabel(null, "/home/dep/lib/mod.rs"), "mod.rs");
-  assert.equal(placeLabel(null, "C:\\dep\\Mod.cs"), "Mod.cs");
-  assert.equal(placeLabel({ id: { path: "a.py", name: ["f"] }, modules: 0, kind: "function" }, "a.py"), "f");
+void test("a place without a symbol is at module level", () => {
+  assert.equal(placeLabel(null), "module level");
+  assert.equal(placeLabel({ id: { path: "a.py", name: ["f"] }, modules: 0, kind: "function" }), "f");
 });

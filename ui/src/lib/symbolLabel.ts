@@ -55,9 +55,8 @@ export function shortLabel(symbol: SymbolName): string {
 /** What a row calls a place that is in no symbol: it is in its file's top level. */
 export const MODULE_LEVEL = "module level";
 
-/** What a row says of a place: its symbol, else the name of its file. */
-export const placeLabel = (symbol: SymbolName | null, path: string): string =>
-  symbol ? shortLabel(symbol) : fileName(path);
+/** What a row says of a place: its symbol, else that it is at module level. */
+export const placeLabel = (symbol: SymbolName | null): string => (symbol ? shortLabel(symbol) : MODULE_LEVEL);
 
 /** The whole name of a symbol as its language writes it, namespaces included, for a tooltip. */
 export const fullName = (id: SymbolId): string => id.name.map((n) => plainName(id.path, n)).join(separatorOf(id.path));

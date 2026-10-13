@@ -115,7 +115,7 @@ void test("typing keeps the places whose symbol, line or file matches, and the t
 
 void test("a place is named by its symbol and the last part of its container, in the file's language's separator", () => {
   const label = (path: string, name: string[], modules = 0) =>
-    symbolLabel({ path, within: { id: { path, name }, modules, kind: "function" } });
+    symbolLabel({ within: { id: { path, name }, modules, kind: "function" } });
   assert.equal(label("src/sync/retry.rs", ["RetryPolicy", "preview"]), "RetryPolicy::preview");
   assert.equal(label("src/retry.ts", ["Retry", "preview"]), "Retry.preview");
   assert.equal(
@@ -137,7 +137,7 @@ void test("a place is named by its symbol and the last part of its container, in
   assert.equal(label("src/sync/retry.rs", ["impl<T: Copy> Wrapper<T>", "get"]), "Wrapper<T>::get");
   assert.equal(label("src/sync/retry.rs", ["impl Backoff for RetryPolicy"]), "RetryPolicy");
   assert.equal(label("src/lib.rs", ["free_fn"]), "free_fn");
-  assert.equal(symbolLabel({ path: "src/billing/util.py", within: null }), "util.py");
+  assert.equal(symbolLabel({ within: null }), "module level");
 });
 
 void test("a flat list puts places in changed hunks first, then changed files, other files and libraries, each by path and line", () => {

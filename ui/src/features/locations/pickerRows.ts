@@ -117,4 +117,4 @@ export function opensBelow(anchor: { top: number; bottom: number }, viewport: nu
  * namespaces (`Ledger::commit`, `TaskDispatcher.Trigger`), else just the symbol; the file's name
  * where there is no symbol.
  */
-export const symbolLabel = (row: Pick<LocationRow, "within" | "path">): string => placeLabel(row.within, row.path);
+export const symbolLabel = (row: Pick<LocationRow, "within">): string => placeLabel(row.within);
