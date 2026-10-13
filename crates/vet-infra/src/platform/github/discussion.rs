@@ -16,7 +16,8 @@ use vet_app::platform::{
 };
 
 use super::wire::{
-    Author, CommitNode, Name, Nodes, Oid, PageInfo, RequestNode, latest_ci, requested, review_verdict, unexpected,
+    Author, CommitNode, Name, Nodes, Oid, Page, RepositoryData, RequestNode, latest_ci, requested, review_verdict,
+    unexpected,
 };
 use super::{Clients, GitHubClient, repository};
 use crate::platform::time::parse_rfc3339;
@@ -193,49 +194,13 @@ struct ThreadNode {
     start_line: Option<u32>,
     subject_type: Option<String>,
     resolved_by: Option<Author>,
-    comments: CommentPage,
-}
-
-#[derive(Deserialize)]
-struct CommentPage {
-    nodes: Vec<Option<CommentNode>>,
-    #[serde(rename = "pageInfo")]
-    page_info: PageInfo,
-}
-
-#[derive(Deserialize)]
-struct ThreadPage {
-    nodes: Vec<Option<ThreadNode>>,
-    #[serde(rename = "pageInfo")]
-    page_info: PageInfo,
-}
-
-#[derive(Deserialize)]
-struct ThreadsData {
-    repository: Option<ThreadsRepository>,
-}
-
-#[derive(Deserialize)]
-struct ThreadsRepository {
-    #[serde(rename = "pullRequest")]
-    pull_request: Option<ThreadsNode>,
+    comments: Page<CommentNode>,
 }
 
 #[derive(Deserialize)]
 struct ThreadsNode {
     #[serde(rename = "reviewThreads")]
-    review_threads: ThreadPage,
-}
-
-#[derive(Deserialize)]
-struct DiscussionData {
-    repository: Option<DiscussionRepository>,
-}
-
-#[derive(Deserialize)]
-struct DiscussionRepository {
-    #[serde(rename = "pullRequest")]
-    pull_request: Option<DiscussionNode>,
+    review_threads: Page<ThreadNode>,
 }
 
 #[derive(Deserialize)]
@@ -255,7 +220,7 @@ struct DiscussionNode {
     commits: Nodes<CommitNode>,
     comments: Nodes<CommentNode>,
     reviews: Nodes<ReviewNode>,
-    review_threads: ThreadPage,
+    review_threads: Page<ThreadNode>,
 }
 
 #[derive(Deserialize)]
@@ -282,7 +247,7 @@ struct NodeData<T> {
 
 #[derive(Deserialize)]
 struct MoreComments {
-    comments: CommentPage,
+    comments: Page<CommentNode>,
 }
 
 impl ThreadNode {
@@ -461,7 +426,7 @@ impl<C: CredentialProvider + Sync> GitHubClient<C> {
         host: &str,
         clients: &Clients,
         thread: &str,
-        first: &CommentPage,
+        first: &Page<CommentNode>,
     ) -> Result<Vec<CommentNode>, PlatformError> {
         let mut after = first
             .page_info
@@ -491,7 +456,7 @@ impl<C: CredentialProvider + Sync> GitHubClient<C> {
         &self,
         host: &str,
         clients: &Clients,
-        mut page: ThreadPage,
+        mut page: Page<ThreadNode>,
         pull_request: (&str, &str, u64),
     ) -> Result<(Vec<PlatformThreadData>, bool), PlatformError> {
         let (owner, name, number) = pull_request;
@@ -508,7 +473,7 @@ impl<C: CredentialProvider + Sync> GitHubClient<C> {
             if threads.len() >= MAX_THREADS {
                 return Ok((threads, false));
             }
-            let data: ThreadsData = self
+            let data: RepositoryData<ThreadsNode> = self
                 .graphql(
                     host,
                     clients,
@@ -517,8 +482,7 @@ impl<C: CredentialProvider + Sync> GitHubClient<C> {
                 )
                 .await?;
             page = data
-                .repository
-                .and_then(|r| r.pull_request)
+                .pull_request()
                 .ok_or_else(|| unexpected("a pull request"))?
                 .review_threads;
         }
@@ -528,7 +492,7 @@ impl<C: CredentialProvider + Sync> GitHubClient<C> {
         let (owner, name) = repository(remote)?;
         let host = remote.host.as_str();
         let clients = self.clients(host).await?;
-        let data: DiscussionData = self
+        let data: RepositoryData<DiscussionNode> = self
             .graphql(
                 host,
                 &clients,
@@ -536,7 +500,7 @@ impl<C: CredentialProvider + Sync> GitHubClient<C> {
                 json!({ "owner": owner, "name": name, "number": number, "after": null }),
             )
             .await?;
-        let node = data.repository.and_then(|r| r.pull_request).ok_or_else(|| {
+        let node = data.pull_request().ok_or_else(|| {
             PlatformError::NotFound(format!(
                 "{owner}/{name}#{number} was not found on {host}, or the token cannot see it"
             ))

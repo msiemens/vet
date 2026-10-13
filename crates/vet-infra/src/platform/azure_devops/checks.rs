@@ -304,7 +304,7 @@ impl<C: CredentialProvider + Sync> AzureDevOpsClient<C> {
         .await?;
         let checks = self.pull_request_checks(&call, &pr, &iterations, commit).await?;
         if checks.is_final() {
-            self.state().checks.insert(key, checks.clone());
+            self.state().checks.insert(key, checks.clone(), (self.now)());
         }
         Ok(checks)
     }
@@ -346,7 +346,7 @@ impl<C: CredentialProvider + Sync> AzureDevOpsClient<C> {
             .max_by_key(|(active, _)| *active)
             .map(|(_, number)| number);
         if let Some(number) = found {
-            self.state().pull_requests_of_commits.insert(key, number);
+            self.state().pull_requests_of_commits.insert(key, number, (self.now)());
         }
         Ok(found)
     }

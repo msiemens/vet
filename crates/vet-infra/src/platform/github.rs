@@ -38,12 +38,13 @@ use vet_app::platform::{
 
 use crate::clock::unix_now;
 use crate::http::LazyClient;
+use crate::platform::cache::Cache;
 use crate::platform::limits::Blocked;
 use crate::platform::message::{rate_limited, reason};
 use limits::{Limits, SECONDARY_WAIT, Watch, WatchLayer};
 use tower::Layer;
 use tower::retry::RetryLayer;
-use wire::{DetailData, SearchData};
+use wire::{DetailNode, RepositoryData, SearchData};
 
 mod checks;
 mod discussion;
@@ -71,6 +72,9 @@ const LIST_MAX_AGE: i64 = 180;
 
 /// How long who the viewer is, and their teams, are reused.
 const VIEWER_MAX_AGE: i64 = 600;
+
+/// How many entries each of the adapter's caches holds.
+const CACHED: usize = 500;
 
 /// Where a host's APIs are: the base URIs that the routes of `octocrab` (REST) and
 /// `/graphql` are relative to.
@@ -174,17 +178,28 @@ struct Newest {
     updated_at: String,
 }
 
-#[derive(Default)]
 struct State {
     /// By host; rebuilt when the credential for the host changes.
     clients: HashMap<String, (Credential, Clients)>,
     /// What the probe saw last, by repository.
-    probed: HashMap<RemoteKey, Option<Newest>>,
-    /// Lists by repository, then search; with the time they were fetched.
-    lists: HashMap<RemoteKey, HashMap<String, (i64, PullRequestListing)>>,
-    viewers: HashMap<String, (i64, Viewer)>,
+    probed: Cache<RemoteKey, Option<Newest>>,
+    /// Lists by repository and search.
+    lists: Cache<(RemoteKey, String), PullRequestListing>,
+    viewers: Cache<String, Viewer>,
     /// The checks of commits whose checks are all done, which nothing changes any more.
-    checks: HashMap<(RemoteKey, String), CommitChecks>,
+    checks: Cache<(RemoteKey, String), CommitChecks>,
+}
+
+impl State {
+    fn new() -> Self {
+        Self {
+            clients: HashMap::new(),
+            probed: Cache::new(CACHED),
+            lists: Cache::new(CACHED),
+            viewers: Cache::new(CACHED),
+            checks: Cache::new(CACHED),
+        }
+    }
 }
 
 pub struct GitHubClient<C> {
@@ -219,7 +234,7 @@ impl<C: CredentialProvider + Sync> GitHubClient<C> {
             http: LazyClient::new(TIMEOUT),
             endpoints: None,
             now: unix_now,
-            state: Mutex::default(),
+            state: Mutex::new(State::new()),
             limits: Arc::default(),
         }
     }
@@ -400,7 +415,8 @@ impl<C: CredentialProvider + Sync> GitHubClient<C> {
             )
             .await;
         let newest = self.settle(host, Bucket::Core, found).await?.pop();
-        Ok(self.state().probed.insert(remote.clone(), newest.clone()) == Some(newest))
+        let now = (self.now)();
+        Ok(self.state().probed.insert(remote.clone(), newest.clone(), now) == Some(newest))
     }
 }
 
@@ -412,9 +428,7 @@ impl<C: CredentialProvider + Sync> Platform for GitHubClient<C> {
     async fn viewer(&self, remote: &RemoteKey) -> Result<Viewer, PlatformError> {
         let host = remote.host.as_str();
         let now = (self.now)();
-        if let Some((at, viewer)) = self.state().viewers.get(host)
-            && now - at < VIEWER_MAX_AGE
-        {
+        if let Some(viewer) = self.state().viewers.fresh(&host.to_owned(), now, VIEWER_MAX_AGE) {
             return Ok(viewer.clone());
         }
         let clients = self.clients(host).await?;
@@ -424,7 +438,7 @@ impl<C: CredentialProvider + Sync> Platform for GitHubClient<C> {
             login: user.login,
             teams: self.teams(host, &clients.rest).await?,
         };
-        self.state().viewers.insert(host.to_owned(), (now, viewer.clone()));
+        self.state().viewers.insert(host.to_owned(), viewer.clone(), now);
         Ok(viewer)
     }
 
@@ -441,14 +455,15 @@ impl<C: CredentialProvider + Sync> Platform for GitHubClient<C> {
             .unchanged_since_last_asked(&remote.host, &clients, remote, owner, name)
             .await?
         {
-            let state = self.state();
-            if let Some((at, found)) = state.lists.get(remote).and_then(|by_search| by_search.get(&search))
-                && now - at < LIST_MAX_AGE
+            if let Some(found) = self
+                .state()
+                .lists
+                .fresh(&(remote.clone(), search.clone()), now, LIST_MAX_AGE)
             {
                 return Ok(found.clone());
             }
         } else {
-            self.state().lists.remove(remote);
+            self.state().lists.retain(|(kept, _), _| kept != remote);
         }
 
         let mut found = PullRequestListing::default();
@@ -474,11 +489,7 @@ impl<C: CredentialProvider + Sync> Platform for GitHubClient<C> {
                 }
             }
         }
-        self.state()
-            .lists
-            .entry(remote.clone())
-            .or_default()
-            .insert(search, (now, found.clone()));
+        self.state().lists.insert((remote.clone(), search), found.clone(), now);
         Ok(found)
     }
 
@@ -495,7 +506,7 @@ impl<C: CredentialProvider + Sync> Platform for GitHubClient<C> {
         let mut force_pushes = Vec::new();
         let mut after: Option<String> = None;
         loop {
-            let data: DetailData = self
+            let data: RepositoryData<DetailNode> = self
                 .graphql(
                     &remote.host,
                     &clients,
@@ -503,7 +514,7 @@ impl<C: CredentialProvider + Sync> Platform for GitHubClient<C> {
                     json!({ "owner": owner, "name": name, "number": number, "after": after }),
                 )
                 .await?;
-            let node = data.repository.and_then(|r| r.pull_request).ok_or_else(not_found)?;
+            let node = data.pull_request().ok_or_else(not_found)?;
             let page = &node.timeline_items.page_info;
             let next = page.end_cursor.clone().filter(|_| page.has_next_page);
             if detail.is_none() {

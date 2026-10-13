@@ -92,27 +92,35 @@ pub(super) struct PageInfo {
     pub end_cursor: Option<String>,
 }
 
+/// A connection: one page of nodes, and where the next one begins.
 #[derive(Deserialize)]
-pub(super) struct SearchData {
-    pub search: Search,
-}
-
-#[derive(Deserialize)]
-pub(super) struct Search {
-    pub nodes: Vec<Option<PullRequestNode>>,
+pub(super) struct Page<T> {
+    pub nodes: Vec<Option<T>>,
     #[serde(rename = "pageInfo")]
     pub page_info: PageInfo,
 }
 
 #[derive(Deserialize)]
-pub(super) struct DetailData {
-    pub repository: Option<Repository>,
+pub(super) struct SearchData {
+    pub search: Page<PullRequestNode>,
+}
+
+/// The answer to a query for one pull request of a repository.
+#[derive(Deserialize)]
+pub(super) struct RepositoryData<T> {
+    pub repository: Option<RepositoryNode<T>>,
 }
 
 #[derive(Deserialize)]
-pub(super) struct Repository {
+pub(super) struct RepositoryNode<T> {
     #[serde(rename = "pullRequest")]
-    pub pull_request: Option<DetailNode>,
+    pub pull_request: Option<T>,
+}
+
+impl<T> RepositoryData<T> {
+    pub(super) fn pull_request(self) -> Option<T> {
+        self.repository.and_then(|r| r.pull_request)
+    }
 }
 
 #[derive(Deserialize)]
@@ -121,14 +129,7 @@ pub(super) struct DetailNode {
     #[serde(flatten)]
     pub pull_request: PullRequestNode,
     pub base_ref_oid: String,
-    pub timeline_items: Timeline,
-}
-
-#[derive(Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub(super) struct Timeline {
-    pub nodes: Vec<Option<ForcePushNode>>,
-    pub page_info: PageInfo,
+    pub timeline_items: Page<ForcePushNode>,
 }
 
 #[derive(Deserialize)]

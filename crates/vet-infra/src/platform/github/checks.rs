@@ -19,9 +19,6 @@ use crate::platform::time::parse_rfc3339;
 /// The app whose check runs have a log to fetch.
 const ACTIONS_APP: &str = "github-actions";
 
-/// How many commits' complete checks are kept.
-const KEPT_COMMITS: usize = 500;
-
 #[derive(Deserialize)]
 struct CheckRuns {
     check_runs: Vec<CheckRunJson>,
@@ -258,11 +255,7 @@ impl<C: CredentialProvider + Sync> GitHubClient<C> {
         let (runs, workflows, statuses) = try_join3(runs, workflows, statuses).await?;
         let checks = commit_checks(remote, commit, runs, &workflows, statuses);
         if checks.is_final() {
-            let mut state = self.state();
-            if state.checks.len() >= KEPT_COMMITS {
-                state.checks.clear();
-            }
-            state.checks.insert(key, checks.clone());
+            self.state().checks.insert(key, checks.clone(), (self.now)());
         }
         Ok(checks)
     }

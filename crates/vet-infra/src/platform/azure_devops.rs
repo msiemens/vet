@@ -19,7 +19,6 @@
 //!
 //! A pull request's threads, votes and checks are in `discussion` and `checks`.
 
-use std::collections::HashMap;
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use std::time::Duration;
 
@@ -35,6 +34,7 @@ use vet_app::platform::{
 
 use crate::clock::unix_now;
 use crate::http::LazyClient;
+use crate::platform::cache::Cache;
 use crate::platform::limits::Gate;
 use access::{API_ENDPOINT, Access, failure};
 use limits::Watch;
@@ -129,23 +129,39 @@ struct Extras {
     updated_at: i64,
 }
 
-#[derive(Default)]
+/// How many entries each of the adapter's caches holds.
+const CACHED: usize = 500;
+
 struct State {
     /// The id of the project of each repository, as its pull requests say it; the policies of
     /// a pull request are asked for by it.
-    project_ids: HashMap<RemoteKey, String>,
-    /// The profile by host, with when it was read.
-    profiles: HashMap<String, (i64, access::Me)>,
+    project_ids: Cache<RemoteKey, String>,
+    /// The profile by host.
+    profiles: Cache<String, access::Me>,
     /// The user's groups by host and organization.
-    teams: HashMap<(String, String), (i64, Vec<String>)>,
+    teams: Cache<(String, String), Vec<String>>,
     /// By host and organization: when the groups were last refused.
-    teams_unreadable: HashMap<(String, String), i64>,
-    /// By repository and pull request: the head they were read for, and when.
-    extras: HashMap<(RemoteKey, u64), (i64, String, Extras)>,
+    teams_unreadable: Cache<(String, String), ()>,
+    /// By repository and pull request: the head they were read for, and what they were.
+    extras: Cache<(RemoteKey, u64), (String, Extras)>,
     /// The pull request each commit that an iteration has as its source was seen in.
-    pull_requests_of_commits: HashMap<(RemoteKey, String), i32>,
+    pull_requests_of_commits: Cache<(RemoteKey, String), i32>,
     /// The checks of commits whose checks are all done, which nothing changes any more.
-    checks: HashMap<(RemoteKey, String), CommitChecks>,
+    checks: Cache<(RemoteKey, String), CommitChecks>,
+}
+
+impl State {
+    fn new() -> Self {
+        Self {
+            project_ids: Cache::new(CACHED),
+            profiles: Cache::new(CACHED),
+            teams: Cache::new(CACHED),
+            teams_unreadable: Cache::new(CACHED),
+            extras: Cache::new(CACHED),
+            pull_requests_of_commits: Cache::new(CACHED),
+            checks: Cache::new(CACHED),
+        }
+    }
 }
 
 pub struct AzureDevOpsClient<C> {
@@ -185,7 +201,7 @@ impl<C: CredentialProvider + Sync> AzureDevOpsClient<C> {
             endpoints: None,
             page_size: PAGE_SIZE,
             now: unix_now,
-            state: Mutex::default(),
+            state: Mutex::new(State::new()),
             limits: Arc::default(),
         }
     }
@@ -283,16 +299,15 @@ impl<C: CredentialProvider + Sync> AzureDevOpsClient<C> {
         let cached = self
             .state()
             .profiles
-            .get(host)
-            .filter(|(at, _)| now - at < VIEWER_MAX_AGE)
-            .map(|(_, me)| me.clone());
+            .fresh(&host.to_owned(), now, VIEWER_MAX_AGE)
+            .cloned();
         let profile = match cached {
             Some(profile) => profile,
             None => {
                 let profile = access
                     .me(&self.endpoints().api, repository.organization, host, now)
                     .await?;
-                self.state().profiles.insert(host.to_owned(), (now, profile.clone()));
+                self.state().profiles.insert(host.to_owned(), profile.clone(), now);
                 profile
             }
         };
@@ -303,29 +318,24 @@ impl<C: CredentialProvider + Sync> AzureDevOpsClient<C> {
             .ok_or_else(|| PlatformError::Unexpected(format!("{host} did not say who the user is")))?;
 
         let key = (host.to_owned(), repository.organization.to_owned());
-        let cached = self
-            .state()
-            .teams
-            .get(&key)
-            .filter(|(at, _)| now - at < VIEWER_MAX_AGE)
-            .map(|(_, teams)| teams.clone());
+        let cached = self.state().teams.fresh(&key, now, VIEWER_MAX_AGE).cloned();
         let unreadable = self
             .state()
             .teams_unreadable
-            .get(&key)
-            .is_some_and(|at| now - at < TEAMS_RETRY_AFTER);
+            .fresh(&key, now, TEAMS_RETRY_AFTER)
+            .is_some();
         let teams = match (cached, profile.id.as_deref()) {
             (Some(teams), _) => teams,
             (None, _) if unreadable => Vec::new(),
             (None, Some(id)) => match self.teams(access, host, repository.organization, id).await {
                 Ok(teams) => {
-                    self.state().teams.insert(key, (now, teams.clone()));
+                    self.state().teams.insert(key, teams.clone(), now);
                     teams
                 }
                 // The token cannot read identities, or the organization has none to give:
                 // the queue works without, and is not asked again for a while.
                 Err(PlatformError::Forbidden(_) | PlatformError::NotFound(_)) => {
-                    if self.state().teams_unreadable.insert(key, now).is_none() {
+                    if self.state().teams_unreadable.insert(key, (), now).is_none() {
                         tracing::warn!(
                             account = host,
                             "the groups of the user cannot be read (the token may lack the identity scope); \
@@ -372,9 +382,8 @@ impl<C: CredentialProvider + Sync> AzureDevOpsClient<C> {
     ) -> Result<Extras, PlatformError> {
         let now = (self.now)();
         let key = (remote.clone(), pr.number);
-        if let Some((at, head, extras)) = self.state().extras.get(&key)
+        if let Some((head, extras)) = self.state().extras.fresh(&key, now, EXTRAS_MAX_AGE)
             && *head == pr.head
-            && now - at < EXTRAS_MAX_AGE
         {
             return Ok(*extras);
         }
@@ -421,14 +430,14 @@ impl<C: CredentialProvider + Sync> AzureDevOpsClient<C> {
             blocked: checks::blocked_by(&evaluations?),
             updated_at: wire::last_activity(pr.updated_at, &threads, &statuses),
         };
-        self.state().extras.insert(key, (now, pr.head.clone(), extras));
+        self.state().extras.insert(key, (pr.head.clone(), extras), now);
         Ok(extras)
     }
 
     /// Remembers the id of the project `remote` is in, which a pull request of it names.
     fn learn_project(&self, remote: &RemoteKey, pr: Option<&GitPullRequest>) {
         if let Some(id) = pr.and_then(|pr| pr.repository.project.id.clone()) {
-            self.state().project_ids.insert(remote.clone(), id);
+            self.state().project_ids.insert(remote.clone(), id, (self.now)());
         }
     }
 
@@ -584,7 +593,7 @@ impl<C: CredentialProvider + Sync> Platform for AzureDevOpsClient<C> {
             for push in &pushes {
                 state
                     .pull_requests_of_commits
-                    .insert((remote.clone(), push.head.clone()), id);
+                    .insert((remote.clone(), push.head.clone()), id, (self.now)());
             }
         }
         let base = base

@@ -47,7 +47,7 @@ fn client_with<C: CredentialProvider + Sync>(fake: &Fake, credentials: C) -> Azu
         }),
         page_size: PAGE_SIZE,
         now,
-        state: Mutex::default(),
+        state: Mutex::new(State::new()),
         limits: Arc::default(),
     }
 }

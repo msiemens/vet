@@ -68,7 +68,7 @@ fn client_with<C: CredentialProvider + Sync>(fake: &Fake, credentials: C) -> Git
             rest: fake.base(),
         }),
         now,
-        state: Mutex::default(),
+        state: Mutex::new(State::new()),
         limits: Arc::default(),
     }
 }
