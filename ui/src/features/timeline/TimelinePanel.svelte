@@ -1,4 +1,5 @@
 <script lang="ts">
+  import type { CommitInfo } from "../../generated/CommitInfo";
   import type { LineDelta } from "../../generated/LineDelta";
   import type { VersionInfo } from "../../generated/VersionInfo";
   import CiStatus from "../../lib/ui/CiStatus.svelte";
@@ -15,6 +16,7 @@
 
   let {
     versions,
+    base: current,
     range,
     byCommit = false,
     files,
@@ -25,6 +27,8 @@
   }: {
     /** Oldest first. */
     versions: readonly VersionInfo[];
+    /** The base the changeset is compared with now. */
+    base?: CommitInfo;
     /** The range the review view shows; none for the whole changeset. */
     range?: Range;
     /** A commit is on view, which choosing a row leaves. */
@@ -50,7 +54,7 @@
   let sort = $state<Sort>();
   const shown = $derived({ range, byCommit });
   const rows = $derived(sortRows(timelineRows(versions, shown), COLUMNS, sort));
-  const base = $derived(baseRow(versions, shown));
+  const base = $derived(baseRow(versions, current, shown));
   const since = $derived(defaultRange(versions));
   /** The version clicked last, which a shift-click runs the block from. */
   let anchor = $state<number>();

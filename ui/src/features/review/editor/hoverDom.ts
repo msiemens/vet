@@ -43,7 +43,9 @@ export function hoverPopups<T extends HoverAnchor>(
       if (!(event.target instanceof Node && el?.contains(event.target))) dismiss();
     };
     const onKey = (event: KeyboardEvent) => {
-      if (event.key === "Escape") dismiss();
+      if (event.key !== "Escape") return;
+      event.preventDefault();
+      dismiss();
     };
 
     const popup = new HoverPopup<T, () => HTMLElement>({

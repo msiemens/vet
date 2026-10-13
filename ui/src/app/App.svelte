@@ -582,6 +582,7 @@
         rightOpen={right.open}
         {softWrap}
         onservers={() => showDialog("settings", "servers")}
+        scope={scope?.label ?? "All changes"}
         onready={(c) => void (controller = c)}
         onclose={() => (controller = undefined)}
       >
@@ -600,6 +601,7 @@
           {#if timelineOpen}
             <TimelinePanel
               versions={versions.items}
+              base={changeset.facts?.base.commit}
               {range}
               byCommit={changeset.shownCommit !== undefined}
               files={rangeFiles}

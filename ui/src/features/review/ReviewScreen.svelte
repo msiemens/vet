@@ -49,6 +49,7 @@
     bottom,
     softWrap,
     onservers,
+    scope,
     onready,
     onclose,
   }: {
@@ -59,6 +60,8 @@
     softWrap: SoftWrap;
     /** Opens Settings at the language servers. */
     onservers: () => void;
+    /** What the changes shown are of, which names the first tab. */
+    scope: string;
     /** The left tool window and whether its sidebar is shown. */
     leftTool: string;
     leftOpen: boolean;
@@ -254,6 +257,7 @@
       <TabStrip
         {tabs}
         files={changeset.shownFiles}
+        {scope}
         {commit}
         unitOf={(id) => controller.commitUnit(id)}
         onmenu={(id, x, y) => openMenu(tabMenu, x, y, { tab: id })}
@@ -265,9 +269,7 @@
     {/if}
   </div>
   {#if range && readOnly}
-    <p class="note" role="status">
-      Read-only: marks and comments only work in a range that ends at the latest version.
-    </p>
+    <p class="note" role="status">Read-only: marks and comments are made on the latest push or All changes.</p>
   {/if}
   {#if pinned !== undefined}<CommitStrip id={pinned} commit={controller.commitUnit(tabs.active)} />{/if}
   {#if commit && tabs.active === CHANGES}<CommitHeader {commit} />{/if}

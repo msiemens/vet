@@ -32,7 +32,11 @@
 
 <svelte:window
   onpointerdown={(e) => open && !root.contains(e.target as Node) && (open = false)}
-  onkeydown={(e) => open && e.key === "Escape" && (open = false)}
+  onkeydown={(e) => {
+    if (!open || e.key !== "Escape") return;
+    e.preventDefault();
+    open = false;
+  }}
   onresize={() => (open = false)}
 />
 

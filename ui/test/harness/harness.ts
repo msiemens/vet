@@ -80,6 +80,11 @@ export class Fixture {
     writeFileSync(join(this.repo, path), lines.join("\n") + "\n");
   }
 
+  /** Moves `HEAD` to `ref` and leaves the files as they are. */
+  resetHeadTo(ref: string) {
+    this.git(this.repo, "reset", "-q", "--soft", ref);
+  }
+
   private git(cwd: string, ...args: string[]) {
     const env = {
       ...process.env,

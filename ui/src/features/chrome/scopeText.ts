@@ -52,12 +52,10 @@ export function scopeChip({ range, latest, commit, live, pending }: ScopeFacts):
   }
   const { first, last } = pushesOf(range);
   const against = range.from === 0 ? "the base" : `v${range.from}`;
-  const dotted = range.live ? dot : undefined;
   return {
     label: first === last ? `Push v${first}` : `Pushes v${first}–v${last}`,
-    tip: `${first === last ? `What push v${first} changed` : `What pushes v${first} to v${last} changed`}, compared with ${against}.${dotted === "pending" ? WAITING : ""}`,
+    tip: `${first === last ? `What push v${first} changed` : `What pushes v${first} to v${last} changed`}, compared with ${against}.`,
     narrowed: true,
-    dot: dotted,
   };
 }
 

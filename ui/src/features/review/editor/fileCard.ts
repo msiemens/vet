@@ -73,7 +73,11 @@ export function showChangeCard(anchor: CardAnchor, content: CardContent) {
   card.style.top = `${Math.max(4, top)}px`;
 
   const onPress = (e: Event) => e.target instanceof Node && !card.contains(e.target) && close?.();
-  const onKey = (e: KeyboardEvent) => e.key === "Escape" && close?.();
+  const onKey = (e: KeyboardEvent) => {
+    if (e.key !== "Escape") return;
+    e.preventDefault();
+    close?.();
+  };
   const onScroll = (e: Event) => e.target instanceof Node && !card.contains(e.target) && close?.();
   window.addEventListener("pointerdown", onPress, true);
   window.addEventListener("keydown", onKey, true);

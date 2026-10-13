@@ -11,17 +11,14 @@ void test("the whole changeset is All changes, with no version number", () => {
 });
 
 void test("pushes are named by their own versions, a block by its ends", () => {
-  assert.equal(scopeChip({ ...quiet, latest: 3, range: { from: 1, to: 2, live: false } }).label, "Push v2");
-  assert.equal(scopeChip({ ...quiet, latest: 3, range: { from: 0, to: 1, live: false } }).label, "Push v1");
-  assert.equal(scopeChip({ ...quiet, latest: 4, range: { from: 1, to: 3, live: false } }).label, "Pushes v2–v3");
+  assert.equal(scopeChip({ ...quiet, latest: 3, range: { from: 1, to: 2 } }).label, "Push v2");
+  assert.equal(scopeChip({ ...quiet, latest: 3, range: { from: 0, to: 1 } }).label, "Push v1");
+  assert.equal(scopeChip({ ...quiet, latest: 4, range: { from: 1, to: 3 } }).label, "Pushes v2–v3");
 });
 
 void test("a push says which version it is compared with, the first one the base", () => {
-  assert.match(scopeChip({ ...quiet, latest: 3, range: { from: 1, to: 2, live: false } }).tip, /compared with v1/);
-  assert.match(
-    scopeChip({ ...quiet, latest: 3, range: { from: 0, to: 1, live: false } }).tip,
-    /compared with the base/,
-  );
+  assert.match(scopeChip({ ...quiet, latest: 3, range: { from: 1, to: 2 } }).tip, /compared with v1/);
+  assert.match(scopeChip({ ...quiet, latest: 3, range: { from: 0, to: 1 } }).tip, /compared with the base/);
 });
 
 void test("a commit is named by its hash, and by its position until the commits are loaded", () => {
@@ -40,10 +37,10 @@ void test("the dot is there while the working tree is followed, and hollow while
   assert.equal(scopeChip({ live: false, pending: true }).dot, undefined);
 });
 
-void test("a push that is not the latest does not follow the working tree", () => {
-  const range = { from: 1, to: 2, live: false };
-  assert.equal(scopeChip({ live: true, pending: true, latest: 3, range }).dot, undefined);
-  assert.equal(scopeChip({ live: true, pending: true, latest: 3, range: { ...range, live: true } }).dot, "pending");
+void test("a push is a fixed set of changes: it does not follow the working tree", () => {
+  const chip = scopeChip({ live: true, pending: true, latest: 2, range: { from: 1, to: 2 } });
+  assert.equal(chip.dot, undefined);
+  assert.doesNotMatch(chip.tip, /become the next version/);
 });
 
 const base = (over: Partial<Base> = {}): Base => ({

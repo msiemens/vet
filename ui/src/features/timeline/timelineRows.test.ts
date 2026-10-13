@@ -51,11 +51,11 @@ void test("the whole changeset shows every push and is compared with the base", 
     rows.map((r) => [r.n, r.shown, r.ring]),
     [5, 4, 3, 2, 1].map((n) => [n, true, false]),
   );
-  assert.equal(baseRow([version(1, { base: commit("a1b2c3d") })])?.ring, true);
+  assert.equal(baseRow(five, commit("a1b2c3d"))?.ring, true);
 });
 
 void test("one push shows only itself and is compared with the version before it", () => {
-  const range = { from: 2, to: 3, live: false };
+  const range = { from: 2, to: 3 };
   const rows = timelineRows(five, { range });
   assert.deepEqual(
     rows.map((r) => [r.n, r.shown, r.ring]),
@@ -70,7 +70,7 @@ void test("one push shows only itself and is compared with the version before it
 });
 
 void test("a block shows each of its pushes, and the first push is compared with the base", () => {
-  const range = { from: 0, to: 2, live: false };
+  const range = { from: 0, to: 2 };
   const rows = timelineRows(five, { range });
   assert.deepEqual(
     rows.map((r) => [r.n, r.shown, r.ring]),
@@ -82,7 +82,7 @@ void test("a block shows each of its pushes, and the first push is compared with
       [1, true, false],
     ],
   );
-  assert.equal(baseRow([version(1, { base: commit("a1b2c3d") })], { range })?.ring, true);
+  assert.equal(baseRow(five, commit("a1b2c3d"), { range })?.ring, true);
 });
 
 void test("a commit on view marks no push and nothing to compare with", () => {
@@ -91,18 +91,28 @@ void test("a commit on view marks no push and nothing to compare with", () => {
     rows.map((r) => r.shown || r.ring),
     [false, false, false, false, false],
   );
-  assert.equal(baseRow([version(1, { base: commit("a1b2c3d") })], { byCommit: true })?.ring, false);
+  assert.equal(baseRow(five, commit("a1b2c3d"), { byCommit: true })?.ring, false);
 });
 
-void test("the header says which pushes are shown", () => {
-  assert.equal(timelineSummary({}, 3), "Showing every push");
-  assert.equal(timelineSummary({ range: { from: 1, to: 2, live: false } }, 3), "Showing what push v2 changed");
-  assert.equal(timelineSummary({ range: { from: 0, to: 2, live: false } }, 3), "Showing pushes v1 to v2");
-  assert.match(timelineSummary({ byCommit: true }, 3), /one commit/);
+void test("the header names the pushes shown, and nothing before a review", () => {
+  const says = (shown: Parameters<typeof timelineSummary>[0]) => timelineSummary(shown, 3);
+  assert.match(says({ range: { from: 1, to: 2 } }), /v2/);
+  assert.doesNotMatch(says({ range: { from: 1, to: 2 } }), /v1|v3/);
+  assert.match(says({ range: { from: 0, to: 2 } }), /v1.*v2/);
+  assert.notEqual(says({}), says({ range: { from: 0, to: 2 } }));
+  assert.match(says({ byCommit: true, range: { from: 0, to: 2 } }), /commit/i);
   assert.equal(timelineSummary({}, undefined), "");
 });
 
-void test("the base is shown once the versions say what it is", () => {
-  assert.equal(baseRow([version(1)]), undefined);
-  assert.equal(baseRow([version(1, { base: commit("a1b2c3d") })])?.commit.shortId, "a1b2c3d");
+void test("the whole changeset is compared with the base now, a range from the start with the first version's", () => {
+  const first = version(1, { base: commit("a1b2c3d") });
+  const rebased = commit("f00ba44");
+  assert.equal(baseRow([first], rebased)?.commit.shortId, "f00ba44");
+  assert.equal(baseRow([first], rebased, { range: { from: 0, to: 1 } })?.commit.shortId, "a1b2c3d");
+});
+
+void test("the base is shown once it is known, and only a range from the start is compared with it", () => {
+  assert.equal(baseRow([version(1)], undefined), undefined);
+  assert.equal(baseRow([version(1)], commit("a1b2c3d"))?.commit.shortId, "a1b2c3d");
+  assert.equal(baseRow(five, commit("a1b2c3d"), { range: { from: 2, to: 3 } })?.ring, false);
 });

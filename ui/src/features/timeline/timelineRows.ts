@@ -78,11 +78,16 @@ export function timelineSummary({ range, byCommit = false }: Shown, latest: numb
   return first === last ? `Showing what push v${first} changed` : `Showing pushes v${first} to v${last}`;
 }
 
-/** The row of the base the first version was made against, if the versions say what it is. */
+/**
+ * The row of the base the review starts from. The whole changeset is compared with `current`, the
+ * base now (a rebase can have moved it); a range from the start with the base the first version
+ * was made against, if the versions say what it is.
+ */
 export function baseRow(
   versions: readonly VersionInfo[],
+  current: CommitInfo | undefined,
   { range, byCommit = false }: Shown = {},
 ): BaseRow | undefined {
-  const commit = versions.at(0)?.base;
+  const commit = range ? (versions.at(0)?.base ?? current) : current;
   return commit ? { commit, ring: !byCommit && (range?.from ?? 0) === 0 } : undefined;
 }

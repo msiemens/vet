@@ -7,12 +7,15 @@ class PendingEdits {
   waiting = $state(false);
 
   constructor() {
-    session.onConnect((backend) =>
+    session.onConnect((backend) => {
       backend.onEvent((event) => {
         if (event.project === backend.project && event.type === "editsPending") this.waiting = event.pending;
-      }),
-    );
-    session.onResync(() => (this.waiting = false));
+      });
+      // What was missed while the link was down is not known; opening the project again tells whether edits wait.
+      backend.onLinkState((state) => {
+        if (state !== "connected") this.waiting = false;
+      });
+    });
     session.onClose(() => (this.waiting = false));
   }
 }

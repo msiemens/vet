@@ -36,7 +36,7 @@ import { type WriteListener } from "./reviewSource";
 import { session } from "./session.svelte";
 import { STALE_NOTICE, type Shown, isCurrent } from "./shown";
 import type { ViewSource } from "./viewScope.svelte";
-import { type Range, followed, rangeKey, rangeView } from "./timelineRange";
+import { type Range, normalised, rangeKey, rangeView } from "./timelineRange";
 import { CHANGESET, commitView } from "./view";
 
 /** What happens to the changeset on view: another is asked for, announced to be fetched, or the ask came to nothing. */
@@ -252,8 +252,8 @@ class ChangesetStore implements ViewSource {
   }
 
   /**
-   * The manifest of the view. A live range is moved to the latest version first, which only the
-   * manifest says, and the commit the lens asks for is shown instead of the changeset, as the
+   * The manifest of the view. A range that covers every push becomes the changeset, which only the
+   * manifest's latest version says, and the commit the lens asks for is shown instead of the changeset, as the
    * manifest says too. A range or commit the backend refuses (its versions or commit are gone) gives
    * way to the changeset.
    */
@@ -273,8 +273,8 @@ class ChangesetStore implements ViewSource {
         continue;
       }
       const latest = manifest.review.state === "open" ? manifest.review.version : undefined;
-      if (range?.live && latest !== undefined && range.to !== latest && attempt < 3) {
-        this.range = followed(range, latest);
+      if (range && normalised(range, latest) === undefined && attempt < 3) {
+        this.range = undefined;
         continue;
       }
       if (!range) {
@@ -337,8 +337,9 @@ class ChangesetStore implements ViewSource {
 
   /** The changeset is reviewed in `lens` now, as this window or another chose: shows the view that goes with it. */
   private async followLens(lens: Lens) {
-    // The commits replace a range; leaving them for a range keeps it.
+    // The commits replace a range; leaving them for a range keeps it, already on view.
     if (lens === "perCommit") this.range = undefined;
+    else if (this.range) return;
     this.commitIndex = lens === "perCommit" ? this.lastCommit : undefined;
     try {
       await this.refresh();
@@ -361,15 +362,15 @@ class ChangesetStore implements ViewSource {
 
   /**
    * Shows the interdiff of `range`, or the whole changeset for none, and fetches its manifest. It
-   * leaves the by commit lens, which the range replaces. Only the working tree has a live end: a
-   * committed changeset's latest version does not follow anything.
+   * leaves the by commit lens, which the range replaces.
    */
   async setRange(range: Range | undefined) {
-    if (this.facts?.lens === "perCommit") await this.showLens("squash");
+    const leavingCommits = this.facts?.lens === "perCommit";
     if (range) this.baseChanged = undefined;
-    const follows = this.facts?.target.changeset.type === "workingTree";
-    this.range = range && { ...range, live: range.live && follows };
+    this.range = range;
     if (range) this.commitIndex = undefined;
+    // With the range set, the lens change it causes shows nothing new and loads nothing.
+    if (leavingCommits) await this.showLens("squash");
     try {
       await this.refresh();
     } catch (error) {

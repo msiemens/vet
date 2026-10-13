@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import {
+  changesTitle,
   commitOf,
   fileTab,
   isStale,
@@ -12,6 +13,11 @@ import {
   settleMode,
   tabAfter,
 } from "./tabModel.ts";
+
+void test("the Changes tab's tooltip carries the file count", () => {
+  assert.match(changesTitle(34), /^34 changed files$/);
+  assert.match(changesTitle(1), /^1 changed file$/);
+});
 
 void test("a file opened at a commit is another tab than the file, and the id tells both back", () => {
   const sha = "a".repeat(40);

@@ -61,6 +61,10 @@ interface Driver {
   openText(path: string): Promise<void>;
   /** Another window comments on the changeset `count` times, each comment long enough to fill a side panel. */
   manyThreads(count: number): Promise<void>;
+  /** An agent edits a file of the working tree; resolves once the page has a version for it. */
+  edit(path: string, tag: string, edited: number[]): Promise<void>;
+  /** An agent moves `HEAD` to `ref` and keeps the files; resolves once the page says it left the base. */
+  leaveBase(ref: string): Promise<void>;
 }
 
 /** A step that sends one review request. */
@@ -114,6 +118,11 @@ const sessions: Record<string, (d: Driver) => Promise<void>> = {
     for (const tool of ["all", "commits", "comments", "changes", "symbol"])
       await d.step(`the ${tool} tool window is open`, () => d.page(`__t.commands.run("view.tool.${tool}")`));
     await d.step("the timeline is open", () => d.page(`__t.commands.run("view.tool.timeline")`));
+    await d.step("a push is chosen: the scope chip is narrowed", async () => {
+      await d.edit("b.txt", "agent", [7, 8, 25]);
+      await d.page(`__t.changeset.setRange({ from: 1, to: 2 })`);
+    });
+    await d.step("HEAD left the base: the banner and the base note show", () => d.leaveBase("main"));
   },
 };
 
@@ -122,18 +131,30 @@ interface StepResult {
   differences: Difference[];
 }
 
-async function runSession(tab: Tab, other: Backend, url: string, script: (d: Driver) => Promise<void>) {
+async function runSession(
+  tab: Tab,
+  other: Backend,
+  fixture: Fixture,
+  url: string,
+  script: (d: Driver) => Promise<void>,
+) {
   await tab.navigate(url);
   const page = (js: string) => tab.evaluate(`(async () => { return await (${js}); })()`);
   const ready = async (js: string) => (await page(js)) as boolean;
   await until(() => ready(`!!document.querySelector(".review")`), "the app");
   await page(`(async () => {
-    const [changeset, session, commands] = await Promise.all([
+    const [changeset, session, commands, versions] = await Promise.all([
       import("/src/state/changeset.svelte.ts"),
       import("/src/state/session.svelte.ts"),
       import("/src/state/commands.ts"),
+      import("/src/state/versions.svelte.ts"),
     ]);
-    window.__t = { changeset: changeset.changeset, session: session.session, commands: commands.commands };
+    window.__t = {
+      changeset: changeset.changeset,
+      session: session.session,
+      commands: commands.commands,
+      versions: versions.versions,
+    };
     // What the page asked of the backend: the review requests it sent, and the requests that were rejected.
     const marks = new Set(["toggleHunk", "toggleFlag", "toggleItem", "toggleFileSeen", "setFilesSeen", "createThread"]);
     const conn = session.session.backend.conn;
@@ -226,6 +247,17 @@ async function runSession(tab: Tab, other: Backend, url: string, script: (d: Dri
           CHANGESET,
         );
     },
+    async edit(path, tag, edited) {
+      fixture.write(path, tag, edited);
+      await until(() => ready(`__t.versions.items.length >= 2`), "a version for the edit");
+    },
+    async leaveBase(ref) {
+      fixture.resetHeadTo(ref);
+      await until(
+        () => ready(`document.body.innerText.includes("no longer builds on the review")`),
+        "the banner for a HEAD off the base",
+      );
+    },
     async openText(path) {
       const at = (await page(`(() => {
         const row = document.querySelector('nav button[title^=' + JSON.stringify(${JSON.stringify(path)}) + ']');
@@ -310,7 +342,7 @@ async function main() {
         const other = await Backend.connect();
         await other.open(fixture.repo);
         const results = await withTab(
-          (tab) => runSession(tab, other, `http://localhost:${vitePort}/#${hash}`, sessions[name]),
+          (tab) => runSession(tab, other, fixture, `http://localhost:${vitePort}/#${hash}`, sessions[name]),
           {
             port: chromePort,
           },

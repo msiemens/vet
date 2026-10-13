@@ -1199,8 +1199,8 @@ export class ReviewController {
 
   /**
    * Whether `layout` shows another range than the last one did: no range and a range differ, and
-   * so do ranges that start at another version. A live range whose end moved with a new revision
-   * is the same range.
+   * so do ranges that start at another version. A range whose end moved with a new revision is the
+   * same range.
    */
   private rangeChanged(layout: ViewLayout): boolean {
     const now = layout.interdiff;

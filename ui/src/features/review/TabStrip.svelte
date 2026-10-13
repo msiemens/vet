@@ -6,22 +6,24 @@
   import Icon from "../../lib/ui/Icon.svelte";
   import Tab from "../../lib/ui/Tab.svelte";
   import { type TabId, commands } from "../../state/commands";
-  import { commitOf, needsCommitName, pathOf, scrollToReveal } from "./tabModel";
+  import { changesTitle, commitOf, needsCommitName, pathOf, scrollToReveal } from "./tabModel";
   import type { Tabs } from "./Tabs.svelte";
 
   /**
-   * `files` are the ones the first tab lists, or the commit's, which the first tab then names by its hash and
-   * subject; `unitOf` is the commit a file tab stays at, once it is read; `onmenu` opens the context menu of a tab.
+   * `files` are the ones the first tab lists, which it names by `scope`, what they are of, or the commit's,
+   * which it then names by its hash and subject; `unitOf` is the commit a file tab stays at, once it is read; `onmenu` opens the context menu of a tab.
    */
   let {
     tabs,
     files,
+    scope,
     commit,
     unitOf,
     onmenu,
   }: {
     tabs: Tabs;
     files: readonly FileLayout[];
+    scope: string;
     commit?: CommitUnit;
     unitOf: (id: TabId) => CommitUnit | undefined;
     onmenu: (id: TabId, x: number, y: number) => void;
@@ -74,7 +76,7 @@
           ? titleOf(id, path)
           : commit
             ? commit.commit.subject
-            : "Every changed file"}
+            : changesTitle(files.length)}
       onselect={() => (tabs.active = id)}
       onclose={commands.isEnabled("tab.close", subject) ? () => commands.run("tab.close", subject) : undefined}
       closeLabel={tabs.active === id ? commands.tooltip("tab.close") : commands.label("tab.close")}
@@ -88,7 +90,7 @@
         <span class="mono hash">{commit.commit.shortId}</span>
         <span class="subject">{commit.commit.subject}</span>
       {:else if path === undefined}
-        All changes <span class="count">{files.length}</span>
+        {scope}
       {:else}
         {@const at = commitOf(id)}
         <FileIcon name={basename(path)} />
@@ -114,10 +116,6 @@
     min-width: 0;
     overflow-x: auto;
     scrollbar-width: none;
-  }
-  .count {
-    margin-left: 4px;
-    color: var(--text-3);
   }
   .hash {
     margin: 0 6px 0 4px;
