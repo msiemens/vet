@@ -46,7 +46,8 @@ export class CursorFollow<Q, A> {
     this.asking?.abort();
     const asking = (this.asking = new AbortController());
     this.requested = this.options.key(place);
-    this.options.ask(place, asking.signal).then(
+    // An `ask` that throws counts as a request that failed.
+    new Promise<A>((resolve) => resolve(this.options.ask(place, asking.signal))).then(
       (answer) => {
         if (!asking.signal.aborted) this.options.apply(answer, place);
       },

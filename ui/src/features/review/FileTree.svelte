@@ -305,10 +305,11 @@
     if (request && arrived && tool === "changes" && request.n !== revealed)
       untrack(() => void revealSymbol(request.path, keyOf(request.symbol.id), request.n));
   });
-  /** The last request of the cursor that found its row. */
+  /** The last request of the cursor that was answered, whether or not its row was found. */
   let revealed = 0;
 
   async function revealSymbol(path: string, id: string, n: number) {
+    revealed = n;
     search.clear();
     cursor = -1;
     for (let dir = dirname(path); dir; dir = dirname(dir)) collapsed.delete(dir);
@@ -317,7 +318,6 @@
     await tick();
     const index = shown().findIndex((r) => r.kind === "symbol" && r.change !== undefined && keyOf(r.symbol.id) === id);
     if (index < 0) return;
-    revealed = n;
     rowList()?.reveal(index);
   }
 

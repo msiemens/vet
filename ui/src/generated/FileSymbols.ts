@@ -8,7 +8,8 @@ import type { SymbolInfo } from "./SymbolInfo";
  */
 export type FileSymbols = { revision: number, path: string, 
 /**
- * In source order, a removed symbol where it was on the base side.
+ * The target side's changed symbols in source order, then the removed ones in the order of
+ * the base side.
  */
 symbols: Array<ChangedSymbol>, 
 /**

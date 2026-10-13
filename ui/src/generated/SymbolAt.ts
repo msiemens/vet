@@ -8,9 +8,9 @@ import type { Unavailable } from "./Unavailable";
  */
 export type SymbolAt = { revision: number, 
 /**
- * The innermost function, type or module that holds the position: the target side's symbol,
- * or the base side's if it exists there only. Absent outside every one of them, and where
- * the language server cannot list the file's symbols (`unavailable`).
+ * The innermost symbol (a function, type, module, field or constant) that holds the position:
+ * the target side's, or the base side's if it exists there only. Absent outside every symbol,
+ * and where the language server cannot list the file's symbols (`unavailable`).
  */
 symbol: SymbolInfo | null, 
 /**

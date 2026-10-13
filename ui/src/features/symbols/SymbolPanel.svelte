@@ -14,12 +14,17 @@
   <ScrollArea>
     {#if symbols.selected}
       <SymbolDetail shown={symbols.selected} {onopen} />
+    {:else if symbols.unavailable}
+      <div class="empty">
+        <b>{symbols.unavailable.label}</b>
+        <span>{symbols.unavailable.message}</span>
+      </div>
     {:else}
       <div class="empty">
         <b>No symbol selected</b>
         <span>
-          Changed symbols are listed under their files in Changes. Select one there, or put the cursor in a function,
-          type or module in an editor.
+          Changed symbols are listed under their files in Changes. Select one there, or put the cursor in a symbol in an
+          editor.
         </span>
       </div>
     {/if}

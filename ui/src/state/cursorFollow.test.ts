@@ -95,6 +95,28 @@ void test("a failed request is reported and its place asked about again", async 
   assert.equal(asked.length, 2);
 });
 
+void test("an ask that throws is a failure, and its place is asked about again", async () => {
+  const failed: unknown[] = [];
+  let calls = 0;
+  const follow = new CursorFollow<number, string>({
+    ms: MS,
+    key: String,
+    ask: () => {
+      calls++;
+      throw new Error("no repository is open");
+    },
+    apply: () => undefined,
+    fail: (error) => failed.push(error),
+  });
+  follow.move(1);
+  mock.timers.tick(MS);
+  await settle();
+  assert.equal(failed.length, 1);
+  follow.move(1);
+  mock.timers.tick(MS);
+  assert.equal(calls, 2);
+});
+
 void test("a cancelled request is no failure", async () => {
   const { follow, asked, failed } = setup();
   follow.move(1);

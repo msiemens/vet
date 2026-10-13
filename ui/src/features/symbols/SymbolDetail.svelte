@@ -14,7 +14,8 @@
   import Icon from "../../lib/ui/Icon.svelte";
   import PathText from "../../lib/ui/PathText.svelte";
   import QualifiedName from "../../lib/ui/QualifiedName.svelte";
-  import { type Shown, symbols } from "../../state/symbols.svelte";
+  import type { Shown } from "../../state/symbolLoad";
+  import { symbols } from "../../state/symbols.svelte";
   import DerivedSection from "./DerivedSection.svelte";
   import SymbolGlyph from "./SymbolGlyph.svelte";
   import { containerOf, describeFate, type OpenLocation, place, placeShort } from "./symbolDetail";
