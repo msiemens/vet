@@ -25,16 +25,13 @@ a {
 
 /* Chrome is not selectable; content that is meant to be copied opts in with `.selectable`. The
    panel lines `.note` and the failure messages (`.err`, `.error`, `.problem`) are text to copy too,
-   so they are. */
+   unless they are part of a control. */
 body {
   user-select: none;
   -webkit-user-select: none;
 }
 .selectable,
-.note,
-.err,
-.error,
-.problem,
+:is(.note, .err, .error, .problem):not(:is(button, a, [role="button"]) *),
 input,
 textarea,
 .cm-editor {
@@ -42,10 +39,7 @@ textarea,
   -webkit-user-select: text;
 }
 .selectable,
-.note,
-.err,
-.error,
-.problem,
+:is(.note, .err, .error, .problem):not(:is(button, a, [role="button"]) *),
 input,
 textarea {
   cursor: text;
