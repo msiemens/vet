@@ -39,6 +39,13 @@ void test("an answer for a file type no language is configured for gives no popu
   assert.equal(hoverContent({ text: "", code: [], unavailable: unavailable("unsupported") }, []), undefined);
 });
 
+void test("a server that does not offer hover is silent, but still shows the diagnostics at the symbol", () => {
+  const answer = { text: "", code: [], unavailable: unavailable("notOffered") };
+  assert.equal(hoverContent(answer, []), undefined);
+  const diagnostic = { message: "bad", severity: "error" } as never;
+  assert.ok(hoverContent(answer, [diagnostic]));
+});
+
 void test("a server that fails says why, and a symbol the server knows nothing about stays silent", () => {
   const popup = hoverContent({ text: "", code: [], unavailable: unavailable("serverFailed") }, []);
   assert.ok(popup);

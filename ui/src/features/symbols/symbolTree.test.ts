@@ -3,7 +3,7 @@ import { test } from "node:test";
 import type { ChangedCaller } from "../../generated/ChangedCaller.ts";
 import type { Reference } from "../../generated/Reference.ts";
 import type { SymbolInfo } from "../../generated/SymbolInfo.ts";
-import { affectedBody, callerTree, isTest, reachBody, removalBody, usagesBody } from "./symbolTree.ts";
+import { affectedBody, calleesBody, callerTree, isTest, reachBody, removalBody, usagesBody } from "./symbolTree.ts";
 
 const span = (line: number) => ({ start: { line, col: 0 }, end: { line, col: 1 } });
 
@@ -92,7 +92,7 @@ void test("usages group by type: one member is a row, several a node, lines of o
 void test("a reference's glyph is only what the answer knows: a kind for a symbol, none for a name", () => {
   const usage = usagesBody({ references: [ref("src/a.rs", ["A", "m"], 1)] } as never);
   assert.equal(usage.entries[0].glyph, "other");
-  const affected = affectedBody([{ ...info("src/b.rs", ["B", "n"], 2), kind: "type" }]);
+  const affected = affectedBody([{ ...info("src/b.rs", ["B", "n"], 2), kind: "type" }], []);
   assert.equal(affected.entries[0].glyph, "type");
 });
 
@@ -113,7 +113,18 @@ void test("tests sit in a branch after the production usages, not among them", (
 void test("nothing to list is a quiet line, but a gap in the answer is not nothing", () => {
   assert.equal(usagesBody({ references: [], gap: null } as never).quiet, "No usages");
   assert.equal(usagesBody({ references: [], gap: "server died" } as never).quiet, undefined);
-  assert.equal(affectedBody([]).quiet, "No unchanged callers to check");
+  assert.equal(affectedBody([], []).quiet, "No unchanged callers to check");
+});
+
+void test("an empty list of callees or affected callers says the analysis is incomplete when the server could not tell", () => {
+  const gaps = ["yaml-language-server 1.25.0 does not offer call hierarchy"];
+  for (const body of [calleesBody([], gaps), affectedBody([], gaps)]) {
+    assert.equal(body.quiet, `Incomplete: ${gaps[0]}`);
+  }
+  assert.equal(calleesBody([], []).quiet, "No changed callees");
+  const listed = affectedBody([info("src/b.rs", ["B", "n"], 2)], gaps);
+  assert.equal(listed.quiet, undefined);
+  assert.deepEqual(listed.notes, [{ text: `Incomplete: ${gaps[0]}`, warn: true }]);
 });
 
 void test("the way in is shown from the entry point down, each step under the one before", () => {

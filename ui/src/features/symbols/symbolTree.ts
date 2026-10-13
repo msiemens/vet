@@ -173,7 +173,7 @@ export function callerTree(callers: readonly ChangedCaller[]): Entry[] {
 
 export function callersBody(calls: Calls): Body {
   const entries = callerTree(calls.callers);
-  const notes = calls.gaps.length ? [{ text: `Incomplete: ${calls.gaps.join("; ")}`, warn: true }] : [];
+  const notes = calls.gaps.length ? [{ text: incomplete(calls.gaps), warn: true }] : [];
   return {
     count: countRows(entries),
     notes,
@@ -183,18 +183,22 @@ export function callersBody(calls: Calls): Body {
   };
 }
 
-export function calleesBody(callees: readonly ChangedSymbol[]): Body {
+/** What an empty list says when the analysis behind it has gaps: that it is incomplete, not that nothing is there. */
+const incomplete = (gaps: readonly string[]): string => `Incomplete: ${gaps.join("; ")}`;
+
+export function calleesBody(callees: readonly ChangedSymbol[], gaps: readonly string[]): Body {
   const entries = arrange(
     callees.map((c, i) =>
       symbolEntry(`e${i}`, c.symbol, c.change, { type: "choose", symbol: c.symbol, change: c.change }),
     ),
   );
+  const empty = gaps.length ? incomplete(gaps) : "No changed callees";
   return {
     count: entries.length,
-    notes: [],
+    notes: gaps.length && entries.length ? [{ text: incomplete(gaps), warn: true }] : [],
     entries,
     tail: [],
-    quiet: entries.length ? undefined : "No changed callees",
+    quiet: entries.length ? undefined : empty,
   };
 }
 
@@ -305,13 +309,14 @@ function placesBody(places: readonly Place[], key: string): Pick<Body, "entries"
   return { entries, tail: [branch] };
 }
 
-export function affectedBody(affected: readonly SymbolInfo[]): Body {
+export function affectedBody(affected: readonly SymbolInfo[], gaps: readonly string[]): Body {
   const places = affected.map((s): Place => ({ path: s.id.path, at: s.at, within: s, kind: s.kind, external: false }));
+  const empty = gaps.length ? incomplete(gaps) : "No unchanged callers to check";
   return {
     count: affected.length,
-    notes: [],
+    notes: gaps.length && affected.length ? [{ text: incomplete(gaps), warn: true }] : [],
     ...placesBody(places, "a"),
-    quiet: affected.length ? undefined : "No unchanged callers to check",
+    quiet: affected.length ? undefined : empty,
   };
 }
 

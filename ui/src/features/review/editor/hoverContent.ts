@@ -93,13 +93,15 @@ function indexingText(name: string, fraction: number | undefined): string {
 /**
  * What builds the popup for a hover answer and the `diagnostics` at the symbol, or nothing if
  * there is nothing to say: a server with no text for a symbol and no reason is silent, and so is
- * a file type no server is there for.
+ * a file type no server is there for and a server that does not offer hover.
  */
 export function hoverContent(answer: HoverAnswer, diagnostics: readonly Diagnostic[]): (() => HTMLElement) | undefined {
   if (!answer.text && !diagnostics.length) {
     const { server, unavailable } = answer;
     if (server?.indexing) return () => notice("clock", indexingText(server.name, server.indexing?.fraction));
-    if (unavailable && unavailable.kind !== "unsupported") return () => notice("cross", unavailable.message);
+    if (unavailable && unavailable.kind !== "unsupported" && unavailable.kind !== "notOffered") {
+      return () => notice("cross", unavailable.message);
+    }
     return undefined;
   }
   return () => {

@@ -97,7 +97,7 @@
     id="callees"
     title="Changed callees"
     load={symbols.calls}
-    build={(calls) => calleesBody(calls.callees)}
+    build={(calls) => calleesBody(calls.callees, calls.gaps)}
     ongo={go}
   />
   {#if shown.change}
@@ -107,7 +107,7 @@
       hint={AFFECTED_HINT}
       warn
       load={symbols.calls}
-      build={(calls) => affectedBody(calls.affected)}
+      build={(calls) => affectedBody(calls.affected, calls.gaps)}
       ongo={go}
     />
   {/if}
