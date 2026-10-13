@@ -1,9 +1,9 @@
 <script lang="ts">
   // Search Everywhere: one popup under the header for names (files, symbols, changesets, comment
-  // threads, actions), with a tab for each kind. Arrow keys move, Tab changes the tab, Enter chooses,
+  // threads, actions), with a tab for each kind. Arrow keys move, Tab or Ctrl+Tab changes the tab, Enter chooses,
   // Shift+Enter shows a changed file or symbol in All changes, Escape closes.
   import { onDestroy, onMount, tick, untrack } from "svelte";
-  import { matches } from "../../lib/keymap";
+  import { bindingOf, matches } from "../../lib/keymap";
   import { splitPath } from "../../lib/paths";
   import { highlightRuns, sliceRanges, type Range } from "../../lib/speedSearch";
   import DiffBar from "../../lib/ui/DiffBar.svelte";
@@ -14,6 +14,7 @@
   import { changeset } from "../../state/changeset.svelte";
   import { keyId } from "../../state/changesetKey";
   import { commands } from "../../state/commands";
+  import { isMac } from "../../state/host";
   import { progress } from "../../state/progress.svelte";
   import { queue } from "../../state/queue.svelte";
   import { serverList } from "../../state/serverList.svelte";
@@ -23,6 +24,7 @@
   import { statusLetter } from "../review";
   import { SymbolGlyph } from "../symbols";
   import type { Choice } from "./choice";
+  import { tabStep } from "./tabKey";
   import { FIND_IN_FILES, PALETTE_COMMANDS } from "./paletteCommands";
   import { palette } from "./paletteState.svelte";
   import {
@@ -61,6 +63,7 @@
   const TOGGLES: readonly PaletteTab[] = ["all", "file", "symbol"];
   const SYMBOL_TABS: readonly PaletteTab[] = ["all", "symbol"];
   const SYMBOL_LETTERS = { modified: "M", added: "A", removed: "D" } as const;
+  const NEXT_TAB = bindingOf("Ctrl-Tab", isMac ? "Meta" : "Ctrl").label;
 
   let cursor = $state(0);
   let root = $state<HTMLElement>();
@@ -304,6 +307,12 @@
         return;
       }
     }
+    const tabs = tabStep(e);
+    if (tabs) {
+      take();
+      step(tabs);
+      return;
+    }
     if (e.ctrlKey || e.altKey || e.metaKey) return;
     switch (e.key) {
       case "Escape":
@@ -325,10 +334,6 @@
       case "PageUp":
         take();
         void move(at - PAGE);
-        break;
-      case "Tab":
-        take();
-        step(e.shiftKey ? -1 : 1);
         break;
       case "Enter":
         take();
@@ -598,7 +603,7 @@
     <span><b>↑↓</b> move</span>
     <span><b>↵</b> open</span>
     <span><b>⇧↵</b> show in All changes</span>
-    <span><b>⇥</b> next tab</span>
+    <span><b>{NEXT_TAB}</b> next tab</span>
     <span><b>esc</b> close</span>
     <span class="grow"></span>
     {#if hint}
