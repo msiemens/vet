@@ -3,7 +3,6 @@
 // (implementations).
 
 import type { LocationRow } from "../../generated/LocationRow.ts";
-import { decodeHighlights, eachRange } from "../../lib/highlights.ts";
 import { match } from "../../lib/speedSearch.ts";
 import { placeLabel } from "../../lib/symbolLabel.ts";
 
@@ -113,53 +112,9 @@ export function opensBelow(anchor: { top: number; bottom: number }, viewport: nu
   return below >= max || below >= anchor.top - gap;
 }
 
-/** A stretch of a row's line: coloured as the syntax has it, and `hit` where the match is. */
-export interface CodeRun {
-  text: string;
-  className?: string;
-  hit: boolean;
-}
-
-/** The row's line cut where its syntax colour changes or the match starts or ends. */
-export function codeRuns(row: Pick<LocationRow, "text" | "highlights" | "matchStart" | "matchEnd">): CodeRun[] {
-  const { text, matchStart, matchEnd } = row;
-  const spans: { from: number; to: number; className?: string }[] = [];
-  let at = 0;
-  eachRange(decodeHighlights(row.highlights), 0, text.length, (from, to, className) => {
-    if (from > at) spans.push({ from: at, to: from });
-    spans.push({ from, to, className });
-    at = to;
-  });
-  if (at < text.length) spans.push({ from: at, to: text.length });
-
-  const runs: CodeRun[] = [];
-  for (const span of spans) {
-    const cuts = [span.from, ...[matchStart, matchEnd].filter((c) => c > span.from && c < span.to), span.to];
-    for (let i = 1; i < cuts.length; i++) {
-      const [from, to] = [cuts[i - 1], cuts[i]];
-      runs.push({
-        text: text.slice(from, to),
-        className: span.className,
-        hit: matchStart < matchEnd && from >= matchStart && to <= matchEnd,
-      });
-    }
-  }
-  return runs;
-}
-
 /**
  * What a place is in, short: the innermost symbol around it with its container, outside the
  * namespaces (`Ledger::commit`, `TaskDispatcher.Trigger`), else just the symbol; the file's name
  * where there is no symbol.
  */
 export const symbolLabel = (row: Pick<LocationRow, "within" | "path">): string => placeLabel(row.within, row.path);
-
-/** A library's file: the package it belongs to, if the path tells, and the rest of the path. */
-export function libraryLabel(path: string): { package?: string; rest: string } {
-  const slashed = path.replaceAll("\\", "/");
-  const crate = /\/registry\/src\/[^/]+\/(.+)-(\d[^/]*)\/(.+)$/.exec(slashed);
-  if (crate) return { package: `${crate[1]} ${crate[2]}`, rest: crate[3] };
-  const module = /\/node_modules\/((?:@[^/]+\/)?[^/]+)\/(.+)$/.exec(slashed);
-  if (module) return { package: module[1], rest: module[2] };
-  return { rest: path };
-}

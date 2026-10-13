@@ -4,6 +4,7 @@
   // Enter opens, Escape closes, and typing filters.
   import { onDestroy, onMount, tick } from "svelte";
   import type { LocationRow } from "../../generated/LocationRow";
+  import { codeRuns, libraryLabel } from "../../lib/foundText";
   import { LIST } from "../../lib/listKeys";
   import { fullName } from "../../lib/symbolLabel";
   import Icon from "../../lib/ui/Icon.svelte";
@@ -14,16 +15,7 @@
   import { SpeedSearch } from "../../lib/ui/speedSearch.svelte";
   import SpeedSearchField from "../../lib/ui/SpeedSearchField.svelte";
   import type { PickerView } from "../../state/pickerTypes";
-  import {
-    codeRuns,
-    countText,
-    groupRows,
-    libraryLabel,
-    matchedRow,
-    opensBelow,
-    symbolLabel,
-    visibleRows,
-  } from "./pickerRows";
+  import { countText, groupRows, matchedRow, opensBelow, symbolLabel, visibleRows } from "./pickerRows";
 
   let {
     view,

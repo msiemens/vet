@@ -1,16 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import type { LocationRow } from "../../generated/LocationRow.ts";
-import {
-  codeRuns,
-  countText,
-  groupRows,
-  libraryLabel,
-  matchedRow,
-  opensBelow,
-  symbolLabel,
-  visibleRows,
-} from "./pickerRows.ts";
+import { countText, groupRows, matchedRow, opensBelow, symbolLabel, visibleRows } from "./pickerRows.ts";
 
 const row = (path: string, line: number, init: Partial<LocationRow> = {}): LocationRow => ({
   path,
@@ -149,39 +140,6 @@ void test("a place is named by its symbol and the last part of its container, in
   assert.equal(symbolLabel({ path: "src/billing/util.py", within: null }), "util.py");
 });
 
-void test("a line is cut where its colours change and where the match is, in UTF-16 units", () => {
-  // `let` is a keyword (0..3), `foo` a function (10..13) after "é😀", which is three units.
-  const runs = codeRuns({
-    text: "let é😀 = foo();",
-    highlights: [0, 3, 0, 7, 3, 5],
-    matchStart: 10,
-    matchEnd: 13,
-  });
-  assert.deepEqual(
-    runs.map((r) => [r.text, r.className, r.hit]),
-    [
-      ["let", "syn-keyword", false],
-      [" é😀 = ", undefined, false],
-      ["foo", "syn-function", true],
-      ["();", undefined, false],
-    ],
-  );
-});
-
-void test("a match inside a coloured stretch splits it and keeps its colour", () => {
-  const runs = codeRuns({ text: "next_delay(3)", highlights: [0, 10, 5], matchStart: 5, matchEnd: 8 });
-  assert.deepEqual(
-    runs.map((r) => [r.text, r.className, r.hit]),
-    [
-      ["next_", "syn-function", false],
-      ["del", "syn-function", true],
-      ["ay", "syn-function", false],
-      ["(3)", undefined, false],
-    ],
-  );
-  assert.deepEqual(codeRuns({ text: "", highlights: [], matchStart: 0, matchEnd: 0 }), []);
-});
-
 void test("a flat list puts places in changed hunks first, then changed files, other files and libraries, each by path and line", () => {
   const rows = visibleRows(
     [
@@ -230,21 +188,4 @@ void test("the popup opens on the side with room for its full height, else on th
   assert.equal(opensBelow(at(291), 600, 520), true);
   // Room below at full height wins even where above is roomier.
   assert.equal(opensBelow(at(1000), 1600, 520), true);
-});
-
-void test("a library's file is named by its package where the path tells", () => {
-  assert.deepEqual(
-    libraryLabel("/home/u/.cargo/registry/src/index.crates.io-6f17d22bba15001f/backoff-0.4.0/src/exponential.rs"),
-    {
-      package: "backoff 0.4.0",
-      rest: "src/exponential.rs",
-    },
-  );
-  assert.deepEqual(libraryLabel("/p/node_modules/@scope/pkg/dist/index.d.ts"), {
-    package: "@scope/pkg",
-    rest: "dist/index.d.ts",
-  });
-  assert.deepEqual(libraryLabel("/usr/lib/rustlib/src/core/option.rs"), {
-    rest: "/usr/lib/rustlib/src/core/option.rs",
-  });
 });

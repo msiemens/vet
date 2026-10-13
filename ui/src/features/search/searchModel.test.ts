@@ -2,17 +2,14 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import type { SearchFile } from "../../generated/SearchFile.ts";
 import type { SearchLine } from "../../generated/SearchLine.ts";
-import { decodeHighlights } from "../../lib/highlights.ts";
 import {
   previewRows,
   resolveScope,
   resultId,
   resultRows,
   scopeChoices,
-  segments,
   selectedRow,
   stepLine,
-  trimmed,
   viewScopeId,
 } from "./searchModel.ts";
 
@@ -102,14 +99,6 @@ void test("the selected result is found again after the results change, else the
   assert.equal(selectedRow([], undefined), -1);
 });
 
-void test("a row leaves out the line's indent, and the matches' columns follow", () => {
-  const l = line(0, "    let delay = 1;", [{ from: 8, to: 13 }]);
-  assert.deepEqual(trimmed(l), { text: "let delay = 1;", hits: [{ from: 4, to: 9 }] });
-  // A cut line starts at a column of its own.
-  const cut = line(0, "elay = 1;", [{ from: 101, to: 105 }], 100);
-  assert.deepEqual(trimmed(cut).hits, [{ from: 1, to: 5 }]);
-});
-
 const base = "a\nb\nc\nd\ne\nf\n";
 const target = "a\nB\nB2\nc\nd\ne\nf\n";
 // Base line 1 ("b") became target lines 1 and 2.
@@ -158,19 +147,4 @@ void test("a preview's line starts count a line break as the editor does, one un
 
 void test("a result that is not in the text has no preview", () => {
   assert.deepEqual(previewRows({ base, target, hunks, kind: "added", line: 40, span: 2, withBase: true }), []);
-});
-
-void test("matches cut a coloured stretch, and the current one is told apart", () => {
-  // "let" is a keyword: [gap 0, length 3, kind 0].
-  const highlights = decodeHighlights([0, 3, 0]);
-  const hits = [
-    { from: 2, to: 9 },
-    { from: 9, to: 10 },
-  ];
-  assert.deepEqual(segments("let delay;", 0, highlights, hits, 1), [
-    { text: "le", className: "syn-keyword" },
-    { text: "t", className: "syn-keyword", find: "hit" },
-    { text: " delay", className: undefined, find: "hit" },
-    { text: ";", className: undefined, find: "current" },
-  ]);
 });

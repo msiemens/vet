@@ -6,6 +6,7 @@
   import type { SearchSide } from "../../generated/SearchSide";
   import type { View } from "../../generated/View";
   import { errorText } from "../../lib/errorText";
+  import { segments, trimmed } from "../../lib/foundText";
   import { basename, dirname } from "../../lib/paths";
   import { NO_HIGHLIGHTS } from "../../lib/highlights";
   import Dialog from "../../lib/ui/Dialog.svelte";
@@ -33,10 +34,8 @@
     resultRows,
     rowKey,
     scopeChoices,
-    segments,
     selectedRow,
     stepLine,
-    trimmed,
     viewScopeId,
   } from "./searchModel";
 

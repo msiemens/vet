@@ -2,12 +2,13 @@
   import type { SearchFile } from "../../generated/SearchFile";
   import type { SearchLine } from "../../generated/SearchLine";
   import type { View } from "../../generated/View";
+  import { segments } from "../../lib/foundText";
   import { basename, dirname } from "../../lib/paths";
   import { NO_HIGHLIGHTS, type Highlights, decodeHighlights } from "../../lib/highlights";
   import FileIcon from "../../lib/ui/FileIcon.svelte";
   import Meter from "../../lib/ui/Meter.svelte";
   import type { Backend } from "../../state/backend";
-  import { type PreviewRow, previewRows, segments } from "./searchModel";
+  import { type PreviewRow, previewRows } from "./searchModel";
 
   let {
     backend,
@@ -20,8 +21,9 @@
     letter,
   }: {
     backend: Backend;
-    file: SearchFile;
-    line: SearchLine;
+    /** The file as a search sees it; `lines` are the matches the preview marks. */
+    file: Pick<SearchFile, "path" | "status" | "completion" | "hunks" | "states" | "lines">;
+    line: Pick<SearchLine, "kind" | "line">;
     /** The view the file's text is read in. */
     view: View;
     revision: number;
