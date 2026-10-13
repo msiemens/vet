@@ -24,7 +24,7 @@ class CheckStore {
     session.onConnect((backend) =>
       backend.onEvent((event) => {
         if (event.project !== backend.project) return;
-        if (event.type === "baseChanged" || event.type === "snapshotSettled") void this.load();
+        if (event.type === "changesetsChanged" || event.type === "snapshotSettled") void this.load();
       }),
     );
     session.onResync(() => void this.load());

@@ -73,19 +73,6 @@ void test("base changed lines are a link to them, and nothing to open without an
   assert.deepEqual(baseChanged(none), { label: "Base changed", value: "—" });
 });
 
-void test("a base that its remote has moved on from says so after the base", () => {
-  const behind = {
-    ...manifest,
-    layout: {
-      base: { choice: { type: "mergeBase", reference: "master" }, commit: { shortId: "a41c9e2" }, behind: 11 },
-    },
-  } as Frame;
-  assert.deepEqual(detailGroups(open, behind, NOW)[0].facts.slice(0, 2), [
-    { label: "Base", value: "a41c9e2" },
-    { value: "11 behind origin/master" },
-  ]);
-});
-
 void test("a changeset that is not on view has only what the list knows of its review", () => {
   const other = { ...open, key: { type: "branch", name: "feature" }, title: "feature" } as ChangesetRow;
   assert.deepEqual(

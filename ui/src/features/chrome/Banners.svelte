@@ -1,6 +1,7 @@
 <script lang="ts">
-  // The notices under the header that the viewer can dismiss: a degraded file watcher, the
-  // dependency restores that failed, and a pull request whose analysis is limited until trusted.
+  // The notices under the header: HEAD off the review's base, which stays while it is so, and
+  // those the viewer can dismiss: a degraded file watcher, the dependency restores that failed,
+  // and a pull request whose analysis is limited until trusted.
   import { untrack } from "svelte";
   import type { PullRequestTrust } from "../../generated/PullRequestTrust";
   import type { RestoreFailure } from "../../generated/RestoreFailure";
@@ -8,16 +9,20 @@
   import Banner from "../../lib/ui/Banner.svelte";
   import { degradedMessage } from "./degradedMessage";
   import { limitedMessage } from "./limitedMessage";
+  import { offBaseMessage } from "./scopeText";
   import { trustMessage } from "./trustMessage";
 
   let {
     degraded,
     failures,
+    offBase,
     pullRequest,
     ontrust,
   }: {
     degraded?: WatchDegraded;
     failures: RestoreFailure[];
+    /** The short hash of the base the working tree's HEAD no longer builds on. */
+    offBase?: string;
     /** The pull request on view, if one is. */
     pullRequest?: PullRequestTrust;
     /** Trusts the pull request on view at its current head. */
@@ -37,6 +42,10 @@
     if (failures.length < untrack(() => dismissedFailures)) dismissedFailures = failures.length;
   });
 </script>
+
+{#if offBase !== undefined}
+  <Banner message={offBaseMessage(offBase)} />
+{/if}
 
 {#if degraded && dismissedDegraded !== degraded}
   <Banner message={degradedMessage[degraded]} ondismiss={() => (dismissedDegraded = degraded)} />

@@ -1,9 +1,10 @@
-// The rows of the timeline's table: one per version, newest first.
+// The rows of the timeline's table: one per version, newest first, and the base under them.
 
+import type { CommitInfo } from "../../generated/CommitInfo";
 import type { LineDelta } from "../../generated/LineDelta";
 import type { VersionInfo } from "../../generated/VersionInfo";
 import { basename } from "../../lib/paths.ts";
-import type { Range } from "../../state/timelineRange";
+import { type Range, pushesOf } from "../../state/timelineRange.ts";
 
 /** A file the range changes, as the panel lists it. */
 export interface RangeFile {
@@ -13,16 +14,11 @@ export interface RangeFile {
   mode?: "+x" | "-x" | "mode";
 }
 
-/** Where a row lies in the chosen range: an end of it, or between the ends. */
-export type Band = "end" | "inside";
-
 export interface TimelineRow {
   n: number;
   /** Unix seconds. */
   at: number;
-  /** A move of the base: the files are not shown, the new base is. */
-  rebasedOnto?: string;
-  /** The commit the version was pushed as, whose checks the row shows; none for a move of the base. */
+  /** The commit the version was pushed as, whose checks the row shows. */
   commit?: string;
   /** The short names of the files the version changed, comma separated. */
   files: string;
@@ -30,11 +26,31 @@ export interface TimelineRow {
   lines?: LineDelta;
   /** The version something was last marked in. */
   reviewed: boolean;
-  band?: Band;
+  /** The push's changes are among those the review view shows. */
+  shown: boolean;
+  /** The version the changes shown are compared against. */
+  ring: boolean;
 }
 
-/** The rows for `versions` (oldest first), newest first, with `range` marked. */
-export function timelineRows(versions: readonly VersionInfo[], range?: Range): TimelineRow[] {
+/** What the rows say about the base the review started from, which no push changed. */
+export interface BaseRow {
+  commit: CommitInfo;
+  /** The changes shown are compared against it. */
+  ring: boolean;
+}
+
+/** What the rows mark: the pushes shown and the version they are compared against. */
+export interface Shown {
+  /** The range the review view shows; none for the whole changeset. */
+  range?: Range;
+  /** A commit is shown: no push is, whatever the range says. */
+  byCommit?: boolean;
+}
+
+/** The rows for `versions` (oldest first), newest first, with what `shown` shows marked. */
+export function timelineRows(versions: readonly VersionInfo[], { range, byCommit = false }: Shown = {}): TimelineRow[] {
+  const pushes = range && pushesOf(range);
+  const ringAt = range?.from ?? 0;
   return versions
     .map((v): TimelineRow => {
       const added = v.files.reduce((sum, f) => sum + f.delta.added, 0);
@@ -42,18 +58,31 @@ export function timelineRows(versions: readonly VersionInfo[], range?: Range): T
       return {
         n: v.n,
         at: v.at,
-        rebasedOnto: v.origin === "baseMoved" ? (v.base?.shortId ?? "") : undefined,
-        commit: v.origin === "baseMoved" ? undefined : v.tip?.id,
+        commit: v.tip?.id,
         files: v.files.map((f) => basename(f.path)).join(", "),
         lines: added || removed ? { added, removed } : undefined,
         reviewed: v.reviewedHere,
-        band:
-          range && v.n >= range.from && v.n <= range.to
-            ? v.n === range.from || v.n === range.to
-              ? "end"
-              : "inside"
-            : undefined,
+        shown: !byCommit && (!pushes || (v.n >= pushes.first && v.n <= pushes.last)),
+        ring: !byCommit && v.n === ringAt,
       };
     })
     .reverse();
+}
+
+/** What the timeline's header says is shown, `latest` being the newest version (none before a review). */
+export function timelineSummary({ range, byCommit = false }: Shown, latest: number | undefined): string {
+  if (latest === undefined) return "";
+  if (byCommit) return "Showing one commit. Choosing a push leaves By commit.";
+  if (!range) return "Showing every push";
+  const { first, last } = pushesOf(range);
+  return first === last ? `Showing what push v${first} changed` : `Showing pushes v${first} to v${last}`;
+}
+
+/** The row of the base the first version was made against, if the versions say what it is. */
+export function baseRow(
+  versions: readonly VersionInfo[],
+  { range, byCommit = false }: Shown = {},
+): BaseRow | undefined {
+  const commit = versions.at(0)?.base;
+  return commit ? { commit, ring: !byCommit && (range?.from ?? 0) === 0 } : undefined;
 }

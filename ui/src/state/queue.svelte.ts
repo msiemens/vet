@@ -72,8 +72,7 @@ class QueueStore {
         else if (event.type === "changesetsChanged") void this.load();
         else if (event.type === "threadsChanged") void this.load(false);
         // A new version or a mark changes the version, the last reviewed version and the progress of the row on view.
-        else if (event.type === "snapshotSettled" || event.type === "reviewChanged" || event.type === "baseChanged")
-          this.follow();
+        else if (event.type === "snapshotSettled" || event.type === "reviewChanged") this.follow();
       });
       // Another credential may list other pull requests, or list them where it could not before.
       backend.onAccountsChanged(() => {
@@ -147,14 +146,12 @@ class QueueStore {
 
   /**
    * The changeset on view as a whole: its files and base, and what is true of it; none while that is not
-   * known. The base is the review's, which a fetch moves between manifests, while it shows the changeset.
+   * known.
    */
   get onViewFrame(): Frame | undefined {
     const layout = this.wholeLayout;
     const facts = changeset.facts;
-    if (!layout || !facts) return undefined;
-    const base = layout === changeset.layout ? changeset.base : undefined;
-    return { layout: base && base !== layout.base ? { ...layout, base } : layout, facts };
+    return layout && facts && { layout, facts };
   }
 
   /** The paths of the files of the changeset on view as a whole. */

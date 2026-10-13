@@ -48,6 +48,8 @@ export interface ViewLayout {
 /** What is true of the changeset as a whole, whatever view is shown. */
 export interface ChangesetFacts {
   readonly target: Target;
+  /** The changeset's own base, which the header names where it is not the default branch's. */
+  readonly base: Base;
   readonly review: ReviewInfo;
   readonly filter: ReviewFilter;
   /** What analysis of the changeset may execute: the project's trust, and a pull request's own. */
@@ -109,6 +111,7 @@ export function partsOf(manifest: Manifest, commit: number | undefined): Parts {
     },
     facts: {
       target: manifest.target,
+      base: manifest.changesetBase,
       review: manifest.review,
       filter: manifest.filter,
       trust: manifest.trust,

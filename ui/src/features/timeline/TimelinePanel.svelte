@@ -10,12 +10,13 @@
   import type { Column } from "../../lib/ui/columns";
   import { type Sort, sortRows } from "../../lib/ui/sorting";
   import { checks } from "../../state/checks.svelte";
-  import { type Range, rowRange } from "../../state/timelineRange";
-  import { type RangeFile, type TimelineRow, timelineRows } from "./timelineRows";
+  import { type Range, chooseRow, defaultRange } from "../../state/timelineRange";
+  import { type RangeFile, type TimelineRow, baseRow, timelineRows, timelineSummary } from "./timelineRows";
 
   let {
     versions,
     range,
+    byCommit = false,
     files,
     selected,
     onrange,
@@ -24,12 +25,15 @@
   }: {
     /** Oldest first. */
     versions: readonly VersionInfo[];
-    /** The range the review view shows. */
+    /** The range the review view shows; none for the whole changeset. */
     range?: Range;
+    /** A commit is on view, which choosing a row leaves. */
+    byCommit?: boolean;
     /** The files the range changes. */
     files: RangeFile[];
     /** The file the review view is at. */
     selected?: string;
+    /** Shows these pushes; none shows the whole changeset. */
     onrange: (range: Range | undefined) => void;
     onselect: (path: string) => void;
     onclose: () => void;
@@ -44,17 +48,20 @@
   ];
 
   let sort = $state<Sort>();
-  const rows = $derived(sortRows(timelineRows(versions, range), COLUMNS, sort));
-  /** The version clicked last, which a shift-click runs the range from. */
+  const shown = $derived({ range, byCommit });
+  const rows = $derived(sortRows(timelineRows(versions, shown), COLUMNS, sort));
+  const base = $derived(baseRow(versions, shown));
+  const since = $derived(defaultRange(versions));
+  /** The version clicked last, which a shift-click runs the block from. */
   let anchor = $state<number>();
 
   const time = (at: number) => new Date(at * 1000).toLocaleTimeString(undefined, { hour12: false });
 
   function choose(n: number, shift: boolean) {
-    const chosen = rowRange(versions, n, shift ? (anchor ?? range?.to) : undefined);
-    if (!chosen) return;
+    // A commit on view is replaced by the push, whatever was shown before it.
+    const current = byCommit ? undefined : range;
     if (!shift) anchor = n;
-    onrange(chosen);
+    onrange(chooseRow(versions, current, n, shift ? (anchor ?? current?.to) : undefined));
   }
 </script>
 
@@ -62,10 +69,18 @@
   <span class="mono delta"><span class="add">+{added}</span> <span class="del">−{removed}</span></span>
 {/snippet}
 
-<section aria-label="Timeline">
+<section aria-label="Timeline" tabindex="-1" data-escapes-scope>
   <header>
     <span class="title">Timeline <span class="count">{versions.length}</span></span>
+    <span class="summary">{timelineSummary(shown, versions.at(-1)?.n)}</span>
     <span class="grow"></span>
+    <button
+      class="ctl"
+      type="button"
+      title="Show the pushes after the version you last reviewed"
+      disabled={!since}
+      onclick={() => onrange(since)}>Since my review</button
+    >
     <IconButton icon="minus" label="Collapse the timeline" size={22} iconSize={14} onclick={onclose} />
   </header>
   <div class="body">
@@ -86,22 +101,20 @@
             <li>
               <button
                 class="flat row"
-                class:edge={row.band === "end"}
-                class:inside={row.band === "inside"}
+                class:shown={row.shown}
                 type="button"
-                aria-current={row.band ? "true" : undefined}
+                aria-current={row.shown ? "true" : undefined}
                 onclick={(e) => choose(row.n, e.shiftKey)}
               >
-                <span class="mono n">v{row.n}</span>
+                <span class="mono n"
+                  ><span class="slot"
+                    >{#if row.ring}<span class="ring" title="The changes shown are compared with this version"
+                      ></span>{/if}</span
+                  >v{row.n}</span
+                >
                 <span class="mono time">{time(row.at)}</span>
                 <span class="names">
-                  {#if row.rebasedOnto !== undefined}
-                    <span class="rebased"
-                      ><Icon name="branch" size={13} /> rebased onto <span class="mono">{row.rebasedOnto}</span></span
-                    >
-                  {:else}
-                    {row.files}
-                  {/if}
+                  {row.files}
                   {#if row.reviewed}<span class="eye" title="Last reviewed here"><Icon name="eye" size={13} /></span
                     >{/if}
                 </span>
@@ -114,6 +127,25 @@
           {:else}
             <li class="empty">Versions start when you first mark something seen, acknowledge a change or comment.</li>
           {/each}
+          {#if base}
+            <li>
+              <div class="row base" aria-label="The base the review started from">
+                <span class="mono n"
+                  ><span class="slot"
+                    >{#if base.ring}<span class="ring" title="The changes shown are compared with the base"
+                      ></span>{/if}</span
+                  >base</span
+                >
+                <span class="mono time">{time(base.commit.time)}</span>
+                <span class="names"
+                  ><span class="mono">{base.commit.shortId}</span>
+                  <span class="subject">{base.commit.subject}</span></span
+                >
+                <span></span>
+                <span></span>
+              </div>
+            </li>
+          {/if}
         </ul>
       </Table>
     </div>
@@ -188,15 +220,42 @@
   .row {
     font-size: var(--fs-ctl);
   }
-  .row.edge,
-  .row.inside {
+  .row.shown {
     box-shadow: inset 3px 0 var(--accent);
+    background: color-mix(in srgb, var(--accent) 16%, transparent);
   }
-  .row.inside {
-    background: color-mix(in srgb, var(--accent) 9%, transparent);
+  .row.shown:hover {
+    background: color-mix(in srgb, var(--accent) 22%, transparent);
   }
-  .row.edge {
-    background: color-mix(in srgb, var(--accent) 20%, transparent);
+  .row.base {
+    display: grid;
+    color: var(--text-2);
+    font-size: var(--fs-ctl);
+  }
+  .n {
+    display: flex;
+    align-items: center;
+    gap: 5px;
+  }
+  .slot {
+    flex: none;
+    width: 9px;
+    height: 9px;
+  }
+  .ring {
+    display: block;
+    width: 9px;
+    height: 9px;
+    box-sizing: border-box;
+    border: 1.5px solid var(--accent);
+    border-radius: 50%;
+  }
+  .summary {
+    margin-left: 10px;
+    font-weight: 400;
+  }
+  .subject {
+    color: var(--text-3);
   }
   .right {
     text-align: right;
@@ -213,12 +272,6 @@
     overflow: hidden;
     white-space: nowrap;
     text-overflow: ellipsis;
-  }
-  .rebased {
-    display: inline-flex;
-    align-items: center;
-    gap: 6px;
-    color: var(--text-2);
   }
   .eye {
     display: inline-flex;

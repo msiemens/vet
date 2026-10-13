@@ -3,14 +3,12 @@
 
 import { untrack } from "svelte";
 import type { BaseDiff } from "../generated/BaseDiff";
-import type { Base } from "../generated/Base";
 import type { Completion } from "../generated/Completion";
 import type { ReviewUpdate } from "../generated/ReviewUpdate";
 import type { Manifest } from "../generated/Manifest";
 import type { RestoreFailure } from "../generated/RestoreFailure";
 import type { ReviewFilter } from "../generated/ReviewFilter";
 import type { NonTextKind } from "../generated/NonTextKind";
-import type { BaseChoice } from "../generated/BaseChoice";
 import type { ChangesetKey } from "../generated/ChangesetKey";
 import type { CommentAt } from "../generated/CommentAt";
 import type { View } from "../generated/View";
@@ -19,7 +17,6 @@ import type { Lens } from "../generated/Lens";
 import { errorText } from "../lib/errorText";
 import { pathsBelow } from "../lib/paths";
 import { LatestLoad } from "./latestLoad";
-import type { BaseCandidates } from "./backend";
 import { commitToShow, neighbour } from "./commitLens";
 import { keyId } from "./changesetKey";
 import { PendingOpen } from "./pendingOpen";
@@ -54,10 +51,6 @@ class ChangesetStore implements ViewSource {
   facts = $state.raw<ChangesetFacts>();
   /** How far the view's files are reviewed. */
   viewCompletion = $state.raw<Completion>();
-  /** The base a fetch moved the changeset's to since the last manifest; none in a commit or a range, whose base is their own. */
-  private movedBase = $state.raw<Base>();
-  /** The view's base as of now. */
-  base = $derived(this.movedBase ?? this.layout?.base);
   /** Dependency restores that failed: the analysis of those projects is limited. Pushed as they happen. */
   restoreFailures = $state.raw<RestoreFailure[]>([]);
   /**
@@ -107,7 +100,6 @@ class ChangesetStore implements ViewSource {
         isCurrent(parts.layout.shown, this.layout?.shown),
       );
       this.layout = parts.layout;
-      this.movedBase = undefined;
       this.viewCompletion = newer.completion && this.viewCompletion ? this.viewCompletion : parts.completion;
       this.facts = newer.changeset && heldFacts ? { ...parts.facts, completion: heldFacts.completion } : parts.facts;
       this.shownCommit = commit;
@@ -196,8 +188,6 @@ class ChangesetStore implements ViewSource {
           else this.applyTotals(event.update);
         } else if (event.type === "reviewStarted" && this.facts) this.facts = { ...this.facts, review: event.review };
         else if (event.type === "restoreFailed") this.restoreFailures = event.failures;
-        // Only the changeset's own view has the changeset's base.
-        else if (event.type === "baseChanged" && this.showsChangeset) this.movedBase = event.base;
       }),
     );
     session.onResync(() => {
@@ -212,7 +202,7 @@ class ChangesetStore implements ViewSource {
    */
   private clear() {
     this.manifestLoads.cancel();
-    this.layout = this.facts = this.viewCompletion = this.movedBase = undefined;
+    this.layout = this.facts = this.viewCompletion = undefined;
     this.range = undefined;
     this.baseChanged = undefined;
     this.commitIndex = this.shownCommit = undefined;
@@ -347,7 +337,8 @@ class ChangesetStore implements ViewSource {
 
   /** The changeset is reviewed in `lens` now, as this window or another chose: shows the view that goes with it. */
   private async followLens(lens: Lens) {
-    this.range = undefined;
+    // The commits replace a range; leaving them for a range keeps it.
+    if (lens === "perCommit") this.range = undefined;
     this.commitIndex = lens === "perCommit" ? this.lastCommit : undefined;
     try {
       await this.refresh();
@@ -369,11 +360,12 @@ class ChangesetStore implements ViewSource {
   }
 
   /**
-   * Shows the interdiff of `range`, or the changeset (or its lens's commit) for none, and fetches its
-   * manifest. Only the working tree has a live end: a committed changeset's latest version does not
-   * follow anything.
+   * Shows the interdiff of `range`, or the whole changeset for none, and fetches its manifest. It
+   * leaves the by commit lens, which the range replaces. Only the working tree has a live end: a
+   * committed changeset's latest version does not follow anything.
    */
   async setRange(range: Range | undefined) {
+    if (this.facts?.lens === "perCommit") await this.showLens("squash");
     if (range) this.baseChanged = undefined;
     const follows = this.facts?.target.changeset.type === "workingTree";
     this.range = range && { ...range, live: range.live && follows };
@@ -528,20 +520,7 @@ class ChangesetStore implements ViewSource {
     await this.refresh().catch((error: unknown) => (session.notice = errorText(error)));
   }
 
-  /**
-   * Compares against `choice`. The backend remaps the review state and pushes
-   * `snapshotSettled`, which fetches the new manifest; a choice that does not resolve shows the
-   * backend's message.
-   */
-  async setBase(choice: BaseChoice) {
-    try {
-      await session.connected().setBase(choice);
-    } catch (error) {
-      session.notice = errorText(error);
-    }
-  }
-
-  /** Fetches the remotes. The footer shows the task; the base's `behind` follows with `baseChanged`. */
+  /** Fetches the remotes. The footer shows the task; the lists follow with `changesetsChanged`. */
   async fetch() {
     try {
       await session.connected().fetch();
@@ -616,16 +595,6 @@ class ChangesetStore implements ViewSource {
   async listDirectory(path: string) {
     try {
       return await session.connected().listDirectory(path);
-    } catch (error) {
-      session.notice = errorText(error);
-      return undefined;
-    }
-  }
-
-  /** What a base can be picked from; `undefined` after showing why it failed. */
-  async baseCandidates(): Promise<BaseCandidates | undefined> {
-    try {
-      return await session.connected().baseCandidates();
     } catch (error) {
       session.notice = errorText(error);
       return undefined;

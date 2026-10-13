@@ -3,18 +3,14 @@
 
 import type { Account } from "../generated/Account";
 import type { BackendSettings } from "../generated/BackendSettings";
-import type { Base } from "../generated/Base";
-import type { BaseChoice } from "../generated/BaseChoice";
 import type { BaseDiff } from "../generated/BaseDiff";
 import type { BlobContent } from "../generated/BlobContent";
-import type { BranchInfo } from "../generated/BranchInfo";
 import type { Calls } from "../generated/Calls";
 import type { ChangesetKey } from "../generated/ChangesetKey";
 import type { ChangesetRow } from "../generated/ChangesetRow";
 import type { CheckLog } from "../generated/CheckLog";
 import type { CommitChecks } from "../generated/CommitChecks";
 import type { CommentAt } from "../generated/CommentAt";
-import type { CommitInfo } from "../generated/CommitInfo";
 import type { CommitUnit } from "../generated/CommitUnit";
 import type { Diagnostic } from "../generated/Diagnostic";
 import type { DirEntry } from "../generated/DirEntry";
@@ -110,12 +106,6 @@ export interface PullRequestList {
   rows: PullRequestRow[];
   /** One per GitHub repository of the project, with the reason its pull requests could not be listed. */
   sources: PullRequestSource[];
-}
-
-export interface BaseCandidates {
-  branches: BranchInfo[];
-  /** Newest first. */
-  commits: CommitInfo[];
 }
 
 function expect<T extends Response["type"]>(response: Response, type: T): Extract<Response, { type: T }> {
@@ -444,11 +434,6 @@ export class Backend {
     expect(await this.conn.request({ type: "openChangeset", project: this.pid, changeset }), "done");
   }
 
-  /** Compares against another base; every subscriber, this one included, then gets `snapshotSettled`. */
-  async setBase(base: BaseChoice): Promise<Base> {
-    return expect(await this.conn.request({ type: "setBase", project: this.pid, base }), "base");
-  }
-
   /** Replaces the open repository's review filter; every subscriber, this one included, then gets `snapshotSettled`. Rejects with the backend's message for an invalid glob. */
   async setProjectFilter(filter: ReviewFilter): Promise<void> {
     expect(await this.conn.request({ type: "setProjectFilter", project: this.pid, filter }), "done");
@@ -476,19 +461,10 @@ export class Backend {
 
   /**
    * Fetches the repository's remotes and resolves when that ended; a remote that failed shows as a failed task, not
-   * here. If any remote was fetched, every subscriber then gets `baseChanged` and `changesetsChanged`.
+   * here. If any remote was fetched, every subscriber then gets `changesetsChanged`.
    */
   async fetch(): Promise<void> {
     expect(await this.conn.request({ type: "fetch", project: this.pid }), "done");
-  }
-
-  /** The branches and recent commits a base can be picked from. */
-  async baseCandidates(): Promise<BaseCandidates> {
-    const { branches, commits } = expect(
-      await this.conn.request({ type: "listBaseCandidates", project: this.pid }),
-      "baseCandidates",
-    );
-    return { branches, commits };
   }
 
   /**

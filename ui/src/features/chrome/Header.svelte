@@ -4,35 +4,29 @@
 
 <script lang="ts">
   import type { Snippet } from "svelte";
-  import type { Base } from "../../generated/Base";
-  import type { BaseChoice } from "../../generated/BaseChoice";
   import type { Completion } from "../../generated/Completion";
   import type { ReviewInfo } from "../../generated/ReviewInfo";
-  import type { Target } from "../../generated/Target";
-  import Icon from "../../lib/ui/Icon.svelte";
   import IconButton from "../../lib/ui/IconButton.svelte";
   import Meter from "../../lib/ui/Meter.svelte";
   import Segmented from "../../lib/ui/Segmented.svelte";
-  import type { BaseCandidates } from "../../state/backend";
   import { commands } from "../../state/commands";
-  import BaseChip from "./BaseChip.svelte";
+  import BaseNote from "./BaseNote.svelte";
   import { completionTitle } from "./completionTitle";
+  import ScopeChip from "./ScopeChip.svelte";
+  import type { BaseNote as BaseNoteInfo, ScopeChip as ScopeInfo } from "./scopeText";
   import TitleBar from "./TitleBar.svelte";
-  import VersionLabel from "./VersionLabel.svelte";
 
   let {
     screen,
     project,
     changesets,
-    base,
-    target,
+    baseNote,
+    scope,
+    onscope,
+    onwhole,
     review,
-    loadBase,
-    onbase,
     completion,
     refreshing = false,
-    chips,
-    back,
     filtered,
     checks,
     outgoing,
@@ -43,23 +37,20 @@
     project: Snippet;
     /** The changeset's name with its switcher; shown in the review. */
     changesets: Snippet;
-    /** What the changes are compared against. */
-    base?: Base;
-    /** What they lead to: the working tree, or a branch's tip. */
-    target?: Target;
-    /** Whether a review has started; its version shows only while it is open. */
+    /** What the changes are measured from, where that is worth saying. */
+    baseNote?: BaseNoteInfo;
+    /** What the review view shows. */
+    scope?: ScopeInfo;
+    /** Opens or focuses the timeline; none while there are no versions. */
+    onscope?: () => void;
+    /** Goes back to all changes. */
+    onwhole: () => void;
+    /** Whether a review has started; Finish Review shows only while it is open. */
     review?: ReviewInfo;
-    /** Lists the branches and commits the base can be picked from. */
-    loadBase: () => Promise<BaseCandidates | undefined>;
-    onbase: (choice: BaseChoice) => void;
-    /** The changeset's progress. */
+    /** The progress of what the review view shows. */
     completion?: Completion;
     /** The queue is being refreshed. */
     refreshing?: boolean;
-    /** While the review view shows a range of versions: its ends, in place of the base and the progress. */
-    chips?: Snippet;
-    /** The way back to the changeset, at the right end. */
-    back?: Snippet;
     /** While the review view shows a filtered part of the changeset: what acts on it and the way back, before the progress. */
     filtered?: Snippet;
     /** The head commit's checks, after the Finish Review button. */
@@ -93,30 +84,8 @@
   {#if screen === "review"}
     <span class="range" data-tauri-drag-region>
       {@render changesets()}
-      {#if chips}
-        {@render chips()}
-      {:else}
-        <BaseChip
-          {base}
-          branch={target?.branch}
-          own={target?.changeset.type === "branch" ? target.name : undefined}
-          load={loadBase}
-          onpick={onbase}
-        />
-        <span class="arrow" data-tauri-drag-region><Icon name="arrow" stroke={1.8} /></span>
-        {#if review?.state === "open"}
-          <VersionLabel version={review.version} updatedAt={review.updatedAt} />
-        {:else if target}
-          <span class="target mono" data-tauri-drag-region
-            >{target.changeset.type === "branch" && target.head ? target.head.slice(0, 7) : target.name}</span
-          >
-        {/if}
-        {#if target?.changeset.type === "workingTree"}<span
-            class="live-dot"
-            aria-label="Follows the working tree"
-            data-tauri-drag-region
-          ></span>{/if}
-      {/if}
+      {#if baseNote}<BaseNote note={baseNote} />{/if}
+      {#if scope}<ScopeChip chip={scope} onopen={onscope} onclear={onwhole} />{/if}
     </span>
   {/if}
   <span class="grow" data-tauri-drag-region></span>
@@ -128,8 +97,6 @@
       disabled={!commands.isEnabled("changeset.refresh")}
       onclick={() => commands.run("changeset.refresh")}
     />
-  {:else if chips}
-    {@render back?.()}
   {:else}
     {@render filtered?.()}
     <span class="completion" {title} data-tauri-drag-region>
@@ -162,18 +129,6 @@
     display: inline-flex;
     align-items: center;
     gap: 4px;
-  }
-  .arrow {
-    display: inline-flex;
-    color: var(--text-3);
-  }
-  .live-dot {
-    margin-left: 0;
-  }
-  .target {
-    padding: 2px 6px;
-    color: var(--text-2);
-    font-size: var(--fs-mono);
   }
   .finish {
     margin-right: 6px;

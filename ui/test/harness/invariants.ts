@@ -28,10 +28,10 @@ const same = (a: unknown, b: unknown) => JSON.stringify(a) === JSON.stringify(b)
 
 /** What of a base identifies it to the viewer. */
 const baseOf = (base: Base) => ({
-  name: base.name,
   commit: base.commit.id,
-  behind: base.behind,
   containedIn: base.containedIn,
+  into: base.into,
+  headOffBase: base.headOffBase,
 });
 
 /** The part of a row's review that the queue shows without being asked again. */
@@ -78,7 +78,7 @@ export async function checkInvariants(other: Backend): Promise<Violation[]> {
   }
   differ("viewCompletion", "completion of the view", changeset.viewCompletion, fresh.completion);
   differ("changesetCompletion", "completion of the changeset", facts.completion, whole.changesetCompletion);
-  differ("base", "base of the view", baseOf(changeset.base ?? layout.base), baseOf(fresh.base));
+  differ("base", "base of the view", baseOf(layout.base), baseOf(fresh.base));
   differ("reviewInfo", "review of the changeset", versionOf(facts), versionOf(fresh));
 
   // The queue and the switcher show the changeset's own numbers as the on-view row's, whatever view the review shows.

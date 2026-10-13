@@ -73,16 +73,6 @@ export class Fixture {
     this.write("src/c.txt", "wt", [12, 20]);
   }
 
-  /** A commit on origin's `feature` that the repository has not fetched: the working tree's base falls behind it. */
-  advanceOrigin() {
-    const clone = join(this.root, "clone");
-    this.git(this.root, "clone", "-q", "-b", "feature", join(this.root, "origin.git"), clone);
-    writeFileSync(join(clone, "upstream.txt"), "new\n");
-    this.git(clone, "add", ".");
-    this.git(clone, "commit", "-qm", "upstream");
-    this.git(clone, "push", "-q", "origin", "feature");
-  }
-
   /** A 40-line file of which the lines `edited` differ from the base text. */
   write(path: string, tag: string, edited: number[]) {
     const lines = Array.from({ length: 40 }, (_, i) => (edited.includes(i) ? `edited ${i} ${tag}` : `line ${i}`));

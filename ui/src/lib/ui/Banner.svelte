@@ -9,7 +9,8 @@
     action,
   }: {
     message: string;
-    ondismiss: () => void;
+    /** Without it the banner stays while what it says holds. */
+    ondismiss?: () => void;
     details?: Snippet;
     /** A button next to the message. */
     action?: { label: string; onclick: () => void };
@@ -29,7 +30,9 @@
         {expanded ? "Hide details" : "Details"}
       </button>
     {/if}
-    <IconButton icon="close" label="Dismiss" size={20} iconSize={12} onclick={ondismiss} />
+    {#if ondismiss}
+      <IconButton icon="close" label="Dismiss" size={20} iconSize={12} onclick={ondismiss} />
+    {/if}
   </div>
   {#if details && expanded}
     <div class="details">{@render details()}</div>

@@ -12,7 +12,9 @@
     TitleBar,
     ToolRail,
     type Screen,
+    baseNote,
     lensOnSelect,
+    scopeChip,
     toggleTool,
     toolFor,
   } from "../features/chrome";
@@ -44,7 +46,7 @@
   import { SettingsDialog } from "../features/settings";
   import { StructurePanel } from "../features/structure";
   import { type OpenLocation, SymbolPanel } from "../features/symbols";
-  import { type RangeFile, RangeChips, TimelinePanel } from "../features/timeline";
+  import { type RangeFile, TimelinePanel } from "../features/timeline";
   import { ProjectSwitcher, recentCommands, WelcomeScreen } from "../features/welcome";
   import type { Thread } from "../generated/Thread";
   import { errorText } from "../lib/errorText";
@@ -78,6 +80,7 @@
   import { contextMenus } from "../state/contextMenu.svelte";
   import { keymap } from "../state/keymap.svelte";
   import { mainMenu } from "../state/mainMenu.svelte";
+  import { pendingEdits } from "../state/pendingEdits.svelte";
   import { platform } from "../state/platform.svelte";
   import { progress as backgroundTasks } from "../state/progress.svelte";
   import { queue } from "../state/queue.svelte";
@@ -184,8 +187,29 @@
   const rangeFiles = $derived<RangeFile[]>(
     range ? (changeset.layout?.files ?? []).map((f) => ({ path: f.path, delta: f.delta, mode: modeChange(f) })) : [],
   );
+  const shownCommit = $derived(
+    changeset.shownCommit === undefined ? undefined : changeset.commits[changeset.shownCommit],
+  );
+  const scope = $derived(
+    changeset.facts &&
+      scopeChip({
+        range,
+        latest: versions.items.at(-1)?.n,
+        commit:
+          changeset.shownCommit === undefined
+            ? undefined
+            : {
+                position: changeset.shownCommit + 1,
+                of: changeset.facts.commits,
+                shortId: shownCommit?.commit.shortId,
+                subject: shownCommit?.commit.subject,
+              },
+        live: changeset.facts.target.changeset.type === "workingTree",
+        pending: pendingEdits.waiting,
+      }),
+  );
+  const note = $derived(changeset.facts && baseNote(changeset.facts.base, changeset.facts.target.changeset.type));
   const footer = $derived({
-    range: range && `v${range.from} → v${range.to}`,
     commit:
       changeset.shownCommit === undefined ? undefined : `${changeset.shownCommit + 1} / ${changeset.commits.length}`,
     languageServer: serverLine(controller?.activePath, serverList.servers, backgroundTasks.tasks, semanticSummary),
@@ -202,7 +226,7 @@
       closeProject: () => void session.closeRepo(),
       finishReview: () => (dialog = "finish"),
       changesSinceReview: () => void showChangesSinceReview(),
-      wholeChangeset: () => void changeset.setRange(undefined),
+      wholeChangeset: () => void changeset.showWhole(),
       refresh: () => void queue.refresh(),
       reconfirmAll: () => void changeset.reconfirmAll(),
       openChangeset: (key) => void changeset.openChangeset(key),
@@ -330,6 +354,7 @@
     // Capturing, so a command's key reaches it before any control or editor handles the key.
     const onkeydown = (e: KeyboardEvent) => void commands.dispatch(e);
     window.addEventListener("keydown", onkeydown, true);
+    window.addEventListener("keydown", leaveScope);
     // The webview's own menu stays on text fields; elsewhere a handler opened the app's menu, or there is none.
     const onContextMenu = (e: MouseEvent) => {
       if (!(e.target instanceof Element && e.target.closest("input, textarea"))) e.preventDefault();
@@ -365,6 +390,7 @@
     return () => {
       stopMenu();
       window.removeEventListener("keydown", onkeydown, true);
+      window.removeEventListener("keydown", leaveScope);
       window.removeEventListener("contextmenu", onContextMenu);
       window.removeEventListener("focus", readDoubleClick);
       stopContext();
@@ -422,10 +448,25 @@
     await changeset.setRange(since);
   }
 
-  /** Opening the timeline shows the changes since the last review. */
   function toggleTimeline() {
     timelineOpen = !timelineOpen;
-    if (timelineOpen) void changeset.setRange(defaultRange(versions.items));
+  }
+
+  /** Shows the timeline, or moves the focus into it where it is shown. */
+  async function focusTimeline() {
+    timelineOpen = true;
+    await tick();
+    document.querySelector<HTMLElement>('[aria-label="Timeline"]')?.focus();
+  }
+
+  /** Escape, with the focus nowhere in particular or in the timeline or the chip, goes back to all changes. */
+  function leaveScope(e: KeyboardEvent) {
+    if (e.key !== "Escape" || e.defaultPrevented || e.metaKey || e.ctrlKey || e.altKey || e.shiftKey) return;
+    if (!scope?.narrowed) return;
+    const at = e.target instanceof Element ? e.target : undefined;
+    if (at && at !== document.body && !at.closest("[data-escapes-scope]")) return;
+    e.preventDefault();
+    void changeset.showWhole();
   }
 
   /** Shows the review at a file. */
@@ -458,23 +499,6 @@
 </script>
 
 {#if session.backend && session.repo}
-  {#snippet rangeChips()}
-    {#if range}
-      <RangeChips {range} versions={versions.items} onrange={(r) => void changeset.setRange(r)} />
-    {/if}
-  {/snippet}
-  {#snippet backToChangeset()}
-    {@const base = changeset.base?.name}
-    {@const latest = versions.items.at(-1)?.n}
-    <button
-      class="ctl back"
-      type="button"
-      title={commands.hint("changeset.whole", "Show the whole changeset again")}
-      disabled={!commands.isEnabled("changeset.whole")}
-      onclick={() => commands.run("changeset.whole")}
-      >Back to {base ?? "…"}{latest === undefined ? "" : ` → v${latest}`}</button
-    >
-  {/snippet}
   {#snippet baseChangedActions()}
     <button
       class="ctl"
@@ -521,16 +545,14 @@
     {screen}
     project={projectSwitcher}
     changesets={changesetSwitcher}
-    chips={range ? rangeChips : undefined}
-    back={backToChangeset}
+    baseNote={note}
+    {scope}
+    onscope={versions.items.length ? () => void focusTimeline() : undefined}
+    onwhole={() => void changeset.showWhole()}
     filtered={changeset.baseChanged ? baseChangedActions : undefined}
     checks={headChecks}
     outgoing={outgoingComments}
-    base={changeset.base}
-    target={changeset.facts?.target}
     review={changeset.facts?.review}
-    loadBase={() => changeset.baseCandidates()}
-    onbase={(choice) => void changeset.setBase(choice)}
     completion={changeset.shownCommit === undefined
       ? changeset.viewCompletion
       : (changeset.facts?.completion ?? changeset.viewCompletion)}
@@ -540,6 +562,7 @@
   <Banners
     degraded={changeset.layout?.degraded}
     failures={changeset.restoreFailures}
+    offBase={changeset.facts?.base.headOffBase ? changeset.facts.base.commit.shortId : undefined}
     pullRequest={changeset.facts?.trust.pullRequest}
     ontrust={() => void changeset.trustPullRequest()}
   />
@@ -578,6 +601,7 @@
             <TimelinePanel
               versions={versions.items}
               {range}
+              byCommit={changeset.shownCommit !== undefined}
               files={rangeFiles}
               {selected}
               onrange={(r) => void changeset.setRange(r)}

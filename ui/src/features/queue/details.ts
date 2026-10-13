@@ -5,7 +5,6 @@ import type { ChangesetKey } from "../../generated/ChangesetKey";
 import type { ChangesetRow } from "../../generated/ChangesetRow";
 import type { ReviewFilter } from "../../generated/ReviewFilter";
 import { shortTime } from "../../lib/shortTime.ts";
-import { behindText } from "../../state/baseBehind.ts";
 import { keyId } from "../../state/changesetKey.ts";
 import type { Frame } from "../../state/reviewModel.ts";
 
@@ -50,10 +49,8 @@ function targetText(key: ChangesetKey, title: string): string {
 
 function changesetFacts(row: ChangesetRow, { layout, facts }: Frame): Fact[] {
   const version = row.review.state === "open" ? ` · v${row.review.version}` : "";
-  const behind = behindText(layout.base);
   return [
     { label: "Base", value: layout.base.commit.shortId },
-    ...(behind ? [{ value: behind }] : []),
     { label: "Target", value: `${targetText(row.key, row.title)}${version}` },
     { label: "Filter", value: filterText(facts.filter) },
   ];

@@ -56,13 +56,6 @@ export const sessions: Record<string, (h: Harness) => Promise<void>> = {
       () => h.asElement(() => threads.create(h.shown(), { type: "changeset" }, "a note on the whole changeset")),
       ONE,
     );
-    // Only the working tree's base follows its branch's upstream, which the fetch brings forward.
-    await h.step("fetched", async () => {
-      const behind = changeset.base?.behind;
-      h.fixture.advanceOrigin();
-      await changeset.fetch();
-      await h.until(() => changeset.base?.behind !== behind, "the base to be behind after the fetch");
-    });
   },
 
   /** A new version, the range since the last review, marks in it, and back. */

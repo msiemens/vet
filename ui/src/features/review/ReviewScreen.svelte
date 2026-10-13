@@ -95,7 +95,7 @@
   const project = $derived(session.repo === undefined ? "the changeset" : repoName(session.repo));
   const revision = $derived(changeset.layout?.shown.revision);
   /** The chosen target when it already contains the changeset, so there is nothing to show. */
-  const containedIn = $derived(changeset.paths.length ? undefined : changeset.base?.containedIn);
+  const containedIn = $derived(changeset.paths.length ? undefined : changeset.layout?.base.containedIn);
   /** The commit on view, while the changeset is reviewed by commit. */
   const commit = $derived(changeset.shownCommit === undefined ? undefined : changeset.commits[changeset.shownCommit]);
   const highlighted = $derived(pathOf(tabs.active) ?? selected);

@@ -5,8 +5,9 @@ import type { View } from "../generated/View";
 import { CHANGESET, interdiffView } from "./view.ts";
 
 /**
- * Version `from` against the later version `to`. A live end follows the working tree: it is
- * always the latest version, so a new settled version moves the range forward.
+ * What the pushes after version `from` up to version `to` changed, compared with `from`, which is
+ * the base the review started from for 0. A live end follows the working tree: it is always the
+ * latest version, so a new settled version moves the range forward.
  */
 export interface Range {
   from: number;
@@ -35,26 +36,30 @@ export function defaultRange(versions: readonly VersionInfo[]): Range | undefine
   return from < latest ? { from, to: latest, live: true } : undefined;
 }
 
+/** The pushes a range shows: those after version `from`, which is the base for 0, up to `to`. */
+export const pushesOf = (range: Range): { first: number; last: number } => ({
+  first: range.from + 1,
+  last: range.to,
+});
+
 /**
- * The range a click on version `clicked` chooses: what changed since the version before it. With
- * `anchor`, the version clicked before, the range runs between the two. None for the first version,
- * which has none before it.
+ * What a click on the row of version `clicked` shows, as a range; none for the whole changeset.
+ * A click shows that push, what it changed from the version before it (the base for the first).
+ * Clicking the only push shown goes back to the whole changeset. With `anchor`, the version clicked
+ * before (a shift-click), it shows the block of pushes between the two. All the pushes are the
+ * whole changeset, which is no range of its own.
  */
-export function rowRange(versions: readonly VersionInfo[], clicked: number, anchor?: number): Range | undefined {
-  const first = versions.at(0)?.n;
+export function chooseRow(
+  versions: readonly VersionInfo[],
+  current: Range | undefined,
+  clicked: number,
+  anchor?: number,
+): Range | undefined {
   const latest = versions.at(-1)?.n;
-  if (first === undefined || latest === undefined) return undefined;
-  const [from, to] =
-    anchor === undefined || anchor === clicked
-      ? [clicked - 1, clicked]
-      : [Math.min(anchor, clicked), Math.max(anchor, clicked)];
-  return from < first ? undefined : { from, to, live: to === latest };
-}
-
-/** The range with its start moved to version `from`. */
-export const withFrom = (range: Range, from: number): Range => ({ ...range, from });
-
-/** The range with its end moved to version `to`: the latest version makes it live, an older one pins it. */
-export function withTo(range: Range, to: number, latest: number): Range {
-  return { ...range, to, live: to === latest };
+  if (latest === undefined) return undefined;
+  const only = current !== undefined && current.from + 1 === clicked && current.to === clicked;
+  if (anchor === undefined && only) return undefined;
+  const first = Math.min(anchor ?? clicked, clicked);
+  const last = Math.max(anchor ?? clicked, clicked);
+  return first === 1 && last === latest ? undefined : { from: first - 1, to: last, live: last === latest };
 }
