@@ -2,7 +2,8 @@
 
 use crate::common::{Client, handler, repo_with};
 use vet_protocol::{
-    FileStatus, ProjectId, Request, Response, SearchFile, SearchLineKind, SearchPattern, SearchScope, SearchSide, View,
+    FileStatus, HunkState, ProjectId, Request, Response, SearchFile, SearchLineKind, SearchPattern, SearchScope,
+    SearchSide, View,
 };
 
 struct Found {
@@ -98,6 +99,11 @@ async fn a_changeset_search_finds_changed_lines_on_either_side_and_leaves_unchan
     // The context line, the added one and the new file's line.
     assert_eq!(found.hits, 3);
     assert_eq!(found.files[1].status, Some(FileStatus::Added));
+    // A preview draws the diff from the hunks and shows their review state.
+    assert_eq!(
+        (found.files[0].hunks.len(), &found.files[0].states[..]),
+        (1, &[HunkState::Unseen][..])
+    );
 }
 
 #[tokio::test]

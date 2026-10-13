@@ -3,10 +3,10 @@
 use std::collections::BTreeMap;
 
 use vet_core::completion::{Completion, HunkState};
-use vet_core::content::{EntryKind, RepoPath};
+use vet_core::content::{EntryKind, Hunk, RepoPath};
 use vet_core::filter::FileMask;
 
-use super::views::FileStatus;
+use super::views::{FileStatus, FileView};
 use super::{LiveSession, NoText, Result, SessionError, View};
 use crate::ports::{GitRepo, LiveStore};
 use crate::search::{FoundLine, LineMatcher, SearchFilters, Sides, search_text};
@@ -36,6 +36,9 @@ pub struct SearchFile {
     /// `None` for a file the view does not change.
     pub status: Option<FileStatus>,
     pub completion: Option<Completion>,
+    /// The file's hunks and their review states, for a changed file.
+    pub hunks: Vec<Hunk>,
+    pub states: Vec<HunkState>,
     pub lines: Vec<FoundLine>,
     /// The matches in `lines`.
     pub hits: u32,
@@ -86,7 +89,7 @@ impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> L
                         query.filters,
                         Sides::Both,
                     );
-                    out.file(file.path.clone(), Some(file.status), Some(file.completion), found);
+                    out.file(file.path.clone(), Some(file), found);
                     if out.full() {
                         break;
                     }
@@ -125,7 +128,7 @@ impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> L
                         query.filters,
                         Sides::TargetOnly,
                     );
-                    out.file(path.clone(), file.map(|f| f.status), file.map(|f| f.completion), found);
+                    out.file(path.clone(), file, found);
                     if out.full() {
                         break;
                     }
@@ -161,13 +164,7 @@ impl Collector {
     }
 
     /// Adds a searched file. The line that reaches the limit is the last one taken.
-    fn file(
-        &mut self,
-        path: RepoPath,
-        status: Option<FileStatus>,
-        completion: Option<Completion>,
-        found: Vec<FoundLine>,
-    ) {
+    fn file(&mut self, path: RepoPath, changed: Option<&FileView>, found: Vec<FoundLine>) {
         self.result.searched += 1;
         let mut lines = Vec::new();
         let mut hits = 0u32;
@@ -184,8 +181,10 @@ impl Collector {
         if !lines.is_empty() {
             self.result.files.push(SearchFile {
                 path,
-                status,
-                completion,
+                status: changed.map(|f| f.status),
+                completion: changed.map(|f| f.completion),
+                hunks: changed.map(|f| f.hunks.clone()).unwrap_or_default(),
+                states: changed.map(|f| f.review.hunks.clone()).unwrap_or_default(),
                 lines,
                 hits,
             });

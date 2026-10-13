@@ -665,6 +665,8 @@ pub fn search_results(r: &SearchResult) -> p::Response {
                 path: f.path.to_string_lossy(),
                 status: f.status.map(status),
                 completion: f.completion.as_ref().map(completion),
+                hunks: f.hunks.iter().map(hunk).collect(),
+                states: f.states.iter().copied().map(hunk_state).collect(),
                 lines: f.lines.iter().map(search_line).collect(),
                 hits: f.hits,
             })

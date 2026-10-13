@@ -3,7 +3,7 @@
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
-use crate::{Completion, FileStatus, View};
+use crate::{Completion, FileStatus, Hunk, HunkState, View};
 
 /// What is looked for, and how. A line is matched on its own; a pattern never spans lines.
 #[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize, TS)]
@@ -93,6 +93,10 @@ pub struct SearchFile {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub completion: Option<Completion>,
+    /// The hunks of a changed file, with the review state of each in `states`; a preview of a
+    /// match draws the diff from them. Empty for an unchanged file.
+    pub hunks: Vec<Hunk>,
+    pub states: Vec<HunkState>,
     pub lines: Vec<SearchLine>,
     /// The matches in `lines`.
     pub hits: u32,
