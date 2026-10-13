@@ -4,9 +4,11 @@
 //! Before it delays a user's requests, a response carries `Retry-After` (seconds to wait),
 //! `X-RateLimit-Remaining` (throughput units left before delays start, 0 once requests are delayed
 //! or blocked) and `X-RateLimit-Reset` (UTC epoch seconds at which the tracked usage is back to
-//! zero). `X-RateLimit-Resource` names the threshold for a human. A blocked request gets 429. Any
-//! of these used up holds back every request to the account until it ends: the pipeline fails it
-//! at once with [`Blocked`], and the limit is logged once for its window.
+//! zero). `X-RateLimit-Resource` names the threshold for a human. A blocked request gets 429.
+//! Delayed requests still succeed, so a count of zero alone holds nothing back: `Retry-After` does,
+//! on any status, and a 429 also holds until `X-RateLimit-Reset` when the count is zero. Either
+//! holds back every request to the account until it ends: the pipeline fails it at once with
+//! [`Blocked`], and the limit is logged once for its window.
 
 use std::sync::Arc;
 
@@ -58,9 +60,10 @@ impl Watch {
     pub(super) fn observe(&self, signals: &Signals<'_>) {
         let now = (self.now)();
         let wait = seconds(signals.retry_after).map(|secs| now + secs.max(0));
+        let refused = signals.status == 429;
         let used_up = seconds(signals.remaining) == Some(0);
-        let reset = seconds(signals.reset).filter(|_| used_up);
-        let unsaid = (signals.status == 429).then_some(now + UNSAID_WAIT);
+        let reset = seconds(signals.reset).filter(|_| refused && used_up);
+        let unsaid = refused.then_some(now + UNSAID_WAIT);
         let (until, why) = match (wait, reset) {
             (Some(wait), reset) if reset.is_none_or(|r| wait >= r) => (wait, "Retry-After"),
             (_, Some(reset)) => (reset, "X-RateLimit-Reset"),

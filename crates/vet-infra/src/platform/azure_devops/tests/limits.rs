@@ -42,11 +42,10 @@ fn counted(canned: Canned, remaining: u32, reset: i64) -> Canned {
 }
 
 #[tokio::test]
-async fn a_used_up_limit_is_not_asked_again_until_it_resets() {
+async fn a_429_with_nothing_left_is_not_asked_again_until_the_reset() {
     let reset = NOW + 600;
-    let (fake, client) = limited(move || counted(Canned::json(&no_value()), 0, reset));
-    // The answer that used the limit up is still an answer.
-    client.list_pull_requests(&remote(), &all_open()).await.unwrap();
+    let (fake, client) = limited(move || counted(Canned::status(429, ""), 0, reset));
+    client.list_pull_requests(&remote(), &all_open()).await.unwrap_err();
     let sent = fake.requests().len();
 
     set_now(NOW + 100);
@@ -60,15 +59,24 @@ async fn a_used_up_limit_is_not_asked_again_until_it_resets() {
 #[tokio::test]
 async fn requests_are_sent_again_once_the_limit_has_ended() {
     let reset = NOW + 600;
-    let (fake, client) = limited(move || counted(Canned::json(&no_value()), 0, reset));
-    client.list_pull_requests(&remote(), &all_open()).await.unwrap();
+    let (fake, client) = limited(move || counted(Canned::status(429, ""), 0, reset));
+    client.list_pull_requests(&remote(), &all_open()).await.unwrap_err();
     set_now(reset - 1);
     client.list_pull_requests(&remote(), &all_open()).await.unwrap_err();
     let sent = fake.requests().len();
 
     set_now(reset);
-    client.list_pull_requests(&remote(), &all_open()).await.unwrap();
+    client.list_pull_requests(&remote(), &all_open()).await.unwrap_err();
     assert!(fake.requests().len() > sent, "the list is asked for again");
+}
+
+#[tokio::test]
+async fn delayed_requests_that_succeed_are_not_held_back() {
+    let (fake, client) = limited(|| counted(Canned::json(&no_value()), 0, NOW + 600));
+    client.list_pull_requests(&remote(), &all_open()).await.unwrap();
+    let sent = fake.requests().len();
+    client.list_pull_requests(&remote(), &all_open()).await.unwrap();
+    assert!(fake.requests().len() > sent, "a count of zero on a 200 is no block");
 }
 
 #[tokio::test]
