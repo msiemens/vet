@@ -8,7 +8,7 @@ use vet_core::content::{
     BlobId, EntryKind, FileDiff, FileEntry, Hunk, LineDelta, LineRange, NonTextKind, RepoPath, Snapshot, SnapshotDiff,
     SnapshotId, SnapshotStatus,
 };
-use vet_core::filter::ReviewFilter;
+use vet_core::filter::{Exclusion, ReviewFilter};
 use vet_core::merkle;
 use vet_core::review::{
     AnchorState, CommentTarget, Confidence, Location, Message, MessageId, PendingVote, PlatformThread, ReviewedSpan,
@@ -2015,6 +2015,35 @@ async fn the_folders_of_what_is_left_out_count_every_file_not_only_the_listed_on
         .map(|f| (f.path.as_str(), f.dir, f.files))
         .collect();
     assert_eq!(folders, [("big", true, 600)]);
+}
+
+#[tokio::test]
+async fn after_bringing_one_rule_back_a_file_is_left_out_by_the_rules_that_still_apply() {
+    let files = [("src/a.rs", "1\n"), ("tests/x.snap", "1\n"), ("docs/d.md", "1\n")];
+    let dirty: Vec<(&str, &str)> = files.iter().map(|(n, _)| (*n, "2\n")).collect();
+    let fx = Fixture::open(&files, &dirty).await;
+    let project = ReviewFilter {
+        roots: vec!["src".into()],
+        exclude: vec!["**/*.snap".into()],
+        ..Default::default()
+    };
+    fx.session.set_filter(project.clone()).await.unwrap();
+    let lifted = ReviewFilter {
+        roots: vec![],
+        ..project
+    };
+
+    fx.session.narrow(&Source::WorkingTree, Some(lifted)).await.unwrap();
+
+    let m = fx.session.manifest(View::Changeset).await.unwrap();
+    let shown: Vec<_> = m.files.iter().map(|f| f.path.to_string_lossy()).collect();
+    assert_eq!(shown, ["docs/d.md", "src/a.rs"]);
+    let left_out: Vec<_> = m.excluded.iter().map(|g| (g.by.clone(), g.count)).collect();
+    assert_eq!(
+        left_out,
+        [(vec![ExcludedBy::Rule(Exclusion::Pattern("**/*.snap".into()))], 1)],
+        "the file is still outside the roots, but those are not in force"
+    );
 }
 
 #[tokio::test]

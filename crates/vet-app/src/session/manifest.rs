@@ -123,11 +123,21 @@ pub(super) fn excluded_groups(changes: &Diffed, st: &State) -> Vec<ExcludedGroup
     let narrowed = st.filter.compile(&changes.diff.generated);
     let project = st.project.as_ref().map(|p| p.compile(&changes.diff.generated));
     // What leaves a file out, given the rules of the filter in force and of the project's: the
-    // project's own rules, else the narrowing; nothing if the review shows the file.
+    // project's own rules that the narrowing still applies, else the narrowing.
     let why = |named: Vec<Exclusion>, project_named: Vec<Exclusion>| match project {
         None => named.into_iter().map(ExcludedBy::Rule).collect(),
-        Some(_) if project_named.is_empty() => vec![ExcludedBy::Narrowing],
-        Some(_) => project_named.into_iter().map(ExcludedBy::Rule).collect(),
+        Some(_) => {
+            let kept: Vec<_> = project_named
+                .into_iter()
+                .filter(|rule| named.contains(rule))
+                .map(ExcludedBy::Rule)
+                .collect();
+            if kept.is_empty() {
+                vec![ExcludedBy::Narrowing]
+            } else {
+                kept
+            }
+        }
     };
     let mut by_path: BTreeMap<&RepoPath, (Vec<ExcludedBy>, LineDelta)> = BTreeMap::new();
     for d in &changes.diff.files {
