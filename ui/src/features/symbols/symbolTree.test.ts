@@ -89,6 +89,13 @@ void test("usages group by type: one member is a row, several a node, lines of o
   assert.equal(body.count, 5);
 });
 
+void test("a reference's glyph is only what the answer knows: a kind for a symbol, none for a name", () => {
+  const usage = usagesBody({ references: [ref("src/a.rs", ["A", "m"], 1)] } as never);
+  assert.equal(usage.entries[0].glyph, "other");
+  const affected = affectedBody([{ ...info("src/b.rs", ["B", "n"], 2), kind: "type" }]);
+  assert.equal(affected.entries[0].glyph, "type");
+});
+
 void test("tests sit in a branch after the production usages, not among them", () => {
   const body = usagesBody({
     references: [ref("tests/x.rs", ["check"], 3), ref("src/a.rs", ["A", "m"], 1), ref("src/c.rs", ["C", "n"], 2)],

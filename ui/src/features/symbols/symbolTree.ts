@@ -203,6 +203,8 @@ interface Place {
   path: string;
   at: Position;
   within: SymbolName | null;
+  /** What `within` is, where the answer says; a reference lists only its name. */
+  kind?: SymbolKind;
   external: boolean;
 }
 
@@ -250,7 +252,7 @@ function memberEntry(key: string, places: Place[], inGroup: boolean): Entry {
   const { name, container } = partsOf(first.within);
   return {
     ...common,
-    glyph: "function",
+    glyph: first.kind ?? "other",
     name,
     // A free member names its file where a type's names the type.
     container: inGroup ? undefined : (container ?? fileName(first.path)),
@@ -304,7 +306,7 @@ function placesBody(places: readonly Place[], key: string): Pick<Body, "entries"
 }
 
 export function affectedBody(affected: readonly SymbolInfo[]): Body {
-  const places = affected.map((s): Place => ({ path: s.id.path, at: s.at, within: s, external: false }));
+  const places = affected.map((s): Place => ({ path: s.id.path, at: s.at, within: s, kind: s.kind, external: false }));
   return {
     count: affected.length,
     notes: [],
