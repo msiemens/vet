@@ -30,6 +30,11 @@ pub fn caller() -> u32 {
 pub fn main() -> u32 {
     keep()
 }
+
+pub fn trouble() -> u32 {
+    let y: u32 = \"y\";
+    y
+}
 ";
 
 const DIRTY: &str = "\
@@ -52,6 +57,11 @@ pub fn caller() -> u32 {
 
 pub fn main() -> u32 {
     fresh()
+}
+
+pub fn trouble() -> u32 {
+    let y: u32 = \"y\";
+    y
 }
 ";
 
@@ -222,11 +232,22 @@ async fn rust_semantics_through_the_protocol() {
         panic!("not diagnostics");
     };
     assert_eq!(unavailable, None);
-    assert!(
-        diagnostics
+    // `broken` is the change's; `trouble` is the same error in the base, moved down with the diff.
+    let origin_at = |line: u32| {
+        let at = diagnostics
             .iter()
-            .any(|d| d.message.contains("expected u32") && d.origin == vet_protocol::DiagnosticOrigin::New),
-        "{diagnostics:?}"
+            .filter(|d| d.message.contains("expected u32") && d.span.start.line == line)
+            .collect::<Vec<_>>();
+        assert_eq!(at.len(), 1, "{diagnostics:?}");
+        at[0].origin
+    };
+    assert_eq!(
+        origin_at(find(DIRTY, "let x: u32", 0, 0).0),
+        vet_protocol::DiagnosticOrigin::New
+    );
+    assert_eq!(
+        origin_at(find(DIRTY, "let y: u32", 0, 0).0),
+        vet_protocol::DiagnosticOrigin::Existing
     );
 
     let Response::FileSymbols(file) = client
@@ -303,6 +324,7 @@ async fn rust_semantics_through_the_protocol() {
             ("broken", Some(SymbolChange::Added)),
             ("caller", None),
             ("main", Some(SymbolChange::Modified)),
+            ("trouble", None),
         ]
     );
     // A file the changeset leaves alone has an outline too.

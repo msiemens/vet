@@ -1035,6 +1035,75 @@ fn a_base_diagnostic_vouches_for_one_target_diagnostic_only() {
 }
 
 #[test]
+fn deleted_lines_above_move_a_base_diagnostic_up_to_its_target_line() {
+    let mut fake = Fake::default();
+    // Three lines are deleted at base lines 2..5: base line 9 is target line 6.
+    let hunks = [hunk((2, 5), (2, 2))];
+    fake.problems.insert(
+        (Side::Base, file("a.rs")),
+        vec![problem(9, Severity::Warning, "unused `x`")],
+    );
+    fake.problems.insert(
+        (Side::Target, file("a.rs")),
+        vec![
+            problem(6, Severity::Warning, "unused `x`"),
+            problem(9, Severity::Warning, "unused `x`"),
+        ],
+    );
+    assert_eq!(
+        origins_of(&fake, Some("a.rs"), "a.rs", &hunks),
+        [Origin::Existing, Origin::New]
+    );
+}
+
+#[test]
+fn a_line_after_several_hunks_is_shifted_by_all_of_them() {
+    let mut fake = Fake::default();
+    // +2 lines at 1, -3 lines at base 6..9 (target 8), +1 line at target 12: net 0 below the last,
+    // so base line 20 is target line 20 and base line 10 is target line 9.
+    let hunks = [hunk((1, 1), (1, 3)), hunk((6, 9), (8, 8)), hunk((13, 13), (12, 13))];
+    fake.problems.insert(
+        (Side::Base, file("a.rs")),
+        vec![
+            problem(20, Severity::Warning, "unused `x`"),
+            problem(10, Severity::Warning, "unused `y`"),
+        ],
+    );
+    fake.problems.insert(
+        (Side::Target, file("a.rs")),
+        vec![
+            problem(20, Severity::Warning, "unused `x`"),
+            problem(9, Severity::Warning, "unused `y`"),
+            problem(10, Severity::Warning, "unused `y`"),
+        ],
+    );
+    assert_eq!(
+        origins_of(&fake, Some("a.rs"), "a.rs", &hunks),
+        [Origin::Existing, Origin::Existing, Origin::New]
+    );
+}
+
+#[test]
+fn a_renamed_file_is_compared_with_its_base_path() {
+    let mut fake = Fake::default();
+    fake.problems.insert(
+        (Side::Base, file("old.rs")),
+        vec![problem(3, Severity::Warning, "unused `x`")],
+    );
+    fake.problems.insert(
+        (Side::Target, file("new.rs")),
+        vec![
+            problem(3, Severity::Warning, "unused `x`"),
+            problem(4, Severity::Warning, "unused `x`"),
+        ],
+    );
+    assert_eq!(
+        origins_of(&fake, Some("old.rs"), "new.rs", &[]),
+        [Origin::Existing, Origin::New]
+    );
+}
+
+#[test]
 fn without_base_diagnostics_no_origin_is_claimed_and_the_target_is_still_listed() {
     let mut fake = Fake::default();
     fake.problems
