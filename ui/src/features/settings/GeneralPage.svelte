@@ -26,23 +26,11 @@
 
 <div class="page">
   <div class="row">
-    <div class="text">
-      <span>Soft wrap</span>
-      <span class="hint">
-        Which files the review views wrap the long lines of; the others scroll sideways. Prose is Markdown,
-        reStructuredText and plain text.
-      </span>
-    </div>
+    <span>Soft wrap</span>
     <Segmented label="Soft wrap" value={softWrap} onchange={onsoftwrap} options={SOFT_WRAPS} />
   </div>
   <div class="row">
-    <div class="text">
-      <label for="finished-review-days">Keep finished reviews</label>
-      <span class="hint">
-        A changeset whose reviews are all finished, and that has no open thread, is removed with its marks and comments
-        this many days after, at the next start of Vet.
-      </span>
-    </div>
+    <label for="finished-review-days">Keep finished reviews</label>
     <div class="value">
       <input
         id="finished-review-days"
@@ -74,11 +62,6 @@
     justify-content: space-between;
     gap: 16px;
   }
-  .text {
-    display: flex;
-    flex-direction: column;
-    gap: 2px;
-  }
   .value {
     flex: none;
     display: flex;
@@ -88,10 +71,6 @@
   }
   .value input {
     width: 64px;
-  }
-  .hint {
-    color: var(--text-3);
-    font-size: 12px;
   }
   p {
     margin: 0;

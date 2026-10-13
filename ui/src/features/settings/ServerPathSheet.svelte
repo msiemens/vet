@@ -63,7 +63,6 @@
         >{/if}
     </span>
   </label>
-  <p class="hint">Vet starts this executable for {title} files in place of the one it finds itself.</p>
   {#if error}<p class="problem" role="alert">{error}</p>{/if}
   {#snippet actions()}
     <button class="ctl" type="button" disabled={busy} onclick={onclose}>Cancel</button>

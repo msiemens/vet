@@ -1,6 +1,7 @@
 <script lang="ts">
   import { bindingOf, specOf } from "../../lib/keymap";
   import { conflictsOf } from "../../lib/keymapEdit";
+  import SettingsSection from "../../lib/ui/SettingsSection.svelte";
   import { commands } from "../../state/commands";
   import { isMac } from "../../state/host";
   import { keymap } from "../../state/keymap.svelte";
@@ -61,59 +62,60 @@
 
 {#if problem}<p class="problem">{problem}</p>{/if}
 
-{#each groups as group (group.area)}
-  <section aria-label={group.label}>
-    <h3>{group.label}</h3>
-    <ul>
-      {#each group.rows as row (row.id)}
-        <li data-command={row.id}>
-          <span class="label">{row.label}</span>
-          {#if recording === row.id}
-            <span class="hint">Press a key combination, Esc to cancel</span>
-            <button class="ctl" type="button" onclick={() => (recording = undefined)}>Cancel</button>
-          {:else}
-            {#if row.binding}
-              <kbd class:changed={row.changed}>{row.binding.label}</kbd>
+<div>
+  {#each groups as group (group.area)}
+    <SettingsSection title={group.label}>
+      <ul>
+        {#each group.rows as row (row.id)}
+          <li data-command={row.id}>
+            <span class="label">{row.label}</span>
+            {#if recording === row.id}
+              <span class="hint">Press a key combination, Esc to cancel</span>
+              <button class="ctl" type="button" onclick={() => (recording = undefined)}>Cancel</button>
             {:else}
-              <span class="none">{row.changed ? "Removed" : "None"}</span>
+              {#if row.binding}
+                <kbd class:changed={row.changed}>{row.binding.label}</kbd>
+              {:else}
+                <span class="none">{row.changed ? "Removed" : "None"}</span>
+              {/if}
+              {#each row.alsoBindings as also (also.spec)}
+                <kbd>{also.label}</kbd>
+              {/each}
+              <span class="actions">
+                <button class="ctl" type="button" onclick={() => record(row.id)}>Change</button>
+                <button class="ctl" type="button" disabled={!row.binding} onclick={() => keymap.unbind(row.id)}>
+                  Remove
+                </button>
+                <button class="ctl" type="button" disabled={!row.changed} onclick={() => keymap.reset(row.id)}>
+                  Reset
+                </button>
+              </span>
             {/if}
-            {#each row.alsoBindings as also (also.spec)}
-              <kbd>{also.label}</kbd>
-            {/each}
-            <span class="actions">
-              <button class="ctl" type="button" onclick={() => record(row.id)}>Change</button>
-              <button class="ctl" type="button" disabled={!row.binding} onclick={() => keymap.unbind(row.id)}>
-                Remove
-              </button>
-              <button class="ctl" type="button" disabled={!row.changed} onclick={() => keymap.reset(row.id)}>
-                Reset
-              </button>
-            </span>
-          {/if}
-          {#if row.sharedWith.length}
-            <p class="problem">Also used by {row.sharedWith.join(", ")}.</p>
-          {/if}
-          {#if clash?.id === row.id}
-            <p class="problem">
-              <kbd>{clash.key}</kbd> is already used by {clash.others.join(", ")}.
-              <button
-                class="ctl"
-                type="button"
-                onclick={() => {
-                  if (clash) keymap.bind(clash.id, clash.spec);
-                  clash = undefined;
-                }}>Take it over</button
-              >
-              <button class="ctl" type="button" onclick={() => (clash = undefined)}>Keep as is</button>
-            </p>
-          {/if}
-        </li>
-      {/each}
-    </ul>
-  </section>
-{:else}
-  <p class="empty">No command matches.</p>
-{/each}
+            {#if row.sharedWith.length}
+              <p class="problem">Also used by {row.sharedWith.join(", ")}.</p>
+            {/if}
+            {#if clash?.id === row.id}
+              <p class="problem">
+                <kbd>{clash.key}</kbd> is already used by {clash.others.join(", ")}.
+                <button
+                  class="ctl"
+                  type="button"
+                  onclick={() => {
+                    if (clash) keymap.bind(clash.id, clash.spec);
+                    clash = undefined;
+                  }}>Take it over</button
+                >
+                <button class="ctl" type="button" onclick={() => (clash = undefined)}>Keep as is</button>
+              </p>
+            {/if}
+          </li>
+        {/each}
+      </ul>
+    </SettingsSection>
+  {:else}
+    <p class="empty">No command matches.</p>
+  {/each}
+</div>
 
 <style>
   .bar {
@@ -124,12 +126,6 @@
   .bar input {
     flex: 1;
     min-width: 0;
-  }
-  h3 {
-    margin: 14px 0 4px;
-    font-size: 12px;
-    font-weight: 600;
-    color: var(--text-2);
   }
   ul {
     list-style: none;

@@ -111,12 +111,8 @@
       />
     </div>
   </fieldset>
-  {#if !useCli}
-    <p class="hint">
-      The platform checks the token before Vet keeps it. {hasKeychain
-        ? "It is kept in the system keychain, never in Vet's own data."
-        : "This window has no keychain, so it is kept until the backend stops."}
-    </p>
+  {#if !useCli && !hasKeychain}
+    <p class="hint">This window has no keychain, so it is kept until the backend stops.</p>
   {/if}
   {#if error}<p class="problem" role="alert">{error}</p>{/if}
   {#snippet actions()}

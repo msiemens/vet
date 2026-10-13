@@ -3,10 +3,10 @@
   import { formatBytes } from "../../lib/formatBytes";
   import { match } from "../../lib/speedSearch";
   import Icon from "../../lib/ui/Icon.svelte";
-  import SeverityIcon from "../../lib/ui/SeverityIcon.svelte";
   import Marked from "../../lib/ui/Marked.svelte";
   import PathText from "../../lib/ui/PathText.svelte";
   import ScrollArea from "../../lib/ui/ScrollArea.svelte";
+  import SettingsSection from "../../lib/ui/SettingsSection.svelte";
   import { SpeedSearch } from "../../lib/ui/speedSearch.svelte";
   import SpeedSearchField from "../../lib/ui/SpeedSearchField.svelte";
   import Table from "../../lib/ui/Table.svelte";
@@ -18,9 +18,6 @@
   import { servers } from "../../state/servers.svelte";
   import ServerPathSheet from "./ServerPathSheet.svelte";
   import { serverRow, type ServerRow } from "./serverRows";
-
-  const CACHES_HINT =
-    "Answers kept from the language servers, in memory and between launches; the least recently used go first when the budget is exceeded. Clearing them only makes the next answers slower.";
 
   /** The server whose custom path sheet is open. */
   let editing = $state<ServerRow>();
@@ -100,7 +97,7 @@
 
 <div class="page">
   {#if !servers.available}
-    <p class="empty">Language servers are resolved per repository. Open a repository to see and change them.</p>
+    <p class="empty">Open a repository to see and change them.</p>
   {:else if servers.loadError}
     <p class="problem">{servers.loadError}</p>
   {:else if servers.loading && !servers.servers.length}
@@ -165,9 +162,7 @@
           >
             <option value="current">{selected.origin ?? "Not found"}</option>
             {#if selected.pinnedVersion && selected.origin !== "Installed by Vet"}
-              <option value="install" disabled={!selected.canInstall} title={selected.installBlocker}
-                >Installed by Vet…</option
-              >
+              <option value="install" disabled={!selected.canInstall}>Installed by Vet…</option>
             {/if}
             <option value="custom">{selected.customPath ? "Change custom path…" : "Custom path…"}</option>
             {#if selected.customPath}<option value="automatic">Automatic</option>{/if}
@@ -183,7 +178,6 @@
               class="ctl"
               type="button"
               disabled={!selected.canInstall}
-              title={selected.installBlocker}
               onclick={() => void servers.install(selected.language)}
               >{selected.status === "failed" ? "Retry" : "Install…"}</button
             >
@@ -213,7 +207,7 @@
           <dt class="top">Features</dt>
           <dd class="checks">
             {#each selected.features as feature (feature.name)}
-              <span class="check" class:yes={feature.offered} title={feature.offered ? "Offered" : "Not offered"}>
+              <span class="check" class:yes={feature.offered}>
                 <Icon name={feature.offered ? "check" : "close"} size={12} />{feature.name}
               </span>
             {/each}
@@ -233,7 +227,6 @@
                   class="ctl"
                   type="button"
                   disabled={!selected.canInstall}
-                  title={selected.installBlocker}
                   onclick={() => void servers.install(selected.language)}>Install fallback</button
                 >
               {/if}
@@ -276,12 +269,7 @@
     {/if}
   {/if}
 
-  <footer>
-    <span class="label"
-      >Semantic caches
-      <span class="info" role="img" aria-label={CACHES_HINT} title={CACHES_HINT}><SeverityIcon severity="info" /></span
-      ></span
-    >
+  <SettingsSection title="Semantic caches">
     <dl>
       {#if backendSettings.usage !== undefined}
         <dt>On disk</dt>
@@ -320,7 +308,7 @@
         >
       </dd>
     </dl>
-  </footer>
+  </SettingsSection>
 </div>
 
 {#if editing}
@@ -339,6 +327,10 @@
     flex-direction: column;
     gap: 16px;
     font-size: var(--fs-ctl);
+  }
+  /* The page's gap is part of the space above a section. */
+  .page > :global(section) {
+    margin-top: 4px;
   }
   p {
     margin: 0;
@@ -450,21 +442,6 @@
     font-size: var(--fs-mono-s);
     white-space: pre-wrap;
     overflow-wrap: anywhere;
-  }
-  footer {
-    margin-top: 8px;
-    padding-top: 12px;
-    border-top: 1px solid var(--line-soft);
-    display: flex;
-    flex-direction: column;
-    gap: 8px;
-  }
-  .label {
-    color: var(--text-2);
-  }
-  .info {
-    display: inline-flex;
-    vertical-align: middle;
   }
   dt.top {
     align-self: start;

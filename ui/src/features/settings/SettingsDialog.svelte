@@ -77,10 +77,7 @@
           <AccountsPage />
         {:else}
           <div class="row">
-            <div class="text">
-              <span>Theme</span>
-              <span class="hint">System follows the operating system's light or dark setting.</span>
-            </div>
+            <span>Theme</span>
             <Segmented
               label="Theme"
               value={theme}
@@ -136,15 +133,6 @@
     align-items: center;
     justify-content: space-between;
     gap: 16px;
-  }
-  .text {
-    display: flex;
-    flex-direction: column;
-    gap: 2px;
     font-size: var(--fs-ctl);
-  }
-  .hint {
-    color: var(--text-3);
-    font-size: 12px;
   }
 </style>
