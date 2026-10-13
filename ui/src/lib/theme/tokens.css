@@ -148,9 +148,9 @@
   --h-tab: 32px;
   /* The underlined tabs of a panel. */
   --h-panel-tabs: 30px;
-  /* The queue: a row of its table, and the panel under the table. */
+  /* The queue: a row of its table, and the panel beside the table. */
   --h-queue-row: 29px;
-  --h-queue-panel: 190px;
+  --w-queue-panel: 460px;
   /* The popovers of the project and the changeset switcher. */
   --w-switcher: 440px;
   /* Search Everywhere: the popup, a result and the line of keys under the list. */

@@ -562,12 +562,6 @@
     void changeset.showWhole();
   }
 
-  /** Shows the review at a file. */
-  function openFile(path: string) {
-    screen = "review";
-    void controller?.revealInChanges(path);
-  }
-
   /** Shows a thread where it is: at its code, or in the Comments tool window's Conversation tab. */
   function openThread(thread: Thread) {
     screen = "review";
@@ -692,7 +686,14 @@
 
   <div class="body">
     {#if screen === "queue"}
-      <QueueScreen onopen={() => (screen = "review")} onopenfile={openFile} onopenthread={openThread} />
+      <QueueScreen
+        onopen={() => (screen = "review")}
+        onopenthread={openThread}
+        onopenlog={(run) => {
+          screen = "review";
+          void controller?.openLog(run);
+        }}
+      />
     {/if}
     <div class="review" class:away={screen !== "review"} inert={screen !== "review"}>
       <ToolRail

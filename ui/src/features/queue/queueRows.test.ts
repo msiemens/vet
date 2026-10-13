@@ -13,7 +13,6 @@ import {
   commentCount,
   filterRows,
   labelOf,
-  parsePanel,
   parseTab,
   pullRequestNumber,
   pullRequestRow,
@@ -281,11 +280,9 @@ void test("a pull request is asked for by its number, with or without the hash",
     assert.equal(pullRequestNumber(typed), undefined, typed);
 });
 
-void test("a stored tab or panel that is not one of the known ids falls back to the default", () => {
+void test("a stored tab that is not one of the known ids falls back to the default", () => {
   assert.equal(parseTab("prs"), "prs");
-  assert.equal(parsePanel("files"), "files");
   for (const stored of [undefined, "", "PRs", "merged", "constructor"]) {
     assert.equal(parseTab(stored), "all", String(stored));
-    assert.equal(parsePanel(stored), "details", String(stored));
   }
 });

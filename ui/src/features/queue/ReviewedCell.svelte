@@ -3,7 +3,7 @@
   import Meter from "../../lib/ui/Meter.svelte";
   import type { Reviewed } from "./queueRows";
 
-  let { reviewed, width = 72 }: { reviewed: Reviewed; width?: number } = $props();
+  let { reviewed, width = 56 }: { reviewed: Reviewed; width?: number } = $props();
 </script>
 
 {#if reviewed.kind === "none"}

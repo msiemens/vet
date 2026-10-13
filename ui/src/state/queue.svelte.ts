@@ -154,11 +154,6 @@ class QueueStore {
     return layout && facts && { layout, facts };
   }
 
-  /** The paths of the files of the changeset on view as a whole. */
-  get onViewPaths(): readonly string[] {
-    return this.wholeLayout?.paths ?? [];
-  }
-
   /** A file of the changeset on view as a whole, with its review state. */
   onViewFile(path: string): ReviewedFile | undefined {
     const layout = this.wholeLayout;
