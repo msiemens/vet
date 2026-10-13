@@ -228,8 +228,8 @@ export function viewCommands(a: ViewActions): Command<CommandContext>[] {
       label: "Find…",
       binding: "Mod-f",
       inFields: true,
-      enabled: (c) => c.tab !== undefined && kindOf(c.tab) === "file",
-      disabledReason: () => "Open a file",
+      enabled: (c) => c.tab !== undefined && kindOf(c.tab) !== "log",
+      disabledReason: () => "Open the Changes tab or a file",
       run: () => a.openFind(),
     },
     {

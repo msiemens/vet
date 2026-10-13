@@ -16,6 +16,26 @@
   box-shadow: none;
 }
 
+/* In a file's header: how many matches the file has. */
+.file > header .found {
+  flex: none;
+  min-width: 18px;
+  height: 16px;
+  box-sizing: border-box;
+  padding: 0 5px;
+  border-radius: 8px;
+  background: var(--find);
+  color: var(--text);
+  font: 600 11px/16px var(--font-ui);
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+}
+.file > header .found.none {
+  background: transparent;
+  color: var(--text-3);
+  font-weight: 400;
+}
+
 /* On an "N unchanged lines" bar: how many matches it hides. */
 .cm-editor .vet-find-gap {
   margin-left: auto;

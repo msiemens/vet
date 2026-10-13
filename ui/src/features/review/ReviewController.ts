@@ -606,7 +606,7 @@ export class ReviewController {
    */
   openFind(): boolean {
     const id = this.tabs.active;
-    if (kindOf(id) !== "file") return false;
+    if (kindOf(id) === "log") return false;
     const selected = focusedEditor(document.activeElement)?.selectedText();
     if (selected && !/[\r\n]/.test(selected)) this.find.options.text = selected;
     this.find.open.add(id);

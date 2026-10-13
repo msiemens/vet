@@ -20,7 +20,7 @@ import { CaretStop } from "./caretStop";
 import { changeCard } from "./changeCard";
 import { type EditorSelection, hunkComment, linesAt } from "./commentAnchor";
 import { takesKeys } from "./dom";
-import { fileHeader } from "./fileHeader";
+import { badgeFind, fileHeader } from "./fileHeader";
 import type { FileSource } from "./fileSource";
 import { type FindOptions, type FindPos } from "./findMatches";
 import { FindRun } from "./findRun";
@@ -235,6 +235,7 @@ export class ChangesetView {
         count: header.count,
         meter: header.meter,
         reconfirm: header.reconfirm,
+        found: header.found,
         baseDiffs: new Map(),
         cards,
         top: 0,
@@ -541,6 +542,8 @@ export class ChangesetView {
   private drawFind() {
     if (this.destroyed) return;
     for (const fi of this.windowing.mounted) this.markFind(fi);
+    const run = this.findRun?.active ? this.findRun : undefined;
+    this.sections.forEach((s, fi) => badgeFind(s.found, run?.sets[fi]?.length));
     this.scrollbar.refresh();
     this.findListener?.(this.findRun?.summary() ?? NO_SUMMARY);
   }

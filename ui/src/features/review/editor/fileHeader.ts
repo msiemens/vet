@@ -29,6 +29,8 @@ export interface FileProgress {
   meter: { seen: HTMLElement; old: HTMLElement };
   /** Offered while the file has hunks seen against an old base. */
   reconfirm: HTMLElement;
+  /** How many matches of a find the file has, while one runs. */
+  found: HTMLElement;
 }
 
 export interface FileHeader extends FileProgress {
@@ -56,6 +58,15 @@ export function renderProgress(
   section.reconfirm.hidden = !review.hunks.includes("seenAgainstOldBase");
 }
 
+/** Shows how many matches of a find a file has in its header; none given (no find, or not searched yet) hides it. */
+export function badgeFind(found: HTMLElement, matches: number | undefined) {
+  found.hidden = matches === undefined;
+  if (matches === undefined) return;
+  found.textContent = String(matches);
+  found.classList.toggle("none", matches === 0);
+  found.title = matches === 1 ? "1 match in this file" : `${matches} matches in this file`;
+}
+
 export function fileHeader(file: FileLayout, actions: HeaderActions): FileHeader {
   const header = document.createElement("header");
   const title = pathText(file.path, "path mono");
@@ -70,6 +81,8 @@ export function fileHeader(file: FileLayout, actions: HeaderActions): FileHeader
   const delta = el("span", "delta mono");
   delta.innerHTML = `<span class="add">+${file.delta.added}</span> <span class="del">−${file.delta.removed}</span>`;
   const count = el("span", "count");
+  const found = el("span", "found");
+  found.hidden = true;
   const seen = iconButton(
     "Toggle everything in this file seen",
     "check",
@@ -86,10 +99,10 @@ export function fileHeader(file: FileLayout, actions: HeaderActions): FileHeader
   );
   const tools = el("span", "tools");
   tools.append(...(comment ? [open, comment] : [open]), reconfirm, seen);
-  header.append(title, delta, count, bar, tools);
+  header.append(title, delta, count, found, bar, tools);
   header.addEventListener("contextmenu", (e) => {
     e.preventDefault();
     actions.menu(e.clientX, e.clientY);
   });
-  return { el: header, count, meter, reconfirm };
+  return { el: header, count, meter, reconfirm, found };
 }
