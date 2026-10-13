@@ -2,7 +2,8 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { fullName, nameOf, placeLabel, shortLabel } from "./symbolLabel.ts";
 
-const label = (path: string, name: string[], modules = 0) => shortLabel({ id: { path, name }, modules });
+const label = (path: string, name: string[], modules = 0) =>
+  shortLabel({ id: { path, name }, modules, kind: "function" });
 
 // Names as the language servers list them (measured: roslyn-language-server, typescript-language-server,
 // rust-analyzer, pyright).
@@ -76,5 +77,5 @@ void test("a place without a symbol is its file, whatever the separators of its 
   assert.equal(placeLabel(null, "src/billing/util.py"), "util.py");
   assert.equal(placeLabel(null, "/home/dep/lib/mod.rs"), "mod.rs");
   assert.equal(placeLabel(null, "C:\\dep\\Mod.cs"), "Mod.cs");
-  assert.equal(placeLabel({ id: { path: "a.py", name: ["f"] }, modules: 0 }, "a.py"), "f");
+  assert.equal(placeLabel({ id: { path: "a.py", name: ["f"] }, modules: 0, kind: "function" }, "a.py"), "f");
 });

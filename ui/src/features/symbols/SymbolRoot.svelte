@@ -4,6 +4,7 @@
   // "N more"; a root with nothing to list is one muted line.
   import type { Snippet } from "svelte";
   import { readStored, writeStored } from "../../lib/storage";
+  import FileIcon from "../../lib/ui/FileIcon.svelte";
   import Icon from "../../lib/ui/Icon.svelte";
   import TreeRow from "../../lib/ui/TreeRow.svelte";
   import type { Load } from "../../state/symbols.svelte";
@@ -106,7 +107,7 @@
   >
     {#snippet glyph()}
       {#if e.glyph === "file"}
-        <span class="file"><Icon name="file" size={12} /></span>
+        <span class="file"><FileIcon name={e.name} /></span>
       {:else if e.glyph}
         <SymbolGlyph kind={e.glyph} />
       {/if}
@@ -242,7 +243,6 @@
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    color: var(--text-3);
   }
   .id.code {
     font: var(--fs-mono-s) / 16px var(--font-mono);

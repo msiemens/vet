@@ -3,6 +3,7 @@ import { test } from "node:test";
 import type { ChangedCaller } from "../../generated/ChangedCaller.ts";
 import type { Reference } from "../../generated/Reference.ts";
 import type { SymbolInfo } from "../../generated/SymbolInfo.ts";
+import type { SymbolKind } from "../../generated/SymbolKind.ts";
 import { affectedBody, calleesBody, callerTree, isTest, reachBody, removalBody, usagesBody } from "./symbolTree.ts";
 
 const span = (line: number) => ({ start: { line, col: 0 }, end: { line, col: 1 } });
@@ -13,10 +14,10 @@ function info(path: string, name: string[], line = 0, modules = 0): SymbolInfo {
 
 const caller = (symbol: SymbolInfo, depth: number): ChangedCaller => ({ symbol, change: "modified", depth });
 
-function ref(path: string, name: string[] | null, line: number): Reference {
+function ref(path: string, name: string[] | null, line: number, kind: SymbolKind = "function"): Reference {
   return {
     location: { path, span: span(line), external: false },
-    within: name && { id: { path, name }, modules: 0 },
+    within: name && { id: { path, name }, modules: 0, kind },
   };
 }
 
@@ -89,9 +90,19 @@ void test("usages group by type: one member is a row, several a node, lines of o
   assert.equal(body.count, 5);
 });
 
-void test("a reference's glyph is only what the answer knows: a kind for a symbol, none for a name", () => {
-  const usage = usagesBody({ references: [ref("src/a.rs", ["A", "m"], 1)] } as never);
-  assert.equal(usage.entries[0].glyph, "other");
+void test("a usage's glyph is the kind of the symbol it is in; a top-level one has the file's", () => {
+  const usage = usagesBody({
+    references: [
+      ref("a.py", ["Db", "table"], 1),
+      ref("b.py", ["Db"], 2, "type"),
+      ref("c.py", ["MAX"], 3, "other"),
+      ref("d.py", null, 4),
+    ],
+  } as never);
+  assert.deepEqual(
+    usage.entries.map((e) => e.glyph),
+    ["function", "type", "other", "file"],
+  );
   const affected = affectedBody([{ ...info("src/b.rs", ["B", "n"], 2), kind: "type" }], []);
   assert.equal(affected.entries[0].glyph, "type");
 });
@@ -128,7 +139,7 @@ void test("an empty list of callees or affected callers says the analysis is inc
 });
 
 void test("the way in is shown from the entry point down, each step under the one before", () => {
-  const step = (name: string) => ({ id: { path: `${name}.rs`, name: [name] }, modules: 0 });
+  const step = (name: string) => ({ id: { path: `${name}.rs`, name: [name] }, modules: 0, kind: "function" as const });
   const body = reachBody({ type: "reached", path: [step("target"), step("mid"), step("main")] });
   assert.equal(body.meta, "main");
   const [top] = body.entries;

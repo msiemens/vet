@@ -103,7 +103,7 @@ void test("typing keeps the places whose symbol, line or file matches, and the t
     row("src/a.rs", 1, { text: "let d = next_delay();", change: "hunk" }),
     row("src/a.rs", 2, {
       text: "print()",
-      within: { id: { path: "src/a.rs", name: ["Retry", "preview"] }, modules: 0 },
+      within: { id: { path: "src/a.rs", name: ["Retry", "preview"] }, modules: 0, kind: "function" },
     }),
     row("lib/b.rs", 3, { text: "x", external: true }),
   ];
@@ -124,7 +124,7 @@ void test("typing keeps the places whose symbol, line or file matches, and the t
 
 void test("a place is named by its symbol and the last part of its container, in the file's language's separator", () => {
   const label = (path: string, name: string[], modules = 0) =>
-    symbolLabel({ path, within: { id: { path, name }, modules } });
+    symbolLabel({ path, within: { id: { path, name }, modules, kind: "function" } });
   assert.equal(label("src/sync/retry.rs", ["RetryPolicy", "preview"]), "RetryPolicy::preview");
   assert.equal(label("src/retry.ts", ["Retry", "preview"]), "Retry.preview");
   assert.equal(

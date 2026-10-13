@@ -13,7 +13,8 @@ void test("fates read as words, the broken one as the bad tone", () => {
 });
 
 void test("the head names the types around a symbol and, apart, its namespaces", () => {
-  const at = (path: string, name: string[], modules: number) => headOf({ id: { path, name }, modules });
+  const at = (path: string, name: string[], modules: number) =>
+    headOf({ id: { path, name }, modules, kind: "function" });
   assert.deepEqual(at("a.rs", ["Policy", "Backoff", "next"], 0), { container: "Policy::Backoff", namespace: "" });
   assert.deepEqual(at("a.ts", ["Policy", "Backoff", "next"], 0), { container: "Policy.Backoff", namespace: "" });
   assert.deepEqual(at("a.cs", ["Acme", "Devices", "Factory", "Create"], 2), {
