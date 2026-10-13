@@ -11,6 +11,7 @@ import {
   type SectionMatches,
   findInFile,
   nearest,
+  nearestAfter,
   step,
 } from "./findMatches.ts";
 import { type FindSummary, summarize } from "./findView.ts";
@@ -71,7 +72,16 @@ export class FindRun {
     // Where it was is waiting to be searched: it moves once that section has been.
     if (here && here.section < sets.length && sets[here.section] === undefined) return;
     if (here && sets[here.section]?.some((m) => m.order === here.order && m.from === here.from)) return;
-    this.current = nearest(sets, here ?? { section: 0, order: -1, from: 0 }) ?? here;
+    const from = here ?? { section: 0, order: -1, from: 0 };
+    const after = nearestAfter(sets, from);
+    if (after) {
+      this.current = after;
+      return;
+    }
+    // Nothing lies after it in the sections searched, but the sections below it may still have
+    // something: the match above the start is only the one to take when they have not.
+    if (here && sets.some((set, section) => set === undefined && section > here.section)) return;
+    this.current = nearest(sets, from) ?? here;
   }
 
   summary(): FindSummary {

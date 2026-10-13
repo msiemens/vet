@@ -36,6 +36,29 @@ void test("a start past the last match wraps to the first", () => {
   assert.deepEqual(run.current, { section: 0, order: 0, from: 0 });
 });
 
+void test("the first match does not wrap above the start while the sections below it are unread", () => {
+  // Files 9 to 12 are below the start in file 9; only 11 has a match, and 2 above has one too.
+  const run = new FindRun(options("ab"), 13, "diff", { section: 9, order: 5, from: 0 });
+  run.add(2, plain("ab"));
+  run.add(9, plain("x"));
+  // Nothing after the start is known yet: it stays, rather than taking the match in file 2.
+  assert.deepEqual(run.current, { section: 9, order: 5, from: 0 });
+  run.add(10, plain("x"));
+  run.add(11, plain("ab"));
+  assert.deepEqual(run.current, { section: 11, order: 0, from: 0 });
+  run.add(12, plain("x"));
+  assert.deepEqual(run.current, { section: 11, order: 0, from: 0 });
+});
+
+void test("once every section below the start is read and has nothing, the first match is the one above", () => {
+  const run = new FindRun(options("ab"), 4, "diff", { section: 2, order: 5, from: 0 });
+  run.add(0, plain("ab"));
+  run.add(2, plain("x"));
+  assert.deepEqual(run.current, { section: 2, order: 5, from: 0 });
+  run.add(3, plain("x"));
+  assert.deepEqual(run.current, { section: 0, order: 0, from: 0 });
+});
+
 void test("while sections are still being read the summary says so", () => {
   const run = new FindRun(options("ab"), 3, "diff");
   run.add(1, plain("ab"));
