@@ -67,6 +67,8 @@ export interface ScrollPosition {
 export interface PanePosition {
   top: number;
   caret: number;
+  /** In px, where the first line starts below the pane's top edge (negative when scrolled into it); kept in memory only. */
+  offset?: number;
 }
 
 /** A view's current stop, as a position that survives a new revision. */
@@ -751,14 +753,17 @@ export class ChangesetView {
     if (!view) return undefined;
     const { doc } = view.state;
     // A line scrolled to the edge starts there, to the pixel: probe just below.
-    const edge = this.root.getBoundingClientRect().top + this.covered + 1 - view.documentTop;
+    const rootTop = this.root.getBoundingClientRect().top;
+    const block = view.lineBlockAtHeight(rootTop + this.covered + 1 - view.documentTop);
     return {
-      top: lineOf(doc, view.lineBlockAtHeight(edge).from),
+      top: lineOf(doc, block.from),
       caret: lineOf(doc, view.state.selection.main.head),
+      // Measured to where the line's text starts, which is what scrolling to the line aligns.
+      offset: (view.coordsAtPos(block.from)?.top ?? view.documentTop + block.top) - rootTop,
     };
   }
 
-  /** Shows the first file with `at.top` as its first line in view and the caret on `at.caret`; lines past the end are the last. */
+  /** Shows the first file with `at.top` as its first line in view, where `at.offset` says, and the caret on `at.caret`; lines past the end are the last. */
   async showLines(at: PanePosition): Promise<void> {
     if (!this.sections.length) return;
     await this.load(0);
@@ -768,10 +773,19 @@ export class ChangesetView {
     this.root.scrollTop = Math.max(0, this.sections[0].top + m.header + at.top * m.line);
     const { view } = this.mount(0);
     this.sync();
+    const first = lineStart(view.state.doc, at.top);
     view.dispatch({
       selection: { anchor: lineStart(view.state.doc, at.caret) },
-      effects: EditorView.scrollIntoView(lineStart(view.state.doc, at.top), { y: "start", yMargin: 0 }),
+      effects: EditorView.scrollIntoView(first, { y: "start" }),
     });
+    if (at.offset === undefined) return;
+    // The scroll above is CodeMirror's, done in its next frame; the line is put at its offset after it.
+    await new Promise((resolve) => requestAnimationFrame(resolve));
+    if (!view.dom.isConnected) return;
+    const now = (view.coordsAtPos(first)?.top ?? 0) - this.root.getBoundingClientRect().top;
+    this.root.scrollTop = Math.round(this.root.scrollTop + now - at.offset);
+    this.pin.update(this.root.scrollTop);
+    this.pin.refresh();
   }
 
   /** Where the current stop is, so a view of a newer revision can keep it. */

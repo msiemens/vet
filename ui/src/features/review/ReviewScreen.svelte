@@ -284,7 +284,7 @@
       {@const path = pathOf(id)}
       {@const text = tabs.modes.get(id) === "file"}
       <!-- A file's tab has a pane for its diff, while the changeset changes the file, and one for its text. -->
-      {#if path === undefined || controller.fileChanged(id)}
+      {#if controller.hasDiffPane(id)}
         <div class="pane" class:active={tabs.active === id && !text}>
           <div class="scroll" {@attach (root) => controller.attach(id, root)}></div>
         </div>

@@ -8,6 +8,7 @@ import { EditorView, lineNumbers } from "@codemirror/view";
 import type { FileReview } from "../../../generated/FileReview";
 import type { NoTextReason } from "../../../generated/NoTextReason";
 import type { Thread } from "../../../generated/Thread";
+import type { View } from "../../../generated/View";
 import type { TextSpan } from "../../../generated/TextSpan";
 import { errorText } from "../../../lib/errorText";
 import { type Highlights, decodeHighlights } from "../../../lib/highlights";
@@ -17,6 +18,7 @@ import { type MarkLayout, type ScrollMark, Scrollbar } from "../../../lib/ui/scr
 import type { FileLayout } from "../../../state/reviewModel";
 import type { ReviewSource } from "../../../state/reviewSource";
 import { type Shown, isCurrent } from "../../../state/shown";
+import { sameView } from "../../../state/view";
 import type { PanePosition } from "./ChangesetView";
 import { currentLine } from "./currentLine";
 import { closeChangeCard, showChangeCard } from "./fileCard";
@@ -256,6 +258,11 @@ export class TextView {
     return { hunks: states, flagged: flags };
   }
 
+  /** Whether the text is of `view`, whatever the revision. */
+  isOfView(view: View): boolean {
+    return sameView(this.shown.view, view);
+  }
+
   /** Whether the text is of `shown`. */
   isFor(shown: Shown): boolean {
     return isCurrent(this.shown, shown);
@@ -420,21 +427,33 @@ export class TextView {
     if (!view) return undefined;
     const { doc } = view.state;
     // A line scrolled to the edge starts there, to the pixel: probe just below.
-    const edge = view.scrollDOM.getBoundingClientRect().top + 1 - view.documentTop;
+    const rootTop = view.scrollDOM.getBoundingClientRect().top;
+    const block = view.lineBlockAtHeight(rootTop + 1 - view.documentTop);
     return {
-      top: lineOf(doc, view.lineBlockAtHeight(edge).from),
+      top: lineOf(doc, block.from),
       caret: lineOf(doc, view.state.selection.main.head),
+      // Measured to where the line's text starts, which is what scrolling to the line aligns.
+      offset: (view.coordsAtPos(block.from)?.top ?? view.documentTop + block.top) - rootTop,
     };
   }
 
-  /** Shows `at.top` as the first line in view with the caret on `at.caret` (once the text has arrived); lines past the end are the last. */
+  /** Shows `at.top` as the first line in view, where `at.offset` says, with the caret on `at.caret` (once the text has arrived); lines past the end are the last. */
   showLines(at: PanePosition) {
     this.position = at;
     const { view } = this;
     if (!view) return;
+    const first = lineStart(view.state.doc, at.top);
     view.dispatch({
       selection: { anchor: lineStart(view.state.doc, at.caret) },
-      effects: EditorView.scrollIntoView(lineStart(view.state.doc, at.top), { y: "start", yMargin: 0 }),
+      effects: EditorView.scrollIntoView(first, { y: "start" }),
+    });
+    const { offset } = at;
+    if (offset === undefined) return;
+    // The scroll above is CodeMirror's, done in its next frame; the line is put at its offset after it.
+    requestAnimationFrame(() => {
+      if (this.destroyed) return;
+      const now = (view.coordsAtPos(first)?.top ?? 0) - view.scrollDOM.getBoundingClientRect().top;
+      view.scrollDOM.scrollTop = Math.round(view.scrollDOM.scrollTop + now - offset);
     });
   }
 

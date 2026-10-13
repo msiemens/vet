@@ -85,6 +85,11 @@ export class Fixture {
     this.git(this.repo, "reset", "-q", "--soft", ref);
   }
 
+  /** Commits the working tree's edits, which makes the branch a changeset of four commits. */
+  commitWorkingTree() {
+    this.git(this.repo, "commit", "-qam", "c4: the working tree");
+  }
+
   private git(cwd: string, ...args: string[]) {
     const env = {
       ...process.env,

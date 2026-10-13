@@ -71,7 +71,20 @@ interface Driver {
   edit(path: string, tag: string, edited: number[]): Promise<void>;
   /** An agent moves `HEAD` to `ref` and keeps the files; resolves once the page says it left the base. */
   leaveBase(ref: string): Promise<void>;
+  /** The working tree is committed and the page opens the branch, reviewed by its four commits. */
+  openBranch(): Promise<void>;
+  /** Where the active file tab's first line in view below the pinned header is, as `lineAt` of the probe. */
+  probe(): Promise<Probe>;
 }
+
+/** The first line whose number is in view below the pinned header, and where its top is below the pane's top. */
+interface Probe {
+  line: number;
+  y: number;
+}
+
+/** Below the pinned header and hunk bar. */
+const PROBE_Y = 100;
 
 /** A step that sends one review request. */
 const ONE = { marks: 1 };
@@ -164,6 +177,46 @@ const sessions: Record<string, (d: Driver) => Promise<void>> = {
       await d.click("#probe-b");
       await closed("probe-b");
     });
+  },
+
+  /** A file's tab keeps its place, to the pixel, across All changes, a commit and a push range. */
+  async place(d) {
+    const scrolledTo = async () => {
+      // A stretch of the file without a change in any view, at a position that is no multiple of a line.
+      await d.page(`document.querySelector(".pane.active .scroll").scrollTop = 487`);
+      await sleep(500);
+      const at = await d.probe();
+      process.stderr.write(`  scrolled to ${JSON.stringify(at)}\n`);
+      return at;
+    };
+    const keeps = async (step: string, before: Probe, run: () => Promise<unknown>) => {
+      await d.step(step, run);
+      const after = await d.probe();
+      process.stderr.write(`  ${step}: was at ${JSON.stringify(before)}, is at ${JSON.stringify(after)}\n`);
+      if (after.line !== before.line || Math.abs(after.y - before.y) > 1.5)
+        throw new Error(`${step}: the file tab was at ${JSON.stringify(before)} and is at ${JSON.stringify(after)}`);
+    };
+    const show = async (mode: string) => {
+      await d.page(`__t.commands.run("view.mode.${mode}")`);
+      await sleep(500);
+    };
+
+    await d.openText("a.txt");
+    await show("unified");
+    // A review's first version is made by its first mark.
+    await d.step("a hunk is seen", () => d.page(call("toggleHunk", "b.txt", 0)), ONE);
+    await d.step("the timeline is open", () => d.page(`__t.commands.run("view.tool.timeline")`));
+    await d.edit("a.txt", "agent", [2, 10, 18, 30, 35]);
+    const all = await scrolledTo();
+    await keeps("a push is chosen", all, () => d.page(`__t.changeset.setRange({ from: 1, to: 2 })`));
+    await keeps("all changes again", all, () => d.page(`__t.changeset.showWhole()`));
+
+    await d.openBranch();
+    await d.openText("a.txt");
+    await show("unified");
+    const whole = await scrolledTo();
+    await keeps("a commit is shown", whole, () => d.page(`__t.changeset.showLens("perCommit")`));
+    await keeps("all changes after the commit", whole, () => d.page(`__t.changeset.showLens("squash")`));
   },
 
   /** Panels fuller than the window scroll inside themselves: the page never does (checked after every step). */
@@ -325,6 +378,21 @@ async function runSession(
         () => ready(`document.body.innerText.includes("no longer builds on the review")`),
         "the banner for a HEAD off the base",
       );
+    },
+    async openBranch() {
+      fixture.commitWorkingTree();
+      await page(`__t.changeset.openChangeset({ type: "branch", name: "feature" })`);
+      await until(() => ready(`__t.changeset.facts?.commits === 4`), "the branch's commits");
+    },
+    async probe() {
+      return (await page(`(() => {
+        const scroller = document.querySelector(".pane.active .scroll");
+        const top = scroller.getBoundingClientRect().top;
+        for (const el of scroller.querySelectorAll(".cm-lineNumbers .cm-gutterElement")) {
+          const y = el.getBoundingClientRect().top - top;
+          if (/^[0-9]+$/.test(el.textContent) && y >= ${PROBE_Y}) return { line: Number(el.textContent), y };
+        }
+      })()`)) as Probe;
     },
     async openText(path) {
       const at = (await page(`(() => {

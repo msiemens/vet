@@ -2,7 +2,7 @@
 // on the active view. Each tab's pane hands its scroll root to `attach`; the controller builds
 // the tab's view in it.
 
-import { tick } from "svelte";
+import { tick, untrack } from "svelte";
 import type { CheckLog } from "../../generated/CheckLog";
 import type { ChangedSymbol } from "../../generated/ChangedSymbol";
 import type { CheckRun } from "../../generated/CheckRun";
@@ -27,6 +27,7 @@ import { serverList } from "../../state/serverList.svelte";
 import { languageOf, withoutFeature } from "../../state/serverStatus";
 import { session } from "../../state/session.svelte";
 import { STALE_NOTICE, type Shown, isCurrent } from "../../state/shown";
+import { sameView } from "../../state/view";
 import { type StructureTarget, structure } from "../../state/structure.svelte";
 import { symbols } from "../../state/symbols.svelte";
 import { threads } from "../../state/threads.svelte";
@@ -280,6 +281,12 @@ export class ReviewController {
   fileChanged(id: TabId): boolean {
     const path = pathOf(id);
     return path !== undefined && this.sourceOf(id).layoutOf(path) !== undefined;
+  }
+
+  /** Whether the tab has a diff pane: the Changes tab, and a file's tab while its view changes the file or is not read yet, so the pane keeps its place across a switch of views. */
+  hasDiffPane(id: TabId): boolean {
+    const path = pathOf(id);
+    return path === undefined || this.stillChanged(id, path);
   }
 
   /** Whether the view the tab reads still changes the file, or does not say yet. */
@@ -907,6 +914,7 @@ export class ReviewController {
     // A scope's views are rebuilt when its own manifest comes.
     if (!force && previous && source !== this.changeset && layout && previous.isFor(layout.shown)) return;
     if (!layout) this.keepPlace(id, "text", previous?.lines());
+    const place = layout && previous?.isOfView(layout.shown.view) === false ? previous.lines() : undefined;
     previous?.destroy();
     this.texts.delete(id);
     if (!layout) return;
@@ -922,7 +930,7 @@ export class ReviewController {
       file && { file, review: source, actions: this.textActions(source, file, shown) },
     );
     this.texts.set(id, text);
-    const at = this.takePending(id, "text");
+    const at = this.takePending(id, "text") ?? place;
     if (at) text.showLines(at);
     if (this.threadsFit(layout)) text.setThreads(this.shownThreads(id), shown.revision);
   }
@@ -951,10 +959,17 @@ export class ReviewController {
       restoring.scroll.delete(id);
       if (restoring.scroll.size === 0) this.restore = undefined;
     }
-    if (!layout) this.keepPlace(id, "diff", previous?.lines());
+    // The file left the view, or it is not read yet: its place waits for the view that has it again.
+    const absent = !layout || (path !== undefined && !files.length);
+    if (absent) this.keepPlace(id, "diff", previous?.lines());
+    // A file's tab that is put on another view (a commit, a push, All changes) keeps its lines.
+    const place =
+      path !== undefined && !restoring && layout && previous && !sameView(previous.shown.view, layout.shown.view)
+        ? previous.lines()
+        : undefined;
     previous?.destroy();
     this.views.delete(id);
-    if (!layout || (path !== undefined && !files.length)) return; // the file left the view, or it is not read yet
+    if (absent) return;
     const shown = layout.shown;
     const view = new ChangesetView(
       root,
@@ -976,7 +991,7 @@ export class ReviewController {
     // A file tab shows its one file at once; the Changes tab loads sections as they come near.
     // A stale revision is replaced by the next build.
     if (path === undefined) return;
-    const at = this.takePending(id, "diff");
+    const at = this.takePending(id, "diff") ?? place;
     (at ? view.showLines(at) : view.load(0)).catch(() => undefined);
   }
 
@@ -1058,7 +1073,8 @@ export class ReviewController {
     root.addEventListener("scroll", this.scheduleSave, { passive: true });
     // The Changes tab is built by `open`, which fetches the manifest first.
     if (kindOf(id) === "log") this.buildLog(id, root);
-    else if (id !== CHANGES) this.build(id);
+    // Untracked: the pane is not torn down when the state the view reads changes, `show` rebuilds it.
+    else if (id !== CHANGES) untrack(() => this.build(id));
     return () => {
       root.removeEventListener("scroll", this.scheduleSave);
       this.views.get(id)?.destroy();
@@ -1186,13 +1202,10 @@ export class ReviewController {
     this.filtered = this.changeset.baseChanged;
     const view = this.views.get(CHANGES);
     if (!view || (!switching && view.revision === layout.shown.revision && !rangeChanged && !filterChanged)) return;
-    // Another range is another set of files: its views start at the top. So does the Changes tab when
-    // it shows other files.
+    // Another range or commit is another set of files: the Changes tab starts at the top, and so does
+    // the filtered one. A file's tab keeps its lines (`build`).
     if ((rangeChanged || filterChanged) && !switching) {
-      const tabs = this.tabs.open.filter(
-        (tab) => hasDiff(tab) && (rangeChanged || tab === CHANGES) && this.sourceOf(tab) === this.changeset,
-      );
-      this.restore = { scroll: new Map(tabs.map((tab) => [tab, 0])) };
+      this.restore = { scroll: new Map([[CHANGES, 0]]) };
     }
     this.show();
     const restored = switching && this.restoreChanges(brought, layout);
