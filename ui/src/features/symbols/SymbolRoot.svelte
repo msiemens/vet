@@ -6,6 +6,7 @@
   import { readStored, writeStored } from "../../lib/storage";
   import FileIcon from "../../lib/ui/FileIcon.svelte";
   import Icon from "../../lib/ui/Icon.svelte";
+  import SectionHead from "../../lib/ui/SectionHead.svelte";
   import TreeRow from "../../lib/ui/TreeRow.svelte";
   import type { Load } from "../../state/symbols.svelte";
   import { SvelteSet } from "svelte/reactivity";
@@ -131,28 +132,28 @@
   <div class="quiet">{body.quiet}</div>
 {:else}
   <section>
-    <div class="rt">
-      <button class="flat tog" type="button" aria-expanded={shown} onclick={toggle}>
-        <span class="chev"><Icon name={shown ? "open" : "closed"} size={10} /></span>
+    <SectionHead {title} open={shown} count={body?.count ?? body?.meta} ontoggle={toggle}>
+      {#snippet before()}
         {#if warn}<span class="warn"><Icon name="warning" size={12} /></span>{/if}
-        {title}
+      {/snippet}
+      {#snippet after()}
         {#if hint}<span class="hint" role="img" aria-label={hint} title={hint}><Icon name="info" size={12} /></span
           >{/if}
-        {#if body?.count !== undefined}<span class="n">{body.count}</span>
-        {:else if body?.meta}<span class="n">{body.meta}</span>{/if}
-      </button>
-      {#if find}
-        <button
-          class="flat find"
-          type="button"
-          title={find.unavailable ?? find.label}
-          aria-label={find.label}
-          disabled={find.unavailable !== undefined}
-        >
-          <Icon name="search" size={12} />
-        </button>
-      {/if}
-    </div>
+      {/snippet}
+      {#snippet aside()}
+        {#if find}
+          <button
+            class="flat find"
+            type="button"
+            title={find.unavailable ?? find.label}
+            aria-label={find.label}
+            disabled={find.unavailable !== undefined}
+          >
+            <Icon name="search" size={12} />
+          </button>
+        {/if}
+      {/snippet}
+    </SectionHead>
     {#if shown}
       {#if !load || load.state === "loading"}
         <p class="note">Loading…</p>
@@ -172,36 +173,6 @@
 {/if}
 
 <style>
-  .rt {
-    display: flex;
-    align-items: center;
-    border-top: 1px solid var(--line-soft);
-    padding-right: 6px;
-  }
-  .tog {
-    flex: 1;
-    min-width: 0;
-    display: flex;
-    align-items: center;
-    gap: 6px;
-    height: var(--h-ctl);
-    padding: 0 4px 0 8px;
-    font-size: 12px;
-    font-weight: 600;
-    color: var(--text-2);
-    text-align: left;
-  }
-  .chev {
-    flex: none;
-    width: var(--w-chev);
-    display: inline-flex;
-    justify-content: center;
-  }
-  .n {
-    font-weight: 400;
-    color: var(--text-3);
-    font-variant-numeric: tabular-nums;
-  }
   .warn {
     display: inline-flex;
     color: var(--old-base);

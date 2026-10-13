@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import type { CheckRun } from "../../generated/CheckRun.ts";
 import type { CommitChecks } from "../../generated/CommitChecks.ts";
-import { badgeCount, durationText, passed } from "./checkRows.ts";
+import { badgeCount, durationText, failedFirst, passed } from "./checkRows.ts";
 
 const run = (state: CheckRun["state"]): CheckRun => ({ id: "1", name: "build", state, phase: "finished", log: false });
 const commit = (...states: CheckRun["state"][]): CommitChecks => ({
@@ -30,6 +30,15 @@ void test("the badge counts what the combined state is about", () => {
   assert.equal(badgeCount(commit("success", "pending", "failure")), 1);
   assert.equal(badgeCount(commit("success", "success", "skipped")), 3);
   assert.equal(badgeCount(commit("success", "needsApproval", "needsApproval")), 2);
+});
+
+void test("failed runs come first and every group keeps its order", () => {
+  const named = (name: string, state: CheckRun["state"]): CheckRun => ({ ...run(state), id: name, name });
+  const runs = [named("a", "success"), named("b", "failure"), named("c", "pending"), named("d", "failure")];
+  assert.deepEqual(
+    failedFirst(runs).map((r) => r.id),
+    ["b", "d", "a", "c"],
+  );
 });
 
 void test("durations read as the platform shows them", () => {
