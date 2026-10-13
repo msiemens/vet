@@ -73,6 +73,13 @@ void test("a usage in a hunk takes the state of that hunk from what the changese
   assert.deepEqual(inHunk.hits, [{ from: 8, to: 18 }]);
 });
 
+void test("a usage names its symbol, or is at module level when no symbol holds it", () => {
+  const symbol = { id: { path: "src/a.rs", name: ["Retry", "next"] }, modules: 0, kind: "function" as const };
+  const [inside, top] = placesFromRows([row({ within: symbol }), row({ line: 2 })], "target", () => undefined);
+  assert.equal(inside.within, "Retry::next");
+  assert.equal(top.within, "module level");
+});
+
 void test("a usage found on the base side is a removed line of the base text", () => {
   const [place] = placesFromRows([row({ change: "hunk", hunk: 0 })], "base", () => undefined);
   assert.deepEqual([place.side, place.kind], ["base", "removed"]);

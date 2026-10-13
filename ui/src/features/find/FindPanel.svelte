@@ -20,6 +20,7 @@
   import { relocated } from "../../state/findRuns";
   import { type Place, letterOf } from "../../state/foundPlace";
   import { basename, dirname } from "../../lib/paths";
+  import { MODULE_LEVEL } from "../../lib/symbolLabel";
   import { ResultPreview } from "../search";
   import FindTab from "./FindTab.svelte";
   import { countText, cutText, rerunText, staleText } from "./findWords";
@@ -373,8 +374,8 @@
                 >
                   <span class="rv {p.review}" title={REVIEWED[p.review]}><i></i></span>
                   <span class="ln mono">{(move?.line ?? p.line) + 1}</span>
-                  <span class="within" class:none={!p.within} title={p.withinTitle}
-                    >{p.within ?? basename(p.file.path)}</span
+                  <span class="within" class:none={p.within === MODULE_LEVEL} title={p.withinTitle}
+                    >{p.within ?? ""}</span
                   >
                   <span class="code mono"
                     >{#each p.runs as run, r (r)}{#if run.hit}<mark class={run.className}>{run.text}</mark

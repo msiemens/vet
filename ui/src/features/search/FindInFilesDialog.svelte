@@ -528,7 +528,7 @@
     {/if}
   </div>
   {#snippet foot()}
-    <KeyHint keys="↑↓">choose</KeyHint>
+    <KeyHint keys="↑↓">move</KeyHint>
     <KeyHint keys="↵">open</KeyHint>
     <KeyHint keys="{isMac ? '⌥' : 'Alt+'}↵">its own tab</KeyHint>
     <KeyHint keys="esc">close</KeyHint>

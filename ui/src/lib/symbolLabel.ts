@@ -52,6 +52,9 @@ export function shortLabel(symbol: SymbolName): string {
   return container === undefined ? name : `${container}${separatorOf(symbol.id.path)}${name}`;
 }
 
+/** What a row calls a place that is in no symbol: it is in its file's top level. */
+export const MODULE_LEVEL = "module level";
+
 /** What a row says of a place: its symbol, else the name of its file. */
 export const placeLabel = (symbol: SymbolName | null, path: string): string =>
   symbol ? shortLabel(symbol) : fileName(path);

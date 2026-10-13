@@ -16,7 +16,7 @@ import type { SymbolInfo } from "../../generated/SymbolInfo";
 import type { SymbolKind } from "../../generated/SymbolKind";
 import type { SymbolName } from "../../generated/SymbolName";
 import type { Usages } from "../../generated/Usages";
-import { containersOf, fileName, partsOf, shortLabel } from "../../lib/symbolLabel.ts";
+import { MODULE_LEVEL, containersOf, fileName, partsOf, shortLabel } from "../../lib/symbolLabel.ts";
 import { describeFate, type FateTone, rowTitle } from "./symbolDetail.ts";
 
 /** Top-level rows a root shows before "N more". */
@@ -248,7 +248,7 @@ function memberEntry(key: string, places: Place[], inGroup: boolean): Entry {
     return {
       ...common,
       glyph: "file",
-      name: "module level",
+      name: MODULE_LEVEL,
       file: true,
       container: inGroup ? undefined : fileName(first.path),
       title: rowTitle(null, first.path, first.at),
