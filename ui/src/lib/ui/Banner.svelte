@@ -31,7 +31,9 @@
       </button>
     {/if}
     {#if ondismiss}
-      <IconButton icon="close" label="Dismiss" size={20} iconSize={12} onclick={ondismiss} />
+      <div class="dismiss">
+        <IconButton icon="close" label="Dismiss" size={20} iconSize={12} onclick={ondismiss} />
+      </div>
     {/if}
   </div>
   {#if details && expanded}
@@ -41,24 +43,41 @@
 
 <style>
   .banner {
+    --tone: var(--old-base);
     flex: none;
     padding: 4px 6px 4px 12px;
-    background: color-mix(in srgb, var(--old-base) 14%, var(--bg-panel));
+    background: color-mix(in srgb, var(--tone) 14%, var(--bg-panel));
     border-bottom: 1px solid var(--line);
     font-size: var(--fs-ctl);
   }
   .line {
     display: flex;
     align-items: center;
-    gap: 10px;
+    gap: 4px;
   }
   span {
     margin-right: auto;
+    padding-right: 10px;
   }
-  button {
-    padding: 0 6px;
+  /* The actions are plain text until pointed at; the hover and pressed boxes are the banner's own
+     tone, a little stronger than its background. */
+  button.flat {
+    height: 20px;
+    box-sizing: border-box;
+    padding: 0 8px;
     border-radius: var(--radius);
     color: var(--text-2);
+    line-height: 1;
+  }
+  button.flat:enabled:hover {
+    background: color-mix(in srgb, var(--tone) 26%, var(--bg-panel));
+  }
+  button.flat:enabled:active {
+    background: color-mix(in srgb, var(--tone) 38%, var(--bg-panel));
+  }
+  .dismiss {
+    display: flex;
+    margin-left: 4px;
   }
   .details {
     max-height: 30vh;
