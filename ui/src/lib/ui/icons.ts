@@ -31,6 +31,8 @@ export const ICONS = {
   filter: '<path d="M4 5h16l-6 7v6l-4 2v-8z"/>',
   search: '<circle cx="11" cy="11" r="6.5"/><path d="M20 20l-4.2-4.2"/>',
   check: '<path d="M5 12.5l4.5 4.5L19 7.5"/>',
+  // Lucide's zap (ISC).
+  zap: '<path d="M4 14a1 1 0 0 1-.78-1.63l9.9-10.2a.5.5 0 0 1 .86.46l-1.92 6.02A1 1 0 0 0 13 10h7a1 1 0 0 1 .78 1.63l-9.9 10.2a.5.5 0 0 1-.86-.46l1.92-6.02A1 1 0 0 0 11 14z"/>',
   // Lucide's flag (ISC).
   flag: '<path d="M4 15s1-1 4-1 5 2 8 2 4-1 4-1V3s-1 1-4 1-5-2-8-2-4 1-4 1z"/><line x1="4" x2="4" y1="22" y2="15"/>',
   reconfirm: '<path d="M20 11a8 8 0 10-2.3 5.7M20 5v6h-6"/>',

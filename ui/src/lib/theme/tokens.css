@@ -148,6 +148,12 @@
   --h-queue-panel: 190px;
   /* The popovers of the project and the changeset switcher. */
   --w-switcher: 440px;
+  /* Search Everywhere: the popup, a result and the line of keys under the list. */
+  --w-palette: 680px;
+  --h-palette: 520px;
+  --h-palette-row: 27px;
+  --h-palette-field: 38px;
+  --h-palette-foot: 26px;
   /* The timeline, the bottom panel listing the review's versions. */
   --h-timeline: 300px;
   --w-timeline-files: 360px;

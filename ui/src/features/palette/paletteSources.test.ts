@@ -8,6 +8,7 @@ const symbol = (path: string, name: string[], change: ChangedSymbol["change"] = 
   change,
   symbol: {
     id: { path, name },
+    modules: 0,
     kind: "function",
     span: { start: { line: 39, col: 0 }, end: { line: 50, col: 1 } },
     at: { line: 39, col: 7 },
@@ -17,11 +18,10 @@ const symbol = (path: string, name: string[], change: ChangedSymbol["change"] = 
 void test("a member symbol is named after its container in its language's way, a top-level one by its name", () => {
   const found = symbolCandidates([
     {
-      path: "src/retry.rs",
       symbols: [symbol("src/retry.rs", ["RetryPolicy", "next_delay"]), symbol("src/retry.rs", ["should_retry"])],
       seen: 20,
     },
-    { path: "src/retry.ts", symbols: [symbol("src/retry.ts", ["RetryPolicy", "nextDelay"])], seen: 100 },
+    { symbols: [symbol("src/retry.ts", ["RetryPolicy", "nextDelay"])], seen: 100 },
   ]);
   assert.deepEqual(
     found.map((s) => [s.label, s.lead]),
@@ -37,7 +37,7 @@ void test("a member symbol is named after its container in its language's way, a
 
 void test("two symbols of one name that changed differently are two candidates", () => {
   const found = symbolCandidates([
-    { path: "a.rs", symbols: [symbol("a.rs", ["f"], "removed"), symbol("a.rs", ["f"], "added")], seen: 0 },
+    { symbols: [symbol("a.rs", ["f"], "removed"), symbol("a.rs", ["f"], "added")], seen: 0 },
   ]);
   assert.equal(new Set(found.map((s) => s.key)).size, 2);
 });

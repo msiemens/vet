@@ -4,7 +4,8 @@
 
 import type { ChangedSymbol } from "../../generated/ChangedSymbol";
 import type { Thread } from "../../generated/Thread";
-import { rowLabel, separatorOf } from "../../lib/symbolLabel.ts";
+import { splitQualified } from "../../lib/qualified.ts";
+import { shortLabel } from "../../lib/symbolLabel.ts";
 import type {
   ActionCandidate,
   ChangesetCandidate,
@@ -28,20 +29,19 @@ export const fileCandidates = (files: readonly ChangedFile[]): FileCandidate[] =
 
 /** The changed symbols of each file, as a symbol is chosen by the Changes tree, with how much of its file is seen. */
 export function symbolCandidates(
-  files: Iterable<{ path: string; symbols: readonly ChangedSymbol[]; seen: number }>,
+  files: Iterable<{ symbols: readonly ChangedSymbol[]; seen: number }>,
 ): SymbolCandidate[] {
   const out: SymbolCandidate[] = [];
-  for (const { path, symbols, seen } of files) {
+  for (const { symbols, seen } of files) {
     for (const { symbol, change } of symbols) {
-      const { name, context } = rowLabel(symbol.id, path);
-      const container = symbol.id.name.length > 1 ? context + separatorOf(symbol.id.path) : "";
+      const label = shortLabel(symbol);
       out.push({
         kind: "symbol",
         key: `${symbol.id.path}#${symbol.id.name.join("\0")}${change}`,
         info: symbol,
         symbolKind: symbol.kind,
-        label: container + name,
-        lead: container.length,
+        label,
+        lead: splitQualified(label).qualifier.length,
         change,
         seen,
       });

@@ -141,6 +141,11 @@ export function mainMenuSpec(s: MenuState): MenuSpec {
     { command: "review.finish" },
   ];
   const navigate: MenuSpec = [
+    { command: "palette.all" },
+    { command: "palette.files" },
+    { command: "palette.symbols" },
+    { command: "palette.actions" },
+    "-",
     { command: "review.nextHunk" },
     { command: "review.previousHunk" },
     { command: "review.nextFlagged" },

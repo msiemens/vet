@@ -31,6 +31,7 @@
     summarizeOutgoing,
     unreadCount,
   } from "../features/comments";
+  import { type Choice, Palette, palette, paletteCommands, watchDoubleShift } from "../features/palette";
   import { NotificationCards, PlatformFooter, copyText } from "../features/platform";
   import { ChangesetSwitcher, OpenPullRequestDialog, QueueScreen, queueCommands, targetLabel } from "../features/queue";
   import {
@@ -38,6 +39,7 @@
     ReviewScreen,
     type ReviewController,
     fileCommands,
+    fileTab,
     reviewActions,
     modeChange,
     statusLetter,
@@ -89,6 +91,7 @@
   import { serverList } from "../state/serverList.svelte";
   import { serverLine } from "../state/serverStatus";
   import { session } from "../state/session.svelte";
+  import { symbols } from "../state/symbols.svelte";
   import { threads } from "../state/threads.svelte";
   import { defaultRange } from "../state/timelineRange";
   import { versions } from "../state/versions.svelte";
@@ -293,9 +296,11 @@
       attach: (thread, at) => void threads.attach(thread, at),
       remove: (thread) => void threads.remove(thread),
     }),
+    ...paletteCommands({ show: (tab) => palette.show(tab) }),
   );
   keymap.load();
   session.onOpen(() => (screen = "queue"));
+  session.onClose(() => palette.close());
   /** Comments and a staged vote that wait to be sent to the platform of the pull request on view. */
   const outgoing = $derived(
     platform.info === undefined
@@ -387,8 +392,13 @@
     session.onConnect(reveal);
     void session.connect().then(reveal);
     const stopMenu = mainMenu.listen();
+    const stopDoubleShift = watchDoubleShift(
+      () => palette.doubleShift && !!session.repo,
+      () => commands.run("palette.all"),
+    );
     return () => {
       stopMenu();
+      stopDoubleShift();
       window.removeEventListener("keydown", onkeydown, true);
       window.removeEventListener("keydown", leaveScope);
       window.removeEventListener("contextmenu", onContextMenu);
@@ -481,6 +491,48 @@
     if (thread.kind !== "changeset") return void controller?.goToThread(thread);
     Object.assign(left, { tool: "comments", open: true });
     platform.commentsTab = "conversation";
+  }
+
+  /** Does what was chosen in Search Everywhere, which has closed and given the focus back. */
+  async function openChoice(choice: Choice) {
+    switch (choice.type) {
+      case "file":
+        screen = "review";
+        if (!choice.inChanges) {
+          void controller?.openSource(ON_SCREEN, choice.path, choice.line);
+          break;
+        }
+        // The file is shown among all the changes, which a commit on screen does not list.
+        if (changeset.shownCommit !== undefined) await changeset.showWhole();
+        await tick();
+        void controller?.revealInChanges(choice.path);
+        break;
+      case "symbol": {
+        screen = "review";
+        const { symbol, change } = choice;
+        // A removed symbol has no text to open, so it is shown where it is reviewed.
+        if (change !== undefined && (change === "removed" || choice.reveal)) {
+          symbols.choose(symbol, change, true);
+          void controller?.revealSymbol({ symbol, change });
+        } else {
+          // The symbol was found in the changeset's target, so its file opens there, never at a pinned commit.
+          void controller?.openSource(fileTab(symbol.id.path), symbol.id.path, symbol.span.start.line);
+        }
+        break;
+      }
+      case "changeset":
+        screen = "review";
+        if (!queue.onView || keyId(queue.onView) !== choice.id) commands.run(`changeset.open:${choice.id}`);
+        break;
+      case "thread": {
+        const thread = threads.items.find((t) => t.id === choice.id);
+        if (thread) openThread(thread);
+        break;
+      }
+      case "action":
+        commands.run(choice.id);
+        break;
+    }
   }
 
   /** Opens the Comments tool window at the form for a comment on the changeset as a whole. */
@@ -678,6 +730,10 @@
       void changeset.openChangeset({ type: "pullRequest", remote, number });
     }}
   />
+{/if}
+
+{#if palette.open}
+  <Palette onchoose={(choice) => void openChoice(choice)} />
 {/if}
 
 <LocationPicker
