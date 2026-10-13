@@ -8,8 +8,8 @@ use vet_core::content::{FileDiff, LineRange, RepoPath};
 use vet_core::review::Side;
 use vet_protocol as p;
 use vet_semantic::derived::{
-    Bounds, CallSite, Calls, Change, ChangedSymbol, Derived, Fate, FileChanges, Inputs, Located, OutlineSymbol, Reach,
-    Reference, RemovalImpact, Usages,
+    Bounds, CallSite, Calls, Change, ChangedSymbol, Derived, Fate, FileChanges, Inputs, Judged, Located, Origin,
+    OutlineSymbol, Reach, Reference, RemovalImpact, Usages,
 };
 use vet_semantic::pool::{Outcome, PoolError};
 use vet_semantic::ports::{
@@ -208,19 +208,39 @@ pub fn finish(mut rows: Vec<p::LocationRow>) -> (Vec<p::LocationRow>, u32) {
     (rows, total)
 }
 
-pub fn diagnostics(d: &[Diagnostic]) -> Vec<p::Diagnostic> {
+fn diagnostic(d: &Diagnostic, origin: p::DiagnosticOrigin) -> p::Diagnostic {
+    p::Diagnostic {
+        span: span(d.span),
+        severity: match d.severity {
+            Severity::Error => p::Severity::Error,
+            Severity::Warning => p::Severity::Warning,
+            Severity::Info => p::Severity::Info,
+            Severity::Hint => p::Severity::Hint,
+        },
+        message: d.message.clone(),
+        source: d.source.clone(),
+        code: d.code.clone(),
+        origin,
+    }
+}
+
+/// Diagnostics not compared with the base yet.
+pub fn pending_diagnostics(d: &[Diagnostic]) -> Vec<p::Diagnostic> {
+    d.iter().map(|d| diagnostic(d, p::DiagnosticOrigin::Pending)).collect()
+}
+
+/// Diagnostics with the origin the comparison found.
+pub fn judged_diagnostics(d: &[Judged]) -> Vec<p::Diagnostic> {
     d.iter()
-        .map(|d| p::Diagnostic {
-            span: span(d.span),
-            severity: match d.severity {
-                Severity::Error => p::Severity::Error,
-                Severity::Warning => p::Severity::Warning,
-                Severity::Info => p::Severity::Info,
-                Severity::Hint => p::Severity::Hint,
-            },
-            message: d.message.clone(),
-            source: d.source.clone(),
-            code: d.code.clone(),
+        .map(|j| {
+            diagnostic(
+                &j.diagnostic,
+                match j.origin {
+                    Origin::New => p::DiagnosticOrigin::New,
+                    Origin::Existing => p::DiagnosticOrigin::Existing,
+                    Origin::Unknown => p::DiagnosticOrigin::Unknown,
+                },
+            )
         })
         .collect()
 }

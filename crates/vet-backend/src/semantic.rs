@@ -225,19 +225,47 @@ impl Booted {
         })
     }
 
-    pub async fn diagnostics(&self, revision: u32, path: &str) -> Result<Response, String> {
+    pub async fn diagnostics(&self, revision: u32, path: &str, against_base: bool) -> Result<Response, String> {
         let file = RepoPath::from(path);
+        let language = self.language_of(&file);
+        if !against_base {
+            let answer = (self.semantics)
+                .diagnostics(&self.view, revision, &file)
+                .await
+                .map_err(message)?;
+            let (found, unavailable) = map::answer(answer.result, language);
+            return Ok(Response::Diagnostics {
+                revision,
+                path: path.to_owned(),
+                diagnostics: map::pending_diagnostics(&found),
+                count: vet_app::semantics::countable(&found),
+                unavailable,
+                origin_unavailable: None,
+            });
+        }
         let answer = (self.semantics)
-            .diagnostics(&self.view, revision, &file)
+            .judged_diagnostics(&self.view, revision, &file)
             .await
             .map_err(message)?;
-        let (found, unavailable) = map::answer(answer.result, self.language_of(&file));
+        let (diagnostics, count, unavailable, origin_unavailable) = match answer.result {
+            Ok(judgement) => {
+                let found: Vec<_> = judgement.diagnostics.iter().map(|j| j.diagnostic.clone()).collect();
+                (
+                    map::judged_diagnostics(&judgement.diagnostics),
+                    vet_app::semantics::countable(&found),
+                    None,
+                    judgement.base.map(|e| map::unavailable(&e, language)),
+                )
+            }
+            Err(e) => (Vec::new(), 0, Some(map::unavailable(&e, language)), None),
+        };
         Ok(Response::Diagnostics {
             revision,
             path: path.to_owned(),
-            diagnostics: map::diagnostics(&found),
-            count: vet_app::semantics::countable(&found),
+            diagnostics,
+            count,
             unavailable,
+            origin_unavailable,
         })
     }
 

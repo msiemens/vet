@@ -12,8 +12,9 @@ use std::time::Instant;
 use vet_core::content::{FileDiff, RepoPath};
 use vet_core::review::Side;
 use vet_semantic::derived::{
-    Bounds, Calls, Change, Compared, Derived, EntryPoints, FileChanges, Located, OutlineSymbol, Reach, Reference,
-    RemovalImpact, Texts, Usages, calls, compared, located, outline, reachability, removal_impact, symbol_at, usages,
+    Bounds, Calls, Change, Compared, Derived, EntryPoints, FileChanges, Judgement, Located, OutlineSymbol, Reach,
+    Reference, RemovalImpact, Texts, Usages, calls, compared, judged, located, outline, reachability, removal_impact,
+    symbol_at, usages,
 };
 use vet_semantic::join::bounded;
 use vet_semantic::pool::{Pool, Supervision, Target};
@@ -516,6 +517,35 @@ where
                         .into_iter()
                         .map(|(language, result)| LanguageSymbols { language, result })
                         .collect(),
+                })
+            }),
+        )
+        .await
+    }
+
+    /// Diagnostics of a file of the target side, each with its origin against the base side's
+    /// (derived, §7.3). A file the change leaves alone is compared with itself on the base.
+    pub async fn judged_diagnostics(
+        &self,
+        view: &RevisionView<G, S>,
+        revision: u32,
+        file: &RepoPath,
+    ) -> Fallible<Answer<Judgement>> {
+        self.current(
+            revision,
+            Box::pin(async move {
+                let files = view.changed_files(revision).await?;
+                let diff = files.iter().find(|f| f.new_path.as_ref() == Some(file));
+                let (old, hunks) = match diff {
+                    Some(diff) => (diff.old_path.as_ref(), diff.hunks.as_slice()),
+                    None => (Some(file), [].as_slice()),
+                };
+                let pair = self.pair(view, revision).await?;
+                let judged = judged(&pair, old, file, hunks).await;
+                Ok(Answer {
+                    revision,
+                    result: judged.value,
+                    provenance: None,
                 })
             }),
         )

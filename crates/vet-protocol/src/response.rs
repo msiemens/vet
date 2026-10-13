@@ -133,6 +133,8 @@ pub enum Response {
         /// How many of `diagnostics` to tell the viewer about: hints are not counted.
         count: u32,
         unavailable: Option<Unavailable>,
+        /// Why the origins are unknown, when the base side could not be compared.
+        origin_unavailable: Option<Unavailable>,
     },
     FileSymbols(FileSymbols),
     FileOutline(FileOutline),

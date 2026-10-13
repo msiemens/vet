@@ -310,11 +310,14 @@ pub enum Request {
     },
     /// The diagnostics of a file of the target side. The language server is
     /// asked and may take seconds on a cold start: there is no push.
+    /// With `against_base` each carries its origin from comparing with the base side's, which
+    /// may take far longer; without it every origin is pending.
     /// Answers with `Response::Diagnostics`; otherwise like `Hover`.
     Diagnostics {
         project: ProjectId,
         revision: u32,
         path: String,
+        against_base: bool,
     },
     /// What the changeset did to the symbols of one changed file (derived, §7.3): the file's
     /// symbols on both sides, from their texts, intersected with its diff hunks. A file no

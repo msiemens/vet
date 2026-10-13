@@ -247,6 +247,7 @@ impl Client {
             project,
             revision,
             path: path.into(),
+            against_base: false,
         };
         match self.call(request).await.unwrap() {
             Response::Diagnostics {

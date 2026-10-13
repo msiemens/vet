@@ -182,6 +182,21 @@ pub struct Diagnostic {
     /// The tool that reported it, e.g. `rustc`.
     pub source: Option<String>,
     pub code: Option<String>,
+    pub origin: DiagnosticOrigin,
+}
+
+/// Whether the change introduced a diagnostic (derived, SPEC §7.3).
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub enum DiagnosticOrigin {
+    New,
+    /// The base has it too, on a line that maps to it.
+    Existing,
+    /// Not compared with the base yet.
+    Pending,
+    /// The base side's diagnostics are not available: never claimed to be new.
+    Unknown,
 }
 
 /// Why a semantic answer is missing, so the shell can say so instead of

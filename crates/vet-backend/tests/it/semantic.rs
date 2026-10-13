@@ -214,6 +214,7 @@ async fn rust_semantics_through_the_protocol() {
             project,
             revision,
             path: path.into(),
+            against_base: true,
         })
         .await
         .unwrap()
@@ -222,7 +223,9 @@ async fn rust_semantics_through_the_protocol() {
     };
     assert_eq!(unavailable, None);
     assert!(
-        diagnostics.iter().any(|d| d.message.contains("expected u32")),
+        diagnostics
+            .iter()
+            .any(|d| d.message.contains("expected u32") && d.origin == vet_protocol::DiagnosticOrigin::New),
         "{diagnostics:?}"
     );
 
@@ -562,6 +565,7 @@ async fn rust_semantics_through_the_protocol() {
             project,
             revision: revision + 1,
             path: path.into(),
+            against_base: true,
         },
     ] {
         let error = client.call(request).await.unwrap_err();

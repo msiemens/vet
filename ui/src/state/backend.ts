@@ -571,16 +571,23 @@ export class Backend {
 
   /**
    * The diagnostics of a file of the target side, and how many of them to tell the viewer about;
-   * the language server may take seconds on a cold start.
+   * the language server may take seconds on a cold start. With `againstBase` each carries whether
+   * the change introduced it, which waits for the base side's analysis; without it every origin is pending.
    */
   async diagnostics(
     revision: number,
     path: string,
+    againstBase: boolean,
     signal?: AbortSignal,
-  ): Promise<{ diagnostics: Diagnostic[]; count: number; unavailable?: Unavailable }> {
-    const request = { type: "diagnostics", project: this.pid, revision, path } as const;
+  ): Promise<{ diagnostics: Diagnostic[]; count: number; unavailable?: Unavailable; originUnavailable?: Unavailable }> {
+    const request = { type: "diagnostics", project: this.pid, revision, path, againstBase } as const;
     const r = expect(await this.semantic(revision, request, signal), "diagnostics");
-    return { diagnostics: r.diagnostics, count: r.count, unavailable: r.unavailable ?? undefined };
+    return {
+      diagnostics: r.diagnostics,
+      count: r.count,
+      unavailable: r.unavailable ?? undefined,
+      originUnavailable: r.originUnavailable ?? undefined,
+    };
   }
 
   /**

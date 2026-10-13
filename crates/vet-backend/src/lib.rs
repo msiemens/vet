@@ -545,7 +545,13 @@ impl Orchestrator {
                 project,
                 revision,
                 path,
-            } => reply(async move { self.ready(project).await?.diagnostics(revision, &path).await }),
+                against_base,
+            } => reply(async move {
+                self.ready(project)
+                    .await?
+                    .diagnostics(revision, &path, against_base)
+                    .await
+            }),
             Request::FileSymbols {
                 project,
                 revision,

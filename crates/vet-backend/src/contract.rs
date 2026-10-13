@@ -423,6 +423,7 @@ mod tests {
                 project,
                 revision: 0,
                 path: path(),
+                against_base: false,
             },
             Request::FileSymbols {
                 project,
