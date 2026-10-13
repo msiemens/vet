@@ -68,6 +68,7 @@ fn symbol_name(info: &SymbolInfo) -> p::SymbolName {
     p::SymbolName {
         id: symbol_id(&info.sym),
         modules: sat_u32(info.modules),
+        kind: symbol_kind(info.kind),
     }
 }
 
@@ -676,6 +677,37 @@ mod tests {
         assert_eq!(matched(100, 110), (100, 110));
         assert_eq!(matched(295, 310), (295, 300));
         assert_eq!(matched(900, 910), (300, 300));
+    }
+
+    #[test]
+    fn a_place_names_the_kind_of_the_symbol_it_is_in() {
+        let within = |kind| SymbolInfo {
+            sym: Sym {
+                file: RepoPath::from("db.py"),
+                name: vec!["TinyDB".into(), "table".into()],
+            },
+            span: Span {
+                start: Pos { line: 1, col: 0 },
+                end: Pos { line: 9, col: 0 },
+            },
+            at: Pos { line: 1, col: 8 },
+            detail: None,
+            kind,
+            modules: 0,
+        };
+        let kinds = |kind| {
+            let r = Reference {
+                within: Some(within(kind)),
+                ..reference("db.py", (3, 8), (3, 13), false)
+            };
+            let listed = super::reference(&r).within.map(|w| w.kind);
+            let in_row = plain_row(&r, "x.table()").within.map(|w| w.kind);
+            (listed, in_row)
+        };
+        let method = Some(p::SymbolKind::Function);
+        assert_eq!(kinds(SymbolKind::Function), (method, method));
+        let class = Some(p::SymbolKind::Type);
+        assert_eq!(kinds(SymbolKind::Type), (class, class));
     }
 
     #[test]

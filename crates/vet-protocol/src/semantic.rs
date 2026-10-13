@@ -41,6 +41,8 @@ pub struct SymbolId {
 pub struct SymbolName {
     pub id: SymbolId,
     pub modules: u32,
+    /// What it is, as the file's outline says.
+    pub kind: SymbolKind,
 }
 
 /// What a symbol is, as far as a list needs to tell them apart.

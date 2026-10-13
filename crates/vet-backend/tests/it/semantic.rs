@@ -11,7 +11,7 @@ use crate::common::{Client, config, find, git, repo_with, write};
 use vet_backend::{Orchestrator, open_store};
 use vet_protocol::{
     CallFate, ChangesetKey, Event, LocationChange, Reach, Request, Response, ServerMessage, ServerState, Side,
-    SymbolChange, SymbolId, SymbolName, UnavailableKind, View,
+    SymbolChange, SymbolId, SymbolKind, SymbolName, UnavailableKind, View,
 };
 
 const BASE: &str = "\
@@ -179,7 +179,8 @@ async fn rust_semantics_through_the_protocol() {
                 path: path.into(),
                 name: name(&["fresh"])
             },
-            modules: 0
+            modules: 0,
+            kind: SymbolKind::Function
         })
     );
     assert_eq!(row.change, LocationChange::Hunk, "{refs:?}");
