@@ -31,9 +31,9 @@ use serde::Deserialize;
 use serde::de::DeserializeOwned;
 use serde_json::{Value, json};
 use vet_app::platform::{
-    CheckLog, CommentRef, CommitChecks, Credential, CredentialProvider, Discussion, Platform, PlatformComment,
-    PlatformError, PlatformKind, PlatformTraits, PullRequestDetail, PullRequestListing, PullRequestQuery, QueueTab,
-    RemoteKey, Submission, Submitted, Viewer, pushes_from_force_pushes,
+    CheckLog, CommentRef, CommitChecks, Credential, CredentialProvider, Discussion, PipelineAction, Platform,
+    PlatformComment, PlatformError, PlatformKind, PlatformTraits, PullRequestDetail, PullRequestListing,
+    PullRequestQuery, QueueTab, RemoteKey, Step, Submission, Submitted, Viewer, pushes_from_force_pushes,
 };
 
 use crate::clock::unix_now;
@@ -533,6 +533,14 @@ impl<C: CredentialProvider + Sync> Platform for GitHubClient<C> {
 
     async fn check_log(&self, remote: &RemoteKey, check: &str) -> Result<CheckLog, PlatformError> {
         self.job_log(remote, check).await
+    }
+
+    async fn steps(&self, remote: &RemoteKey, check: &str) -> Result<Vec<Step>, PlatformError> {
+        self.job_steps(remote, check).await
+    }
+
+    async fn pipeline_action(&self, remote: &RemoteKey, action: &PipelineAction) -> Result<(), PlatformError> {
+        self.change_run(remote, action).await
     }
 
     async fn discussion(&self, remote: &RemoteKey, number: u64) -> Result<Discussion, PlatformError> {

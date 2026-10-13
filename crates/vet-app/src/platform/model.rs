@@ -21,6 +21,23 @@ pub struct PlatformTraits {
     /// Removing the first comment of a thread removes the thread. Otherwise the thread stays with
     /// its other comments, and goes once none is left.
     pub first_comment_ends_thread: bool,
+    pub pipelines: PipelineWords,
+}
+
+/// What the platform calls the parts of a run, and how its actions differ, so that one layout
+/// serves every platform without saying a "job" where the platform's retry unit is a stage.
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub struct PipelineWords {
+    /// The unit the platform re-runs and the tool lists under a run: `job`, `stage`.
+    pub group: &'static str,
+    /// What a group is made of: `step`, `task`.
+    pub step: &'static str,
+    pub rerun_failed: &'static str,
+    pub rerun_all: &'static str,
+    pub rerun_group: &'static str,
+    pub cancel: &'static str,
+    /// Running everything again also stops a build that is running, so it asks first.
+    pub rerun_all_replaces_running: bool,
 }
 
 /// What a comment on the whole pull request is.
@@ -85,6 +102,15 @@ impl PlatformTraits {
             blocking: vec![BlockingSource::UnresolvedThreads],
             revision_scoped: false,
             first_comment_ends_thread: true,
+            pipelines: PipelineWords {
+                group: "job",
+                step: "step",
+                rerun_failed: "Re-run failed jobs",
+                rerun_all: "Re-run all jobs",
+                rerun_group: "Re-run job",
+                cancel: "Cancel run",
+                rerun_all_replaces_running: false,
+            },
         }
     }
 
@@ -116,6 +142,15 @@ impl PlatformTraits {
             revision_scoped: false,
             // A removed comment is marked deleted; the thread is deleted with its last one.
             first_comment_ends_thread: false,
+            pipelines: PipelineWords {
+                group: "stage",
+                step: "task",
+                rerun_failed: "Retry failed stages",
+                rerun_all: "Re-run all",
+                rerun_group: "Retry stage",
+                cancel: "Cancel run",
+                rerun_all_replaces_running: true,
+            },
         }
     }
 }

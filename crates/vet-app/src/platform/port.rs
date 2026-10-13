@@ -1,7 +1,7 @@
 //! The port to a hosting platform; implemented over HTTP by `vet-infra`, one adapter per
 //! platform.
 
-use super::checks::{CheckLog, CommitChecks};
+use super::checks::{CheckLog, CommitChecks, PipelineAction, Step};
 use super::discussion::{CommentRef, Discussion, PlatformComment, Submission, Submitted};
 use super::model::{PlatformError, PlatformTraits, PullRequestDetail, PullRequestListing, PullRequestQuery, Viewer};
 use super::queue::{PullRequestRow, rows};
@@ -44,6 +44,23 @@ pub trait Platform {
         remote: &RemoteKey,
         check: &str,
     ) -> impl Future<Output = Result<CheckLog, PlatformError>> + Send;
+
+    /// The steps of the job `check` (a [`Check::id`] of `remote` with a run), in the order they run.
+    fn steps(&self, remote: &RemoteKey, check: &str) -> impl Future<Output = Result<Vec<Step>, PlatformError>> + Send {
+        let _ = (remote, check);
+        async { Err(unsupported("reading the steps of a job")) }
+    }
+
+    /// Asks the platform to change a run. The platform does its work later; what it makes of the
+    /// request shows in the next [`Platform::checks`].
+    fn pipeline_action(
+        &self,
+        remote: &RemoteKey,
+        action: &PipelineAction,
+    ) -> impl Future<Output = Result<(), PlatformError>> + Send {
+        let _ = (remote, action);
+        async { Err(unsupported("changing a run")) }
+    }
 
     /// The review threads of a pull request with their comments, who reviews it, and its
     /// conversation. Comments of a review that is not submitted yet are left out.

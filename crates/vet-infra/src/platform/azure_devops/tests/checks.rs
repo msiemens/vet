@@ -1,6 +1,7 @@
 //! The checks of commits: statuses by iteration, policy evaluations, builds and their logs.
 
 use serde_json::{Value, json};
+use vet_app::platform::Phase;
 
 use super::*;
 
@@ -78,6 +79,8 @@ fn building(statuses: Vec<Value>, evaluations: Vec<Value>) -> Fake {
                 request.path
             );
             list(&evaluations)
+        } else if path.starts_with("/contoso/shop/_apis/build/builds/") {
+            Canned::status(404, r#"{"message":"TF215009: build not found"}"#)
         } else {
             panic!("unexpected request {} {}", request.method, request.path)
         }
@@ -338,6 +341,270 @@ async fn the_log_of_a_build_is_that_of_the_step_that_failed_with_the_line_of_its
         let failure = log.failure.expect("where it failed");
         assert_eq!((failure.line, failure.step.as_deref()), (2, Some("Run tests")));
     }
+}
+
+fn record(id: &str, parent: Option<&str>, kind: &str, name: &str, order: i32) -> Value {
+    json!({ "id": id, "parentId": parent, "type": kind, "name": name, "identifier": name, "order": order,
+        "state": "completed", "result": "succeeded",
+        "startTime": "2024-05-01T12:00:00Z", "finishTime": "2024-05-01T12:03:00Z" })
+}
+
+fn with(mut record: Value, fields: Value) -> Value {
+    for (key, value) in fields.as_object().unwrap() {
+        record[key] = value.clone();
+    }
+    record
+}
+
+/// Stages Build (passed), Test (failed, in its second task) and Package (skipped). Their jobs hold
+/// the tasks, deeper than the stage.
+fn timeline() -> Value {
+    let log = |id: i32| json!({ "id": id, "type": "Container", "url": "u" });
+    json!({ "records": [
+        record("s1", None, "Stage", "Build", 1),
+        record("p1", Some("s1"), "Phase", "Build", 1),
+        record("j1", Some("p1"), "Job", "Build", 1),
+        with(record("t1", Some("j1"), "Task", "Checkout", 1), json!({ "log": log(1) })),
+        with(record("t2", Some("j1"), "Task", "cargo build", 2), json!({ "log": log(2) })),
+        with(record("s2", None, "Stage", "Test", 2), json!({ "result": "failed", "attempt": 2 })),
+        record("p2", Some("s2"), "Phase", "Test", 1),
+        record("j2", Some("p2"), "Job", "Test", 1),
+        with(record("t3", Some("j2"), "Task", "Checkout", 1), json!({ "log": log(3) })),
+        with(record("t4", Some("j2"), "Task", "Run tests", 2), json!({ "log": log(4), "result": "failed" })),
+        with(record("t5", Some("j2"), "Task", "Publish", 3), json!({ "state": "pending", "result": null })),
+        with(record("s3", None, "Stage", "Package", 3), json!({ "result": "skipped" })),
+    ]})
+}
+
+fn build() -> Value {
+    let project = json!({ "id": "proj-1", "name": "Shop", "visibility": "private" });
+    json!({ "id": 55, "buildNumber": "20240501.2", "reason": "pullRequest", "priority": "normal",
+        "status": "completed", "project": project,
+        "definition": { "id": 3, "name": "shop-ci", "project": project, "queueStatus": "enabled", "revision": 1, "url": "u" } })
+}
+
+/// A server for pull request 7 whose one build policy queued build 55, which has the stages of
+/// `timeline`.
+fn pipelines() -> Fake {
+    Fake::start(move |request, _| {
+        let path = request.path.split('?').next().unwrap().to_ascii_lowercase();
+        let list = |items: &[Value]| Canned::json(&json!({ "count": items.len(), "value": items }).to_string());
+        if path.ends_with("/_apis/connectiondata") {
+            Canned::json(&profile())
+        } else if path == "/contoso/_apis/identities" {
+            Canned::json(&no_value())
+        } else if path.ends_with("/pullrequestquery") {
+            Canned::json(&json!({ "results": [{ "a2": [{ "pullRequestId": 7, "status": "active" }] }] }).to_string())
+        } else if path.ends_with("/pullrequests/7") {
+            Canned::json(&pull_request().to_string())
+        } else if path.ends_with("/iterations") {
+            Canned::json(&iterations().to_string())
+        } else if path.ends_with("/statuses") {
+            list(&[])
+        } else if path == "/contoso/shop/_apis/policy/evaluations" {
+            list(&[evaluation("e1", "rejected", "Build validation", true, Some(55))])
+        } else if path == "/contoso/shop/_apis/policy/evaluations/e1" {
+            Canned::json(&evaluation("e1", "queued", "Build validation", true, Some(55)).to_string())
+        } else if path == "/contoso/shop/_apis/build/builds/55" {
+            Canned::json(&build().to_string())
+        } else if path == TIMELINE {
+            Canned::json(&timeline().to_string())
+        } else if let Some(log) = path.strip_prefix("/contoso/shop/_apis/build/builds/55/logs/") {
+            match log {
+                "1" => Canned::json("checkout done\n"),
+                "2" => Canned::json("compiled\n"),
+                "3" => Canned::json("checkout done\n"),
+                "4" => Canned::json("running 2 tests\n##[error]test two failed\n"),
+                other => panic!("unexpected log {other}"),
+            }
+        } else if path.starts_with("/contoso/shop/_apis/build/builds/55/stages/") {
+            Canned::json("{}")
+        } else {
+            panic!("unexpected request {} {}", request.method, request.path)
+        }
+    })
+}
+
+fn patches(fake: &Fake) -> Vec<(String, String)> {
+    fake.requests()
+        .into_iter()
+        .filter(|r| r.method == "PATCH")
+        .map(|r| (r.path.split('?').next().unwrap().to_ascii_lowercase(), r.body))
+        .collect()
+}
+
+#[tokio::test]
+async fn the_stages_of_a_build_are_the_jobs_of_its_run() {
+    set_now(NOW);
+    let fake = pipelines();
+
+    let checks = client(&fake).checks(&remote(), "a2").await.unwrap();
+
+    let jobs: Vec<_> = checks
+        .checks
+        .iter()
+        .map(|c| {
+            (
+                c.id.as_str(),
+                c.state,
+                c.phase,
+                c.log,
+                c.run.as_ref().map(|r| r.id.as_str()),
+            )
+        })
+        .collect();
+    assert_eq!(
+        jobs,
+        [
+            ("stage:55:Build", CiState::Success, Phase::Finished, true, Some("55:e1")),
+            ("stage:55:Test", CiState::Failure, Phase::Finished, true, Some("55:e1")),
+            (
+                "stage:55:Package",
+                CiState::Skipped,
+                Phase::Finished,
+                false,
+                Some("55:e1")
+            ),
+        ]
+    );
+    let run = checks.checks[0].run.as_ref().unwrap();
+    assert_eq!(
+        (run.name.as_str(), run.detail.as_str(), run.attempt),
+        ("shop-ci", "#20240501.2 · pull request", 2),
+        "the attempt is the highest of the stages"
+    );
+    assert_eq!(checks.runs().len(), 1);
+}
+
+#[tokio::test]
+async fn a_policy_that_only_advises_does_not_fail_the_commit_through_its_stages() {
+    set_now(NOW);
+    let fake = Fake::start(move |request, _| {
+        let path = request.path.split('?').next().unwrap().to_ascii_lowercase();
+        if path == "/contoso/shop/_apis/policy/evaluations" {
+            let items = [evaluation("e1", "rejected", "Docs", false, Some(55))];
+            Canned::json(&json!({ "count": 1, "value": items }).to_string())
+        } else if path == "/contoso/shop/_apis/build/builds/55" {
+            Canned::json(&build().to_string())
+        } else if path == TIMELINE {
+            Canned::json(&timeline().to_string())
+        } else if path.ends_with("/pullrequestquery") {
+            Canned::json(&json!({ "results": [{ "a2": [{ "pullRequestId": 7, "status": "active" }] }] }).to_string())
+        } else if path.ends_with("/pullrequests/7") {
+            Canned::json(&pull_request().to_string())
+        } else if path.ends_with("/iterations") {
+            Canned::json(&iterations().to_string())
+        } else if path.ends_with("/statuses") {
+            Canned::json(r#"{"value":[]}"#)
+        } else if path.ends_with("/_apis/connectiondata") {
+            Canned::json(&profile())
+        } else {
+            Canned::json(&no_value())
+        }
+    });
+
+    let checks = client(&fake).checks(&remote(), "a2").await.unwrap();
+
+    assert_eq!(checks.state(), Some(CiState::Success));
+}
+
+#[tokio::test]
+async fn the_tasks_of_a_stage_come_in_the_order_they_run() {
+    set_now(NOW);
+    let fake = pipelines();
+
+    let steps = client(&fake).steps(&remote(), "stage:55:Test").await.unwrap();
+
+    let tasks: Vec<_> = steps.iter().map(|s| (s.name.as_str(), s.state, s.phase)).collect();
+    assert_eq!(
+        tasks,
+        [
+            ("Checkout", CiState::Success, Phase::Finished),
+            ("Run tests", CiState::Failure, Phase::Finished),
+            ("Publish", CiState::Pending, Phase::Queued),
+        ]
+    );
+}
+
+#[tokio::test]
+async fn the_log_of_a_stage_is_what_its_tasks_printed_and_points_at_the_error_of_the_one_that_failed() {
+    set_now(NOW);
+    let fake = pipelines();
+    let client = client(&fake);
+
+    let failed = client.check_log(&remote(), "stage:55:Test").await.unwrap();
+    let passed = client.check_log(&remote(), "stage:55:Build").await.unwrap();
+
+    assert_eq!(failed.text, "checkout done\nrunning 2 tests\n##[error]test two failed");
+    let failure = failed.failure.expect("where it failed");
+    assert_eq!((failure.line, failure.step.as_deref()), (2, Some("Run tests")));
+    assert_eq!(passed.text, "checkout done\ncompiled");
+    assert_eq!(passed.failure, None);
+}
+
+#[tokio::test]
+async fn re_running_failed_stages_retries_the_failed_ones_only() {
+    set_now(NOW);
+    let fake = pipelines();
+
+    client(&fake)
+        .pipeline_action(
+            &remote(),
+            &PipelineAction::RerunFailed {
+                run: "55:e1".to_owned(),
+            },
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(
+        patches(&fake),
+        [(
+            "/contoso/shop/_apis/build/builds/55/stages/test".to_owned(),
+            r#"{"state":"retry"}"#.to_owned()
+        )]
+    );
+}
+
+#[tokio::test]
+async fn one_stage_is_retried_all_of_a_run_is_requeued_through_its_policy_and_a_build_is_cancelled() {
+    set_now(NOW);
+    let fake = pipelines();
+    let client = client(&fake);
+
+    client
+        .pipeline_action(
+            &remote(),
+            &PipelineAction::RerunJob {
+                check: "stage:55:Package".to_owned(),
+            },
+        )
+        .await
+        .unwrap();
+    client
+        .pipeline_action(
+            &remote(),
+            &PipelineAction::RerunAll {
+                run: "55:e1".to_owned(),
+            },
+        )
+        .await
+        .unwrap();
+    client
+        .pipeline_action(
+            &remote(),
+            &PipelineAction::Cancel {
+                run: "55:e1".to_owned(),
+            },
+        )
+        .await
+        .unwrap();
+
+    let sent = patches(&fake);
+    assert_eq!(sent[0].0, "/contoso/shop/_apis/build/builds/55/stages/package");
+    assert_eq!(sent[1].0, "/contoso/shop/_apis/policy/evaluations/e1");
+    assert_eq!(sent[2].0, "/contoso/shop/_apis/build/builds/55");
+    assert!(sent[2].1.contains(r#""status":"cancelling""#), "{}", sent[2].1);
 }
 
 #[tokio::test]

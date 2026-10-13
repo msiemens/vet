@@ -4,7 +4,8 @@ use std::cell::Cell;
 use std::sync::{Arc, Mutex};
 
 use vet_app::platform::{
-    ChangedLines, ChangesAsked, ChangesRequest, CiState, ReviewDecision, ReviewRequest, ReviewVerdict, ViewerReview,
+    ChangedLines, ChangesAsked, ChangesRequest, CiState, Phase, PipelineAction, ReviewDecision, ReviewRequest,
+    ReviewVerdict, ViewerReview,
 };
 
 use super::*;
@@ -790,12 +791,18 @@ const STATUSES: &str = r#"{"state":"success","statuses":[
 {"id":21,"context":"deploy/preview","state":"success","target_url":"https://preview.example/1","created_at":"2024-05-01T12:00:00Z","updated_at":"2024-05-01T12:02:00Z"}
 ]}"#;
 
+const WORKFLOW_RUNS: &str = r#"{"total_count":1,"workflow_runs":[
+{"id":5,"name":"CI","run_number":42,"run_attempt":2,"event":"pull_request","status":"completed","conclusion":"failure"}
+]}"#;
+
 fn checks_server(runs: Arc<Mutex<String>>) -> Fake {
     Fake::start(move |request, _| {
         if request.path.starts_with("/repos/acme/app/commits/abc123/check-runs") {
             Canned::json(&runs.lock().unwrap())
         } else if request.path.starts_with("/repos/acme/app/commits/abc123/status") {
             Canned::json(STATUSES)
+        } else if request.path.starts_with("/repos/acme/app/actions/runs?head_sha=abc123") {
+            Canned::json(WORKFLOW_RUNS)
         } else {
             Canned::status(404, r#"{"message":"Not Found"}"#)
         }
@@ -844,6 +851,165 @@ async fn the_checks_of_a_commit_are_its_runs_and_its_statuses() {
         Some("https://github.com/acme/app/commit/abc123/checks")
     );
     assert_eq!(fake.requests()[0].header("authorization"), Some("Bearer gho_secret"));
+}
+
+#[tokio::test]
+async fn the_jobs_of_a_workflow_run_are_grouped_under_it_and_a_status_belongs_to_none() {
+    let queued = RUNS
+        .replace(
+            r#""name":"build","status":"completed","conclusion":"success""#,
+            r#""name":"build","status":"queued","conclusion":null"#,
+        )
+        .replace(
+            r#""html_url":null,"app":{"slug":"github-actions"}"#,
+            r#""html_url":"https://github.com/acme/app/actions/runs/9/job/13","app":{"slug":"other"}"#,
+        );
+    let fake = checks_server(Arc::new(Mutex::new(queued)));
+    let found = client(&fake).checks(&remote(), "abc123").await.unwrap();
+
+    let jobs: Vec<_> = found
+        .checks
+        .iter()
+        .map(|c| (c.name.as_str(), c.run.as_ref().map(|r| r.id.as_str()), c.phase))
+        .collect();
+    assert_eq!(
+        jobs,
+        [
+            ("test (ubuntu)", Some("5"), Phase::Finished),
+            ("build", Some("5"), Phase::Queued),
+            ("lint", None, Phase::Cancelled),
+            ("deploy/preview", None, Phase::Finished),
+        ],
+        "only a job of the Actions app is part of a run, and a conclusion of cancelled is its own phase"
+    );
+    let run = found.checks[0].run.as_ref().unwrap();
+    assert_eq!(
+        (run.name.as_str(), run.detail.as_str(), run.attempt),
+        ("CI", "#42 · pull_request", 2)
+    );
+}
+
+#[tokio::test]
+async fn a_repository_without_workflow_runs_still_has_its_checks() {
+    let fake = Fake::start(|request, _| {
+        if request.path.starts_with("/repos/acme/app/commits/abc123/check-runs") {
+            Canned::json(RUNS)
+        } else if request.path.starts_with("/repos/acme/app/commits/abc123/status") {
+            Canned::json(STATUSES)
+        } else {
+            Canned::status(404, r#"{"message":"Not Found"}"#)
+        }
+    });
+    let found = client(&fake).checks(&remote(), "abc123").await.unwrap();
+    assert_eq!(found.checks.len(), 4);
+    assert!(found.checks.iter().all(|c| c.run.is_none()));
+}
+
+const JOB_WITH_STEPS: &str = r#"{"id":11,"steps":[
+{"name":"Set up job","status":"completed","conclusion":"success","started_at":"2024-05-01T12:00:00Z","completed_at":"2024-05-01T12:00:02Z"},
+{"name":"Test","status":"in_progress","conclusion":null,"started_at":"2024-05-01T12:00:02Z","completed_at":null},
+{"name":"Post","status":"pending","conclusion":null,"started_at":null,"completed_at":null}]}"#;
+
+#[tokio::test]
+async fn the_steps_of_a_job_say_which_is_running_and_which_waits() {
+    let fake = Fake::start(|request, _| {
+        if request.path == "/repos/acme/app/actions/jobs/11" {
+            Canned::json(JOB_WITH_STEPS)
+        } else {
+            Canned::status(404, r#"{"message":"Not Found"}"#)
+        }
+    });
+    let steps = client(&fake).steps(&remote(), "11").await.unwrap();
+
+    let summary: Vec<_> = steps.iter().map(|s| (s.name.as_str(), s.state, s.phase)).collect();
+    assert_eq!(
+        summary,
+        [
+            ("Set up job", CiState::Success, Phase::Finished),
+            ("Test", CiState::Pending, Phase::Running),
+            ("Post", CiState::Pending, Phase::Queued),
+        ]
+    );
+    assert_eq!(steps[0].finished.zip(steps[0].started).map(|(f, s)| f - s), Some(2));
+}
+
+fn accepting(path: &'static str) -> Fake {
+    Fake::start(move |request, _| {
+        if request.method == "POST" && request.path == path {
+            Canned::status(201, "{}")
+        } else if request.path.starts_with("/repos/acme/app/commits/abc123/check-runs") {
+            Canned::json(RUNS)
+        } else if request.path.starts_with("/repos/acme/app/commits/abc123/status") {
+            Canned::json(STATUSES)
+        } else {
+            Canned::status(404, r#"{"message":"Not Found"}"#)
+        }
+    })
+}
+
+#[tokio::test]
+async fn each_action_on_a_run_is_the_call_for_it_and_makes_the_commit_be_read_again() {
+    let cases = [
+        (
+            PipelineAction::RerunFailed { run: "5".to_owned() },
+            "/repos/acme/app/actions/runs/5/rerun-failed-jobs",
+        ),
+        (
+            PipelineAction::RerunAll { run: "5".to_owned() },
+            "/repos/acme/app/actions/runs/5/rerun",
+        ),
+        (
+            PipelineAction::RerunJob { check: "11".to_owned() },
+            "/repos/acme/app/actions/jobs/11/rerun",
+        ),
+        (
+            PipelineAction::Cancel { run: "5".to_owned() },
+            "/repos/acme/app/actions/runs/5/cancel",
+        ),
+    ];
+    for (action, path) in cases {
+        let fake = accepting(path);
+        let client = client(&fake);
+        client.checks(&remote(), "abc123").await.unwrap();
+        client.pipeline_action(&remote(), &action).await.unwrap();
+        client.checks(&remote(), "abc123").await.unwrap();
+
+        assert_eq!(
+            fake.requests()
+                .iter()
+                .filter(|r| r.method == "POST")
+                .map(|r| r.path.as_str())
+                .collect::<Vec<_>>(),
+            [path]
+        );
+        assert_eq!(
+            requests_to(&fake, "check-runs"),
+            2,
+            "checks that were done change with a re-run, so what was kept is dropped: {action:?}"
+        );
+    }
+}
+
+#[tokio::test]
+async fn a_token_that_may_not_run_workflows_is_told_so() {
+    let fake =
+        Fake::start(|_, _| Canned::status(403, r#"{"message":"Resource not accessible by personal access token"}"#));
+    let error = client(&fake)
+        .pipeline_action(&remote(), &PipelineAction::Cancel { run: "5".to_owned() })
+        .await
+        .unwrap_err();
+    assert!(matches!(error, PlatformError::Forbidden(_)), "{error:?}");
+}
+
+#[tokio::test]
+async fn something_that_is_not_a_run_is_not_sent() {
+    let fake = accepting("/never");
+    let error = client(&fake)
+        .pipeline_action(&remote(), &PipelineAction::Cancel { run: "../x".to_owned() })
+        .await
+        .unwrap_err();
+    assert!(matches!(error, PlatformError::Unexpected(_)), "{error:?}");
+    assert!(fake.requests().is_empty());
 }
 
 const FORK_RUNS: &str = r#"{"total_count":2,"check_runs":[

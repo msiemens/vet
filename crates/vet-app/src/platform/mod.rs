@@ -17,7 +17,7 @@ mod remote;
 mod sync;
 
 pub use accounts::{Account, AccountError, AccountState, Accounts};
-pub use checks::{Check, CheckLog, CommitChecks, LogFailure};
+pub use checks::{Check, CheckLog, CommitChecks, LogFailure, Phase, PipelineAction, Run, RunSummary, Step};
 pub use credentials::{
     Credential, CredentialProvider, CredentialSource, CredentialValidator, Owner, Token, ValidationError,
 };
@@ -30,9 +30,10 @@ pub use discussion::{
 pub(crate) use fake::FakeHosting;
 pub use host::{PlatformKind, normalize_host};
 pub use model::{
-    BlockingSource, ChangedLines, ChangesAsked, ChangesRequest, ChangesetThreads, CiState, ForcePush, PlatformError,
-    PlatformTraits, Posting, PullRequest, PullRequestDetail, PullRequestHead, PullRequestListing, PullRequestQuery,
-    Push, QueueStatus, QueueTab, ReviewDecision, ReviewRequest, ReviewVerdict, Verdict, Viewer, ViewerReview,
+    BlockingSource, ChangedLines, ChangesAsked, ChangesRequest, ChangesetThreads, CiState, ForcePush, PipelineWords,
+    PlatformError, PlatformTraits, Posting, PullRequest, PullRequestDetail, PullRequestHead, PullRequestListing,
+    PullRequestQuery, Push, QueueStatus, QueueTab, ReviewDecision, ReviewRequest, ReviewVerdict, Verdict, Viewer,
+    ViewerReview,
 };
 pub use port::{ListedRows, Platform, commits_checks, list_rows};
 pub use pushes::pushes_from_force_pushes;

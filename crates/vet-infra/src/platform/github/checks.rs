@@ -5,11 +5,12 @@
 //! A job's log is where Actions writes what each step printed; where the job failed is found
 //! from the job's steps and the log's own `##[error]` lines (see [`process_log`]).
 
-use futures::future::try_join;
+use futures::future::try_join3;
 use octocrab::map_github_error;
 use serde::Deserialize;
 use vet_app::platform::{
-    Check, CheckLog, CiState, CommitChecks, CredentialProvider, LogFailure, PlatformError, RemoteKey,
+    Check, CheckLog, CiState, CommitChecks, CredentialProvider, LogFailure, Phase, PipelineAction, PlatformError,
+    RemoteKey, Run, Step,
 };
 
 use super::wire::parse_timestamp;
@@ -23,11 +24,11 @@ const KEPT_COMMITS: usize = 500;
 
 #[derive(Deserialize)]
 struct CheckRuns {
-    check_runs: Vec<Run>,
+    check_runs: Vec<CheckRunJson>,
 }
 
 #[derive(Deserialize)]
-struct Run {
+struct CheckRunJson {
     id: u64,
     name: String,
     status: String,
@@ -36,6 +37,26 @@ struct Run {
     completed_at: Option<String>,
     html_url: Option<String>,
     app: Option<App>,
+}
+
+#[derive(Deserialize)]
+struct WorkflowRuns {
+    workflow_runs: Vec<WorkflowRun>,
+}
+
+/// A workflow run of a commit: what its jobs, which are check runs, belong to.
+#[derive(Deserialize)]
+struct WorkflowRun {
+    id: u64,
+    name: Option<String>,
+    run_number: u64,
+    #[serde(default = "first_attempt")]
+    run_attempt: u32,
+    event: Option<String>,
+}
+
+fn first_attempt() -> u32 {
+    1
 }
 
 #[derive(Deserialize)]
@@ -61,14 +82,16 @@ struct Status {
 #[derive(Deserialize)]
 struct Job {
     #[serde(default)]
-    steps: Vec<Step>,
+    steps: Vec<JobStep>,
 }
 
 #[derive(Deserialize)]
-struct Step {
+struct JobStep {
     name: String,
+    status: Option<String>,
     conclusion: Option<String>,
     started_at: Option<String>,
+    completed_at: Option<String>,
 }
 
 /// The state of a check run: running until it completed, then by its conclusion. A cancelled run
@@ -97,15 +120,50 @@ fn status_state(state: &str) -> CiState {
     }
 }
 
-fn run_check(run: Run) -> Check {
+/// How far a check run or step has come: waiting for a runner, running, done or stopped.
+fn phase_of(status: &str, conclusion: Option<&str>) -> Phase {
+    match status {
+        "queued" | "waiting" | "pending" | "requested" => Phase::Queued,
+        "completed" if conclusion == Some("cancelled") => Phase::Cancelled,
+        "completed" | "action_required" => Phase::Finished,
+        _ => Phase::Running,
+    }
+}
+
+/// The id of the workflow run that the address of one of its jobs names
+/// (`https://github.com/o/r/actions/runs/5/job/11`).
+fn workflow_run_of(address: &str) -> Option<&str> {
+    let rest = address.split_once("/actions/runs/")?.1;
+    let id = rest.split(['/', '?', '#']).next()?;
+    (!id.is_empty() && id.bytes().all(|b| b.is_ascii_digit())).then_some(id)
+}
+
+fn run_check(job: CheckRunJson, runs: &[WorkflowRun]) -> Check {
+    let run = job
+        .app
+        .as_ref()
+        .filter(|a| a.slug == ACTIONS_APP)
+        .and_then(|_| workflow_run_of(job.html_url.as_deref()?))
+        .and_then(|id| runs.iter().find(|r| r.id.to_string() == id))
+        .map(|r| Run {
+            id: r.id.to_string(),
+            name: r.name.clone().unwrap_or_else(|| format!("Run {}", r.id)),
+            detail: match &r.event {
+                Some(event) => format!("#{} · {event}", r.run_number),
+                None => format!("#{}", r.run_number),
+            },
+            attempt: r.run_attempt,
+        });
     Check {
-        id: run.id.to_string(),
-        state: run_state(&run.status, run.conclusion.as_deref()),
-        started: run.started_at.as_deref().and_then(parse_instant),
-        finished: run.completed_at.as_deref().and_then(parse_instant),
-        url: run.html_url,
-        log: run.app.is_some_and(|a| a.slug == ACTIONS_APP),
-        name: run.name,
+        id: job.id.to_string(),
+        state: run_state(&job.status, job.conclusion.as_deref()),
+        phase: phase_of(&job.status, job.conclusion.as_deref()),
+        run,
+        started: job.started_at.as_deref().and_then(parse_instant),
+        finished: job.completed_at.as_deref().and_then(parse_instant),
+        url: job.html_url,
+        log: job.app.is_some_and(|a| a.slug == ACTIONS_APP),
+        name: job.name,
     }
 }
 
@@ -121,13 +179,26 @@ fn status_check(status: Status) -> Check {
         url: status.target_url.filter(|u| !u.is_empty()),
         log: false,
         name: status.context,
+        phase: if state == CiState::Pending {
+            Phase::Running
+        } else {
+            Phase::Finished
+        },
+        run: None,
         state,
     }
 }
 
-/// The checks of a commit from the answers of the two APIs: runs first, then statuses.
-fn commit_checks(remote: &RemoteKey, commit: &str, runs: CheckRuns, statuses: CombinedStatus) -> CommitChecks {
-    let mut checks: Vec<Check> = runs.check_runs.into_iter().map(run_check).collect();
+/// The checks of a commit from the answers of the APIs: the check runs, which an Actions job
+/// is one of and which then name their workflow run, then the statuses.
+fn commit_checks(
+    remote: &RemoteKey,
+    commit: &str,
+    jobs: CheckRuns,
+    workflows: &[WorkflowRun],
+    statuses: CombinedStatus,
+) -> CommitChecks {
+    let mut checks: Vec<Check> = jobs.check_runs.into_iter().map(|j| run_check(j, workflows)).collect();
     checks.extend(statuses.statuses.into_iter().map(status_check));
     CommitChecks {
         commit: commit.to_owned(),
@@ -169,8 +240,23 @@ impl<C: CredentialProvider + Sync> GitHubClient<C> {
                 .await;
             self.settle(host, Bucket::Core, found).await
         };
-        let (runs, statuses) = try_join(runs, statuses).await?;
-        let checks = commit_checks(remote, commit, runs, statuses);
+        let workflows = async {
+            let found: octocrab::Result<WorkflowRuns> = clients
+                .rest
+                .get(
+                    format!("/repos/{owner}/{name}/actions/runs"),
+                    Some(&[("head_sha", commit), ("per_page", "100")]),
+                )
+                .await;
+            // Without Actions, or a token that cannot see them, the check runs stand alone.
+            match self.settle(host, Bucket::Core, found).await {
+                Ok(found) => Ok(found.workflow_runs),
+                Err(PlatformError::Forbidden(_) | PlatformError::NotFound(_)) => Ok(Vec::new()),
+                Err(other) => Err(other),
+            }
+        };
+        let (runs, workflows, statuses) = try_join3(runs, workflows, statuses).await?;
+        let checks = commit_checks(remote, commit, runs, &workflows, statuses);
         if checks.is_final() {
             let mut state = self.state();
             if state.checks.len() >= KEPT_COMMITS {
@@ -184,9 +270,7 @@ impl<C: CredentialProvider + Sync> GitHubClient<C> {
     pub(super) async fn job_log(&self, remote: &RemoteKey, check: &str) -> Result<CheckLog, PlatformError> {
         let (owner, name) = repository(remote)?;
         let host = remote.host.as_str();
-        let job_id: u64 = check
-            .parse()
-            .map_err(|_| PlatformError::Unexpected(format!("{check:?} is not a job of {host}")))?;
+        let job_id = job_number(check, host)?;
         let clients = self.clients(host).await?;
         let rest = &clients.rest;
 
@@ -221,6 +305,55 @@ impl<C: CredentialProvider + Sync> GitHubClient<C> {
         ))
     }
 
+    /// The steps of an Actions job.
+    pub(super) async fn job_steps(&self, remote: &RemoteKey, check: &str) -> Result<Vec<Step>, PlatformError> {
+        let (owner, name) = repository(remote)?;
+        let host = remote.host.as_str();
+        let job_id = job_number(check, host)?;
+        let clients = self.clients(host).await?;
+        let job: octocrab::Result<Job> = clients
+            .rest
+            .get(format!("/repos/{owner}/{name}/actions/jobs/{job_id}"), None::<&()>)
+            .await;
+        let job = self.settle(host, Bucket::Core, job).await?;
+        Ok(job
+            .steps
+            .into_iter()
+            .map(|step| {
+                let status = step.status.as_deref().unwrap_or("completed");
+                Step {
+                    state: run_state(status, step.conclusion.as_deref()),
+                    phase: phase_of(status, step.conclusion.as_deref()),
+                    started: step.started_at.as_deref().and_then(parse_instant),
+                    finished: step.completed_at.as_deref().and_then(parse_instant),
+                    name: step.name,
+                }
+            })
+            .collect())
+    }
+
+    /// Asks Actions to re-run or stop a run. What it makes of the request shows in the checks
+    /// the next time they are read, so what is kept of them is dropped.
+    pub(super) async fn change_run(&self, remote: &RemoteKey, action: &PipelineAction) -> Result<(), PlatformError> {
+        let (owner, name) = repository(remote)?;
+        let host = remote.host.as_str();
+        let path = match action {
+            PipelineAction::RerunFailed { run } => format!("runs/{}/rerun-failed-jobs", run_number(run, host)?),
+            PipelineAction::RerunAll { run } => format!("runs/{}/rerun", run_number(run, host)?),
+            PipelineAction::Cancel { run } => format!("runs/{}/cancel", run_number(run, host)?),
+            PipelineAction::RerunJob { check } => format!("jobs/{}/rerun", job_number(check, host)?),
+        };
+        let clients = self.clients(host).await?;
+        let answer = clients
+            .rest
+            ._post(format!("/repos/{owner}/{name}/actions/{path}"), None::<&()>)
+            .await;
+        let answer = self.settle(host, Bucket::Core, answer).await?;
+        self.settle(host, Bucket::Core, map_github_error(answer).await).await?;
+        self.state().checks.retain(|(kept, _), _| kept != remote);
+        Ok(())
+    }
+
     /// The text at `address`, fetched with no credential.
     async fn plain_get(&self, host: &str, address: &str) -> Result<String, PlatformError> {
         let http = self
@@ -238,6 +371,17 @@ impl<C: CredentialProvider + Sync> GitHubClient<C> {
         }
         response.text().await.map_err(gone)
     }
+}
+
+fn job_number(check: &str, host: &str) -> Result<u64, PlatformError> {
+    check
+        .parse()
+        .map_err(|_| PlatformError::Unexpected(format!("{check:?} is not a job of {host}")))
+}
+
+fn run_number(run: &str, host: &str) -> Result<u64, PlatformError> {
+    run.parse()
+        .map_err(|_| PlatformError::Unexpected(format!("{run:?} is not a run of {host}")))
 }
 
 /// Unix seconds of a time as GitHub writes it: UTC or with an offset, with or without a fraction

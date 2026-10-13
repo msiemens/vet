@@ -28,9 +28,9 @@ use azure_devops_rust_api::ims::models::QueryMembership;
 use futures::future::try_join_all;
 use url::Url;
 use vet_app::platform::{
-    CheckLog, CiState, CommentRef, CommitChecks, CredentialProvider, Discussion, Platform, PlatformComment,
-    PlatformError, PlatformKind, PlatformTraits, PullRequest, PullRequestDetail, PullRequestListing, PullRequestQuery,
-    QueueTab, RemoteKey, Submission, Submitted, Viewer, matches,
+    CheckLog, CiState, CommentRef, CommitChecks, CredentialProvider, Discussion, PipelineAction, Platform,
+    PlatformComment, PlatformError, PlatformKind, PlatformTraits, PullRequest, PullRequestDetail, PullRequestListing,
+    PullRequestQuery, QueueTab, RemoteKey, Step, Submission, Submitted, Viewer, matches,
 };
 
 use crate::clock::unix_now;
@@ -609,6 +609,14 @@ impl<C: CredentialProvider + Sync> Platform for AzureDevOpsClient<C> {
 
     async fn check_log(&self, remote: &RemoteKey, check: &str) -> Result<CheckLog, PlatformError> {
         self.build_log(remote, check).await
+    }
+
+    async fn steps(&self, remote: &RemoteKey, check: &str) -> Result<Vec<Step>, PlatformError> {
+        self.stage_tasks(remote, check).await
+    }
+
+    async fn pipeline_action(&self, remote: &RemoteKey, action: &PipelineAction) -> Result<(), PlatformError> {
+        self.change_run(remote, action).await
     }
 
     async fn discussion(&self, remote: &RemoteKey, number: u64) -> Result<Discussion, PlatformError> {
