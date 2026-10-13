@@ -3,7 +3,7 @@
 //! triggered when either the base or the target blob id changes (the base case
 //! is `SeenAgainstOldBase`).
 
-use vet_core::completion::Completion;
+use vet_core::completion::{Completion, percent};
 use vet_core::content::{FileEntry, NonTextKind, RepoPath};
 use vet_core::review::{ReviewedSpan, Thread, ThreadStatus};
 
@@ -64,20 +64,12 @@ impl ReviewSummary {
 
     /// Share of the changeset that is seen, in percent; 0 with nothing to review.
     pub fn seen_percent(&self) -> f32 {
-        self.percent(self.seen)
+        percent(self.seen, self.total)
     }
 
     /// Share of the changeset that is seen against an old base only, in percent.
     pub fn old_base_percent(&self) -> f32 {
-        self.percent(self.old_base)
-    }
-
-    fn percent(&self, part: u32) -> f32 {
-        if self.total == 0 {
-            0.0
-        } else {
-            part as f32 / self.total as f32 * 100.0
-        }
+        percent(self.old_base, self.total)
     }
 }
 

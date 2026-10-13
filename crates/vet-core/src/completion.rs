@@ -8,6 +8,15 @@ use crate::content::{FileDiff, LineRange, NonTextChange, RepoPath};
 use crate::filter::CompiledFilter;
 use crate::review::{ReviewedSpan, Side, SpanState, sides};
 
+/// `part` of `total` in percent; 0 with nothing to review.
+pub fn percent(part: u32, total: u32) -> f32 {
+    if total == 0 {
+        0.0
+    } else {
+        part as f32 / total as f32 * 100.0
+    }
+}
+
 #[derive(Clone, Copy, PartialEq, Eq, Default, Debug)]
 pub struct Completion {
     /// Changed lines passing the filter, counted on both sides.
@@ -44,12 +53,7 @@ impl Completion {
     }
 
     fn percent(&self, part: u32) -> f32 {
-        let total = self.lines + self.items;
-        if total == 0 {
-            0.0
-        } else {
-            part as f32 / total as f32 * 100.0
-        }
+        percent(part, self.lines + self.items)
     }
 
     fn zip(self, other: Self, op: impl Fn(u32, u32) -> u32) -> Self {

@@ -15,6 +15,7 @@ use vet_app::platform::{
 
 use super::{Bucket, GitHubClient, repository};
 use crate::platform::time::parse_rfc3339;
+use vet_core::num::sat_u32;
 
 /// The app whose check runs have a log to fetch.
 const ACTIONS_APP: &str = "github-actions";
@@ -439,7 +440,7 @@ pub(super) fn process_log(raw: &str, failed_step: Option<(&str, Option<i64>)>) -
     CheckLog {
         text: texts.join("\n"),
         failure: failure.map(|(line, step)| LogFailure {
-            line: u32::try_from(line).unwrap_or(u32::MAX),
+            line: sat_u32(line),
             step: step.map(str::to_owned),
         }),
     }

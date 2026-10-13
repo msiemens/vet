@@ -1,9 +1,11 @@
 //! The pull-request queue: which pull requests belong on which list, and the facts each
 //! row shows. Pure: the platforms only supply the pull requests.
 
+use vet_core::content::LineDelta;
+
 use super::model::{
-    ChangedLines, ChangesRequest, CiState, PullRequest, PullRequestQuery, QueueStatus, QueueTab, ReviewDecision,
-    ReviewRequest, ReviewVerdict, Viewer,
+    ChangesRequest, CiState, PullRequest, PullRequestQuery, QueueStatus, QueueTab, ReviewDecision, ReviewRequest,
+    ReviewVerdict, Viewer,
 };
 
 /// What the viewer's earlier review says about the pull request as it is now.
@@ -33,7 +35,7 @@ pub struct PullRequestRow {
     pub fork: Option<String>,
     /// The commit the pull request's head is at.
     pub head: String,
-    pub lines: Option<ChangedLines>,
+    pub lines: Option<LineDelta>,
     pub comments: u32,
     pub ci: Option<CiState>,
     pub unresolved_threads: u32,

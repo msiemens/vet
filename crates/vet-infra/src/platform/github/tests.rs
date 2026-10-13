@@ -4,9 +4,10 @@ use std::cell::Cell;
 use std::sync::{Arc, Mutex};
 
 use vet_app::platform::{
-    ChangedLines, ChangesAsked, ChangesRequest, CiState, Phase, PipelineAction, ReviewDecision, ReviewRequest,
-    ReviewVerdict, ViewerReview,
+    ChangesAsked, ChangesRequest, CiState, Phase, PipelineAction, ReviewDecision, ReviewRequest, ReviewVerdict,
+    ViewerReview,
 };
+use vet_core::content::LineDelta;
 
 use super::*;
 use crate::platform::fake::{Canned, Fake, Seen, Signed};
@@ -194,7 +195,7 @@ async fn a_list_follows_the_pages_and_reads_what_the_queue_shows() {
     assert_eq!(first.fork.as_deref(), Some("grace/app"));
     assert_eq!(
         first.lines,
-        Some(ChangedLines {
+        Some(LineDelta {
             added: 120,
             removed: 34
         })

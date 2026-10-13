@@ -1,6 +1,8 @@
 //! What hosting platforms say about pull requests, in terms that hold for every
 //! platform, and how each platform is described to the rest of Vet (SPEC §11).
 
+use vet_core::content::LineDelta;
+
 use super::host::PlatformKind;
 
 /// What differs between platforms, as data. Vet core and the UI branch on these and
@@ -241,13 +243,6 @@ pub enum QueueStatus {
     Approved,
 }
 
-/// The lines a pull request adds and removes.
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub struct ChangedLines {
-    pub added: u32,
-    pub removed: u32,
-}
-
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub struct PullRequest {
     pub number: u64,
@@ -267,7 +262,8 @@ pub struct PullRequest {
     /// The commit the source branch points to.
     pub head: String,
     /// Absent when the platform's list does not say.
-    pub lines: Option<ChangedLines>,
+    /// The lines the pull request adds and removes.
+    pub lines: Option<LineDelta>,
     /// Comments on the pull request and on its code.
     pub comments: u32,
     pub draft: bool,

@@ -5,6 +5,7 @@ use vet_app::ports::{FoundServer, ServerOrigin, ServerState, Tsserver};
 use vet_app::semantics::WorkspaceSymbols;
 use vet_app::servers::ServerStatus;
 use vet_core::content::{FileDiff, LineRange, RepoPath};
+use vet_core::num::sat_u32;
 use vet_core::review::Side;
 use vet_protocol as p;
 use vet_semantic::derived::{
@@ -17,8 +18,6 @@ use vet_semantic::ports::{
     Severity, Span, Sym, SymbolInfo, SymbolKind,
 };
 use vet_semantic::query::SemanticError;
-
-use super::sat_u32;
 
 pub fn at(path: &str, line: u32, col: u32) -> At {
     At {

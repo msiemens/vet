@@ -13,6 +13,7 @@ pub mod interdiff;
 pub mod marking;
 pub mod merge;
 pub mod merkle;
+pub mod num;
 pub mod prepared;
 pub mod remap;
 pub mod resolve;

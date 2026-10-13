@@ -20,6 +20,7 @@ use vet_app::platform::{
     Check, CheckLog, CiState, CommitChecks, CredentialProvider, LogFailure, Phase, PipelineAction, PlatformError,
     RemoteKey, Run, Step,
 };
+use vet_core::num::sat_u32;
 
 use super::wire::newest_per_context;
 use super::{AzureDevOpsClient, Call, Repository, address, web_address};
@@ -251,7 +252,7 @@ fn build_number(check: &str) -> Option<i32> {
 fn failure_in(text: &str, step: Option<String>) -> LogFailure {
     let line = text.lines().position(|l| l.contains(ERROR_MARK)).unwrap_or(0);
     LogFailure {
-        line: u32::try_from(line).unwrap_or(u32::MAX),
+        line: sat_u32(line),
         step,
     }
 }
@@ -691,7 +692,7 @@ impl<C: CredentialProvider + Sync> AzureDevOpsClient<C> {
                 && let Some(at) = part.lines().position(|l| l.contains(ERROR_MARK))
             {
                 failure = Some(LogFailure {
-                    line: u32::try_from(lines + at).unwrap_or(u32::MAX),
+                    line: sat_u32(lines + at),
                     step: Some(name.clone()),
                 });
             }

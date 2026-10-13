@@ -7,6 +7,7 @@ use std::collections::{BTreeMap, HashMap, HashSet};
 use std::sync::Arc;
 
 use vet_core::content::{EntryKind, LineRange, RepoPath, Snapshot, SnapshotStatus, is_binary};
+use vet_core::num::sat_u32;
 use vet_core::review::{
     Anchor, AnchorState, CommentTarget, EditConflict, Message, MessageId, Outgoing, PendingVote, PlatformThread,
     RemoteComment, Side, Strategy, Thread, ThreadId, ThreadStatus,
@@ -178,7 +179,7 @@ impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> L
             number: *number,
             synced_at,
             discussion,
-            unresolved_threads: u32::try_from(unresolved_threads).unwrap_or(u32::MAX),
+            unresolved_threads: sat_u32(unresolved_threads),
         })
     }
 
@@ -1332,18 +1333,13 @@ fn drafts_of(st: &State, verdict: &str, body: Option<String>) -> (Submission, u3
         if thread.messages.iter().any(|m| {
             m.remote.as_ref().is_some_and(|r| r.conflict.is_some()) || matches!(m.outgoing, Outgoing::Posting { .. })
         }) {
-            skipped += u32::try_from(drafts.len()).unwrap_or(u32::MAX);
+            skipped += sat_u32(drafts.len());
             continue;
         }
         // A flat comment is no thread on the platform, so nothing in it is a reply in the review:
         // each of its drafts is a comment on the pull request of its own.
         if thread.is_flat() {
-            submission
-                .comments
-                .extend(drafts.iter().map(|m| NewConversationComment {
-                    key: m.id.0,
-                    body: m.body.clone(),
-                }));
+            submission.comments.extend(conversation_comments(&drafts));
             continue;
         }
         if thread.is_posted() {
@@ -1360,17 +1356,12 @@ fn drafts_of(st: &State, verdict: &str, body: Option<String>) -> (Submission, u3
             continue;
         }
         if thread.target == CommentTarget::Changeset {
-            submission
-                .comments
-                .extend(drafts.iter().map(|m| NewConversationComment {
-                    key: m.id.0,
-                    body: m.body.clone(),
-                }));
+            submission.comments.extend(conversation_comments(&drafts));
             continue;
         }
         let place = place_for_posting(st, thread);
         let Some((path, side, lines)) = place else {
-            skipped += u32::try_from(drafts.len()).unwrap_or(u32::MAX);
+            skipped += sat_u32(drafts.len());
             continue;
         };
         let mut texts = drafts.into_iter();
@@ -1391,6 +1382,14 @@ fn drafts_of(st: &State, verdict: &str, body: Option<String>) -> (Submission, u3
         });
     }
     (submission, skipped)
+}
+
+/// Each of `drafts` as a comment on the pull request of its own.
+fn conversation_comments<'a>(drafts: &'a [&Message]) -> impl Iterator<Item = NewConversationComment> + 'a {
+    drafts.iter().map(|m| NewConversationComment {
+        key: m.id.0,
+        body: m.body.clone(),
+    })
 }
 
 /// The file, the side and the 1-based inclusive lines (none for the whole file) of a draft.

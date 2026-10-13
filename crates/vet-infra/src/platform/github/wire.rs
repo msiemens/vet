@@ -2,9 +2,11 @@
 
 use serde::Deserialize;
 use vet_app::platform::{
-    ChangedLines, ChangesAsked, ChangesRequest, CiState, ForcePush, PlatformError, PullRequest, PullRequestDetail,
-    ReviewDecision, ReviewRequest, ReviewVerdict, ViewerReview,
+    ChangesAsked, ChangesRequest, CiState, ForcePush, PlatformError, PullRequest, PullRequestDetail, ReviewDecision,
+    ReviewRequest, ReviewVerdict, ViewerReview,
 };
+use vet_core::content::LineDelta;
+use vet_core::num::sat_u32;
 
 use crate::platform::time::parse_rfc3339;
 
@@ -371,7 +373,7 @@ impl PullRequestNode {
                     .map_or_else(|| "a deleted repository".to_owned(), |r| r.name_with_owner)
             }),
             head: self.head_ref_oid,
-            lines: Some(ChangedLines {
+            lines: Some(LineDelta {
                 added: self.additions,
                 removed: self.deletions,
             }),
@@ -380,7 +382,7 @@ impl PullRequestNode {
             labels: self.labels.present().map(|l| l.name).collect(),
             assignees: self.assignees.present().map(|a| a.login).collect(),
             ci,
-            unresolved_threads: u32::try_from(unresolved_threads).unwrap_or(u32::MAX),
+            unresolved_threads: sat_u32(unresolved_threads),
             review_requests: self.review_requests.present().filter_map(review_request).collect(),
             viewer_review: self.viewer_latest_review.and_then(|r| {
                 Some(ViewerReview {

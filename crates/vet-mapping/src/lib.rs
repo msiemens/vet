@@ -25,6 +25,7 @@ use vet_core::completion::{Completion, HunkState};
 use vet_core::content::{EntryKind, Hunk, LineDelta, LineRange, NonTextKind, RepoPath};
 use vet_core::filter::{Exclusion, ReviewFilter};
 use vet_core::inline::TextChange;
+use vet_core::num::sat_u32;
 use vet_core::review::{
     AnchorState, CommentTarget, Confidence, Location, Message, Outgoing, PendingVote, Side, StaleReason, Strategy,
     ThreadStatus,
@@ -284,11 +285,6 @@ pub fn base_diff(d: &BaseDiffView) -> p::Response {
     })
 }
 
-/// `n`, or the largest `u32` if it does not fit.
-pub fn sat_u32<T: TryInto<u32>>(n: T) -> u32 {
-    n.try_into().unwrap_or(u32::MAX)
-}
-
 fn unix_secs(time: i64) -> u32 {
     u32::try_from(time).unwrap_or(0)
 }
@@ -324,7 +320,7 @@ pub fn changeset_key(source: &Source) -> p::ChangesetKey {
         Source::Branch { name } => p::ChangesetKey::Branch { name: name.clone() },
         Source::PullRequest { remote, number } => p::ChangesetKey::PullRequest {
             remote: remote.to_string(),
-            number: u32::try_from(*number).unwrap_or(u32::MAX),
+            number: sat_u32(*number),
         },
     }
 }
@@ -469,10 +465,7 @@ pub fn pull_requests(list: &PullRequestList, reviews: &[RowReview]) -> p::Respon
                     source_branch: row.source_branch.clone(),
                     target_branch: row.target_branch.clone(),
                     fork: row.fork.clone(),
-                    lines: row.lines.map(|l| p::LineDelta {
-                        added: l.added,
-                        removed: l.removed,
-                    }),
+                    lines: row.lines.map(line_delta),
                     comments: row.comments,
                     ci: row.ci.map(ci_state),
                     draft: row.draft,

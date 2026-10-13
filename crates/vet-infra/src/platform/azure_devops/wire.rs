@@ -10,6 +10,7 @@ use azure_devops_rust_api::git::models::{
 use vet_app::platform::{
     ChangesAsked, ChangesRequest, CiState, Push, ReviewDecision, ReviewRequest, ReviewVerdict, ViewerReview,
 };
+use vet_core::num::sat_u32;
 
 /// The signed-in user, as the reviewers of a pull request name them.
 #[derive(Clone, PartialEq, Eq, Debug)]
@@ -231,7 +232,7 @@ pub(super) fn unresolved_threads(threads: &[GitPullRequestCommentThread]) -> u32
                 .any(|c| c.is_deleted != Some(true) && !matches!(c.comment_type, Some(CommentType::System)))
         })
         .count();
-    u32::try_from(open).unwrap_or(u32::MAX)
+    sat_u32(open)
 }
 
 /// The comments people wrote on the pull request, in threads not deleted.
@@ -243,7 +244,7 @@ pub(super) fn comment_count(threads: &[GitPullRequestCommentThread]) -> u32 {
         .flat_map(|t| &t.comments)
         .filter(|c| c.is_deleted != Some(true) && !matches!(c.comment_type, Some(CommentType::System)))
         .count();
-    u32::try_from(count).unwrap_or(u32::MAX)
+    sat_u32(count)
 }
 
 /// When a pull request created at `created` last changed: the newest of its threads not
