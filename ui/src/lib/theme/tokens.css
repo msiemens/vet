@@ -177,6 +177,8 @@
   --w-rail: 34px;
   --w-welcome-side: 240px;
   --h-welcome-row: 52px;
+  /* The column of labels in a grid of facts, and in the form of a settings sheet. */
+  --w-facts-label: 100px;
   --s-avatar: 28px;
   --s-logo: 40px;
   --w-tree: 270px;

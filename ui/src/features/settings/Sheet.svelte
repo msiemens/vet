@@ -83,7 +83,7 @@
   form > :global(fieldset),
   form > :global(.field-row) {
     display: grid;
-    grid-template-columns: 92px 1fr;
+    grid-template-columns: var(--w-facts-label) 1fr;
     align-items: center;
     gap: 8px;
     margin: 0;
@@ -96,7 +96,7 @@
   }
   form > :global(fieldset > legend) {
     float: left;
-    width: 92px;
+    width: var(--w-facts-label);
     padding: 0;
     padding-top: 2px;
   }

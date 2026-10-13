@@ -2,6 +2,7 @@
   import { onMount } from "svelte";
   import { formatBytes } from "../../lib/formatBytes";
   import { match } from "../../lib/speedSearch";
+  import Facts from "../../lib/ui/Facts.svelte";
   import Icon from "../../lib/ui/Icon.svelte";
   import Marked from "../../lib/ui/Marked.svelte";
   import PathText from "../../lib/ui/PathText.svelte";
@@ -139,7 +140,7 @@
 
     {#if selected}
       {@const busy = selected.status === "installing"}
-      <dl>
+      <Facts>
         <dt><label for="server-source">Source</label></dt>
         <dd class="source">
           <select
@@ -257,12 +258,12 @@
             </details>
           </dd>
         {/if}
-      </dl>
+      </Facts>
     {/if}
   {/if}
 
   <SettingsSection title="Semantic caches">
-    <dl>
+    <Facts>
       {#if backendSettings.usage !== undefined}
         <dt>On disk</dt>
         <dd>{formatBytes(backendSettings.usage)}</dd>
@@ -299,7 +300,7 @@
           onclick={() => commands.run("semantic.clearCaches")}>{commands.label("semantic.clearCaches")}</button
         >
       </dd>
-    </dl>
+    </Facts>
   </SettingsSection>
 </div>
 
@@ -349,22 +350,6 @@
   .pad {
     padding: 12px 10px;
   }
-  dl {
-    display: grid;
-    grid-template-columns: 100px 1fr;
-    gap: 6px 12px;
-    margin: 0;
-    align-items: center;
-  }
-  dt {
-    text-align: right;
-    color: var(--text-2);
-  }
-  dd {
-    margin: 0;
-    min-width: 0;
-    overflow-wrap: anywhere;
-  }
   .source,
   .tsserver {
     display: flex;
@@ -410,9 +395,6 @@
     font-size: var(--fs-mono-s);
     white-space: pre-wrap;
     overflow-wrap: anywhere;
-  }
-  dt.top {
-    align-self: start;
   }
   .checks {
     display: grid;

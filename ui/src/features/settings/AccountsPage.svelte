@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onMount } from "svelte";
   import { accounts } from "../../state/accounts.svelte";
+  import Facts from "../../lib/ui/Facts.svelte";
   import Icon from "../../lib/ui/Icon.svelte";
   import StatusDot from "../../lib/ui/StatusDot.svelte";
   import type { Column } from "../../lib/ui/columns";
@@ -108,7 +109,7 @@
   </SettingsTable>
 
   {#if selected}
-    <dl>
+    <Facts>
       <dt>Host</dt>
       <dd class="mono">{selected.host}</dd>
       <dt>Account</dt>
@@ -145,7 +146,7 @@
           onclick={() => void checkAgain(selected.host, selected.key)}>{checking ? "Checking…" : "Check again"}</button
         >
       </dd>
-    </dl>
+    </Facts>
   {/if}
   {#if keychainWarning}<p class="problem" role="alert">{keychainWarning}</p>{/if}
 </div>
@@ -203,21 +204,6 @@
   }
   .strip button:disabled {
     opacity: 0.4;
-  }
-  dl {
-    display: grid;
-    grid-template-columns: 100px 1fr;
-    gap: 6px 12px;
-    margin: 0;
-  }
-  dt {
-    text-align: right;
-    color: var(--text-2);
-  }
-  dd {
-    margin: 0;
-    min-width: 0;
-    overflow-wrap: anywhere;
   }
   .status.signedIn {
     color: var(--add-text);
