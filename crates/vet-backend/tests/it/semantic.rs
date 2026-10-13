@@ -219,38 +219,6 @@ async fn rust_semantics_through_the_protocol() {
         "{diagnostics:?}"
     );
 
-    let Response::ChangedSymbols(changed) = client
-        .call(Request::ChangedSymbols { project, revision })
-        .await
-        .unwrap()
-    else {
-        panic!("not changed symbols");
-    };
-    assert_eq!(changed.revision, revision);
-    let change_of = |symbol: &str| {
-        changed
-            .symbols
-            .iter()
-            .find(|c| c.symbol.id.name == name(&[symbol]))
-            .unwrap_or_else(|| panic!("{symbol} in {:?}", changed.symbols))
-            .change
-    };
-    assert_eq!(change_of("gone"), SymbolChange::Removed);
-    assert_eq!(change_of("keep"), SymbolChange::Modified);
-    assert_eq!(change_of("fresh"), SymbolChange::Added);
-    assert_eq!(change_of("main"), SymbolChange::Modified);
-    assert!(changed.gaps.is_empty(), "{changed:?}");
-    assert_eq!(changed.inputs.analysis, "changed symbols");
-    assert!(
-        changed
-            .inputs
-            .primitives
-            .iter()
-            .any(|p| p.starts_with("document_symbols(base:"))
-    );
-    assert!(!changed.inputs.hunks.is_empty());
-
-    // The same per file; every symbol is at the top level, so none has a holder.
     let Response::FileSymbols(file) = client
         .call(Request::FileSymbols {
             project,
@@ -262,8 +230,28 @@ async fn rust_semantics_through_the_protocol() {
     else {
         panic!("not file symbols");
     };
-    assert_eq!(file.symbols, changed.symbols);
+    assert_eq!(file.revision, revision);
+    let change_of = |symbol: &str| {
+        file.symbols
+            .iter()
+            .find(|c| c.symbol.id.name == name(&[symbol]))
+            .unwrap_or_else(|| panic!("{symbol} in {:?}", file.symbols))
+            .change
+    };
+    assert_eq!(change_of("gone"), SymbolChange::Removed);
+    assert_eq!(change_of("keep"), SymbolChange::Modified);
+    assert_eq!(change_of("fresh"), SymbolChange::Added);
+    assert_eq!(change_of("main"), SymbolChange::Modified);
+    // Every symbol is at the top level, so none has a holder.
     assert!(file.context.is_empty() && file.gap.is_none(), "{file:?}");
+    assert_eq!(file.inputs.analysis, "changed symbols");
+    assert!(
+        file.inputs
+            .primitives
+            .iter()
+            .any(|p| p.starts_with("document_symbols(base:"))
+    );
+    assert!(!file.inputs.hunks.is_empty());
     assert!(
         client
             .call(Request::FileSymbols {
@@ -345,32 +333,6 @@ async fn rust_semantics_through_the_protocol() {
         assert!(!signature.highlights.is_empty(), "{signature:?}");
     }
 
-    let Response::Impact(impact) = client
-        .call(Request::Impact {
-            project,
-            revision,
-            symbol: id("keep"),
-        })
-        .await
-        .unwrap()
-    else {
-        panic!("not an impact");
-    };
-    assert_eq!(impact.revision, revision);
-    assert_eq!(impact.references.len(), 1, "{impact:?}");
-    let within = impact.references[0].within.as_ref().map(|w| w.name.clone());
-    assert_eq!(within, Some(name(&["fresh"])), "{impact:?}");
-    let callers: Vec<_> = impact.callers.iter().map(|c| c.id.name.clone()).collect();
-    assert_eq!(callers, [name(&["fresh"])]);
-    assert!(impact.gaps.is_empty());
-    assert!(
-        impact
-            .inputs
-            .primitives
-            .iter()
-            .any(|p| p.starts_with("references(target:"))
-    );
-
     let calls = |symbol| {
         let client = &client;
         async move {
@@ -422,6 +384,13 @@ async fn rust_semantics_through_the_protocol() {
     let within = usages.references[0].within.as_ref().map(|w| w.name.clone());
     assert_eq!((usages.references.len(), within), (1, Some(name(&["fresh"]))));
     assert_eq!(usages.gap, None);
+    assert!(
+        usages
+            .inputs
+            .primitives
+            .iter()
+            .any(|p| p.starts_with("references(target:"))
+    );
 
     let Response::RemovalImpact(removal) = client
         .call(Request::RemovalImpact {
@@ -474,14 +443,6 @@ async fn rust_semantics_through_the_protocol() {
 
     // Kinds are not interchangeable, and stale revisions are refused.
     let wrong = client
-        .call(Request::Impact {
-            project,
-            revision,
-            symbol: id("gone"),
-        })
-        .await;
-    assert!(wrong.unwrap_err().contains("removed"));
-    let wrong = client
         .call(Request::RemovalImpact {
             project,
             revision,
@@ -514,9 +475,10 @@ async fn rust_semantics_through_the_protocol() {
             line: 0,
             col: 0,
         },
-        Request::ChangedSymbols {
+        Request::FileSymbols {
             project,
             revision: revision + 1,
+            path: path.into(),
         },
         Request::Diagnostics {
             project,
@@ -584,17 +546,31 @@ async fn a_language_without_a_server_degrades_and_never_fails_the_project() {
 
     // Derived results report the failed file as a gap instead of failing; the changed
     // notes.md has no language and is no gap.
-    let Response::ChangedSymbols(changed) = client
-        .call(Request::ChangedSymbols { project, revision })
-        .await
-        .unwrap()
-    else {
-        panic!("not changed symbols");
+    let file_symbols = |path: &str| {
+        let request = Request::FileSymbols {
+            project,
+            revision,
+            path: path.into(),
+        };
+        let client = &client;
+        async move {
+            let Response::FileSymbols(file) = client.call(request).await.unwrap() else {
+                panic!("not file symbols");
+            };
+            file
+        }
     };
-    assert!(changed.symbols.is_empty());
-    assert_eq!(changed.gaps.len(), 1, "{changed:?}");
-    assert_eq!(changed.gaps[0].path, "a.py");
-    assert!(changed.gaps[0].reason.contains("/no/such/pyright-langserver"));
+    let failed = file_symbols("a.py").await;
+    assert!(failed.symbols.is_empty());
+    assert!(
+        failed
+            .gap
+            .as_deref()
+            .is_some_and(|gap| gap.contains("/no/such/pyright-langserver")),
+        "{failed:?}"
+    );
+    let notes = file_symbols("notes.md").await;
+    assert!(notes.symbols.is_empty() && notes.gap.is_none(), "{notes:?}");
 
     // The project itself is fine.
     assert_eq!(client.revision(project).await, revision);

@@ -1,5 +1,5 @@
-//! A review under load: the symbols panel asks for the analyses of several symbols at
-//! once while the language server is slow, and the viewer goes on marking files seen.
+//! A review under load: the Changes tree and the Symbol panel ask for the symbols of several
+//! files and the analyses of a symbol at once while the language server is slow, and the viewer goes on marking files seen.
 //! Runs the backend on the real store with a language server that takes its time over
 //! every file; needs `python3` for that server: the tests are ignored and run by `ci/tool-tests.sh`.
 
@@ -13,7 +13,7 @@ use std::time::{Duration, Instant};
 use crate::common::{Client, config, repo_with};
 use serde_json::Value;
 use vet_backend::{Orchestrator, open_store};
-use vet_protocol::{Event, Request, Response, ServerMessage, Side, SymbolId, TaskKind, ThreadTarget, View};
+use vet_protocol::{Request, Response, Side, SymbolId, ThreadTarget, View};
 
 /// Speaks just enough LSP to start. A file's symbols take `DELAY` seconds to answer; every
 /// message it receives, and every `--version` it is asked for (with the unix time it was asked
@@ -111,7 +111,7 @@ fn unix_now() -> f64 {
 
 #[tokio::test]
 #[ignore = "needs python3"]
-async fn many_analyses_of_one_revision_share_one_search_while_files_are_marked_seen() {
+async fn many_analyses_of_one_revision_ask_each_text_once_while_files_are_marked_seen() {
     let names: Vec<_> = (0..FILES).map(|i| format!("src/m{i}.rs")).collect();
     // Every text is its own, so that every one is asked of the server.
     let text = |value: usize| format!("pub fn f() -> usize {{\n    {value}\n}}\n");
@@ -136,9 +136,7 @@ async fn many_analyses_of_one_revision_share_one_search_while_files_are_marked_s
     let data = tempfile::tempdir().unwrap();
     let handler = Arc::new(Orchestrator::new(open_store(data.path()).await.unwrap(), config()));
     let client = Arc::new(Client::new(&handler));
-    let mut observer = Client::new(&handler);
     let project = client.open(repo.path()).await;
-    assert_eq!(observer.open(repo.path()).await, project);
     let revision = client.revision(project).await;
     client
         .call(Request::SetServerPath {
@@ -152,21 +150,25 @@ async fn many_analyses_of_one_revision_share_one_search_while_files_are_marked_s
     // them; the analyses are what must not probe again and again.
     let changed = unix_now();
 
-    // Four selections of a symbol, three analyses each, and the changed symbols themselves.
+    // Four selections of a symbol, three analyses each, and the symbols of every changed file.
     let symbol = SymbolId {
         path: names[0].clone(),
         name: vec!["f".into()],
     };
     let mut analyses = tokio::task::JoinSet::new();
     for _ in 0..4 {
-        for request in [
-            Request::ChangedSymbols { project, revision },
+        let files = names.iter().map(|path| Request::FileSymbols {
+            project,
+            revision,
+            path: path.clone(),
+        });
+        let about_symbol = [
             Request::Signature {
                 project,
                 revision,
                 symbol: symbol.clone(),
             },
-            Request::Impact {
+            Request::Calls {
                 project,
                 revision,
                 symbol: symbol.clone(),
@@ -176,7 +178,8 @@ async fn many_analyses_of_one_revision_share_one_search_while_files_are_marked_s
                 revision,
                 symbol: symbol.clone(),
             },
-        ] {
+        ];
+        for request in files.chain(about_symbol) {
             let client = client.clone();
             analyses.spawn(async move { client.call(request).await });
         }
@@ -212,18 +215,6 @@ async fn many_analyses_of_one_revision_share_one_search_while_files_are_marked_s
     }
     println!("{toggles} toggles, the slowest took {slowest:?}");
 
-    let mut searches = std::collections::BTreeSet::new();
-    while let Ok(message) = observer.inbox.try_recv() {
-        if let ServerMessage::Event {
-            event: Event::Task(task),
-        } = message
-            && task.kind == TaskKind::Analyse
-        {
-            searches.insert(task.id);
-        }
-    }
-    println!("{} analysis tasks", searches.len());
-    assert_eq!(searches.len(), 1, "one search, not one per analysis");
     assert!(toggles >= 5, "the analyses were over after {toggles} markings");
 
     // Each text of the changed files is asked of the server once, and its identity is
@@ -449,7 +440,11 @@ async fn review_actions_answer_while_semantic_work_is_stuck(stuck: Stuck) {
     let mut semantic = tokio::task::JoinSet::new();
     for _ in 0..12 {
         for request in [
-            Request::ChangedSymbols { project, revision },
+            Request::FileSymbols {
+                project,
+                revision,
+                path: names[0].clone(),
+            },
             Request::Hover {
                 project,
                 revision,
@@ -458,7 +453,7 @@ async fn review_actions_answer_while_semantic_work_is_stuck(stuck: Stuck) {
                 line: 0,
                 col: 7,
             },
-            Request::Impact {
+            Request::Calls {
                 project,
                 revision,
                 symbol: symbol.clone(),

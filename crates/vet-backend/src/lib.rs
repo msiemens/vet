@@ -524,9 +524,6 @@ impl Orchestrator {
                 revision,
                 path,
             } => reply(async move { self.ready(project).await?.diagnostics(revision, &path).await }),
-            Request::ChangedSymbols { project, revision } => {
-                reply(async move { self.ready(project).await?.changed_symbols(revision).await })
-            }
             Request::FileSymbols {
                 project,
                 revision,
@@ -560,11 +557,6 @@ impl Orchestrator {
                 revision,
                 symbol,
             } => reply(async move { self.ready(project).await?.usages(revision, &symbol).await }),
-            Request::Impact {
-                project,
-                revision,
-                symbol,
-            } => reply(async move { self.ready(project).await?.impact(revision, &symbol).await }),
             Request::RemovalImpact {
                 project,
                 revision,

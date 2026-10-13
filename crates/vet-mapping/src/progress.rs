@@ -13,7 +13,6 @@ pub fn task(project: p::ProjectId, t: &Task) -> p::Task {
             TaskKind::Restore => p::TaskKind::Restore,
             TaskKind::ServerStart => p::TaskKind::ServerStart,
             TaskKind::ServerIndex => p::TaskKind::ServerIndex,
-            TaskKind::Analyse => p::TaskKind::Analyse,
             TaskKind::Fetch => p::TaskKind::Fetch,
             TaskKind::Store => p::TaskKind::Store,
         },

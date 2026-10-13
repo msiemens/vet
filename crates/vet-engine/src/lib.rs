@@ -12,13 +12,6 @@
 //! dropped, the computation is dropped with it, and whatever it was waiting for
 //! sees the cancellation. A flight therefore owns what it uses (`'static`).
 //!
-//! An engine may let flights [linger](Engine::lingering): when the last waiter
-//! is dropped, the computation goes on for a grace period, and a caller that asks
-//! for the key meanwhile joins it. A caller dropped because its request was
-//! superseded is followed by the request that superseded it, which then finds the
-//! work under way instead of starting it again. Once the grace period is over
-//! with nobody waiting, the computation is dropped as above.
-//!
 //! What stays after a flight ended is the key's [`Retention`]:
 //!
 //! - [`Retention::Kept`]: the key names every input. The value stays, least
@@ -37,7 +30,6 @@ use std::pin::Pin;
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError, TryLockError};
 use std::task::{Context, Poll, Wake, Waker};
-use std::time::Duration;
 
 /// What stays of a value after the flight that computed it ended.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -68,7 +60,7 @@ pub trait Kind: Eq + Hash + Clone + Send + Sync + 'static {
 }
 
 /// How much an engine keeps: at most `entries` values weighing at most `weight`
-/// together. Flights are not counted; each has a waiter or lingers.
+/// together. Flights are not counted; each has a waiter.
 #[derive(Clone, Copy, Debug)]
 pub struct Limits {
     pub entries: usize,
@@ -159,19 +151,6 @@ impl Progress {
 /// Starts the task a flight of a key reports as; none: it has none.
 type Observe<K> = Box<dyn Fn(&K) -> Option<Arc<dyn Task>> + Send + Sync>;
 
-/// What drives a lingering flight, since the engine has no runtime of its own.
-pub trait Linger: Send + Sync {
-    /// Polls `work` on its own until it ends or `grace` has passed, and then drops it.
-    fn hold(&self, grace: Duration, work: Pin<Box<dyn Future<Output = ()> + Send>>);
-}
-
-/// How long flights linger, and what drives them meanwhile.
-#[derive(Clone)]
-struct Lingering {
-    grace: Duration,
-    linger: Arc<dyn Linger>,
-}
-
 type Outcome<K> = Result<Computed<<K as Kind>::Value>, <K as Kind>::Error>;
 type Work<K> = Pin<Box<dyn Future<Output = Outcome<K>> + Send>>;
 
@@ -244,8 +223,6 @@ enum Phase<K: Kind> {
 struct Flight<K: Kind> {
     /// Callers that still want the result; changed under the engine's lock.
     waiting: AtomicUsize,
-    /// Grace periods under way since the last caller left; changed under the engine's lock.
-    lingering: AtomicUsize,
     /// The thread polling the computation, 0 if none.
     driver: AtomicU64,
     wakers: Arc<Wakers>,
@@ -368,8 +345,6 @@ enum Entered<K: Kind> {
 /// Values by key. See the module's documentation.
 pub struct Engine<K: Kind> {
     observe: Option<Observe<K>>,
-    lingering: Option<Lingering>,
-    /// Shared with the waiters, which outlive the caller while they linger.
     map: Arc<Mutex<Map<K>>>,
 }
 
@@ -385,7 +360,6 @@ impl<K: Kind> Engine<K> {
     pub fn new(limits: Limits) -> Self {
         Self {
             observe: None,
-            lingering: None,
             map: Arc::new(Mutex::new(Map {
                 limits,
                 tick: 0,
@@ -401,13 +375,6 @@ impl<K: Kind> Engine<K> {
     /// it with the flight. The computation reports to it through its [`Progress`].
     pub fn observing(mut self, observe: impl Fn(&K) -> Option<Arc<dyn Task>> + Send + Sync + 'static) -> Self {
         self.observe = Some(Box::new(observe));
-        self
-    }
-
-    /// Lets a flight whose last waiter was dropped go on for `grace`, driven by
-    /// `linger`, so that a caller who asks for its key meanwhile joins it.
-    pub fn lingering(mut self, grace: Duration, linger: Arc<dyn Linger>) -> Self {
-        self.lingering = Some(Lingering { grace, linger });
         self
     }
 
@@ -430,7 +397,6 @@ impl<K: Kind> Engine<K> {
             map: self.map.clone(),
             key,
             flight,
-            role: Role::Caller(self.lingering.clone()),
         };
         let Computed { value, reused, .. } = poll_fn(|cx| waiter.poll(cx)).await?;
         Ok(Got { value, reused })
@@ -463,7 +429,6 @@ impl<K: Kind> Engine<K> {
         let work: Work<K> = Box::pin(compute(Progress(task.clone())));
         let flight = Arc::new(Flight {
             waiting: AtomicUsize::new(1),
-            lingering: AtomicUsize::new(0),
             driver: AtomicU64::new(0),
             wakers: Arc::new(Wakers::new()),
             phase: Mutex::new(Phase::Running { work, _task: task }),
@@ -504,20 +469,11 @@ impl<K: Kind> Engine<K> {
     }
 }
 
-/// Whose interest in a flight a waiter is.
-enum Role {
-    /// A caller's, and how long the flight lingers once the last caller left.
-    Caller(Option<Lingering>),
-    /// A grace period's, after the last caller left.
-    Lingerer,
-}
-
-/// An interest in a flight. Dropping it withdraws the interest.
+/// A caller's interest in a flight. Dropping it withdraws the interest.
 struct Waiter<K: Kind> {
     map: Arc<Mutex<Map<K>>>,
     key: K,
     flight: Arc<Flight<K>>,
-    role: Role,
 }
 
 impl<K: Kind> Waiter<K> {
@@ -564,48 +520,18 @@ impl<K: Kind> Waiter<K> {
 }
 
 impl<K: Kind> Drop for Waiter<K> {
-    /// The interest is withdrawn. The last caller's leaves the computation to a
-    /// grace period if the engine lingers; without any interest left, it is dropped.
+    /// The interest is withdrawn; without any left, the computation is dropped.
     fn drop(&mut self) {
         let flight = &self.flight;
-        let mut lingers = None;
         let cancel = {
             let mut map = lock(&self.map);
-            let flying = map.is_flying(&self.key, flight);
-            let (waiting, lingering) = match &self.role {
-                Role::Caller(lingering) => {
-                    let waiting = flight.waiting.fetch_sub(1, Ordering::SeqCst) - 1;
-                    lingers = lingering.clone().filter(|_| waiting == 0 && flying);
-                    if lingers.is_some() {
-                        flight.lingering.fetch_add(1, Ordering::SeqCst);
-                    }
-                    (waiting, flight.lingering.load(Ordering::SeqCst))
-                }
-                Role::Lingerer => (
-                    flight.waiting.load(Ordering::SeqCst),
-                    flight.lingering.fetch_sub(1, Ordering::SeqCst) - 1,
-                ),
-            };
-            let cancel = waiting == 0 && lingering == 0;
-            if cancel && flying {
+            let cancel = flight.waiting.fetch_sub(1, Ordering::SeqCst) == 1;
+            if cancel && map.is_flying(&self.key, flight) {
                 map.slots.remove(&self.key);
             }
             cancel
         };
-        if let Some(Lingering { grace, linger }) = lingers {
-            let lingerer = Waiter {
-                map: self.map.clone(),
-                key: self.key.clone(),
-                flight: flight.clone(),
-                role: Role::Lingerer,
-            };
-            linger.hold(
-                grace,
-                Box::pin(async move {
-                    let _ = poll_fn(|cx| lingerer.poll(cx)).await;
-                }),
-            );
-        } else if cancel {
+        if cancel {
             let cancelled = {
                 let mut phase = lock(&flight.phase);
                 match &*phase {

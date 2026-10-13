@@ -1,6 +1,5 @@
 //! Background work that a person waits for or wonders about (SPEC "Background
-//! work is visible"): scans, diffs, restores, servers starting and indexing, the
-//! changed-symbols analysis. Each step is a task with a stable id, a title, an
+//! work is visible"): scans, diffs, restores, servers starting and indexing. Each step is a task with a stable id, a title, an
 //! optional fraction and detail, and its own end. A step reports through the
 //! [`Tasks`] it is handed and knows nothing about who listens.
 
@@ -17,7 +16,6 @@ pub enum TaskKind {
     Restore,
     ServerStart,
     ServerIndex,
-    Analyse,
     Fetch,
     Store,
 }

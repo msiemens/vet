@@ -1,13 +1,11 @@
 //! Which symbols changed (§7.3): `documentSymbol` on both sides of each changed
 //! file, intersected with the diff hunks.
 
-use std::sync::atomic::{AtomicUsize, Ordering};
-
-use vet_core::content::{FileDiff, LineRange, RepoPath};
+use vet_core::content::{FileDiff, LineRange};
 use vet_core::review::Side;
 
 use super::{Derived, Inputs};
-use crate::join::{bounded, join};
+use crate::join::join;
 use crate::ports::{Provenance, Sym, SymbolInfo};
 use crate::query::{Asked, Primitives, SemanticError};
 
@@ -24,21 +22,6 @@ pub struct ChangedSymbol {
     /// The target-side symbol, or the base-side one for `Removed`.
     pub symbol: SymbolInfo,
     pub change: Change,
-}
-
-/// A file whose symbols could not be determined.
-#[derive(Clone, PartialEq, Eq, Debug)]
-pub struct Gap {
-    pub file: RepoPath,
-    pub reason: String,
-}
-
-#[derive(Clone, PartialEq, Eq, Debug, Default)]
-pub struct Changes {
-    pub symbols: Vec<ChangedSymbol>,
-    /// Files a backend failed on; their symbols are unknown, not unchanged. Files no configured
-    /// backend handles are not here: they have no symbols to know, and the footer reports them.
-    pub gaps: Vec<Gap>,
 }
 
 /// What the change of one file did to its symbols.
@@ -66,11 +49,6 @@ pub struct Compared {
     pub changes: FileChanges,
 }
 
-/// Files whose texts are read at once, both sides each. It only bounds the texts held
-/// while their questions wait their turn: how many requests run on a server is the
-/// pool's to decide (`pool::REQUESTS_PER_SERVER`), over all that ask it.
-const FILES_READ_AHEAD: usize = 16;
-
 /// The file contents of both sides, so their symbols can be had from the texts alone:
 /// without a server on the base snapshot, and without the target file as the live
 /// tree has it now, which may have moved on from the revision.
@@ -79,44 +57,6 @@ pub trait Texts: Sync {
     fn base_text(&self, file: &FileDiff) -> impl Future<Output = Option<String>> + Send;
     /// The target content of `file`; `None` if it is not available.
     fn target_text(&self, file: &FileDiff) -> impl Future<Output = Option<String>> + Send;
-}
-
-/// `on_file(done, total)` is called each time a file's symbols are in, `total` being
-/// the files with changes to look at.
-pub async fn changed_symbols(
-    p: &impl Primitives,
-    texts: &impl Texts,
-    files: &[FileDiff],
-    on_file: &(impl Fn(usize, usize) + Sync),
-) -> Derived<Changes> {
-    let mut inputs = Inputs::new("changed symbols");
-    let mut out = Changes::default();
-    let files: Vec<_> = files.iter().filter(|f| !f.hunks.is_empty()).collect();
-    let total = files.len();
-    let done = AtomicUsize::new(0);
-    let answers = bounded(FILES_READ_AHEAD, 0..total, |at| {
-        let file = files[at];
-        let done = &done;
-        async move {
-            let answer = compared(p, texts, file).await;
-            on_file(done.fetch_add(1, Ordering::Relaxed) + 1, total);
-            answer
-        }
-    })
-    .await;
-    for (file, answer) in files.into_iter().zip(answers) {
-        inputs.hunks.extend(answer.inputs.hunks);
-        inputs.primitives.extend(answer.inputs.primitives);
-        match answer.value {
-            Ok(compared) => out.symbols.extend(compared.changes.symbols),
-            Err(SemanticError::NoBackend(_)) => {}
-            Err(e) => out.gaps.push(Gap {
-                file: file.path().clone(),
-                reason: e.to_string(),
-            }),
-        }
-    }
-    Derived { value: out, inputs }
 }
 
 /// The symbols of both sides of `file`, from the texts, and what the change did to them.

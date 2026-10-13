@@ -248,27 +248,6 @@ pub struct ChangedSymbol {
     pub change: SymbolChange,
 }
 
-/// A file whose symbols could not be determined: unknown, not unchanged.
-#[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize, TS)]
-#[serde(rename_all = "camelCase")]
-#[ts(export)]
-pub struct FileGap {
-    pub path: String,
-    pub reason: String,
-}
-
-#[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize, TS)]
-#[serde(rename_all = "camelCase")]
-#[ts(export)]
-pub struct ChangedSymbols {
-    pub revision: u32,
-    pub symbols: Vec<ChangedSymbol>,
-    /// Changed files whose analysis failed, with why: their symbols are unknown. Files no
-    /// language is configured for are not listed.
-    pub gaps: Vec<FileGap>,
-    pub inputs: DerivedInputs,
-}
-
 /// What the changeset did to the symbols of one file (derived, §7.3).
 #[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
@@ -308,19 +287,6 @@ pub struct SymbolSignature {
     pub code: String,
     /// The highlighting of `code`, empty for prose or an unknown language (see [`Highlights`]).
     pub highlights: Highlights,
-}
-
-#[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize, TS)]
-#[serde(rename_all = "camelCase")]
-#[ts(export)]
-pub struct Impact {
-    pub revision: u32,
-    pub symbol: SymbolInfo,
-    pub references: Vec<Reference>,
-    pub callers: Vec<SymbolInfo>,
-    /// Queries that failed; the matching list is unknown, not empty.
-    pub gaps: Vec<String>,
-    pub inputs: DerivedInputs,
 }
 
 /// A changed symbol that reaches the one asked about through calls of changed symbols alone.

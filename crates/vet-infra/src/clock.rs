@@ -3,7 +3,6 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use tokio::time::Instant;
 use vet_app::ports::{Clock, Millis};
-use vet_engine::Linger;
 use vet_semantic::ports::Detach;
 
 /// Whole unix seconds of `t`; negative before the epoch.
@@ -51,14 +50,5 @@ pub struct TokioDetach;
 impl Detach for TokioDetach {
     fn detach(&self, work: Pin<Box<dyn Future<Output = ()> + Send>>) {
         tokio::spawn(work);
-    }
-}
-
-/// Drives a lingering flight of an engine as a task of its own, for its grace period.
-pub struct TokioLinger;
-
-impl Linger for TokioLinger {
-    fn hold(&self, grace: Duration, work: Pin<Box<dyn Future<Output = ()> + Send>>) {
-        tokio::spawn(tokio::time::timeout(grace, work));
     }
 }

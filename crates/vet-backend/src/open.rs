@@ -26,7 +26,7 @@ use vet_app::session::RevisionView;
 use vet_app::settle::Settling;
 use vet_app::trust::Trust;
 use vet_infra::budget::Budgets;
-use vet_infra::clock::{TokioClock, TokioDetach, TokioLinger, unix_now};
+use vet_infra::clock::{TokioClock, TokioDetach, unix_now};
 use vet_infra::git::GixRepo;
 use vet_infra::language;
 use vet_infra::lsp::LspLauncher;
@@ -264,8 +264,6 @@ impl Wired {
             Links {
                 revisions: session.revisions(),
                 limits,
-                tasks: self.tasks.clone(),
-                linger: Arc::new(TokioLinger),
             },
         )
         .reading(reading)

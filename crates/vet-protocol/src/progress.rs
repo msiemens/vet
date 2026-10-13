@@ -19,8 +19,6 @@ pub enum TaskKind {
     ServerStart,
     /// A language server indexing the project.
     ServerIndex,
-    /// Finding the symbols the changes touch.
-    Analyse,
     /// Fetching the repository's remotes.
     Fetch,
     /// Keeping the working tree's changed files in Vet's store, ahead of a review.

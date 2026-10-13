@@ -101,14 +101,18 @@ async fn python_semantics_through_the_protocol() {
     assert_eq!(refs.rows[0].line, find(BASE, "gone()", 1, 0).0 + 1);
 
     // Derived results run on both servers.
-    let Response::ChangedSymbols(changed) = client
-        .call(Request::ChangedSymbols { project, revision })
+    let Response::FileSymbols(changed) = client
+        .call(Request::FileSymbols {
+            project,
+            revision,
+            path: path.into(),
+        })
         .await
         .unwrap()
     else {
-        panic!("not changed symbols");
+        panic!("not file symbols");
     };
-    assert!(changed.gaps.is_empty(), "{changed:?}");
+    assert!(changed.gap.is_none(), "{changed:?}");
     let change_of = |symbol: &str| {
         changed
             .symbols

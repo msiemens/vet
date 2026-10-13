@@ -230,15 +230,6 @@ impl Booted {
         })
     }
 
-    pub async fn changed_symbols(&self, revision: u32) -> Result<Response, String> {
-        let changes = self
-            .semantics
-            .changed_symbols(&self.view, revision)
-            .await
-            .map_err(message)?;
-        Ok(Response::ChangedSymbols(map::changed_symbols(revision, &changes)))
-    }
-
     pub async fn file_symbols(&self, revision: u32, path: &str) -> Result<Response, String> {
         let file = RepoPath::from(path);
         let found = (self.semantics)
@@ -297,14 +288,6 @@ impl Booted {
             .map_err(message)?;
         let (found, unavailable) = map::answer(answer.result, self.language_of(&RepoPath::from(symbol.path.as_str())));
         Ok(highlight::signature(&symbol.path, revision, found, unavailable))
-    }
-
-    pub async fn impact(&self, revision: u32, symbol: &vet_protocol::SymbolId) -> Result<Response, String> {
-        let impact = (self.semantics)
-            .impact(&self.view, revision, &map::core_sym(symbol))
-            .await
-            .map_err(message)?;
-        Ok(Response::Impact(map::impact(revision, &impact)))
     }
 
     pub async fn removal_impact(&self, revision: u32, symbol: &vet_protocol::SymbolId) -> Result<Response, String> {

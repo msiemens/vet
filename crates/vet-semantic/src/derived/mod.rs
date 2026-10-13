@@ -4,7 +4,6 @@
 mod calls;
 mod changed;
 mod cursor;
-mod impact;
 mod reach;
 mod reference;
 mod removal;
@@ -20,9 +19,8 @@ use crate::ports::{At, Pos, Provenance};
 use crate::query::{Asked, SemanticError};
 
 pub use calls::{Caller, Calls, calls};
-pub use changed::{Change, ChangedSymbol, Changes, Compared, FileChanges, Gap, Texts, changed_symbols, compared};
+pub use changed::{Change, ChangedSymbol, Compared, FileChanges, Texts, compared};
 pub use cursor::{Located, symbol_at};
-pub use impact::{SymbolImpact, impact};
 pub use reach::{EntryPoint, EntryPoints, Reach, reachability};
 pub use reference::{Reference, located};
 pub use removal::{CallSite, Fate, RemovalImpact, removal_impact};

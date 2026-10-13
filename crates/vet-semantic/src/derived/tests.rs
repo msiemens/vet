@@ -191,10 +191,44 @@ fn changed_fixture() -> (Fake, Vec<FileDiff>) {
     (fake, vec![diff("a.rs", hunks)])
 }
 
+/// A file a backend failed on.
+#[derive(Clone, PartialEq, Eq, Debug)]
+struct Gap {
+    file: RepoPath,
+    reason: String,
+}
+
+#[derive(Clone, PartialEq, Eq, Debug, Default)]
+struct Changes {
+    symbols: Vec<ChangedSymbol>,
+    /// Files no backend handles are none: they have no symbols to know.
+    gaps: Vec<Gap>,
+}
+
+/// The changed symbols of the files with hunks, files in order.
+async fn changed_symbols(p: &impl Primitives, texts: &impl Texts, files: &[FileDiff]) -> Derived<Changes> {
+    let mut inputs = Inputs::new("changed symbols");
+    let mut out = Changes::default();
+    for file in files.iter().filter(|f| !f.hunks.is_empty()) {
+        let answer = compared(p, texts, file).await;
+        inputs.hunks.extend(answer.inputs.hunks);
+        inputs.primitives.extend(answer.inputs.primitives);
+        match answer.value {
+            Ok(compared) => out.symbols.extend(compared.changes.symbols),
+            Err(SemanticError::NoBackend(_)) => {}
+            Err(e) => out.gaps.push(Gap {
+                file: file.path().clone(),
+                reason: e.to_string(),
+            }),
+        }
+    }
+    Derived { value: out, inputs }
+}
+
 #[test]
 fn changed_symbols_are_the_innermost_symbols_touched_by_hunks() {
     let (fake, files) = changed_fixture();
-    let result = block_on(changed_symbols(&fake, &NoTexts, &files, &|_, _| {}));
+    let result = block_on(changed_symbols(&fake, &NoTexts, &files));
     let summary: Vec<_> = result
         .value
         .symbols
@@ -226,9 +260,9 @@ fn base_symbols_come_from_the_base_text_not_from_a_base_server() {
     let (mut fake, files) = changed_fixture();
     let base = fake.symbols.remove(&(Side::Base, file("a.rs"))).unwrap();
     fake.texts.insert((file("a.rs"), "base of a.rs".into()), base);
-    let with_texts = block_on(changed_symbols(&fake, &FakeTexts, &files, &|_, _| {})).value;
+    let with_texts = block_on(changed_symbols(&fake, &FakeTexts, &files)).value;
     let (expected, _) = changed_fixture();
-    let with_server = block_on(changed_symbols(&expected, &NoTexts, &files, &|_, _| {})).value;
+    let with_server = block_on(changed_symbols(&expected, &NoTexts, &files)).value;
     assert_eq!(with_texts, with_server);
     assert!(with_texts.gaps.is_empty());
 }
@@ -242,9 +276,9 @@ fn target_symbols_come_from_the_target_text_not_from_the_file_as_the_server_has_
         .insert((Side::Target, file("a.rs")), vec![sym("a.rs", "moved_on", 0, 20)]);
     fake.texts
         .insert((file("a.rs"), "target of a.rs".into()), target.unwrap());
-    let with_texts = block_on(changed_symbols(&fake, &FakeTexts, &files, &|_, _| {})).value;
+    let with_texts = block_on(changed_symbols(&fake, &FakeTexts, &files)).value;
     let (expected, _) = changed_fixture();
-    let with_server = block_on(changed_symbols(&expected, &NoTexts, &files, &|_, _| {})).value;
+    let with_server = block_on(changed_symbols(&expected, &NoTexts, &files)).value;
     assert_eq!(with_texts, with_server);
 }
 
@@ -252,7 +286,7 @@ fn target_symbols_come_from_the_target_text_not_from_the_file_as_the_server_has_
 fn base_symbols_fall_back_to_the_base_server_when_the_text_cannot_be_placed() {
     let (fake, files) = changed_fixture();
     // The fake knows no symbols for the text, as a server that refuses it.
-    let changes = block_on(changed_symbols(&fake, &FakeTexts, &files, &|_, _| {})).value;
+    let changes = block_on(changed_symbols(&fake, &FakeTexts, &files)).value;
     assert_eq!(changes.symbols.len(), 4);
     assert!(changes.gaps.is_empty());
 }
@@ -282,9 +316,7 @@ fn added_and_deleted_files_report_every_symbol() {
             hunks: vec![hunk((0, 3), (0, 0))],
         },
     ];
-    let changes = block_on(changed_symbols(&fake, &NoTexts, &files, &|_, _| {}))
-        .value
-        .symbols;
+    let changes = block_on(changed_symbols(&fake, &NoTexts, &files)).value.symbols;
     let kinds: Vec<_> = changes.iter().map(|c| c.change).collect();
     assert_eq!(kinds, [Change::Added, Change::Added, Change::Removed]);
 }
@@ -301,33 +333,12 @@ fn changed_symbols_keep_the_order_of_the_files_however_many_are_asked_at_once() 
             .insert((Side::Target, file(&path)), vec![sym(&path, "s", 0, 3)]);
         files.push(diff(&path, vec![hunk((1, 2), (1, 2))]));
     }
-    let result = block_on(changed_symbols(&fake, &NoTexts, &files, &|_, _| {}));
+    let result = block_on(changed_symbols(&fake, &NoTexts, &files));
     let order: Vec<_> = result.value.symbols.iter().map(|c| c.symbol.sym.file.clone()).collect();
     let want: Vec<_> = (0..10).map(|n| file(&format!("f{n}.rs"))).collect();
     assert_eq!(order, want);
     assert_eq!(result.inputs.primitives.len(), 20);
     assert_eq!(result.inputs.primitives[2], "document_symbols(base:f1.rs) [fake]");
-}
-
-#[test]
-fn each_analysed_file_is_reported_as_done_of_the_files_with_hunks() {
-    let mut fake = Fake::default();
-    let mut files = vec![diff("untouched.rs", vec![])];
-    for n in 0..6 {
-        let path = format!("f{n}.rs");
-        fake.symbols
-            .insert((Side::Base, file(&path)), vec![sym(&path, "s", 0, 3)]);
-        fake.symbols
-            .insert((Side::Target, file(&path)), vec![sym(&path, "s", 0, 3)]);
-        files.push(diff(&path, vec![hunk((1, 2), (1, 2))]));
-    }
-    let reported = std::sync::Mutex::new(Vec::new());
-    block_on(changed_symbols(&fake, &NoTexts, &files, &|done, total| {
-        reported.lock().unwrap().push((done, total));
-    }));
-    let mut reported = reported.into_inner().unwrap();
-    reported.sort();
-    assert_eq!(reported, (1..=6).map(|done| (done, 6)).collect::<Vec<_>>());
 }
 
 #[test]
@@ -338,7 +349,7 @@ fn files_without_a_backend_are_no_gap_but_a_failed_analysis_is() {
         diff("README.md", vec![hunk((0, 1), (0, 2))]),
         diff("broken.rs", vec![hunk((0, 1), (0, 2))]),
     ];
-    let changes = block_on(changed_symbols(&fake, &NoTexts, &files, &|_, _| {})).value;
+    let changes = block_on(changed_symbols(&fake, &NoTexts, &files)).value;
     assert!(changes.symbols.is_empty());
     let gaps: Vec<_> = changes.gaps.iter().map(|g| (&g.file, g.reason.as_str())).collect();
     assert_eq!(gaps.len(), 1, "{gaps:?}");
@@ -347,35 +358,8 @@ fn files_without_a_backend_are_no_gap_but_a_failed_analysis_is() {
 }
 
 #[test]
-fn impact_lists_references_and_callers_of_added_and_modified_symbols_only() {
-    let (mut fake, files) = changed_fixture();
-    let changes = block_on(changed_symbols(&fake, &NoTexts, &files, &|_, _| {}))
-        .value
-        .symbols;
-    let keep = changes[0].symbol.location();
-    fake.references
-        .insert((Side::Target, keep.clone()), vec![site("b.rs", 7)]);
-    fake.callers
-        .insert((Side::Target, keep), vec![sym("b.rs", "caller", 5, 9)]);
-    fake.failing_callers.push(changes[1].symbol.location());
-    fake.symbols
-        .insert((Side::Target, file("b.rs")), vec![sym("b.rs", "caller", 5, 9)]);
-
-    let result = block_on(impact(&fake, &changes));
-    assert_eq!(result.value.len(), 3);
-    assert_eq!(result.value[0].references.len(), 1);
-    assert_eq!(result.value[0].references[0].location, site("b.rs", 7));
-    assert_eq!(result.value[0].callers.len(), 1);
-    assert!(result.value[1].gaps.iter().any(|g| g.contains("no call hierarchy")));
-    assert_eq!(result.inputs.primitives.len(), 7);
-}
-
-#[test]
 fn a_reference_is_in_the_innermost_symbol_around_it() {
-    let (mut fake, files) = changed_fixture();
-    let changes = block_on(changed_symbols(&fake, &NoTexts, &files, &|_, _| {}))
-        .value
-        .symbols;
+    let mut fake = Fake::default();
     fake.symbols.insert(
         (Side::Target, file("b.rs")),
         vec![
@@ -385,22 +369,19 @@ fn a_reference_is_in_the_innermost_symbol_around_it() {
             sym("b.rs", "LIMIT", 22, 23),
         ],
     );
-    fake.references.insert(
-        (Side::Target, changes[0].symbol.location()),
-        vec![
-            // In the function's signature, in its body, in the nested function, in the class
-            // body, at the top level and in a constant at the top level.
-            site("b.rs", 4),
-            site("b.rs", 6),
-            site("b.rs", 9),
-            site("b.rs", 15),
-            site("b.rs", 21),
-            site("b.rs", 22),
-        ],
-    );
-    let result = block_on(impact(&fake, &changes[..1]));
-    let within: Vec<_> = result.value[0]
-        .references
+    // In the function's signature, in its body, in the nested function, in the class
+    // body, at the top level and in a constant at the top level.
+    let references = vec![
+        site("b.rs", 4),
+        site("b.rs", 6),
+        site("b.rs", 9),
+        site("b.rs", 15),
+        site("b.rs", 21),
+        site("b.rs", 22),
+    ];
+    let result = block_on(located(&fake, Side::Target, references));
+    let within: Vec<_> = result
+        .value
         .iter()
         .map(|r| r.within.as_ref().map(|s| s.name.join("::")))
         .collect();
@@ -427,34 +408,25 @@ fn a_reference_is_in_the_innermost_symbol_around_it() {
 
 #[test]
 fn a_reference_whose_file_has_no_outline_or_is_outside_the_repository_is_in_nothing() {
-    let (mut fake, files) = changed_fixture();
-    let changes = block_on(changed_symbols(&fake, &NoTexts, &files, &|_, _| {}))
-        .value
-        .symbols;
+    let mut fake = Fake::default();
     fake.failing_symbols.push(file("c.rs"));
     let outside = Location {
         external: true,
         ..site("/dep/lib.rs", 3)
     };
-    fake.references.insert(
-        (Side::Target, changes[0].symbol.location()),
-        vec![site("c.rs", 1), outside.clone(), site("unknown.rs", 1)],
-    );
-    let result = block_on(impact(&fake, &changes[..1]));
-    let refs = &result.value[0].references;
+    let references = vec![site("c.rs", 1), outside.clone(), site("unknown.rs", 1)];
+    let result = block_on(located(&fake, Side::Target, references));
+    let refs = &result.value;
+    // The references are listed, without a symbol around them.
     assert_eq!(refs.len(), 3);
     assert!(refs.iter().all(|r| r.within.is_none()));
-    // Not an error: the references are listed and nothing is missing from them.
-    assert!(result.value[0].gaps.is_empty(), "{:?}", result.value[0].gaps);
     assert_eq!(refs[1].location, outside);
 }
 
 #[test]
 fn a_remaining_reference_of_a_removed_symbol_is_in_the_container_it_was_in_on_the_base() {
     let (mut fake, files) = changed_fixture();
-    let changes = block_on(changed_symbols(&fake, &NoTexts, &files, &|_, _| {}))
-        .value
-        .symbols;
+    let changes = block_on(changed_symbols(&fake, &NoTexts, &files)).value.symbols;
     let dropped = &changes[3];
     fake.symbols.insert(
         (Side::Base, file("c.rs")),
@@ -473,9 +445,7 @@ fn a_remaining_reference_of_a_removed_symbol_is_in_the_container_it_was_in_on_th
 #[test]
 fn removed_symbol_call_sites_are_classified() {
     let (mut fake, mut files) = changed_fixture();
-    let changes = block_on(changed_symbols(&fake, &NoTexts, &files, &|_, _| {}))
-        .value
-        .symbols;
+    let changes = block_on(changed_symbols(&fake, &NoTexts, &files)).value.symbols;
     let dropped = &changes[3];
     assert_eq!(dropped.change, Change::Removed);
 
@@ -595,7 +565,7 @@ fn the_inputs_say_which_server_answered_and_which_answers_were_reused() {
 
     let (mut fake, files) = changed_fixture();
     fake.failing_symbols.push(file("a.rs"));
-    let result = block_on(changed_symbols(&fake, &NoTexts, &files, &|_, _| {}));
+    let result = block_on(changed_symbols(&fake, &NoTexts, &files));
     assert_eq!(
         result.inputs.primitives,
         ["document_symbols(base:a.rs)", "document_symbols(target:a.rs)"]
@@ -875,9 +845,7 @@ fn a_failed_call_hierarchy_is_a_gap_not_an_empty_list() {
 #[test]
 fn usages_are_the_references_on_the_target_and_a_failure_is_a_gap() {
     let (mut fake, files) = changed_fixture();
-    let keep = block_on(changed_symbols(&fake, &NoTexts, &files, &|_, _| {}))
-        .value
-        .symbols[0]
+    let keep = block_on(changed_symbols(&fake, &NoTexts, &files)).value.symbols[0]
         .symbol
         .clone();
     let unlisted = block_on(usages(&fake, &keep)).value;

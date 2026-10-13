@@ -7,8 +7,8 @@ use vet_core::content::{FileDiff, LineRange, RepoPath};
 use vet_core::review::Side;
 use vet_protocol as p;
 use vet_semantic::derived::{
-    Bounds, CallSite, Calls, Change, ChangedSymbol, Changes, Derived, Fate, FileChanges, Inputs, Located, Reach,
-    Reference, RemovalImpact, SymbolImpact, Usages,
+    Bounds, CallSite, Calls, Change, ChangedSymbol, Derived, Fate, FileChanges, Inputs, Located, Reach, Reference,
+    RemovalImpact, Usages,
 };
 use vet_semantic::pool::{Outcome, PoolError};
 use vet_semantic::ports::{
@@ -301,20 +301,6 @@ fn changed(c: &ChangedSymbol) -> p::ChangedSymbol {
     }
 }
 
-pub fn changed_symbols(revision: u32, d: &Derived<Changes>) -> p::ChangedSymbols {
-    p::ChangedSymbols {
-        revision,
-        symbols: d.value.symbols.iter().map(changed).collect(),
-        gaps: (d.value.gaps.iter())
-            .map(|g| p::FileGap {
-                path: g.file.to_string_lossy(),
-                reason: g.reason.clone(),
-            })
-            .collect(),
-        inputs: inputs(&d.inputs),
-    }
-}
-
 /// `gap` is why the symbols of the file are unknown, if they are.
 pub fn file_symbols(revision: u32, path: &str, d: &Derived<FileChanges>, gap: Option<String>) -> p::FileSymbols {
     p::FileSymbols {
@@ -360,17 +346,6 @@ pub fn usages(revision: u32, info: &SymbolInfo, d: &Derived<Usages>) -> p::Usage
         symbol: symbol(info),
         references: d.value.references.iter().map(reference).collect(),
         gap: d.value.gap.clone(),
-        inputs: inputs(&d.inputs),
-    }
-}
-
-pub fn impact(revision: u32, d: &Derived<SymbolImpact>) -> p::Impact {
-    p::Impact {
-        revision,
-        symbol: symbol(&d.value.symbol),
-        references: d.value.references.iter().map(reference).collect(),
-        callers: d.value.callers.iter().map(symbol).collect(),
-        gaps: d.value.gaps.clone(),
         inputs: inputs(&d.inputs),
     }
 }

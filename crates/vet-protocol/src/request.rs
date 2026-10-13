@@ -316,13 +316,6 @@ pub enum Request {
         revision: u32,
         path: String,
     },
-    /// The symbols the changeset touches (derived, §7.3): both sides of every
-    /// changed file, intersected with the diff hunks. Fails if `revision` is no
-    /// longer current. Answers with `Response::ChangedSymbols`.
-    ChangedSymbols {
-        project: ProjectId,
-        revision: u32,
-    },
     /// What the changeset did to the symbols of one changed file (derived, §7.3): the file's
     /// symbols on both sides, from their texts, intersected with its diff hunks. A file no
     /// language server handles has none. Fails if `revision` is no longer current or `path` is
@@ -364,14 +357,6 @@ pub enum Request {
     /// The references to a symbol of the target side (derived). Fails like `Calls`. Answers
     /// with `Response::Usages`.
     Usages {
-        project: ProjectId,
-        revision: u32,
-        symbol: SymbolId,
-    },
-    /// References and callers of an added or modified changed symbol, on the
-    /// target side (derived). Fails if the symbol is not one of
-    /// `ChangedSymbols` at `revision`, or was removed. Answers with `Response::Impact`.
-    Impact {
         project: ProjectId,
         revision: u32,
         symbol: SymbolId,
