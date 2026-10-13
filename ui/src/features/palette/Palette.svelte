@@ -22,6 +22,7 @@
   import { symbols } from "../../state/symbols.svelte";
   import { queueRows, labelOf, reviewedOf, sourceText } from "../queue";
   import { statusLetter } from "../review";
+  import { openFindInFiles } from "../search";
   import { SymbolGlyph } from "../symbols";
   import type { Choice } from "./choice";
   import { tabStep } from "./tabKey";
@@ -246,7 +247,7 @@
     }
     if (entry.type === "find") {
       if (!commands.isEnabled(FIND_IN_FILES)) return;
-      finish(() => void commands.run(FIND_IN_FILES));
+      finish(() => openFindInFiles({ query: palette.query.trim() || undefined }));
       return;
     }
     const { item, line } = entry.row;

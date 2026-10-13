@@ -1,4 +1,4 @@
-// The commands that open Search Everywhere on one of its tabs, and the one its last row hands over to.
+// The commands that open Search Everywhere on one of its tabs, and the id of the one its last row hands over to.
 
 import type { Command } from "../../lib/commands.ts";
 import type { CommandContext } from "../../state/commands.ts";
@@ -26,13 +26,5 @@ export function paletteCommands(a: { show(tab: PaletteTab): void }): Command<Com
     open("palette.files", "Go to File…", "file", "Mod-p"),
     open("palette.symbols", "Go to Symbol…", "symbol", "Mod-Alt-o"),
     open("palette.actions", "Find Action…", "action", "Mod-Shift-a"),
-    {
-      id: FIND_IN_FILES,
-      label: "Find in Files…",
-      binding: "Mod-Shift-f",
-      enabled: () => false,
-      disabledReason: () => "Find in Files is not built yet",
-      run: () => false,
-    },
   ];
 }
