@@ -10,10 +10,12 @@
 use std::collections::HashMap;
 use std::pin::Pin;
 use std::process::Stdio;
+use std::str::FromStr;
 use std::sync::atomic::{AtomicI64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
+use lsp_types::Uri;
 use lsp_types::notification::Notification;
 use lsp_types::request::Request;
 use serde_json::{Value, json};
@@ -23,6 +25,7 @@ use tokio::sync::{Notify, mpsc, oneshot};
 use vet_app::progress::Running;
 use vet_semantic::ports::Readiness;
 
+use super::uri::path_of;
 use crate::exec::{Tail, command};
 
 pub(super) const REQUEST_TIMEOUT: Duration = Duration::from_secs(60);
@@ -61,6 +64,8 @@ pub(super) struct State {
     pub diagnostics: HashMap<String, DiagnosticsState>,
     /// `workspace/projectInitializationComplete`, which roslyn sends once it has loaded the projects it was told to.
     pub projects_loaded: bool,
+    /// The server has asked for its settings (`workspace/configuration`) and been answered.
+    pub configuration_pulled: bool,
     exited: bool,
 }
 
@@ -116,12 +121,25 @@ impl std::fmt::Display for RequestError {
 
 type Pending = Mutex<HashMap<i64, oneshot::Sender<Result<Value, ResponseError>>>>;
 
+/// What the client answers a server's requests with, beyond the plain acknowledgements.
+#[derive(Default)]
+pub(super) struct Replies {
+    /// The workspace folders, for `workspace/workspaceFolders`.
+    pub workspace_folders: Value,
+    /// By section: the answers to `workspace/configuration`.
+    pub settings: Value,
+    /// `vscode/content` is answered with the bundled schema at the address, or refused.
+    pub bundled_schemas: bool,
+    /// `custom/schema/request` is answered with the schemas the file name has (YAML).
+    pub associate_schemas: bool,
+}
+
 struct Shared {
     pending: Pending,
     state: Mutex<State>,
     changed: Notify,
     stderr: Mutex<Tail>,
-    workspace_folders: Value,
+    replies: Replies,
 }
 
 impl Shared {
@@ -183,7 +201,7 @@ impl Connection {
         args: &[String],
         cwd: &std::path::Path,
         env: &[(String, String)],
-        workspace_folders: Value,
+        replies: Replies,
     ) -> Result<Self, String> {
         let mut child = command(binary, args, Some(cwd), env)
             .stdin(Stdio::piped())
@@ -192,7 +210,7 @@ impl Connection {
         let stdin = child.stdin.take().expect("piped");
         let stdout = child.stdout.take().expect("piped");
         let stderr = child.stderr.take().expect("piped");
-        let conn = Self::over(stdout, stdin, Some(child), workspace_folders);
+        let conn = Self::over(stdout, stdin, Some(child), replies);
         tokio::spawn(collect_stderr(stderr, conn.shared.clone()));
         Ok(conn)
     }
@@ -202,7 +220,7 @@ impl Connection {
         reader: impl AsyncRead + Send + Unpin + 'static,
         writer: impl AsyncWrite + Send + Unpin + 'static,
         child: Option<Child>,
-        workspace_folders: Value,
+        replies: Replies,
     ) -> Self {
         let (queue, queued) = mpsc::unbounded_channel();
         let outbox = Outbox(queue);
@@ -211,7 +229,7 @@ impl Connection {
             state: Mutex::default(),
             changed: Notify::new(),
             stderr: Mutex::new(Tail::new(STDERR_LINES)),
-            workspace_folders,
+            replies,
         });
         tokio::spawn(write_loop(writer, queued));
         tokio::spawn(read_loop(reader, shared.clone(), outbox.clone()));
@@ -461,14 +479,21 @@ async fn read_loop(reader: impl AsyncRead + Unpin, shared: Arc<Shared>, outbox: 
             (Some(method), Some(id)) => {
                 let reply = match server_request(&shared, &method, &message["params"]) {
                     Ok(result) => json!({"jsonrpc": "2.0", "id": id, "result": result}),
-                    Err(()) => json!({
+                    Err(error) => json!({
                         "jsonrpc": "2.0",
                         "id": id,
-                        "error": {"code": -32601, "message": format!("unsupported request {method}")},
+                        "error": {"code": error.code, "message": error.message},
                     }),
                 };
                 if outbox.send(&reply).is_err() {
                     break;
+                }
+                if method == "workspace/configuration" {
+                    let mut state = shared.state.lock().expect("not poisoned");
+                    state.configuration_pulled = true;
+                    state.touch();
+                    drop(state);
+                    shared.changed.notify_waiters();
                 }
             }
             (Some(method), None) => notification(&shared, &method, &message["params"]),
@@ -494,20 +519,67 @@ async fn read_loop(reader: impl AsyncRead + Unpin, shared: Arc<Shared>, outbox: 
     shared.changed.notify_waiters();
 }
 
-fn server_request(shared: &Shared, method: &str, params: &Value) -> Result<Value, ()> {
+/// The error response to a request of the server.
+struct Refusal {
+    code: i64,
+    message: String,
+}
+
+const METHOD_NOT_FOUND: i64 = -32601;
+const REQUEST_FAILED: i64 = -32803;
+
+/// The part of `settings` that `section` names (`yaml`, `yaml.schemas`), `null` if there is none.
+fn section(settings: &Value, section: &str) -> Value {
+    section
+        .split('.')
+        .try_fold(settings, |value, key| value.get(key))
+        .cloned()
+        .unwrap_or(Value::Null)
+}
+
+fn server_request(shared: &Shared, method: &str, params: &Value) -> Result<Value, Refusal> {
+    let replies = &shared.replies;
     match method {
         "window/workDoneProgress/create" | "client/registerCapability" | "client/unregisterCapability" => {
             Ok(Value::Null)
         }
         "workspace/configuration" => {
-            let items = params["items"].as_array().map_or(0, Vec::len);
-            Ok(Value::Array(vec![Value::Null; items]))
+            let items = params["items"].as_array().map_or(&[][..], Vec::as_slice);
+            Ok(Value::Array(
+                items
+                    .iter()
+                    .map(|item| {
+                        item["section"]
+                            .as_str()
+                            .map_or(Value::Null, |s| section(&replies.settings, s))
+                    })
+                    .collect(),
+            ))
         }
-        "workspace/workspaceFolders" => Ok(shared.workspace_folders.clone()),
+        "workspace/workspaceFolders" => Ok(replies.workspace_folders.clone()),
         "workspace/applyEdit" => Ok(json!({"applied": false})),
         "window/showMessageRequest" => Ok(Value::Null),
         "window/showDocument" => Ok(json!({"success": false})),
-        _ => Err(()),
+        "custom/schema/request" if replies.associate_schemas => {
+            let resource = params.as_str().or_else(|| params[0].as_str()).unwrap_or_default();
+            let path = Uri::from_str(resource).ok().and_then(|uri| path_of(&uri));
+            let schemas = path.map_or_else(Vec::new, |p| crate::schemas::yaml_schemas(&p.to_string_lossy()));
+            Ok(json!(schemas))
+        }
+        "vscode/content" if replies.bundled_schemas => {
+            // The address is the only parameter, as a string or as a list of one.
+            let url = params.as_str().or_else(|| params[0].as_str()).unwrap_or_default();
+            crate::schemas::serve(url)
+                .map(Value::String)
+                .map_err(|message| Refusal {
+                    code: REQUEST_FAILED,
+                    message,
+                })
+        }
+        _ => Err(Refusal {
+            code: METHOD_NOT_FOUND,
+            message: format!("unsupported request {method}"),
+        }),
     }
 }
 
@@ -681,5 +753,78 @@ mod tests {
         conn.request::<Shutdown>(()).await.unwrap();
         assert_eq!(pending(&conn), 0);
         assert!(!conn.with_state(|s| s.exited));
+    }
+
+    fn shared_with(replies: Replies) -> Shared {
+        Shared {
+            pending: Mutex::default(),
+            state: Mutex::default(),
+            changed: Notify::new(),
+            stderr: Mutex::new(Tail::new(STDERR_LINES)),
+            replies,
+        }
+    }
+
+    #[test]
+    fn configuration_is_answered_by_section_and_unknown_sections_by_null() {
+        let shared = shared_with(Replies {
+            settings: json!({"yaml": {"validate": true, "schemas": {"k": ["*.yml"]}}}),
+            ..Replies::default()
+        });
+        let items = json!({"items": [{"section": "yaml"}, {"section": "yaml.schemas"}, {"section": "json"}, {}]});
+        let answer = server_request(&shared, "workspace/configuration", &items).ok().unwrap();
+        assert_eq!(
+            answer,
+            json!([{"validate": true, "schemas": {"k": ["*.yml"]}}, {"k": ["*.yml"]}, null, null])
+        );
+    }
+
+    #[test]
+    fn schema_addresses_are_answered_from_the_bundle_or_refused_by_name() {
+        let shared = shared_with(Replies {
+            bundled_schemas: true,
+            ..Replies::default()
+        });
+        let served = "https://json.schemastore.org/github-workflow.json";
+        for params in [json!(served), json!([served])] {
+            let body = server_request(&shared, "vscode/content", &params).ok().unwrap();
+            assert!(body.as_str().is_some_and(|b| b.contains("\"jobs\"")), "{params}");
+        }
+        let refused = server_request(&shared, "vscode/content", &json!("https://example.com/s.json"))
+            .err()
+            .unwrap();
+        assert_eq!(refused.code, REQUEST_FAILED);
+        assert!(refused.message.contains("example.com"), "{}", refused.message);
+    }
+
+    #[test]
+    fn the_schema_requests_are_unsupported_unless_the_setup_asks_for_them() {
+        let shared = shared_with(Replies::default());
+        for method in ["vscode/content", "custom/schema/request"] {
+            let error = server_request(&shared, method, &json!("file:///p/a.yml"))
+                .err()
+                .unwrap();
+            assert_eq!(error.code, METHOD_NOT_FOUND, "{method}");
+        }
+    }
+
+    #[test]
+    fn a_yaml_file_is_associated_with_the_schemas_its_name_has() {
+        let shared = shared_with(Replies {
+            associate_schemas: true,
+            ..Replies::default()
+        });
+        let answer = server_request(
+            &shared,
+            "custom/schema/request",
+            &json!(["file:///p/.github/workflows/ci.yml"]),
+        )
+        .ok()
+        .unwrap();
+        assert_eq!(answer.as_array().map(Vec::len), Some(1), "{answer}");
+        let none = server_request(&shared, "custom/schema/request", &json!(["file:///p/notes.yml"]))
+            .ok()
+            .unwrap();
+        assert_eq!(none, json!([]));
     }
 }

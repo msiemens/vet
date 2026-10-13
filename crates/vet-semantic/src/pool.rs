@@ -641,11 +641,11 @@ impl<M: Materializer, L: ServerLauncher> Inner<M, L> {
         root: &Path,
     ) -> Option<ServerIdentity> {
         let known = Foreseen::new(key.clone(), root.to_owned(), self.generation(&key.backend));
-        let (this, root, backend) = (self.clone(), root.to_owned(), backend.clone());
+        let (this, root, backend, policy) = (self.clone(), root.to_owned(), backend.clone(), key.policy);
         let worked_out = self
             .identities
             .get(known, move |_| async move {
-                let identity = this.launcher.identify(&root, &backend).await.map_err(drop)?;
+                let identity = this.launcher.identify(&root, &backend, policy).await.map_err(drop)?;
                 Ok(engine::Computed::new(identity, true))
             })
             .await;
@@ -1043,6 +1043,7 @@ mod tests {
             binary: "rust-analyzer".into(),
             args: vec![],
             filetypes: vec!["rs".into()],
+            file_names: vec![],
             root_markers: vec!["Cargo.toml".into()],
             executes_project_code_during_analysis: executes,
             loads_project_on_open: false,
@@ -1199,7 +1200,7 @@ mod tests {
             };
             Ok(Started {
                 server: FakeServer(self.0.clone()),
-                identity: self.identify(root, backend).await?,
+                identity: self.identify(root, backend, policy).await?,
                 restore,
             })
         }
@@ -1215,7 +1216,12 @@ mod tests {
         }
 
         /// A binary that is replaced between two starts: the version it has when the server starts.
-        async fn identify(&self, _: &std::path::Path, backend: &Backend) -> Result<ServerIdentity, LaunchError> {
+        async fn identify(
+            &self,
+            _: &std::path::Path,
+            backend: &Backend,
+            _: AnalysisPolicy,
+        ) -> Result<ServerIdentity, LaunchError> {
             self.0.identified.fetch_add(1, Ordering::SeqCst);
             self.0.take_turns().await;
             let version = self.0.version.load(Ordering::SeqCst);

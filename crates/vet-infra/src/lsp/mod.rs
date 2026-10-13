@@ -11,6 +11,7 @@ mod fake;
 mod identity;
 mod rpc;
 mod server;
+mod setup;
 mod uri;
 
 use std::io;
@@ -30,11 +31,13 @@ use vet_semantic::ports::{
 
 use crate::budget::{Budget, Budgets, SEMANTIC_IO};
 use crate::git::list_files;
-use crate::language::{self, Compiler};
+use crate::language;
 use crate::paths;
 use crate::restore::discover;
+use crate::schemas::SchemaSource;
 use capabilities::Offered;
-use rpc::Connection;
+use rpc::{Connection, Replies};
+use setup::Setup;
 use uri::{directory_uri, file_uri};
 
 pub use identity::{Identities, UserEnv};
@@ -42,6 +45,9 @@ pub use server::LspServer;
 
 /// No server message for this long, none in progress: indexing is done.
 const QUIET: Duration = Duration::from_millis(750);
+
+/// How long a start waits for a server to ask for its settings.
+const SETTINGS_TIMEOUT: Duration = Duration::from_secs(10);
 
 pub struct LspLauncher<L, R> {
     /// How long to wait for indexing after `initialized`.
@@ -257,15 +263,20 @@ impl<L: ServerLocator + Sync, R: Restorer + Sync> LspLauncher<L, R> {
             mut phases,
         } = self.prepare(&root, tree, backend, policy).await?;
         let identity = phases
-            .run("identity", self.identities.of(&root, backend, &command))
+            .run("identity", self.identities.of(&root, backend, &command, policy))
             .await?;
-        let folders_json = serde_json::to_value(&folders).map_err(|e| LaunchError::Protocol(e.to_string()))?;
+        let setup = setup::setup(config, &command, &root, SchemaSource::of(policy));
+        let replies = Replies {
+            workspace_folders: serde_json::to_value(&folders).map_err(|e| LaunchError::Protocol(e.to_string()))?,
+            settings: setup.settings.clone().unwrap_or(Value::Null),
+            bundled_schemas: setup.bundled,
+            associate_schemas: setup.associates_schemas,
+        };
         let phase = Instant::now();
-        let conn = Connection::spawn(&command.program, &config.args, &root, &restored.env, folders_json)
+        let conn = Connection::spawn(&command.program, &setup.args, &root, &restored.env, replies)
             .map_err(LaunchError::Spawn)?;
 
-        let options = initialization_options(config, &command);
-        let offered = handshake(&conn, &root, folders, options).await?;
+        let offered = handshake(&conn, &root, folders, setup).await?;
         phases.mark("spawn and handshake", phase);
 
         if matches!(backend, Backend::Roslyn(_)) {
@@ -386,10 +397,15 @@ impl<L: ServerLocator + Send + Sync + 'static, R: Restorer + Send + Sync + 'stat
         })
     }
 
-    async fn identify(&self, root: &Path, backend: &Backend) -> Result<ServerIdentity, LaunchError> {
+    async fn identify(
+        &self,
+        root: &Path,
+        backend: &Backend,
+        policy: AnalysisPolicy,
+    ) -> Result<ServerIdentity, LaunchError> {
         let root = self.canonical(root).await.unwrap_or_else(|_| root.to_owned());
         let command = (self.locator.locate(backend.config(), &root).await).map_err(LaunchError::NotInstalled)?;
-        self.identities.of(&root, backend, &command).await
+        self.identities.of(&root, backend, &command, policy).await
     }
 
     async fn recorded_restore(&self, root: &Path, backend: &Backend, policy: AnalysisPolicy) -> Option<Hash> {
@@ -402,26 +418,19 @@ impl<L: ServerLocator + Send + Sync + 'static, R: Restorer + Send + Sync + 'stat
     }
 }
 
-/// What a language's server is told with `initialize`, beyond the protocol:
-/// where its compiler is, for those that bring none.
-fn initialization_options(config: &ServerConfig, command: &ServerCommand) -> Option<Value> {
-    let compiler = command.compiler.as_ref()?;
-    let language = language::by_id(&config.backend.0)?;
-    (language.compiler == Compiler::TypeScript).then(|| json!({"tsserver": {"path": compiler.to_string_lossy()}}))
-}
-
-/// `initialize`, the check of what the server can do, and `initialized`.
+/// `initialize`, the check of what the server can do, `initialized`, and what the server is
+/// told after it.
 async fn handshake(
     conn: &Connection,
     root: &Path,
     folders: Vec<lsp::WorkspaceFolder>,
-    initialization_options: Option<Value>,
+    setup: Setup,
 ) -> Result<Offered, LaunchError> {
     #[allow(deprecated)]
     let params = lsp::InitializeParams {
         process_id: Some(std::process::id()),
         root_uri: directory_uri(root),
-        initialization_options,
+        initialization_options: setup.options,
         capabilities: client_capabilities(),
         workspace_folders: Some(folders),
         client_info: Some(lsp::ClientInfo {
@@ -437,6 +446,17 @@ async fn handshake(
     let offered = capabilities::read_capabilities(&init.capabilities)?;
     conn.notify::<lsp::notification::Initialized>(lsp::InitializedParams {})
         .map_err(LaunchError::Protocol)?;
+    for (method, params) in setup.notifications {
+        conn.notify_raw(method, params).map_err(LaunchError::Protocol)?;
+    }
+    if let Some(settings) = setup.settings {
+        conn.notify::<lsp::notification::DidChangeConfiguration>(lsp::DidChangeConfigurationParams { settings })
+            .map_err(LaunchError::Protocol)?;
+    }
+    if setup.pulls_settings {
+        // A server that does not ask is asked no more of: it works with what it has.
+        conn.wait_for(SETTINGS_TIMEOUT, |s| s.configuration_pulled).await;
+    }
     Ok(offered)
 }
 
@@ -531,27 +551,6 @@ fn client_capabilities() -> lsp::ClientCapabilities {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    fn command(compiler: Option<&str>) -> ServerCommand {
-        ServerCommand {
-            program: "server".into(),
-            compiler: compiler.map(PathBuf::from),
-        }
-    }
-
-    #[test]
-    fn typescript_is_told_where_its_compiler_is_and_other_languages_are_told_nothing() {
-        let typescript = language::TYPESCRIPT.backend();
-        let options = initialization_options(typescript.config(), &command(Some("/p/typescript/lib/tsserver.js")));
-        assert_eq!(
-            options,
-            Some(json!({"tsserver": {"path": "/p/typescript/lib/tsserver.js"}}))
-        );
-        assert_eq!(initialization_options(typescript.config(), &command(None)), None);
-
-        let rust = language::RUST.backend();
-        assert_eq!(initialization_options(rust.config(), &command(Some("/x"))), None);
-    }
 
     fn touch(root: &Path, name: &str) {
         let path = root.join(name);

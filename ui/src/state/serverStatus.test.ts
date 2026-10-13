@@ -6,11 +6,12 @@ import type { Unavailable } from "../generated/Unavailable.ts";
 import { summarize } from "./semanticSummary.ts";
 import { hasServer, languageOf, serverLine, withoutFeature } from "./serverStatus.ts";
 
-const server = (language: string, name: string, extensions: string[]): ServerInfo => ({
+const server = (language: string, name: string, extensions: string[], fileNames: string[] = []): ServerInfo => ({
   language,
   title: language,
   server: name,
   extensions,
+  fileNames,
   state: { type: "missing", reason: "" },
   customPath: null,
   pinnedVersion: null,
@@ -101,6 +102,16 @@ void test("the language of a file is the one whose server serves its extension, 
   assert.equal(languageOf("lib/a.pyi", SERVERS), "python");
   assert.equal(languageOf("notes.md", SERVERS), undefined);
   assert.equal(languageOf("Makefile", SERVERS), undefined);
+});
+
+void test("a file without an extension is served by its name, also followed by a dot and anything", () => {
+  const servers = [...SERVERS, server("dockerfile", "dockerfile-language-server", ["dockerfile"], ["Dockerfile"])];
+  for (const path of ["Dockerfile", "svc/api/Dockerfile", "Dockerfile.dev", "api.dockerfile"]) {
+    assert.equal(languageOf(path, servers), "dockerfile", path);
+  }
+  for (const path of ["Dockerfiles", "my-Dockerfile", "Dockerfile/readme"]) {
+    assert.equal(languageOf(path, servers), undefined, path);
+  }
 });
 
 void test("a server is without a feature only once it has said so, whatever the language", () => {

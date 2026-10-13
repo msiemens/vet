@@ -1092,7 +1092,7 @@ mod tests {
             }
             Ok(Started {
                 server: FakeServer(c.clone(), tree),
-                identity: self.identify(root, backend).await?,
+                identity: self.identify(root, backend, policy).await?,
                 restore: match tree {
                     Tree::Immutable => self.recorded_restore(root, backend, policy).await,
                     Tree::Live => None,
@@ -1100,7 +1100,12 @@ mod tests {
             })
         }
 
-        async fn identify(&self, _: &Path, backend: &Backend) -> Result<ServerIdentity, LaunchError> {
+        async fn identify(
+            &self,
+            _: &Path,
+            backend: &Backend,
+            _: AnalysisPolicy,
+        ) -> Result<ServerIdentity, LaunchError> {
             self.0.identified.fetch_add(1, Ordering::SeqCst);
             Ok(ServerIdentity {
                 backend: backend.config().backend.clone(),
@@ -1224,6 +1229,7 @@ mod tests {
             binary: id.into(),
             args: vec![],
             filetypes: vec![extension.into()],
+            file_names: vec![],
             root_markers: vec![],
             executes_project_code_during_analysis: id == "go",
             loads_project_on_open: false,

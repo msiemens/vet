@@ -513,6 +513,7 @@ pub fn servers(all: &[ServerStatus], features: impl Fn(&BackendId) -> Option<Fea
                 title: s.title.clone(),
                 server: s.server.clone(),
                 extensions: s.extensions.clone(),
+                file_names: s.file_names.clone(),
                 state: server_state(&s.state),
                 custom_path: s.custom_path.clone(),
                 pinned_version: s.pinned.clone(),

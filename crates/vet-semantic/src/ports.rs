@@ -60,6 +60,9 @@ pub struct ServerConfig {
     pub args: Vec<String>,
     /// File extensions without the dot.
     pub filetypes: Vec<String>,
+    /// File names that have no extension to serve by (`Dockerfile`): the name itself, or the
+    /// name and a dot and anything after it (`Dockerfile.dev`).
+    pub file_names: Vec<String>,
     pub root_markers: Vec<String>,
     /// Default `true` (conservative).
     pub executes_project_code_during_analysis: bool,
@@ -88,12 +91,25 @@ impl Backend {
     }
 }
 
-/// The backend serving `file`, by extension. `None`: the language is unsupported.
+impl ServerConfig {
+    /// Whether the server serves `file`: by its extension, or by its name.
+    pub fn serves(&self, file: &RepoPath) -> bool {
+        if let Some(ext) = file.extension()
+            && self.filetypes.iter().any(|t| t.as_bytes() == ext)
+        {
+            return true;
+        }
+        let name = file.0.rsplit(|&b| b == b'/').next().unwrap_or_default();
+        self.file_names.iter().any(|n| {
+            let n = n.as_bytes();
+            name == n || (name.starts_with(n) && name.get(n.len()) == Some(&b'.'))
+        })
+    }
+}
+
+/// The backend serving `file`. `None`: the language is unsupported.
 pub fn backend_for<'a>(backends: &'a [Backend], file: &RepoPath) -> Option<&'a Backend> {
-    let ext = file.extension()?;
-    backends
-        .iter()
-        .find(|b| b.config().filetypes.iter().any(|t| t.as_bytes() == ext))
+    backends.iter().find(|b| b.config().serves(file))
 }
 
 /// An operation a server may not offer. A query for one it lacks is answered with
@@ -513,13 +529,14 @@ pub trait ServerLauncher: Send + Sync + 'static {
         policy: AnalysisPolicy,
     ) -> impl Future<Output = Result<Started<Self::Server>, LaunchError>> + Send;
 
-    /// The identity a server started on `root` now would have, without starting
+    /// The identity a server started on `root` under `policy` now would have, without starting
     /// it. A binary replaced between this and a start shows in the identity the
     /// start returns, which is the one that counts.
     fn identify(
         &self,
         root: &std::path::Path,
         backend: &Backend,
+        policy: AnalysisPolicy,
     ) -> impl Future<Output = Result<ServerIdentity, LaunchError>> + Send;
 
     /// The fingerprint of the restore a server started now on the immutable tree
@@ -547,8 +564,22 @@ mod tests {
             binary: "rust-analyzer".into(),
             args: vec![],
             filetypes: vec!["rs".into()],
+            file_names: vec![],
             root_markers: vec![],
             executes_project_code_during_analysis: true,
+            loads_project_on_open: false,
+        })
+    }
+
+    fn docker() -> Backend {
+        Backend::GenericLsp(ServerConfig {
+            backend: BackendId("docker".into()),
+            binary: "docker-langserver".into(),
+            args: vec![],
+            filetypes: vec!["dockerfile".into()],
+            file_names: vec!["Dockerfile".into()],
+            root_markers: vec![],
+            executes_project_code_during_analysis: false,
             loads_project_on_open: false,
         })
     }
@@ -561,6 +592,21 @@ mod tests {
         assert!(backend_for(&backends, &path("README.md")).is_none());
         assert!(backend_for(&backends, &path("dir.rs/Makefile")).is_none());
         assert!(backend_for(&backends, &path("rs")).is_none());
+    }
+
+    #[test]
+    fn a_file_without_an_extension_is_served_by_its_name() {
+        let backends = [rust(), docker()];
+        let served = |p: &str| backend_for(&backends, &RepoPath::from(p)).map(|b| b.config().backend.0.as_str());
+        assert_eq!(served("Dockerfile"), Some("docker"));
+        assert_eq!(served("services/api/Dockerfile"), Some("docker"));
+        assert_eq!(served("Dockerfile.dev"), Some("docker"));
+        assert_eq!(served("api.dockerfile"), Some("docker"));
+        assert_eq!(served("Dockerfile.dev.rs"), Some("rust"));
+        assert_eq!(served("Dockerfiles"), None);
+        assert_eq!(served("dir.d/Dockerfile.txt"), Some("docker"));
+        assert_eq!(served("my-Dockerfile"), None);
+        assert_eq!(served("Dockerfile/readme"), None);
     }
 
     #[test]

@@ -224,9 +224,13 @@ impl ToolRestorer {
     async fn plan(&self, root: &Path, language: &'static Language, policy: AnalysisPolicy) -> Plan {
         let executing = policy.allow_executing_restores;
         let mut plan = Plan::default();
-        if language.restore == Restore::Dotnet {
-            Self::csharp(&self.semantic_io, root, &mut plan).await;
-            return plan;
+        match language.restore {
+            Restore::None => return plan,
+            Restore::Dotnet => {
+                Self::csharp(&self.semantic_io, root, &mut plan).await;
+                return plan;
+            }
+            _ => {}
         }
         let files = match list_files(&self.semantic_io, root).await {
             Ok(files) => files,
@@ -243,7 +247,7 @@ impl ToolRestorer {
                     Restore::Cargo => Self::rust(&root, &files, &mut plan),
                     Restore::Javascript => Self::javascript(&root, &files, executing, &mut plan),
                     Restore::Python => Self::python(&root, &files, executing, &mut plan),
-                    Restore::Dotnet => {}
+                    Restore::None | Restore::Dotnet => {}
                 }
                 plan
             })
@@ -662,7 +666,7 @@ impl ToolRestorer {
         let steps: Vec<&Step> = allowed(plan, policy).collect();
         let tools = self.versions(&steps).await;
         let inputs = self.inputs(plan, &steps, &tools, policy);
-        let file = layout.meta().join(format!("restore-{}.json", language.id));
+        let file = layout.meta().join(format!("restore-{}.json", language.restore.name()));
         let record = Record::read(&file).filter(|record| self.reusable(record, inputs, root, &steps));
         Standing {
             steps,
@@ -843,6 +847,24 @@ mod tests {
             commands(&[("svc/a/Cargo.toml", ""), ("svc/b/Cargo.toml", "")], "rust").await,
             ["svc/a: cargo fetch", "svc/b: cargo fetch"]
         );
+    }
+
+    #[tokio::test]
+    async fn languages_without_a_restore_plan_nothing_and_the_javascript_ones_plan_alike() {
+        let files = [
+            ("package.json", ""),
+            ("package-lock.json", ""),
+            ("a.yml", ""),
+            ("Dockerfile", ""),
+        ];
+        for language in ["yaml", "json", "bash", "dockerfile"] {
+            assert!(commands(&files, language).await.is_empty(), "{language}");
+        }
+        let typescript = commands(&files, "typescript").await;
+        assert!(!typescript.is_empty());
+        for language in ["svelte", "angular"] {
+            assert_eq!(commands(&files, language).await, typescript, "{language}");
+        }
     }
 
     #[tokio::test]

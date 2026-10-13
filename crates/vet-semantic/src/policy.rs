@@ -30,6 +30,14 @@ impl AnalysisPolicy {
         allow_executing_restores: true,
     };
 
+    /// May a language server load JSON schemas the repository names (`$schema`, a modeline) or
+    /// the schema store from the network? A repository could otherwise make the machine send
+    /// requests, so this is for what is trusted to execute restores; the rest checks against
+    /// the schemas Vet bundles.
+    pub fn allow_schema_downloads(self) -> bool {
+        self.allow_executing_restores
+    }
+
     /// Names the policy in the keys of what depends on it (kept trees, restore records,
     /// cached answers): two policies share a name only if they permit the same.
     pub fn tag(self) -> &'static str {

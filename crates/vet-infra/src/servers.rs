@@ -272,6 +272,12 @@ impl ServerResolver for ToolResolver {
         Self::spec(language).map_or_else(Vec::new, |s| s.files.iter().map(|(ext, _)| (*ext).to_owned()).collect())
     }
 
+    fn file_names(&self, language: &BackendId) -> Vec<String> {
+        Self::spec(language).map_or_else(Vec::new, |s| {
+            s.names.iter().map(|(name, _)| (*name).to_owned()).collect()
+        })
+    }
+
     fn pinned(&self, language: &BackendId) -> Option<String> {
         match Self::spec(language)?.install {
             Install::No => None,

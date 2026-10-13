@@ -40,6 +40,9 @@ pub mod exec;
 /// `vet_semantic::ports::Restorer`.
 pub mod restore;
 
+/// The JSON schemas bundled for the YAML and JSON servers.
+pub mod schemas;
+
 /// `vet_app::ports::ServerResolver`.
 pub mod servers;
 

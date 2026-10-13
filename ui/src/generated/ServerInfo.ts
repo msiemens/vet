@@ -18,7 +18,12 @@ server: string,
 /**
  * The file extensions (without the dot) the server serves.
  */
-extensions: Array<string>, state: ServerState, 
+extensions: Array<string>, 
+/**
+ * The names of files without an extension it serves (`Dockerfile`); a name followed by a dot
+ * and anything (`Dockerfile.dev`) is served too.
+ */
+fileNames: Array<string>, state: ServerState, 
 /**
  * The path the user set; it is what `state` was resolved from if present.
  */

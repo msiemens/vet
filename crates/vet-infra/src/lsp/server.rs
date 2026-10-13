@@ -442,7 +442,7 @@ impl LspServer {
                 .notify::<DidOpenTextDocument>(lsp::DidOpenTextDocumentParams {
                     text_document: lsp::TextDocumentItem {
                         uri: uri.clone(),
-                        language_id: language_id(extension(file)).into(),
+                        language_id: language_id(file).into(),
                         version: 1,
                         text: text.clone(),
                     },
@@ -566,7 +566,7 @@ impl<'a> VirtualDoc<'a> {
         conn.notify::<DidOpenTextDocument>(lsp::DidOpenTextDocumentParams {
             text_document: lsp::TextDocumentItem {
                 uri: uri.clone(),
-                language_id: language_id(extension(file)).into(),
+                language_id: language_id(file).into(),
                 version: 1,
                 text: text.to_owned(),
             },
@@ -585,13 +585,6 @@ impl Drop for VirtualDoc<'_> {
                 text_document: lsp::TextDocumentIdentifier { uri: self.uri.clone() },
             });
     }
-}
-
-fn extension(file: &RepoPath) -> &str {
-    std::str::from_utf8(&file.0)
-        .ok()
-        .and_then(|p| p.rsplit_once('.'))
-        .map_or("", |(_, ext)| ext)
 }
 
 fn outline(symbols: &[lsp::DocumentSymbol]) -> Vec<Outline> {

@@ -20,7 +20,31 @@ pub fn roslyn() -> Backend {
     language::CSHARP.backend()
 }
 
-/// The POC languages.
+pub fn svelte() -> Backend {
+    language::SVELTE.backend()
+}
+
+pub fn angular() -> Backend {
+    language::ANGULAR.backend()
+}
+
+pub fn yaml() -> Backend {
+    language::YAML.backend()
+}
+
+pub fn json() -> Backend {
+    language::JSON.backend()
+}
+
+pub fn bash() -> Backend {
+    language::BASH.backend()
+}
+
+pub fn dockerfile() -> Backend {
+    language::DOCKERFILE.backend()
+}
+
+/// Every language.
 pub fn defaults() -> Vec<Backend> {
     language::ALL.map(Language::backend).into()
 }

@@ -16,22 +16,27 @@ use std::convert::Infallible;
 use std::io;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::SystemTime;
 
+use serde_json::Value;
 use vet_app::ports::ServerCommand;
 use vet_core::content::Hash;
 use vet_engine::{Computed, Engine, Kind, Limits, Retention};
+use vet_semantic::policy::AnalysisPolicy;
 use vet_semantic::ports::{Backend, BackendId, LaunchError, ServerIdentity};
 
-use super::{client_capabilities, initialization_options};
+use super::client_capabilities;
+use super::setup;
 use crate::budget::{Budget, Budgets, PROBES, SEMANTIC_IO};
 use crate::exec::{Host, is_file};
-use crate::language::{self, Install, Language, UserFile};
+use crate::language::{self, Install, Language, SchemaClient, UserFile};
 use crate::restore::record::Digest;
+use crate::schemas::{self, SchemaSource};
 use crate::servers::{capture, probe_version};
 
 /// Bumped when what the fingerprint is made of changes, so no old fingerprint equals a new one.
-const FORMAT: u32 = 1;
+const FORMAT: u32 = 2;
 
 /// The user's home and environment, as the servers see them.
 #[derive(Clone, Debug, Default)]
@@ -133,6 +138,9 @@ pub struct Identities {
     semantic_io: Budget,
     /// Where `--version` and the toolchain are asked.
     probes: Budget,
+    /// Tells this run of Vet from every other, for what only this run can vouch for: the schemas
+    /// a server loaded from the network.
+    session: String,
 }
 
 /// Toolchain probes kept.
@@ -148,6 +156,7 @@ impl Identities {
             generations: Mutex::default(),
             semantic_io: Budget::new(SEMANTIC_IO),
             probes: Budget::new(PROBES),
+            session: session(),
         }
     }
 
@@ -179,6 +188,7 @@ impl Identities {
         root: &Path,
         backend: &Backend,
         command: &ServerCommand,
+        policy: AnalysisPolicy,
     ) -> Result<ServerIdentity, LaunchError> {
         let config = backend.config();
         let spec = language::by_id(&config.backend.0);
@@ -205,17 +215,38 @@ impl Identities {
             .field(&program.to_string_lossy())
             .field(&binary.to_hex())
             .field(version.as_deref().unwrap_or("no version"));
-        if spec.is_some_and(|s| matches!(s.install, Install::Npm { .. })) {
+        if let Some(Install::Npm { packages }) = spec.map(|s| s.install) {
             digest.field("package").field(&self.package_manifest(&program).await);
+            // The packages installed beside the server answer for it too (the fallback
+            // `typescript`, Angular's language service).
+            for (package, _) in &packages[1..] {
+                digest
+                    .field(package)
+                    .field(&self.companion_manifest(&program, package).await);
+            }
         }
-        digest.field("args").field(&config.args.len().to_string());
-        config.args.iter().for_each(|arg| {
+        let setup = setup::setup(config, command, root, SchemaSource::of(policy));
+        digest.field("args").field(&setup.args.len().to_string());
+        setup.args.iter().for_each(|arg| {
             digest.field(arg);
         });
-        let options = initialization_options(config, command);
+        let shown = |value: Option<&Value>| value.map_or_else(|| "none".to_owned(), Value::to_string);
         digest
             .field("initialization options")
-            .field(&options.map_or_else(|| "none".to_owned(), |o| o.to_string()));
+            .field(&shown(setup.options.as_ref()));
+        digest.field("settings").field(&shown(setup.settings.as_ref()));
+        digest.field("notifications");
+        for (method, params) in &setup.notifications {
+            digest.field(method).field(&params.to_string());
+        }
+        // What a server checks files against is the bundle's content while the network is closed,
+        // and whatever the network serves otherwise: that cannot be told, so an answer given
+        // online is reused only by servers of the same session of Vet.
+        if setup.bundled {
+            digest.field("schemas bundled").field(&schemas::fingerprint().to_hex());
+        } else if spec.is_some_and(|s| s.schemas != SchemaClient::None) {
+            digest.field("schemas online").field(&self.session);
+        }
         let capabilities =
             serde_json::to_value(client_capabilities()).map_err(|e| LaunchError::Protocol(e.to_string()))?;
         digest.field("client capabilities").field(&capabilities.to_string());
@@ -258,6 +289,13 @@ impl Identities {
     async fn package_manifest(&self, path: &Path) -> String {
         let path = path.to_owned();
         self.off_thread(move || package_manifest(&path)).await
+    }
+
+    /// The `package.json` of the npm package `package` installed in the same `node_modules` as
+    /// the one `path` is in.
+    async fn companion_manifest(&self, path: &Path, package: &str) -> String {
+        let (path, package) = (path.to_owned(), package.to_owned());
+        self.off_thread(move || companion_manifest(&path, &package)).await
     }
 
     /// The toolchain in the root and the configuration outside the repository that the
@@ -375,6 +413,20 @@ impl Identities {
     }
 }
 
+/// A name for this run of Vet: when it began and which process it is. Each `Identities` of a
+/// process has its own.
+fn session() -> String {
+    static NEXT: AtomicU64 = AtomicU64::new(0);
+    let began = SystemTime::now()
+        .duration_since(SystemTime::UNIX_EPOCH)
+        .map_or(0, |d| d.as_nanos());
+    format!(
+        "{began}-{}-{}",
+        std::process::id(),
+        NEXT.fetch_add(1, Ordering::Relaxed)
+    )
+}
+
 fn hash_of_file(path: &Path) -> Option<Hash> {
     std::fs::read(path).ok().map(|bytes| Hash::of(&bytes))
 }
@@ -394,6 +446,16 @@ fn package_manifest(path: &Path) -> String {
     real.ancestors()
         .skip(1)
         .find_map(|dir| hash_of_file(&dir.join("package.json")))
+        .map_or_else(|| "none".to_owned(), |hash| hash.to_hex())
+}
+
+/// The `package.json` of `package` in the `node_modules` that `path` is in, or `none`.
+fn companion_manifest(path: &Path, package: &str) -> String {
+    let real = std::fs::canonicalize(path).unwrap_or_else(|_| path.to_owned());
+    real.ancestors()
+        .skip(1)
+        .filter(|dir| dir.file_name().is_some_and(|name| name == "node_modules"))
+        .find_map(|dir| hash_of_file(&dir.join(package).join("package.json")))
         .map_or_else(|| "none".to_owned(), |hash| hash.to_hex())
 }
 
@@ -474,7 +536,23 @@ mod tests {
                 program: self.program().to_string_lossy().into_owned(),
                 compiler: None,
             };
-            identities.of(&self.root(), &self.backend(), &command).await.unwrap()
+            identities
+                .of(&self.root(), &self.backend(), &command, AnalysisPolicy::EXECUTING)
+                .await
+                .unwrap()
+        }
+
+        /// The fingerprint of `language`'s server, which is the program of this setup.
+        async fn fingerprint_of(&self, identities: &Identities, language: &Language, policy: AnalysisPolicy) -> Hash {
+            let command = ServerCommand {
+                program: self.program().to_string_lossy().into_owned(),
+                compiler: None,
+            };
+            identities
+                .of(&self.root(), &language.backend(), &command, policy)
+                .await
+                .unwrap()
+                .fingerprint
         }
 
         fn identities(&self) -> Identities {
@@ -558,13 +636,75 @@ mod tests {
             };
             let backend = language::TYPESCRIPT.backend();
             let (identities, root) = (&identities, setup.root());
-            async move { identities.of(&root, &backend, &command).await.unwrap().fingerprint }
+            async move {
+                identities
+                    .of(&root, &backend, &command, AnalysisPolicy::EXECUTING)
+                    .await
+                    .unwrap()
+                    .fingerprint
+            }
         };
         let none = identify(None).await;
         let one = identify(Some(tsserver.clone())).await;
         assert_ne!(one, none);
         std::fs::write(&tsserver, "two").unwrap();
         assert_ne!(identify(Some(tsserver)).await, one);
+    }
+
+    #[tokio::test]
+    async fn where_schemas_may_come_from_is_part_of_the_identity_of_a_server_that_uses_them() {
+        let setup = Setup::new();
+        for language in [&language::YAML, &language::JSON] {
+            // The version a program prints is remembered by its path, so each language has its own run.
+            let identities = setup.identities();
+            let closed = setup
+                .fingerprint_of(&identities, language, AnalysisPolicy::LIMITED)
+                .await;
+            assert_eq!(
+                setup
+                    .fingerprint_of(&identities, language, AnalysisPolicy::SERVERS)
+                    .await,
+                closed,
+                "{}: policies that keep the network closed share an identity",
+                language.id
+            );
+            let open = setup
+                .fingerprint_of(&identities, language, AnalysisPolicy::EXECUTING)
+                .await;
+            assert_ne!(open, closed, "{}: bundled and online answers never mix", language.id);
+            assert_eq!(
+                setup
+                    .fingerprint_of(&identities, language, AnalysisPolicy::EXECUTING)
+                    .await,
+                open,
+                "{}: within a run of Vet an online identity is stable",
+                language.id
+            );
+            let next_run = setup.identities();
+            assert_ne!(
+                setup
+                    .fingerprint_of(&next_run, language, AnalysisPolicy::EXECUTING)
+                    .await,
+                open,
+                "{}: another run cannot vouch for what the network served",
+                language.id
+            );
+            assert_eq!(
+                setup.fingerprint_of(&next_run, language, AnalysisPolicy::LIMITED).await,
+                closed,
+                "{}: the bundle's answers are the same in every run",
+                language.id
+            );
+        }
+        // A language that checks nothing against schemas is the same either way.
+        let identities = setup.identities();
+        let limited = setup
+            .fingerprint_of(&identities, &language::RUST, AnalysisPolicy::LIMITED)
+            .await;
+        let executing = setup
+            .fingerprint_of(&identities, &language::RUST, AnalysisPolicy::EXECUTING)
+            .await;
+        assert_eq!(limited, executing);
     }
 
     #[tokio::test]

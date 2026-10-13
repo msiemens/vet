@@ -64,6 +64,9 @@ pub struct ServerInfo {
     pub server: String,
     /// The file extensions (without the dot) the server serves.
     pub extensions: Vec<String>,
+    /// The names of files without an extension it serves (`Dockerfile`); a name followed by a dot
+    /// and anything (`Dockerfile.dev`) is served too.
+    pub file_names: Vec<String>,
     pub state: ServerState,
     /// The path the user set; it is what `state` was resolved from if present.
     pub custom_path: Option<String>,

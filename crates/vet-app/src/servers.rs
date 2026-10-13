@@ -19,6 +19,8 @@ pub struct ServerStatus {
     pub server: String,
     /// The file extensions (without the dot) the server serves.
     pub extensions: Vec<String>,
+    /// The names of files without an extension that it serves.
+    pub file_names: Vec<String>,
     pub state: ServerState,
     pub custom_path: Option<String>,
     /// The version `install` provides; `None` if Vet cannot install this language's server.
@@ -114,6 +116,7 @@ impl<R: ServerResolver + Sync, S: ServerSettings + Sync> Servers<R, S> {
                 title: self.resolver.title(language),
                 server: self.resolver.display_name(language),
                 extensions: self.resolver.extensions(language),
+                file_names: self.resolver.file_names(language),
                 state,
                 custom_path,
                 pinned: self.resolver.pinned(language),
@@ -241,6 +244,10 @@ mod tests {
             vec![language.0.clone()]
         }
 
+        fn file_names(&self, _: &BackendId) -> Vec<String> {
+            vec![]
+        }
+
         fn pinned(&self, language: &BackendId) -> Option<String> {
             (language.0 == "typescript").then(|| "1.0.0".into())
         }
@@ -281,6 +288,7 @@ mod tests {
             binary: String::new(),
             args: vec![],
             filetypes: vec![],
+            file_names: vec![],
             root_markers: vec![],
             executes_project_code_during_analysis: false,
             loads_project_on_open: false,

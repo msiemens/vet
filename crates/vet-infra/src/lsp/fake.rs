@@ -10,7 +10,7 @@ use std::time::Duration;
 use serde_json::{Value, json};
 use tokio::io::{AsyncWriteExt, BufReader, duplex};
 
-use super::rpc::{Connection, read_message};
+use super::rpc::{Connection, Replies, read_message};
 
 /// What the server does with a request.
 pub(super) enum Reply {
@@ -38,7 +38,7 @@ pub(super) struct Fake {
 pub(super) fn start(behave: impl Fn(&Value) -> Reply + Send + 'static) -> (Connection, Fake) {
     let (client_out, server_in) = duplex(1 << 16);
     let (server_out, client_in) = duplex(1 << 16);
-    let conn = Connection::over(client_in, client_out, None, Value::Null);
+    let conn = Connection::over(client_in, client_out, None, Replies::default());
     let received = Arc::new(Mutex::new(Received::default()));
     let writer: Writer = Arc::new(tokio::sync::Mutex::new(server_out));
     tokio::spawn(serve(server_in, writer.clone(), received.clone(), behave));

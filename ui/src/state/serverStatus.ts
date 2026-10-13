@@ -14,19 +14,28 @@ function extensionOf(path: string): string | undefined {
 }
 
 /**
- * Whether a language server is there for the type of file `path` is: one serving its extension
- * that was found, whether it runs yet or not. An empty list is one not loaded yet, which says nothing.
+ * Whether the server serves the file `path`: by its extension, or by its name (`Dockerfile`, also
+ * followed by a dot and anything, as `Dockerfile.dev`).
+ */
+function serves(server: ServerInfo, path: string): boolean {
+  const extension = extensionOf(path);
+  if (extension !== undefined && server.extensions.includes(extension)) return true;
+  const name = path.slice(path.lastIndexOf("/") + 1);
+  return server.fileNames.some((n) => name === n || name.startsWith(`${n}.`));
+}
+
+/**
+ * Whether a language server is there for the type of file `path` is: one serving it that was
+ * found, whether it runs yet or not. An empty list is one not loaded yet, which says nothing.
  */
 export function hasServer(path: string, servers: readonly ServerInfo[]): boolean {
   if (!servers.length) return true;
-  const extension = extensionOf(path);
-  return servers.some((s) => s.state.type === "found" && extension !== undefined && s.extensions.includes(extension));
+  return servers.some((s) => s.state.type === "found" && serves(s, path));
 }
 
 /** The language whose server serves the type of file `path` is; none if no language does. */
 export function languageOf(path: string, servers: readonly ServerInfo[]): string | undefined {
-  const extension = extensionOf(path);
-  return servers.find((s) => extension !== undefined && s.extensions.includes(extension))?.language;
+  return servers.find((s) => serves(s, path))?.language;
 }
 
 /**
@@ -38,8 +47,7 @@ export function withoutFeature(
   servers: readonly ServerInfo[],
   feature: keyof ServerFeatures,
 ): string | undefined {
-  const extension = extensionOf(path);
-  const server = servers.find((s) => extension !== undefined && s.extensions.includes(extension));
+  const server = servers.find((s) => serves(s, path));
   return server?.features?.[feature] === false ? server.server : undefined;
 }
 
@@ -69,10 +77,9 @@ export function serverLine(
   if (missing && missing.kind !== "serverMissing" && missing.kind !== "serverFailed") {
     return { name: missing.label, title: missing.message };
   }
-  const extension = extensionOf(path);
   const server = missing?.language
     ? servers.find((s) => s.language === missing.language)
-    : servers.find((s) => extension !== undefined && s.extensions.includes(extension));
+    : servers.find((s) => serves(s, path));
   if (!server) return missing && { name: missing.label, title: missing.message };
   if (missing) {
     return {
