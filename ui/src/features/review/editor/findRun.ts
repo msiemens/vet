@@ -68,6 +68,8 @@ export class FindRun {
   private settle() {
     const sets: SectionMatches = this.sets;
     const here = this.current;
+    // Where it was is waiting to be searched: it moves once that section has been.
+    if (here && here.section < sets.length && sets[here.section] === undefined) return;
     if (here && sets[here.section]?.some((m) => m.order === here.order && m.from === here.from)) return;
     this.current = nearest(sets, here ?? { section: 0, order: -1, from: 0 }) ?? here;
   }

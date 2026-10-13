@@ -16,17 +16,24 @@ const options = (text: string, over: Partial<FindOptions> = {}): FindOptions => 
 
 const plain = (target: string): FileText => ({ base: target, target, hunks: [] });
 
-void test("the current match is the first one from where the search started", () => {
+void test("the current match is the first one from where the search started, once that section is read", () => {
   const run = new FindRun(options("ab"), 2, "diff", { section: 1, order: 0, from: 0 });
   run.add(0, plain("ab\nab"));
-  assert.deepEqual(run.current, { section: 0, order: 0, from: 0 });
+  // Section 1 is not read yet: the start stays, and no match is current.
+  assert.deepEqual(run.current, { section: 1, order: 0, from: 0 });
+  assert.equal(run.summary().index, -1);
   run.add(1, plain("x\nab"));
-  // Matches found later in front of the current one do not move it.
-  assert.deepEqual(run.current, { section: 0, order: 0, from: 0 });
+  assert.deepEqual(run.current, { section: 1, order: 1, from: 0 });
   const s = run.summary();
   assert.equal(s.total, 3);
-  assert.equal(s.index, 0);
+  assert.equal(s.index, 2);
   assert.equal(s.pending, 0);
+});
+
+void test("a start past the last match wraps to the first", () => {
+  const run = new FindRun(options("ab"), 1, "diff", { section: 0, order: 5, from: 0 });
+  run.add(0, plain("ab\nab"));
+  assert.deepEqual(run.current, { section: 0, order: 0, from: 0 });
 });
 
 void test("while sections are still being read the summary says so", () => {
