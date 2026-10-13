@@ -523,6 +523,30 @@ impl LspServer {
         Ok(items?.unwrap_or_default())
     }
 
+    /// The symbols on the other end of the calls of the declaration at `at`, asked with request `R`:
+    /// `params` makes its parameters for one item, `other_end` takes the item from a call.
+    async fn calls<R, C>(
+        &self,
+        at: &At,
+        params: impl Fn(lsp::CallHierarchyItem) -> R::Params,
+        other_end: impl Fn(C) -> lsp::CallHierarchyItem,
+    ) -> Result<Vec<SymbolInfo>, QueryError>
+    where
+        R: Request<Result = Option<Vec<C>>>,
+        R::Params: Clone,
+    {
+        let mut items = Vec::new();
+        for item in self.prepare_calls(at).await? {
+            let Asked { response: calls, timed } = self
+                .request::<R>(Some((&at.file, Needs::Project)), params(item))
+                .await?;
+            let found = calls.as_ref().map_or(0, |c| c.as_ref().map_or(0, Vec::len));
+            self.log_request(R::METHOD, Place(at), &format!("{found} calls"), timed.started);
+            items.extend(calls?.unwrap_or_default().into_iter().map(&other_end));
+        }
+        Ok(self.symbols_of(items).await)
+    }
+
     /// The symbols the call hierarchy `items` stand for, each once, those outside the root
     /// and the code outside every declaration left out. A server reports that code as a
     /// module item named after the file.
@@ -802,49 +826,29 @@ impl LanguageServer for LspServer {
     }
 
     async fn incoming_calls(&self, at: &At) -> Result<Vec<SymbolInfo>, QueryError> {
-        let mut callers = Vec::new();
-        for item in self.prepare_calls(at).await? {
-            let params = lsp::CallHierarchyIncomingCallsParams {
+        self.calls::<CallHierarchyIncomingCalls, _>(
+            at,
+            |item| lsp::CallHierarchyIncomingCallsParams {
                 item,
                 work_done_progress_params: Default::default(),
                 partial_result_params: Default::default(),
-            };
-            let Asked { response: calls, timed } = self
-                .request::<CallHierarchyIncomingCalls>(Some((&at.file, Needs::Project)), params)
-                .await?;
-            let found = calls.as_ref().map_or(0, |c| c.as_ref().map_or(0, Vec::len));
-            self.log_request(
-                "callHierarchy/incomingCalls",
-                Place(at),
-                &format!("{found} calls"),
-                timed.started,
-            );
-            callers.extend(calls?.unwrap_or_default().into_iter().map(|call| call.from));
-        }
-        Ok(self.symbols_of(callers).await)
+            },
+            |call| call.from,
+        )
+        .await
     }
 
     async fn outgoing_calls(&self, at: &At) -> Result<Vec<SymbolInfo>, QueryError> {
-        let mut callees = Vec::new();
-        for item in self.prepare_calls(at).await? {
-            let params = lsp::CallHierarchyOutgoingCallsParams {
+        self.calls::<CallHierarchyOutgoingCalls, _>(
+            at,
+            |item| lsp::CallHierarchyOutgoingCallsParams {
                 item,
                 work_done_progress_params: Default::default(),
                 partial_result_params: Default::default(),
-            };
-            let Asked { response: calls, timed } = self
-                .request::<CallHierarchyOutgoingCalls>(Some((&at.file, Needs::Project)), params)
-                .await?;
-            let found = calls.as_ref().map_or(0, |c| c.as_ref().map_or(0, Vec::len));
-            self.log_request(
-                "callHierarchy/outgoingCalls",
-                Place(at),
-                &format!("{found} calls"),
-                timed.started,
-            );
-            callees.extend(calls?.unwrap_or_default().into_iter().map(|call| call.to));
-        }
-        Ok(self.symbols_of(callees).await)
+            },
+            |call| call.to,
+        )
+        .await
     }
 
     async fn workspace_symbols(&self, query: &str) -> Result<Vec<SymbolInfo>, QueryError> {
