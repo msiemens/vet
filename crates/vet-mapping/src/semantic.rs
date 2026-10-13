@@ -816,5 +816,11 @@ mod tests {
         assert_eq!((all.len(), total), (n as usize, n));
         let (few, total) = finish(rows(n), 10);
         assert_eq!((few.len(), total), (10, n));
+        let (few, total) = finish(rows(20), 10);
+        assert_eq!(
+            (few.len(), total),
+            (10, 20),
+            "a limit below the default cuts a short list too"
+        );
     }
 }
