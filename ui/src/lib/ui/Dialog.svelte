@@ -14,6 +14,7 @@
     padded = true,
     children,
     actions,
+    bar,
   }: {
     title: string;
     onclose: () => void;
@@ -28,6 +29,8 @@
     children: Snippet;
     /** Buttons in the footer, right-aligned. */
     actions?: Snippet;
+    /** Controls in the title row, right-aligned before the close button. */
+    bar?: Snippet;
   } = $props();
 
   const MIN = { w: 360, h: 240 };
@@ -139,6 +142,7 @@
 >
   <header>
     <h2>{title}</h2>
+    {#if bar}<div class="bar">{@render bar()}</div>{/if}
     <IconButton icon="close" label="Close" size={22} iconSize={12} onclick={onclose} />
   </header>
   {#if padded}
@@ -208,6 +212,15 @@
     margin: 0;
     font-size: var(--fs);
     font-weight: 600;
+  }
+  .bar {
+    flex: 1;
+    min-width: 0;
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    gap: 8px;
+    margin: 0 8px 0 16px;
   }
   .sheet.resizable {
     max-height: calc(100vh - 12vh - 16px);

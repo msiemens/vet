@@ -281,6 +281,16 @@ export class TextView {
     return { wrapped: next.wrapped };
   }
 
+  showFound() {
+    const { view, findRun: run } = this;
+    const at = run?.current;
+    const m = at && run.matchesOf(0).find((x) => x.order === at.order && x.from === at.from);
+    if (view && m)
+      view.dispatch({
+        effects: EditorView.scrollIntoView(lineStart(view.state.doc, m.line) + m.from, { y: "center" }),
+      });
+  }
+
   /** Puts the caret on the current match, and the focus in the editor, as the find ends; answers whether there was one. */
   selectFound(): boolean {
     const { view, findRun: run } = this;

@@ -52,6 +52,7 @@
     statusLetter,
     viewCommands,
   } from "../features/review";
+  import { FindInFilesDialog, findInFiles, searchCommands } from "../features/search";
   import { SettingsDialog } from "../features/settings";
   import { StructurePanel } from "../features/structure";
   import { type OpenLocation, SymbolPanel } from "../features/symbols";
@@ -297,6 +298,7 @@
       },
       forget: (path) => void session.forget(path),
     }),
+    ...searchCommands(() => controller?.find.options.text),
     ...viewCommands(reviewActions),
     ...fileCommands(reviewActions),
     ...threadCommands({
@@ -727,6 +729,20 @@
   <Palette
     onchoose={(choice) => void openChoice(choice, choiceHost)}
     onsettings={() => showDialog("settings", "servers")}
+  />
+{/if}
+
+{#if findInFiles.open && session.backend && session.repo}
+  <FindInFilesDialog
+    backend={session.backend}
+    view={changeset.view}
+    files={changeset.facts?.files ?? 0}
+    range={changeset.range ?? defaultRange(versions.items)}
+    revision={changeset.layout?.shown.revision ?? 0}
+    onopen={(result) => {
+      screen = "review";
+      void controller?.openFound(result);
+    }}
   />
 {/if}
 

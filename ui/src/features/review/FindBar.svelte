@@ -5,6 +5,7 @@
   import Spinner from "../../lib/ui/Spinner.svelte";
   import { commands } from "../../state/commands";
   import { isMac } from "../../state/host";
+  import { openFindInFiles } from "../search";
   import type { FindOptions, FindSide } from "./editor/findMatches";
   import type { FindState } from "./FindState.svelte";
 
@@ -172,6 +173,21 @@
     onclick={() => onoption({ onlyChanges: !options.onlyChanges })}>Only changes</button
   >
   <span class="grow"></span>
+  <IconButton
+    icon="tree"
+    label="Find in Files"
+    title={commands.tooltip("find.inFiles", "Find in Files with this query")}
+    disabled={!commands.isEnabled("find.inFiles")}
+    size={24}
+    iconSize={14}
+    onclick={() =>
+      openFindInFiles({
+        query: options.text,
+        matchCase: options.matchCase,
+        wholeWord: options.wholeWord,
+        regex: options.regex,
+      })}
+  />
   <IconButton icon="close" label="Close" title="Close (Esc)" size={24} iconSize={13} onclick={onclose} />
 </div>
 

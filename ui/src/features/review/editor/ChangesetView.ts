@@ -574,6 +574,21 @@ export class ChangesetView {
     return { wrapped: next.wrapped };
   }
 
+  async showFound(): Promise<void> {
+    const seed = this.findRun?.current;
+    if (!seed) return;
+    if (this.findRun?.sets[seed.section] === undefined) {
+      // The match to show is in a section that has not been searched yet: it is, first.
+      const loaded = await this.load(seed.section).catch(() => undefined);
+      // The find may have been started again while the text came.
+      if (this.destroyed || this.findRun?.sets[seed.section] !== undefined) return this.showFound();
+      this.findRun?.add(seed.section, loaded);
+      this.drawFind();
+    }
+    const run = this.findRun;
+    if (run?.current) await this.showMatch(run, run.current);
+  }
+
   private async showMatch(run: FindRun, pos: FindPos) {
     const m = run.matchesOf(pos.section).find((x) => x.order === pos.order && x.from === pos.from);
     if (!m) return;

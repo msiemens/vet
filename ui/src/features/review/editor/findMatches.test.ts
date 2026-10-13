@@ -9,6 +9,7 @@ import {
   findInFile,
   indexOf,
   nearest,
+  orderOf,
   posOf,
   step,
 } from "./findMatches.ts";
@@ -110,4 +111,14 @@ void test("a section not searched yet adds nothing to the count before a place",
   const list = run();
   const all: SectionMatches = [undefined, list];
   assert.equal(indexOf(all, posOf(1, nth(list, 2))), 2);
+});
+
+void test("the place of a line in the order is the one the search gave its matches", () => {
+  for (const mode of ["diff", "file"] as const) {
+    // "e" is in every line, so every kind of line has a match.
+    const list = run({ text: "e" }, mode);
+    assert.ok(list.length > 5);
+    for (const m of list)
+      assert.equal(orderOf(FILE.hunks, m.kind, m.line, mode), m.order, `${mode} ${m.kind}:${m.line}`);
+  }
 });

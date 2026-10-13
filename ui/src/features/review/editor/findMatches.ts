@@ -82,6 +82,26 @@ export function findInFile(file: FileText, re: RegExp, options: FindOptions, mod
   return out;
 }
 
+/** The `order` of the line of `kind` at `line` (0-based, in its side's text), as `findInFile` numbers the lines it visits. */
+export function orderOf(hunks: readonly Hunk[], kind: MatchKind, line: number, mode: FindMode): number {
+  let order = 0;
+  let t = 0;
+  for (const h of hunks) {
+    if (kind === "context" && line < h.targetStart) return order + (line - t);
+    order += h.targetStart - t;
+    if (mode === "diff") {
+      if (kind === "removed" && line >= h.baseStart && line < h.baseStart + h.baseLen)
+        return order + (line - h.baseStart);
+      order += h.baseLen;
+    }
+    if (kind === "added" && line >= h.targetStart && line < h.targetStart + h.targetLen)
+      return order + (line - h.targetStart);
+    order += h.targetLen;
+    t = h.targetStart + h.targetLen;
+  }
+  return order + (line - t);
+}
+
 /** Where a match is, which holds when the query or the texts change: a section and a place in it. */
 export interface FindPos {
   section: number;

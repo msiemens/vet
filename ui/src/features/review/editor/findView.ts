@@ -93,6 +93,8 @@ export interface Finder {
   find(options: FindOptions | undefined, from?: FindPos): void;
   /** Goes to the match `delta` from the current one; answers whether the step wrapped, or none without matches. */
   findStep(delta: 1 | -1): Promise<{ wrapped: boolean } | undefined> | { wrapped: boolean } | undefined;
+  /** Scrolls the current match into view, once the text it is in has been searched. */
+  showFound(): Promise<void> | void;
   /** Puts the caret on the current match and the focus in its editor; answers whether there was one. */
   selectFound(): boolean;
 }

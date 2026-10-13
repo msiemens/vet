@@ -78,6 +78,11 @@ const hostDialer: Dialer = {
 
 export type FileContents = Extract<Response, { type: "fileContents" }>;
 
+/** What `search` asks for: the `search` request without its type and project. */
+export type SearchQuery = Omit<Extract<Request, { type: "search" }>, "type" | "project">;
+
+export type SearchResults = Extract<Response, { type: "searchResults" }>;
+
 /** The events that belong to the backend, not to a session. */
 type ProcessEvent = Extract<ServerEvent, { type: "credentialsNeeded" | "accountsChanged" | "recentProjectsChanged" }>;
 
@@ -333,6 +338,14 @@ export class Backend {
       "fileText",
     );
     return { revision, content };
+  }
+
+  /**
+   * The lines of the files in `query.scope` that `query.pattern` matches. Fails with a message fit to show
+   * when the pattern or the file mask is invalid.
+   */
+  async search(query: SearchQuery): Promise<SearchResults> {
+    return expect(await this.conn.request({ type: "search", project: this.pid, ...query }), "searchResults");
   }
 
   /** One side of a non-text item's file, as of `revision`. */

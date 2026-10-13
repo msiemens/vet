@@ -38,7 +38,8 @@ import { SUBMIT_KEY } from "../../lib/composer";
 import { errorText } from "../../lib/errorText";
 import { ChangesetView, type Listeners, type PanePosition, type ViewHooks } from "./editor/ChangesetView";
 import { fileSource } from "./editor/fileSource";
-import type { FindOptions, FindPos } from "./editor/findMatches";
+import { type FindOptions, type FindPos, orderOf } from "./editor/findMatches";
+import type { OpenedResult } from "../search";
 import { type Finder, NO_SUMMARY, type FindSummary } from "./editor/findView";
 import { FindState } from "./FindState.svelte";
 import type { Rendered } from "./editor/rendered";
@@ -116,6 +117,8 @@ export class ReviewController {
   /** Where the current match is in each tab, which a rebuilt view starts from. */
   private findAt = new Map<TabId, FindPos>();
   private wraps = 0;
+  /** The tab whose current match is to be shown, as long as its view may still be replaced. */
+  private landing?: TabId;
   /** The diff view of each attached tab; a file tab has none while its file is not in the changeset. */
   private views = new Map<TabId, ChangesetView>();
   /** The text view of each file tab that showed its text; built when the tab first shows it. */
@@ -579,6 +582,13 @@ export class ReviewController {
     if (!finder || !this.find.open.has(id)) return;
     finder.onFind((summary) => this.found(id, shown, summary));
     finder.find(this.find.options, this.findAt.get(id));
+    if (this.landing === id) void this.land(id, shown, finder);
+  }
+
+  /** Scrolls the tab's current match into view; a view rebuilt meanwhile starts the find again and does it again. */
+  private async land(id: TabId, pane: "text" | "diff", finder: Finder) {
+    await finder.showFound();
+    if (this.finder(id, pane) === finder && this.landing === id) this.landing = undefined;
   }
 
   /** A pane found something: the bar shows it if it is the active tab's shown pane. */
@@ -615,9 +625,48 @@ export class ReviewController {
     return true;
   }
 
+  /**
+   * Shows a result of Find in Files: in the Changes tab when it is the view the search was of and that
+   * tab is on show, else in the file's own tab. The find bar opens there with the search's query and
+   * the result as its current match.
+   */
+  async openFound(result: OpenedResult) {
+    const { path, kind, line, col, width } = result;
+    const side: Side = kind === "removed" ? "base" : "target";
+    const span: TextSpan = { start: { line, col }, end: { line, col: col + width } };
+    const section = this.tabs.active === CHANGES && result.reveal ? this.changes.indexOf(path) : -1;
+    let id: TabId;
+    if (section >= 0) {
+      id = CHANGES;
+      this.tabs.active = CHANGES;
+      await this.changes.goToSpan(section, side, span);
+    } else {
+      await this.openLocation(
+        result.commit === undefined ? ON_SCREEN : fileTab(path, result.commit),
+        path,
+        line,
+        side,
+        span,
+      );
+      id = this.tabs.active;
+      if (pathOf(id) !== path) return;
+    }
+    const mode = this.findPane(id) === "text" ? "file" : "diff";
+    Object.assign(this.find.options, result.options);
+    this.findAt.set(id, {
+      section: id === CHANGES ? section : (this.views.get(id)?.indexOf(path) ?? 0),
+      order: orderOf(result.hunks, kind, line, mode),
+      from: col,
+    });
+    this.find.open.add(id);
+    this.landing = id;
+    this.applyFind(id);
+  }
+
   /** Closes the bar: the current match stays selected in the editor, which gets the focus. */
   closeFind() {
     const id = this.tabs.active;
+    this.landing = undefined;
     this.finder(id, this.findPane(id))?.selectFound();
     this.find.open.delete(id);
     this.finder(id, "diff")?.find(undefined);
@@ -628,6 +677,7 @@ export class ReviewController {
   /** Goes to the next or previous match of the active tab, and says when that wrapped round the end. */
   async stepFind(delta: 1 | -1) {
     const id = this.tabs.active;
+    this.landing = undefined;
     const stepped = await this.finder(id, this.findPane(id))?.findStep(delta);
     if (stepped?.wrapped)
       this.find.wrapped = { text: delta > 0 ? "Wrapped to the start" : "Wrapped to the end", n: ++this.wraps };
