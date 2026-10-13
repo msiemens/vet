@@ -1,6 +1,6 @@
 <script lang="ts">
-  import Icon from "../../lib/ui/Icon.svelte";
   import StatusDot from "../../lib/ui/StatusDot.svelte";
+  import TagChip from "../../lib/ui/TagChip.svelte";
   import type { ScopeChip } from "./scopeText";
 
   let {
@@ -26,16 +26,21 @@
   {/if}
 {/snippet}
 
-<span class="scope" class:narrowed={chip.narrowed} data-escapes-scope>
+{#snippet label()}
   {#if onopen}
     <button class="chip" type="button" title={chip.tip} onclick={onopen}>{chip.label}{@render dot()}</button>
   {:else}
     <span class="chip static" title={chip.tip}>{chip.label}{@render dot()}</span>
   {/if}
-  {#if chip.narrowed && onclear}
-    <button class="x" type="button" aria-label="Back to all changes" title="Back to all changes (Esc)" onclick={onclear}
-      ><Icon name="close" size={12} stroke={1.8} /></button
-    >
+{/snippet}
+
+<span class="scope" data-escapes-scope>
+  {#if chip.narrowed}
+    <TagChip removeLabel="Back to all changes" removeTitle="Back to all changes (Esc)" onremove={onclear}>
+      {@render label()}
+    </TagChip>
+  {:else}
+    {@render label()}
   {/if}
 </span>
 
@@ -43,15 +48,6 @@
   .scope {
     display: inline-flex;
     align-items: center;
-    gap: 2px;
-    padding: 0 2px;
-    border: 1px solid transparent;
-    border-radius: 7px;
-  }
-  .scope.narrowed {
-    background: color-mix(in srgb, var(--accent) 12%, transparent);
-    border-color: color-mix(in srgb, var(--accent) 38%, transparent);
-    color: var(--accent);
   }
   .chip {
     display: inline-flex;
@@ -71,26 +67,14 @@
   button.chip:active {
     background: var(--press);
   }
+  .scope :global(.tag) .chip {
+    height: 16px;
+    padding: 0 4px;
+  }
   .chip.static {
     color: var(--text-2);
   }
   .chip :global(.dot) {
     margin-left: 6px;
-  }
-  .x {
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    width: 18px;
-    height: 18px;
-    padding: 0;
-    border: 0;
-    border-radius: 4px;
-    background: transparent;
-    color: var(--accent);
-    cursor: default;
-  }
-  .x:hover {
-    background: color-mix(in srgb, var(--accent) 22%, transparent);
   }
 </style>

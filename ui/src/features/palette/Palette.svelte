@@ -18,6 +18,7 @@
   import PopupShell from "../../lib/ui/PopupShell.svelte";
   import SeenMeter from "../../lib/ui/SeenMeter.svelte";
   import Spinner from "../../lib/ui/Spinner.svelte";
+  import TagChip from "../../lib/ui/TagChip.svelte";
   import { changeset } from "../../state/changeset.svelte";
   import { keyId } from "../../state/changesetKey";
   import { commands } from "../../state/commands";
@@ -502,8 +503,8 @@
   {/snippet}
   {#snippet trailing()}
     {#if pinned}
-      <span class="at-chip" title="Files open in a tab pinned to this commit"
-        ><Icon name="commit" size={11} stroke={1.8} />at {pinned}</span
+      <TagChip mono title="Files open in a tab pinned to this commit"
+        ><Icon name="commit" size={11} stroke={1.8} />at {pinned}</TagChip
       >
     {/if}
   {/snippet}
@@ -634,19 +635,6 @@
   .gn {
     color: var(--text-3);
     font: var(--fs-mono-s) var(--font-mono);
-  }
-  .at-chip {
-    display: inline-flex;
-    align-items: center;
-    gap: 5px;
-    height: 20px;
-    padding: 0 7px;
-    border: 1px solid color-mix(in srgb, var(--accent) 38%, transparent);
-    border-radius: 10px;
-    background: color-mix(in srgb, var(--accent) 12%, transparent);
-    color: var(--accent);
-    font: var(--fs-mono-s) var(--font-mono);
-    white-space: nowrap;
   }
   .group {
     display: flex;
