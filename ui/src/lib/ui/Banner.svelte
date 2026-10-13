@@ -7,7 +7,7 @@
     message,
     ondismiss,
     details,
-    action,
+    actions = [],
     extra,
     tone = "caution",
     icon = false,
@@ -24,8 +24,8 @@
     /** Without it the banner stays while what it says holds. */
     ondismiss?: () => void;
     details?: Snippet;
-    /** A button next to the message. */
-    action?: { label: string; onclick: () => void };
+    /** Buttons next to the message. */
+    actions?: { label: string; onclick: () => void }[];
     /** Under the message. */
     extra?: Snippet;
   } = $props();
@@ -47,9 +47,9 @@
       <span class="selectable">{message}</span>
       {@render extra?.()}
     </div>
-    {#if action}
+    {#each actions as action (action.label)}
       <button class="flat" type="button" onclick={action.onclick}>{action.label}</button>
-    {/if}
+    {/each}
     {#if details}
       <button class="flat" type="button" aria-expanded={expanded} onclick={() => (expanded = !expanded)}>
         {expanded ? "Hide details" : "Details"}

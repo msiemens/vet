@@ -25,6 +25,7 @@ import type { LocationRows } from "../generated/LocationRows";
 import type { Manifest } from "../generated/Manifest";
 import type { MappedLine } from "../generated/MappedLine";
 import type { NonTextKind } from "../generated/NonTextKind";
+import type { PatternMatch } from "../generated/PatternMatch";
 import type { PipelineAction } from "../generated/PipelineAction";
 import type { PipelineOutcome } from "../generated/PipelineOutcome";
 import type { PipelineStep } from "../generated/PipelineStep";
@@ -327,6 +328,15 @@ export class Backend {
       "directory",
     );
     return { revision, entries };
+  }
+
+  /** What each include and exclude glob of the draft `filter` matches in the changeset on view, in the order the filter lists them. */
+  async patternMatches(filter: ReviewFilter): Promise<{ include: PatternMatch[]; exclude: PatternMatch[] }> {
+    const { include, exclude } = expect(
+      await this.conn.request({ type: "patternMatches", project: this.pid, filter }),
+      "patternMatches",
+    );
+    return { include, exclude };
   }
 
   /** The path of every file of the target snapshot, as of `revision`. */

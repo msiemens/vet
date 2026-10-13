@@ -425,7 +425,7 @@
       message="Cannot tell which problems are new{unknownFiles > 1 ? ` in ${unknownFiles} files` : ''}: {unknownWhy
         ? unknownWhy.message
         : 'the base could not be analysed'}, so none of {unknownFiles > 1 ? 'theirs is' : "that file's is"} marked new."
-      action={{ label: "Retry", onclick: () => problems.retry() }}
+      actions={[{ label: "Retry", onclick: () => problems.retry() }]}
     />
   {/if}
 

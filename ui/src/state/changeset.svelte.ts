@@ -557,6 +557,25 @@ class ChangesetStore implements ViewSource {
     }
   }
 
+  /** What each glob of the draft `filter` matches in the changeset on view; `undefined` if it could not be asked. */
+  async patternMatches(filter: ReviewFilter) {
+    try {
+      return await session.connected().patternMatches(filter);
+    } catch {
+      return undefined;
+    }
+  }
+
+  /** The names of the folders directly in the repository's folder `path` (`""` is the root); `undefined` if there is no such folder. */
+  async folders(path: string) {
+    try {
+      const { entries } = await session.connected().listDirectory(path);
+      return entries.filter((e) => e.kind === "dir").map((e) => e.name);
+    } catch {
+      return undefined;
+    }
+  }
+
   /** Marks the repository trusted or not. The backend then pushes `targetChanged`, which fetches the manifest that says so. */
   async setProjectTrusted(trusted: boolean) {
     try {

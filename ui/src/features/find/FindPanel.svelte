@@ -251,14 +251,14 @@
 
   {#if set}
     {#if stale}
-      <Banner message={staleText([...moved])} action={{ label: "Rerun", onclick: () => findSets.rerun(set) }} />
+      <Banner message={staleText([...moved])} actions={[{ label: "Rerun", onclick: () => findSets.rerun(set) }]} />
     {:else if set.rerun && set.phase === "done"}
       <Banner message={rerunText(set.rerun)} />
     {/if}
     {#if cut !== undefined}
       <Banner
         message="{cutText(set.places.length, cut)} Filter the list or show all."
-        action={{ label: "Show all", onclick: () => findSets.showAll(set) }}
+        actions={[{ label: "Show all", onclick: () => findSets.showAll(set) }]}
       />
     {:else if set.truncated && set.phase === "done"}
       <Banner message="The search stopped at its limit of matches. Narrow the query to read the rest." />

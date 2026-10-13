@@ -146,8 +146,8 @@
       <Banner
         tone="bad"
         message={failed.message}
-        action={recent.some((p) => p.path === failed.path)
-          ? { label: "Remove from recent", onclick: () => onforget(failed.path) }
+        actions={recent.some((p) => p.path === failed.path)
+          ? [{ label: "Remove from recent", onclick: () => onforget(failed.path) }]
           : undefined}
       />
     {/if}

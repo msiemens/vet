@@ -203,7 +203,7 @@
     <Banner
       tone="bad"
       message="{name} sync stopped. The token for {status.host} expired, so runs cannot be loaded or changed."
-      action={{ label: "Sign in…", onclick: onsignin }}
+      actions={[{ label: "Sign in…", onclick: onsignin }]}
     />
   {:else if limitedUntil !== undefined}
     <Banner

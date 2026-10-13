@@ -19,6 +19,7 @@
     offBase,
     pullRequest,
     ontrust,
+    ontrustproject,
   }: {
     degraded?: WatchDegraded;
     failures: RestoreFailure[];
@@ -28,6 +29,8 @@
     pullRequest?: PullRequestTrust;
     /** Trusts the pull request on view at its current head. */
     ontrust: () => void;
+    /** Opens the project's trust setting. */
+    ontrustproject: () => void;
   } = $props();
 
   let dismissedDegraded = $state<WatchDegraded>();
@@ -56,7 +59,11 @@
   <Banner
     message={trustMessage(pullRequest)}
     ondismiss={() => (dismissedLimited = true)}
-    action={{ label: "Trust this PR", onclick: ontrust }}
+    actions={[
+      { label: "Trust this PR", onclick: ontrust },
+      // Trusting the project does not lift the limit of a fork's pull request.
+      ...(pullRequest.fork ? [] : [{ label: "Trust project…", onclick: ontrustproject }]),
+    ]}
   />
 {/if}
 

@@ -728,6 +728,7 @@
     offBase={changeset.facts?.base.headOffBase ? changeset.facts.base.commit.shortId : undefined}
     pullRequest={changeset.facts?.trust.pullRequest}
     ontrust={() => void changeset.trustPullRequest()}
+    ontrustproject={() => showDialog("settings", "trust")}
   />
 
   <div class="body">
@@ -761,7 +762,7 @@
         rightOpen={right.open}
         {softWrap}
         bottomOpen={bottomTool !== undefined}
-        onfilter={() => showDialog("settings", "review")}
+        onfilter={() => showDialog("settings", "filter")}
         ontool={showTool}
         scope={scope?.label ?? "All changes"}
         onready={(c) => void (controller = c)}
@@ -857,6 +858,7 @@
     {softWrap}
     onsoftwrap={setSoftWrap}
     onclose={() => (dialog = undefined)}
+    project={session.repo ? repoName(session.repo) : undefined}
     filter={session.repo ? changeset.facts?.filter : undefined}
     excluded={{ lines: changeset.layout?.excludedLines ?? 0, items: changeset.layout?.excludedItems ?? 0 }}
     onfilter={(f) => changeset.setFilter(f)}
