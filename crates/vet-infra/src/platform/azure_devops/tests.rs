@@ -113,6 +113,7 @@ impl Doc {
         json!({
             "pullRequestId": self.number,
             "title": format!("PR {}", self.number),
+            "description": format!("Why PR {} exists.\n\n- one\n- two", self.number),
             "createdBy": self.author,
             "creationDate": format!("2024-05-01T12:00:{:02}Z", self.number % 60),
             "isDraft": self.number % 2 == 0,

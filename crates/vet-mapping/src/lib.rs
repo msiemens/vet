@@ -1120,6 +1120,7 @@ pub fn pull_request_info(
         number: sat_u32(v.number),
         title: d.title.clone(),
         url: d.url.clone(),
+        description: d.description.clone(),
         draft: d.draft,
         state: match d.state {
             PullRequestState::Open => p::PullRequestState::Open,

@@ -99,6 +99,8 @@ pub struct Reviewer {
 pub struct Discussion {
     pub title: String,
     pub url: String,
+    /// The text the author gave the pull request (markdown); empty when it has none.
+    pub description: String,
     pub draft: bool,
     pub source_branch: String,
     pub target_branch: String,

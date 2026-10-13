@@ -11,7 +11,11 @@ import type { Reviewer } from "./Reviewer";
 /**
  * What the Comments tool window shows of the pull request on view, above its threads.
  */
-export type PullRequestInfo = { number: number, title: string, url: string, draft: boolean, state: PullRequestState, 
+export type PullRequestInfo = { number: number, title: string, url: string, 
+/**
+ * The pull request's text as its author wrote it (markdown); empty when it has none.
+ */
+description: string, draft: boolean, state: PullRequestState, 
 /**
  * The author's login.
  */

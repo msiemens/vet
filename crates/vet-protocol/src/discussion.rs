@@ -186,6 +186,8 @@ pub struct PullRequestInfo {
     pub number: u32,
     pub title: String,
     pub url: String,
+    /// The pull request's text as its author wrote it (markdown); empty when it has none.
+    pub description: String,
     pub draft: bool,
     pub state: PullRequestState,
     /// The author's login.

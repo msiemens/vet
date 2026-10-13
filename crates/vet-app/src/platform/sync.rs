@@ -232,6 +232,7 @@ mod tests {
         Discussion {
             title: "Add idempotency keys".to_owned(),
             url: "https://github.com/acme/app/pull/482".to_owned(),
+            description: String::new(),
             draft: false,
             source_branch: "keys".to_owned(),
             target_branch: "main".to_owned(),

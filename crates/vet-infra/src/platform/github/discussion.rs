@@ -48,7 +48,7 @@ fn discussion_query() -> String {
         "query($owner: String!, $name: String!, $number: Int!, $after: String) {{
   repository(owner: $owner, name: $name) {{
     pullRequest(number: $number) {{
-      title url isDraft state headRefName baseRefName
+      title url body isDraft state headRefName baseRefName
       author {{ login avatarUrl ... on User {{ name }} }}
       labels(first: 20) {{ nodes {{ name }} }}
       reviewRequests(first: 30) {{
@@ -243,6 +243,7 @@ struct DiscussionRepository {
 struct DiscussionNode {
     title: String,
     url: String,
+    body: String,
     is_draft: bool,
     state: String,
     head_ref_name: String,
@@ -550,6 +551,7 @@ impl<C: CredentialProvider + Sync> GitHubClient<C> {
         Ok(Discussion {
             title: node.title,
             url: node.url,
+            description: node.body,
             draft: node.is_draft,
             source_branch: node.head_ref_name,
             target_branch: node.base_ref_name,

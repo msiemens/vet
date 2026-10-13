@@ -36,6 +36,7 @@ fn thread(id: &str, resolved: bool, line: Option<u32>, comments: Value, next: Op
 fn first_page(threads: Value, next: Option<&str>) -> String {
     json!({ "data": { "repository": { "pullRequest": {
         "title": "Add idempotency keys", "url": "https://github.com/acme/app/pull/482", "isDraft": false,
+        "body": "Retried jobs no longer run twice.\n\nSee `Job::key`.",
         "state": "OPEN", "headRefName": "lena/keys", "baseRefName": "main",
         "author": { "login": "lena", "name": "Lena Berg", "avatarUrl": "https://avatars.example/lena" },
         "labels": { "nodes": [{ "name": "sync" }, { "name": "database" }] },
@@ -231,6 +232,10 @@ async fn the_pull_request_block_says_who_reviews_what_blocks_and_what_was_said()
         ("lena/keys", "main")
     );
     assert_eq!(found.labels, ["sync", "database"]);
+    assert_eq!(
+        found.description,
+        "Retried jobs no longer run twice.\n\nSee `Job::key`."
+    );
     assert_eq!(found.ci, Some(CiState::Failure));
     assert_eq!(
         found

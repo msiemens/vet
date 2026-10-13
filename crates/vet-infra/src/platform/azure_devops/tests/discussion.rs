@@ -380,6 +380,7 @@ async fn a_discussion_has_the_pull_request_its_reviewers_the_viewers_vote_and_th
     );
     assert_eq!(discussion.viewer_verdict.as_deref(), Some("approved-with-suggestions"));
     assert_eq!(discussion.labels, ["performance"]);
+    assert_eq!(discussion.description, "Why PR 7 exists.\n\n- one\n- two");
     assert_eq!(discussion.ci, None);
 }
 
