@@ -5,23 +5,24 @@
   import type { CiState } from "../../generated/CiState";
   import Icon from "../../lib/ui/Icon.svelte";
   import type { IconName } from "../../lib/ui/icons";
-  import { type Look, look } from "./pipelineRows";
+  import { type Look, look, lookTitle } from "./pipelineRows";
 
   let { state, phase, size = 12 }: { state: CiState; phase: CheckPhase; size?: number } = $props();
 
-  const LOOKS: Record<Look, { icon: IconName; tone: string; title: string }> = {
-    success: { icon: "check", tone: "ok", title: "Passed" },
-    failure: { icon: "close", tone: "failing", title: "Failed" },
-    running: { icon: "timeline", tone: "running", title: "Running" },
-    queued: { icon: "timeline", tone: "waiting", title: "Queued" },
-    cancelled: { icon: "minus", tone: "waiting", title: "Cancelled" },
-    skipped: { icon: "minus", tone: "waiting", title: "Skipped" },
-    approval: { icon: "lock", tone: "running", title: "Needs approval" },
+  const LOOKS: Record<Look, { icon: IconName; tone: string }> = {
+    success: { icon: "check", tone: "ok" },
+    failure: { icon: "close", tone: "failing" },
+    running: { icon: "timeline", tone: "running" },
+    queued: { icon: "timeline", tone: "waiting" },
+    cancelled: { icon: "minus", tone: "waiting" },
+    skipped: { icon: "minus", tone: "waiting" },
+    approval: { icon: "lock", tone: "running" },
   };
-  const shown = $derived(LOOKS[look(state, phase)]);
+  const current = $derived(look(state, phase));
+  const shown = $derived(LOOKS[current]);
 </script>
 
-<span class="state {shown.tone}" title={shown.title}><Icon name={shown.icon} {size} stroke={2} /></span>
+<span class="state {shown.tone}" title={lookTitle(current)}><Icon name={shown.icon} {size} stroke={2} /></span>
 
 <style>
   .state {

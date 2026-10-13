@@ -25,6 +25,8 @@
     defaultJob,
     disabledReason,
     finished,
+    look,
+    lookTitle,
     rerunnable,
     runMeta,
     runOf,
@@ -245,8 +247,7 @@
                   onclick={(e) => nav.click(e, index)}
                 >
                   {#snippet glyph()}<StateIcon state={group.run.state} phase={group.run.phase} />{/snippet}
-                  {group.run.name}
-                  {#snippet trailing()}<span class="mono meta">{runMeta(group.run)}</span>{/snippet}
+                  {group.run.name}<span class="mono meta">{runMeta(group.run)}</span>
                 </TreeRow>
                 <span></span>
                 <span class="mono time"
@@ -285,8 +286,7 @@
               <div class="row" role="treeitem" aria-selected="false">
                 <TreeRow tone="plain" cur={cursor === index} title={item.job.name}>
                   {#snippet glyph()}<StateIcon state={item.job.state} phase={item.job.phase} />{/snippet}
-                  {item.job.name}
-                  {#snippet trailing()}<span class="mono meta">status from a service</span>{/snippet}
+                  {item.job.name}<span class="mono meta">status from a service</span>
                 </TreeRow>
                 <span></span>
                 <span class="mono time">{timeOf(item.job)}</span>
@@ -299,20 +299,12 @@
         {#if chosen}
           <div class="head">
             <StateIcon state={chosen.state} phase={chosen.phase} />
-            <b>{chosen.name}</b>
-            <span class="mono sub">
-              {chosenRun?.name} · {chosen.phase === "queued"
-                ? "queued"
-                : chosen.phase === "running"
-                  ? "running"
-                  : chosen.phase === "cancelled"
-                    ? "cancelled"
-                    : chosen.state === "failure"
-                      ? "failed"
-                      : chosen.state === "success"
-                        ? "passed"
-                        : "skipped"}{timeOf(chosen) ? ` · ${timeOf(chosen)}` : ""}
-            </span>
+            <b class="job">{chosen.name}</b>
+            <span class="mono sub"
+              >{chosenRun?.name} · {lookTitle(look(chosen.state, chosen.phase)).toLowerCase()}{timeOf(chosen)
+                ? ` · ${timeOf(chosen)}`
+                : ""}</span
+            >
             <span class="grow"></span>
             <button
               class="tool"
@@ -434,6 +426,22 @@
     height: 34px;
     padding: 0 12px;
     border-bottom: 1px solid var(--line-soft);
+  }
+  .job,
+  .sub {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .job {
+    font-weight: 650;
+  }
+  .sub {
+    flex: 1 1 0;
+  }
+  .head .tool {
+    flex: none;
   }
   .sub,
   .meta,

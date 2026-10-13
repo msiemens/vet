@@ -51,6 +51,19 @@ export function look(state: CheckRun["state"], phase: CheckPhase): Look {
   }
 }
 
+const TITLES: Record<Look, string> = {
+  success: "Passed",
+  failure: "Failed",
+  running: "Running",
+  queued: "Queued",
+  cancelled: "Cancelled",
+  skipped: "Skipped",
+  approval: "Needs approval",
+};
+
+/** What a look is called. */
+export const lookTitle = (l: Look): string => TITLES[l];
+
 /** A run or job that is not going to change by itself. */
 export const finished = (phase: CheckPhase) => phase === "finished" || phase === "cancelled";
 
