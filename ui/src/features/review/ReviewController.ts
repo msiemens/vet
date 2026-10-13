@@ -985,7 +985,7 @@ export class ReviewController {
     );
     this.views.set(id, view);
     if (this.threadsFit(layout)) view.setThreads(this.shownThreads(id), shown.revision);
-    root.scrollTop = top;
+    view.scrollTo(top);
     view.keepCurrent(anchor);
     view.sync();
     // A file tab shows its one file at once; the Changes tab loads sections as they come near.

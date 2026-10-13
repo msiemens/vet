@@ -81,6 +81,8 @@ interface Driver {
 interface Probe {
   line: number;
   y: number;
+  /** The hunk bar pinned under the file's header, if one is. */
+  bar: string | null;
 }
 
 /** Below the pinned header and hunk bar. */
@@ -123,9 +125,7 @@ const sessions: Record<string, (d: Driver) => Promise<void>> = {
   /** A change that no notification announced is still drawn once the view is looked at again. */
   async healing(d) {
     await d.step("opened", () => Promise.resolve());
-    await d.page(
-      `(() => { const l = __t.changeset.cells.listeners; window.__muted = new Set(l); l.clear(); })()`,
-    );
+    await d.page(`(() => { const l = __t.changeset.cells.listeners; window.__muted = new Set(l); l.clear(); })()`);
     await d.step("another window marks while the views are not told", () => d.otherMark("b.txt", 0), { stale: true });
     await d.page(`window.__muted.forEach((l) => __t.changeset.cells.listeners.add(l))`);
     await d.step("the view is scrolled", () =>
@@ -195,7 +195,7 @@ const sessions: Record<string, (d: Driver) => Promise<void>> = {
       await d.step(step, run);
       const after = await d.probe();
       process.stderr.write(`  ${step}: was at ${JSON.stringify(before)}, is at ${JSON.stringify(after)}\n`);
-      if (after.line !== before.line || Math.abs(after.y - before.y) > 1.5)
+      if (after.line !== before.line || Math.abs(after.y - before.y) > 1.5 || after.bar !== before.bar)
         throw new Error(`${step}: the file tab was at ${JSON.stringify(before)} and is at ${JSON.stringify(after)}`);
     };
     const show = async (mode: string) => {
@@ -390,9 +390,14 @@ async function runSession(
       return (await page(`(() => {
         const scroller = document.querySelector(".pane.active .scroll");
         const top = scroller.getBoundingClientRect().top;
+        const pinned = scroller.querySelector(".vet-pin-bars");
+        const content = document.createRange();
+        if (pinned) content.selectNodeContents(pinned);
+        const at = content.getBoundingClientRect();
+        const bar = pinned && pinned.textContent.trim() + "@" + Math.round(at.left) + "," + Math.round(at.top - top);
         for (const el of scroller.querySelectorAll(".cm-lineNumbers .cm-gutterElement")) {
           const y = el.getBoundingClientRect().top - top;
-          if (/^[0-9]+$/.test(el.textContent) && y >= ${PROBE_Y}) return { line: Number(el.textContent), y };
+          if (/^[0-9]+$/.test(el.textContent) && y >= ${PROBE_Y}) return { line: Number(el.textContent), y, bar };
         }
       })()`)) as Probe;
     },

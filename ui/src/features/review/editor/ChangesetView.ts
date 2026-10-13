@@ -448,6 +448,13 @@ export class ChangesetView {
       ],
       s.wrap ? { heightChanged: () => this.heightChanged(s) } : undefined,
     );
+    // The gutters' width is published by the editor's first measure; the pinned bar copies it from there.
+    s.handle.view.requestMeasure({
+      read: () => null,
+      write: () => {
+        if (!this.destroyed) this.pin.refresh();
+      },
+    });
     this.threads.mounted(s);
     this.windowing.mounted.add(fi);
     const first = this.stopOf(fi, 0);
@@ -470,6 +477,12 @@ export class ChangesetView {
   /** The servers changed: asks again for the diagnostics of every mounted editor. */
   refreshDiagnostics() {
     for (const fi of this.windowing.mounted) this.showDiagnostics(this.sections[fi]);
+  }
+
+  /** Scrolls to `top` px and pins what belongs there: a scroll that leaves the position as it is raises no event. */
+  scrollTo(top: number) {
+    this.root.scrollTop = top;
+    this.pin.update(this.root.scrollTop);
   }
 
   /** Unmounts far sections and mounts loaded near ones, the ones in view first. */
