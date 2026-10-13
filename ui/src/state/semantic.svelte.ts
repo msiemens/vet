@@ -148,6 +148,8 @@ class SemanticStore {
     const r = await session.backend?.definition(revision, side, path, line, col, signal);
     if (!r) return false;
     this.note(revision, path, r.unavailable);
+    // An unavailable server (still starting, say) may answer later, so this is no answer to keep.
+    if (r.unavailable) throw new Error(r.unavailable.message);
     return r.locations.length > 0;
   }
 
