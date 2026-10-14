@@ -9,12 +9,19 @@ language-servers = { max-threads = 2 }
 # The load tests (`vet-backend`'s `load` module): each runs a backend on a 300-file repository against
 # servers that are stuck on purpose, and counts on the whole machine. They run one at a time.
 load = { max-threads = 1 }
+# The Roslyn tests: each restores a project of its own into one shared NuGet cache and starts a
+# server that loads it; they run one at a time.
+roslyn = { max-threads = 1 }
 
 [profile.default]
 # Report a test as slow after 30 s; kill it after 4 periods (2 min), so a server
 # that never answers fails its test instead of hanging the run.
 slow-timeout = { period = "30s", terminate-after = 4 }
 failure-output = "immediate-final"
+
+[[profile.default.overrides]]
+filter = 'package(vet-infra) & binary(it) & test(/^lsp::roslyn/)'
+test-group = "roslyn"
 
 [[profile.default.overrides]]
 filter = 'binary(it) & ((package(vet-infra) & test(/^(lsp|servers|restore)::/)) | (package(vet-backend) & test(/^(semantic|restore|python)::/)))'

@@ -11,6 +11,7 @@ use std::time::Duration;
 
 use tempfile::TempDir;
 use vet_core::content::RepoPath;
+use vet_infra::exec::dotnet_env;
 use vet_infra::lsp::{BinaryLocator, LspLauncher, NoRestore, config};
 use vet_semantic::policy::AnalysisPolicy;
 use vet_semantic::ports::{At, Backend, Feature, LanguageServer, Pos, ServerLauncher, Tree};
@@ -448,6 +449,24 @@ handler = lambda: helper()
     server.shutdown().await;
 }
 
+/// Restores the project in `dir` as a restore step of Vet does, and shows everything dotnet said
+/// if that fails.
+fn dotnet_restore(dir: &Path) {
+    let restored = Command::new("dotnet")
+        .arg("restore")
+        .envs(dotnet_env())
+        .current_dir(dir)
+        .output()
+        .unwrap();
+    assert!(
+        restored.status.success(),
+        "dotnet restore: {}\nstdout:\n{}\nstderr:\n{}",
+        restored.status,
+        String::from_utf8_lossy(&restored.stdout),
+        String::from_utf8_lossy(&restored.stderr)
+    );
+}
+
 /// roslyn-language-server lists no lambda, anonymous method, local variable or parameter in its
 /// outline, a local function in its method's; a call in a lambda is a call of the method around
 /// it, and top-level statements are the call of a generated entry point, which is no symbol.
@@ -485,16 +504,7 @@ public class W
 ";
     std::fs::write(dir.path().join("W.cs"), src).unwrap();
     std::fs::write(dir.path().join("Program.cs"), "using App;\n\nvar top = W.Helper();\n").unwrap();
-    let restored = Command::new("dotnet")
-        .arg("restore")
-        .current_dir(dir.path())
-        .output()
-        .unwrap();
-    assert!(
-        restored.status.success(),
-        "{}",
-        String::from_utf8_lossy(&restored.stdout)
-    );
+    dotnet_restore(dir.path());
     let server = LspLauncher::new(BinaryLocator, NoRestore)
         .start(
             dir.path(),
@@ -549,16 +559,7 @@ async fn roslyn_answers_a_hover_on_a_newly_opened_file() {
         let class = format!("namespace App;\npublic class C{i}\n{{\n    public int Run(int x) => x + {i};\n}}\n");
         std::fs::write(dir.path().join(format!("C{i}.cs")), class).unwrap();
     }
-    let restored = Command::new("dotnet")
-        .arg("restore")
-        .current_dir(dir.path())
-        .output()
-        .unwrap();
-    assert!(
-        restored.status.success(),
-        "{}",
-        String::from_utf8_lossy(&restored.stdout)
-    );
+    dotnet_restore(dir.path());
 
     for tree in [Tree::Immutable, Tree::Live] {
         let server = LspLauncher::new(BinaryLocator, NoRestore)
