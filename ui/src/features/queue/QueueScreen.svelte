@@ -19,6 +19,7 @@
   import { keyId } from "../../state/changesetKey";
   import { commands } from "../../state/commands";
   import { contextMenus } from "../../state/contextMenu.svelte";
+  import { minute } from "../../state/minute.svelte";
   import { queue } from "../../state/queue.svelte";
   import ChangesCell from "./ChangesCell.svelte";
   import ChangesetName from "./ChangesetName.svelte";
@@ -224,7 +225,7 @@
               >
             {/if}
           </span>
-          <span class="right when">{updatedText(row)}</span>
+          <span class="right when">{updatedText(row, minute.now)}</span>
         </button>
       {:else}
         {#if !unlisted.length}

@@ -7,6 +7,7 @@
   import ScrollArea from "../../lib/ui/ScrollArea.svelte";
   import SeenMeter from "../../lib/ui/SeenMeter.svelte";
   import { checks } from "../../state/checks.svelte";
+  import { minute } from "../../state/minute.svelte";
   import { commitRow } from "./commitRows";
 
   let {
@@ -20,7 +21,7 @@
     onselect: (index: number) => void;
   } = $props();
 
-  const rows = $derived(commits.map((c) => commitRow(c)));
+  const rows = $derived(commits.map((c) => commitRow(c, minute.now)));
   const indices = $derived(commits.map((_, i) => i));
 
   let cursor = $state(-1);

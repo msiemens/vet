@@ -38,7 +38,7 @@ export type MetaItem =
  * The line under the title: for a pull request its author, its branches and when it changed; for the
  * working tree where its changes live; for a branch its author, where it is and when it changed.
  */
-export function metaOf(row: QueueRow, files: number | undefined, nowMs = Date.now()): MetaItem[] {
+export function metaOf(row: QueueRow, files: number | undefined, nowMs: number): MetaItem[] {
   if (row.key.type === "workingTree") {
     return [
       { type: "text", text: "Live changes on" },

@@ -5,6 +5,7 @@
   import Avatar from "../../lib/ui/Avatar.svelte";
   import Icon from "../../lib/ui/Icon.svelte";
   import { checks } from "../../state/checks.svelte";
+  import { minute } from "../../state/minute.svelte";
   import { passed } from "../checks";
 
   /** What the Changes tab says of the commit it shows: who wrote it, when, and what they said. */
@@ -24,7 +25,7 @@
       <Avatar name={info.author} url={null} size={18} />
       {info.author}
     </span>
-    <span class="meta">{shortTime(info.time, Date.now(), "detailed")}</span>
+    <span class="meta">{shortTime(info.time, minute.now, "detailed")}</span>
     <span class="mono meta">{info.shortId}</span>
     {#if checked && look}
       <span class="meta ci {look.tone}" title={`${count.passed} of ${count.total} checks passed`}>

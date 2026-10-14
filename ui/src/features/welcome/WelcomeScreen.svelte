@@ -10,6 +10,7 @@
   import SearchField from "../../lib/ui/SearchField.svelte";
   import { shortTime } from "../../lib/shortTime";
   import { commands } from "../../state/commands";
+  import { minute } from "../../state/minute.svelte";
   import { openRecent, openRecentMenu } from "./openRecent";
   import RecentRow from "./RecentRow.svelte";
   import { type RecentMatch, searchRecent } from "./recentList";
@@ -148,7 +149,7 @@
         >
           {#snippet row(match)}
             <RecentRow {match} roomy>
-              {#snippet trailing()}<span class="when">{shortTime(match.project.openedAt)}</span>{/snippet}
+              {#snippet trailing()}<span class="when">{shortTime(match.project.openedAt, minute.now)}</span>{/snippet}
             </RecentRow>
           {/snippet}
         </PickList>

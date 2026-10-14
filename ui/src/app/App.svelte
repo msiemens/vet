@@ -100,6 +100,7 @@
   import { keymap } from "../state/keymap.svelte";
   import { mainMenu } from "../state/mainMenu.svelte";
   import { pendingEdits } from "../state/pendingEdits.svelte";
+  import { minute } from "../state/minute.svelte";
   import { platform } from "../state/platform.svelte";
   import { problems } from "../state/problems.svelte";
   import { progress as backgroundTasks } from "../state/progress.svelte";
@@ -269,7 +270,9 @@
         pending: pendingEdits.waiting,
       }),
   );
-  const note = $derived(changeset.facts && baseNote(changeset.facts.base, changeset.facts.target.changeset.type));
+  const note = $derived(
+    changeset.facts && baseNote(changeset.facts.base, changeset.facts.target.changeset.type, minute.now),
+  );
   const footer = $derived({
     commit:
       changeset.shownCommit === undefined ? undefined : `${changeset.shownCommit + 1} / ${changeset.commits.length}`,

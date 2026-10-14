@@ -12,6 +12,7 @@
   import type { CommandContext } from "../../state/commands";
   import { commands } from "../../state/commands";
   import { contextMenus } from "../../state/contextMenu.svelte";
+  import { minute } from "../../state/minute.svelte";
   import { platform } from "../../state/platform.svelte";
   import { session } from "../../state/session.svelte";
   import { structure } from "../../state/structure.svelte";
@@ -138,7 +139,7 @@
       commitIndex: changeset.shownCommit,
       pullRequest: platform.info,
       threads: { total: threads.items.length, open: threads.items.filter((t) => t.status === "open").length },
-      now: Date.now(),
+      now: minute.now,
     });
   });
   const narrowed = $derived(

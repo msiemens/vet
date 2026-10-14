@@ -148,7 +148,7 @@ void test("the working tree's line says where its changes live", () => {
     openThreads: 0,
     review: { state: "none" },
   };
-  assert.deepEqual(metaOf(tree, 4), [
+  assert.deepEqual(metaOf(tree, 4, Date.now()), [
     { type: "text", text: "Live changes on" },
     { type: "mono", text: "develop" },
     { type: "text", text: "4 files, not committed" },

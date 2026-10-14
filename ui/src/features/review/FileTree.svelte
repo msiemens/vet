@@ -210,19 +210,21 @@
   const MIN_TREE = 80;
   let nav = $state<HTMLElement>();
 
+  /** Where the pointer and the list were when the divider was pressed, while it is held. */
+  let dividerDrag: { y: number; height: number } | undefined;
+
+  // The pointer is captured by the divider, so the drag ends with the press, cancelled or not, and
+  // leaves nothing behind if the tree goes away.
   function dragDivider(e: PointerEvent) {
-    const start = { y: e.clientY, height: listHeight };
-    const room = () => (nav?.clientHeight ?? 400) - MIN_TREE;
-    const move = (m: PointerEvent) => {
-      listHeight = Math.max(MIN_LIST, Math.min(room(), start.height + m.clientY - start.y));
-    };
-    const stop = () => {
-      window.removeEventListener("pointermove", move);
-      window.removeEventListener("pointerup", stop);
-    };
-    window.addEventListener("pointermove", move);
-    window.addEventListener("pointerup", stop);
+    (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
+    dividerDrag = { y: e.clientY, height: listHeight };
     e.preventDefault();
+  }
+
+  function moveDivider(e: PointerEvent) {
+    if (!dividerDrag) return;
+    const room = (nav?.clientHeight ?? 400) - MIN_TREE;
+    listHeight = Math.max(MIN_LIST, Math.min(room, dividerDrag.height + e.clientY - dividerDrag.y));
   }
 
   function nudgeDivider(e: KeyboardEvent) {
@@ -607,6 +609,8 @@
       aria-label="Resize the commit list"
       tabindex="0"
       onpointerdown={dragDivider}
+      onpointermove={moveDivider}
+      onlostpointercapture={() => (dividerDrag = undefined)}
       onkeydown={nudgeDivider}
     ></div>
   {/if}

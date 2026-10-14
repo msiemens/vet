@@ -7,6 +7,7 @@
   import SwitcherPopover from "../../lib/ui/SwitcherPopover.svelte";
   import { keyId } from "../../state/changesetKey";
   import { commands } from "../../state/commands";
+  import { minute } from "../../state/minute.svelte";
   import { queue } from "../../state/queue.svelte";
   import ChangesCell from "./ChangesCell.svelte";
   import ChangesetName from "./ChangesetName.svelte";
@@ -113,7 +114,7 @@
           <ChangesCell {changes} />
           {#if comments > 0}<span class="threads"><Icon name="comments" size={11} />{comments}</span>{/if}
         </span>
-        <span>{updatedText(changeset)}</span>
+        <span>{updatedText(changeset, minute.now)}</span>
       </span>
     </span>
   {/snippet}

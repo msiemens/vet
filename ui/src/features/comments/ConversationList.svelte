@@ -4,6 +4,7 @@
   import { shortTime } from "../../lib/shortTime";
   import EmptyState from "../../lib/ui/EmptyState.svelte";
   import IconButton from "../../lib/ui/IconButton.svelte";
+  import { minute } from "../../state/minute.svelte";
   import { platform } from "../../state/platform.svelte";
   import { threads } from "../../state/threads.svelte";
   import { type DraftComment, isOwnComment, verdictChip } from "./conversation";
@@ -66,7 +67,7 @@
         <div class="meta">
           <span class="author" class:mine={own} title={entry.author}>{entry.author}</span>
           {#if chip}<span class="chip {chip.tone}">{chip.label}</span>{/if}
-          <span class="time">{shortTime(entry.at, Date.now(), "detailed")}</span>
+          <span class="time">{shortTime(entry.at, minute.now, "detailed")}</span>
           <span class="grow"></span>
           {#if own && editing !== entry.id}
             <IconButton
@@ -98,7 +99,7 @@
         <div class="meta">
           <span class="author mine" title={message.author}>{message.author}</span>
           <span class="badge">Draft</span>
-          <span class="time">{shortTime(message.at, Date.now(), "detailed")}</span>
+          <span class="time">{shortTime(message.at, minute.now, "detailed")}</span>
           <span class="grow"></span>
           {#if editing !== key}
             <IconButton

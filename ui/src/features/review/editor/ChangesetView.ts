@@ -10,6 +10,7 @@ import type { Side } from "../../../generated/Side";
 import type { Thread } from "../../../generated/Thread";
 import type { TextSpan } from "../../../generated/TextSpan";
 import { Scrollbar } from "../../../lib/ui/scrollbar";
+import { loadOnce } from "../../../lib/loadOnce";
 import type { SoftWrap } from "../../../lib/softWrap";
 import type { Mode } from "../../../lib/viewMode";
 import { commands } from "../../../state/commands";
@@ -21,7 +22,7 @@ import { changeCard } from "./changeCard";
 import { type EditorSelection, hunkComment, linesAt } from "./commentAnchor";
 import { takesKeys } from "./dom";
 import { badgeFind, fileHeader } from "./fileHeader";
-import type { FileSource } from "./fileSource";
+import { type FileSource, StaleRevision } from "./fileSource";
 import { type FindOptions, type FindPos } from "./findMatches";
 import { FindRun } from "./findRun";
 import { type FindSummary, NO_MARKS, NO_SUMMARY, editorMarks } from "./findView";
@@ -52,6 +53,8 @@ export interface Listeners extends ReviewRequests {
   fileMenu(path: string, x: number, y: number): void;
   /** Jump to Source: the file's text at a 0-based target line. */
   openSource(path: string, line: number): void;
+  /** A file's text could not be loaded. */
+  loadFailed(error: unknown): void;
   /** The file whose header is pinned at the top of the view changed; none above the first file. */
   pinned?(path: string | undefined): void;
   threads: ThreadListeners;
@@ -426,18 +429,25 @@ export class ChangesetView {
 
   load(fi: number): Promise<Loaded> {
     const s = this.sections[fi];
-    s.loading ??= this.source.contents(s.file).then((loaded) => {
-      s.loaded = loaded;
-      if (s.wrap) {
-        // The text tells how many rows its lines take; the section grows to them before its editor does.
-        s.wrapped = this.wrappedSides(s);
-        this.heights.resize(s, this.heights.estimate(s));
-      }
-      // Mounting waits for the next frame, so a large reply's parse and an editor's creation never share one.
-      this.windowing.syncNextFrame();
-      return loaded;
-    });
-    return s.loading;
+    return loadOnce(
+      s,
+      () =>
+        this.source.contents(s.file).then((loaded) => {
+          s.loaded = loaded;
+          if (s.wrap) {
+            // The text tells how many rows its lines take; the section grows to them before its editor does.
+            s.wrapped = this.wrappedSides(s);
+            this.heights.resize(s, this.heights.estimate(s));
+          }
+          // Mounting waits for the next frame, so a large reply's parse and an editor's creation never share one.
+          this.windowing.syncNextFrame();
+          return loaded;
+        }),
+      // A replaced view's loads end in a stale revision; the new view is on its way.
+      (error) => {
+        if (!this.destroyed && !(error instanceof StaleRevision)) this.listeners.loadFailed(error);
+      },
+    );
   }
 
   /** Loads every section, the ones nearest the viewport first. */

@@ -16,7 +16,8 @@ import { canSubmit, isSubmitKey, replyShape } from "../../../lib/composer.ts";
 import { isFlat } from "../../../lib/flatThread.ts";
 import { lineRange } from "../../../lib/lineRange.ts";
 import { movedLabel, movedTitle } from "../../../lib/movedTitle.ts";
-import { fullTime, shortTime } from "../../../lib/shortTime.ts";
+import { liveTime } from "../../../lib/liveTime.ts";
+import { fullTime } from "../../../lib/shortTime.ts";
 import { iconSvg } from "../../../lib/ui/icons.ts";
 import { el, iconButton } from "./dom.ts";
 import type { CardData } from "./threadPlacement.ts";
@@ -260,7 +261,8 @@ export function markdownBody(text: string, actions: Pick<ThreadActions, "openLin
 /** A message's meta line: who wrote it and when, whether it was edited, and whether it waits to be posted. */
 export function messageMeta(thread: Thread, message: ThreadMessage): HTMLElement {
   const meta = el("div", "vet-msg-meta");
-  const when = el("span", "vet-msg-time", shortTime(message.at, Date.now(), "detailed"));
+  const when = el("span", "vet-msg-time");
+  liveTime(when, message.at, "detailed");
   when.title = fullTime(message.at);
   meta.append(el("span", "vet-msg-author", message.author), when);
   if (message.editedAt !== null) {

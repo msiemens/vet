@@ -1,5 +1,6 @@
 <script lang="ts">
   import { commands } from "../../state/commands";
+  import { minute } from "../../state/minute.svelte";
   import { platform } from "../../state/platform.svelte";
   import { shortTime } from "../../lib/shortTime";
   import { copyText } from "./copy";
@@ -16,7 +17,7 @@
     {#each platform.notified as item (item.id)}
       <li>
         <span class="text selectable">{item.notification.text}</span>
-        <span class="time">{shortTime(item.at)}</span>
+        <span class="time">{shortTime(item.at, minute.now)}</span>
         {#if item.notification.copyText}
           <button class="flat" type="button" onclick={() => void copyText(item.notification.copyText ?? "")}>
             Copy text

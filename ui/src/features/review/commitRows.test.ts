@@ -37,11 +37,12 @@ void test("a commit from earlier this week says the weekday and the time of day"
 void test("a clean merge is muted", () => {
   const row = commitRow(
     unit({ type: "merge", clean: true, remerged: true }, { lines: 0, seenLines: 0, seenPercent: 0 }),
+    Date.now(),
   );
   assert.deepEqual([row.merge, row.clean, row.notRemerged], [true, true, false]);
 });
 
 void test("a merge compared with its first parent says so", () => {
-  assert.equal(commitRow(unit({ type: "merge", clean: false, remerged: false })).notRemerged, true);
-  assert.equal(commitRow(unit({ type: "merge", clean: false, remerged: true })).notRemerged, false);
+  assert.equal(commitRow(unit({ type: "merge", clean: false, remerged: false }), Date.now()).notRemerged, true);
+  assert.equal(commitRow(unit({ type: "merge", clean: false, remerged: true }), Date.now()).notRemerged, false);
 });

@@ -2,6 +2,7 @@
   import type { CommitUnit } from "../../generated/CommitUnit";
   import { shortTime } from "../../lib/shortTime";
   import Icon from "../../lib/ui/Icon.svelte";
+  import { minute } from "../../state/minute.svelte";
 
   /**
    * What a file tab says of the commit it stays at: its short hash always, and once the commit is read
@@ -18,7 +19,7 @@
   <span class="mono hash">{commit?.commit.shortId ?? id.slice(0, 7)}</span>
   {#if commit}
     <span class="subject">{commit.commit.subject}</span>
-    <span class="who">{commit.commit.author} · {shortTime(commit.commit.time, Date.now(), "detailed")}</span>
+    <span class="who">{commit.commit.author} · {shortTime(commit.commit.time, minute.now, "detailed")}</span>
   {/if}
 </div>
 

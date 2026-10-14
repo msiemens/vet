@@ -50,15 +50,15 @@ const base = (over: Partial<Base> = {}): Base => ({
 });
 
 void test("the base is said for a pull request into another branch, not for the default one", () => {
-  assert.equal(baseNote(base(), "pullRequest"), undefined);
-  const note = baseNote(base({ into: "release/2.1" }), "pullRequest");
+  assert.equal(baseNote(base(), "pullRequest", Date.now()), undefined);
+  const note = baseNote(base({ into: "release/2.1" }), "pullRequest", Date.now());
   assert.deepEqual([note?.text, note?.alert], ["into release/2.1", false]);
   assert.match(note?.tip ?? "", /^Into release\/2\.1\. Branched off at a1b2c3d bump/);
 });
 
 void test("the base of a workspace is said once HEAD left it, with the alert", () => {
-  assert.equal(baseNote(base(), "workingTree"), undefined);
-  const note = baseNote(base({ headOffBase: true }), "workingTree");
+  assert.equal(baseNote(base(), "workingTree", Date.now()), undefined);
+  const note = baseNote(base({ headOffBase: true }), "workingTree", Date.now());
   assert.deepEqual([note?.text, note?.alert], ["since a1b2c3d", true]);
   assert.match(note?.tip ?? "", /HEAD no longer builds on this base\.$/);
 });

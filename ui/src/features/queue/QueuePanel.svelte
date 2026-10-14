@@ -26,6 +26,7 @@
   import { checks } from "../../state/checks.svelte";
   import { commands } from "../../state/commands";
   import { openUrl } from "../../state/host";
+  import { minute } from "../../state/minute.svelte";
   import { platform } from "../../state/platform.svelte";
   import { session } from "../../state/session.svelte";
   import { threads } from "../../state/threads.svelte";
@@ -165,7 +166,7 @@
         <div class="head">
           <div class="title"><ChangesetName label={labelOf(row)} /></div>
           <div class="meta">
-            {#each metaOf(row, frame?.facts.files) as item, i (i)}
+            {#each metaOf(row, frame?.facts.files, minute.now) as item, i (i)}
               {#if i > 0}<span class="sep">·</span>{/if}
               {#if item.type === "author"}
                 {#if !item.muted}<Avatar name={item.name} url={item.avatar ?? null} />{/if}

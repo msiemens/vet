@@ -194,7 +194,7 @@ export function authorOf(row: QueueRow): Author | undefined {
 }
 
 /** The Updated column: the working tree is live, a branch changed with its last commit, a pull request when the platform saw it change. */
-export function updatedText(row: QueueRow, nowMs = Date.now()): string {
+export function updatedText(row: QueueRow, nowMs: number): string {
   if (row.pullRequest) return shortTime(row.pullRequest.updatedAt, nowMs);
   if (row.key.type === "workingTree") return "now";
   return row.lastCommit === undefined ? "" : shortTime(row.lastCommit, nowMs);

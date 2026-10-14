@@ -1011,6 +1011,7 @@ export class ReviewController {
       baseDiff: built.view.type === "changeset" ? (shown, path, hunk) => source.baseDiff(shown, path, hunk) : undefined,
       fileMenu: this.fileMenu,
       openSource: (path, line) => void this.openSource(id, path, line),
+      loadFailed: (error) => this.changeset.reportFailure(error, built.revision),
       threads: this.threadListeners(source),
       commentable: commitOf(id) === undefined,
     };

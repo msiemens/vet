@@ -21,7 +21,7 @@ export interface CommitRow {
   oldBase: number;
 }
 
-export function commitRow(unit: CommitUnit, now = Date.now()): CommitRow {
+export function commitRow(unit: CommitUnit, now: number): CommitRow {
   const merge = unit.kind.type === "merge";
   const clean = unit.kind.type === "merge" && unit.kind.clean;
   return {

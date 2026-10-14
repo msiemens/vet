@@ -77,7 +77,7 @@ export interface BaseNote {
  * What the header says of the base: only where the viewer would not expect it, a pull request
  * into a branch other than the default and a working tree whose HEAD left its base.
  */
-export function baseNote(base: Base, of: BaseOf, nowMs = Date.now()): BaseNote | undefined {
+export function baseNote(base: Base, of: BaseOf, nowMs: number): BaseNote | undefined {
   const alert = base.headOffBase;
   if (base.into === undefined && !alert) return undefined;
   const c = base.commit;
