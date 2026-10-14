@@ -204,6 +204,27 @@ mod tests {
     }
 
     #[test]
+    fn a_renamed_identifier_is_changed_at_each_of_its_uses() {
+        let (a, b) = ("let n = n + n;\n", "let count = n + count;\n");
+        assert_eq!(
+            changes(a, b, &[hunk((0, 1), (0, 1))]),
+            [change((4, 5), (4, 9)), change((12, 13), (16, 21))]
+        );
+    }
+
+    #[test]
+    fn an_inserted_argument_is_the_words_added() {
+        let (a, b) = ("call(first, last)\n", "call(first, middle, last)\n");
+        assert_eq!(changes(a, b, &[hunk((0, 1), (0, 1))]), [change((12, 12), (12, 20))]);
+    }
+
+    #[test]
+    fn a_deleted_word_from_the_middle_of_a_line() {
+        let (a, b) = ("one two three four\n", "one two four\n");
+        assert_eq!(changes(a, b, &[hunk((0, 1), (0, 1))]), [change((8, 14), (8, 8))]);
+    }
+
+    #[test]
     fn unrelated_lines_are_one_change() {
         let changes = changes("aa\nbb\n", "xx\nyy\n", &[hunk((0, 2), (0, 2))]);
         assert_eq!(changes, [change((0, 5), (0, 5))]);

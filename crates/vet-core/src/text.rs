@@ -238,3 +238,52 @@ pub(crate) fn unique_map(old: &[&[u8]], new: &[&[u8]]) -> Vec<Option<usize>> {
         .map(|(i, &j)| j.filter(|&j| (co[old[i]] == 1 && cn[new[j]] == 1) || stable(i, j)))
         .collect()
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn lines(text: &str) -> Vec<&[u8]> {
+        text.split_inclusive('\n').map(str::as_bytes).collect()
+    }
+
+    fn mapped(old: &str, new: &str) -> Vec<Option<usize>> {
+        unique_map(&lines(old), &lines(new))
+    }
+
+    #[test]
+    fn unchanged_lines_follow_what_was_added_or_removed_around_them() {
+        assert_eq!(mapped("a\nb\nc\n", "x\na\nb\nc\n"), [Some(1), Some(2), Some(3)]);
+        assert_eq!(mapped("a\nb\nc\nd\n", "a\nd\n"), [Some(0), None, None, Some(1)]);
+        assert_eq!(
+            mapped("a\nb\nc\nd\n", "a\nB\nc\nd\n"),
+            [Some(0), None, Some(2), Some(3)]
+        );
+    }
+
+    #[test]
+    fn a_repeated_line_stays_mapped_only_where_its_neighbours_stay() {
+        // The new brace is one of three; the last brace, whose neighbour moved, is not trusted.
+        assert_eq!(
+            mapped("x\n}\n}\ny\n", "x\n}\n}\n}\ny\n"),
+            [Some(0), Some(1), None, Some(4)]
+        );
+        // Away from the change the braces keep their place.
+        assert_eq!(
+            mapped("}\n}\nx\ny\n", "}\n}\nx\nY\n"),
+            [Some(0), Some(1), Some(2), None]
+        );
+    }
+
+    #[test]
+    fn a_moved_block_maps_lines_to_equal_lines_in_order() {
+        let old = "a1\na2\na3\nb1\nb2\nb3\n";
+        let new = "b1\nb2\nb3\na1\na2\na3\n";
+        let (o, n) = (lines(old), lines(new));
+        let map = unique_map(&o, &n);
+        let kept: Vec<usize> = map.iter().flatten().copied().collect();
+        assert!(!kept.is_empty());
+        assert!(kept.windows(2).all(|w| w[0] < w[1]));
+        assert!(map.iter().enumerate().all(|(i, j)| j.is_none_or(|j| o[i] == n[j])));
+    }
+}
