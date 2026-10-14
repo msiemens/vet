@@ -5,7 +5,6 @@ use vet_mapping as mapping;
 use vet_protocol::{Event, ProjectId, Response, Serving};
 use vet_semantic::policy::AnalysisPolicy;
 use vet_semantic::ports::BackendId;
-use vet_semantic::query::SemanticError;
 
 use crate::error::Result;
 use crate::{Open, Orchestrator};
@@ -21,14 +20,11 @@ impl Orchestrator {
         let ready = self.ready(project).await?;
         let serving = paths
             .iter()
-            .map(|path| {
-                let file = RepoPath::from(path.as_str());
-                match ready.language_of(&file) {
-                    Some(language) => Serving::Language { language },
-                    None => Serving::Unsupported {
-                        why: mapping::semantic::unavailable(&SemanticError::NoBackend(file), None),
-                    },
-                }
+            .map(|path| match ready.language_of(&RepoPath::from(path.as_str())) {
+                Some(language) => Serving::Language { language },
+                None => Serving::Unsupported {
+                    why: mapping::semantic::unsupported(),
+                },
             })
             .collect();
         Ok(Response::ServedBy { serving })

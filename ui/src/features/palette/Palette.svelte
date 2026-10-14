@@ -29,7 +29,6 @@
   import { keyId } from "../../state/changesetKey";
   import { commands } from "../../state/commands";
   import { isMac } from "../../state/host";
-  import { progress } from "../../state/progress.svelte";
   import { queue } from "../../state/queue.svelte";
   import { serverList } from "../../state/serverList.svelte";
   import { threads } from "../../state/threads.svelte";
@@ -158,7 +157,7 @@
     }),
   );
   const failed = $derived(failedServers(found, serverList.servers));
-  const indexing = $derived(indexingNotes(found, serverList.servers, progress.tasks));
+  const indexing = $derived(indexingNotes(found, serverList.servers, serverList.runtimes));
   const entries = $derived(entriesOf(built.groups));
   const at = $derived(Math.min(cursor, entries.length - 1));
   const current = $derived<Entry | undefined>(entries[at]);

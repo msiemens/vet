@@ -1,64 +1,78 @@
-// What the footer says about the language server of the focused file: its name and, as far as
-// the backend has told, whether it is starting, indexing, ready, failed or not installed.
+// What the footer says about the language server of the focused file: its name and, as the backend
+// has told, whether it is starting, indexing, ready, failed or not installed. Which server serves a
+// file, and what each is doing, is the backend's to say; this only words it.
 
 import type { ServerFeatures } from "../generated/ServerFeatures";
 import type { ServerInfo } from "../generated/ServerInfo";
-import type { Task } from "../generated/Task";
-import { basename } from "../lib/paths.ts";
+import type { ServerRuntime } from "../generated/ServerRuntime";
+import type { ServerRuntimes } from "../generated/ServerRuntimes";
+import type { Serving } from "../generated/Serving";
+import type { Unavailable } from "../generated/Unavailable";
 import type { SemanticSummary } from "./semanticSummary";
-import { fractionOf } from "./taskHeadline.ts";
-
-function extensionOf(path: string): string | undefined {
-  const name = basename(path);
-  const dot = name.lastIndexOf(".");
-  return dot > 0 ? name.slice(dot + 1).toLowerCase() : undefined;
-}
 
 /**
- * Whether the server serves the file `path`: by its extension, or by its name (`Dockerfile`, also
- * followed by a dot and anything, as `Dockerfile.dev`).
+ * Whether a language server is there for a file served as `serving`: one that was found, whether it
+ * runs yet or not. A file not known to be served, or servers not loaded yet, say nothing.
  */
-function serves(server: ServerInfo, path: string): boolean {
-  const extension = extensionOf(path);
-  if (extension !== undefined && server.extensions.includes(extension)) return true;
-  const name = basename(path);
-  return server.fileNames.some((n) => name === n || name.startsWith(`${n}.`));
+export function hasServer(serving: Serving | undefined, servers: readonly ServerInfo[]): boolean {
+  if (serving === undefined) return true;
+  if (serving.type === "unsupported") return false;
+  const server = servers.find((s) => s.language === serving.language);
+  return !server || server.state.type === "found";
 }
 
 /**
- * Whether a language server is there for the type of file `path` is: one serving it that was
- * found, whether it runs yet or not. An empty list is one not loaded yet, which says nothing.
- */
-export function hasServer(path: string, servers: readonly ServerInfo[]): boolean {
-  if (!servers.length) return true;
-  return servers.some((s) => s.state.type === "found" && serves(s, path));
-}
-
-/** The language whose server serves the type of file `path` is; none if no language does. */
-export function languageOf(path: string, servers: readonly ServerInfo[]): string | undefined {
-  return servers.find((s) => serves(s, path))?.language;
-}
-
-/** Whether the server serving `path` is starting or indexing, by the running background `tasks`. */
-export function atWork(path: string, servers: readonly ServerInfo[], tasks: readonly Task[]): boolean {
-  const server = servers.find((s) => serves(s, path));
-  return (
-    !!server &&
-    tasks.some((t) => (t.kind === "serverIndex" || t.kind === "serverStart") && t.title.includes(server.server))
-  );
-}
-
-/**
- * The name of the server for the type of file `path` is when that server has said it does not offer
- * `feature`; none while it has not said (it has not started yet) or offers it.
+ * The name of the server of `language` when that server has said it does not offer `feature`; none
+ * while it has not said (it has not started yet) or offers it.
  */
 export function withoutFeature(
-  path: string,
+  language: string | undefined,
   servers: readonly ServerInfo[],
   feature: keyof ServerFeatures,
 ): string | undefined {
-  const server = servers.find((s) => serves(s, path));
+  const server = servers.find((s) => s.language === language);
   return server?.features?.[feature] === false ? server.server : undefined;
+}
+
+const runtimesOf = (language: string, all: ServerRuntimes) => all.runtimes.filter((r) => r.language === language);
+
+/** Whether a server of `language` is starting or indexing, on either side. */
+export function atWork(language: string | undefined, all: ServerRuntimes): boolean {
+  return (
+    language !== undefined &&
+    runtimesOf(language, all).some((r) => r.phase.type === "starting" || r.phase.type === "indexing")
+  );
+}
+
+/** How far a server is in 0..1; `undefined` when it does not say. */
+function fractionOf({ done, total }: { done: number | null; total: number | null }): number | undefined {
+  if (done === null || total === null || total <= 0) return undefined;
+  return Math.min(1, Math.max(0, done / total));
+}
+
+/** The server of `language` as far as it is indexing, on the target side first; none if it does not. */
+export function indexingOf(
+  language: string | undefined,
+  all: ServerRuntimes,
+): { fraction?: number; detail?: string } | undefined {
+  if (language === undefined) return undefined;
+  const own = runtimesOf(language, all).sort(targetFirst);
+  for (const { phase } of own) {
+    if (phase.type === "indexing") return { fraction: fractionOf(phase), detail: phase.detail ?? undefined };
+  }
+  return undefined;
+}
+
+const targetFirst = (a: ServerRuntime, b: ServerRuntime) => Number(a.side === "base") - Number(b.side === "base");
+
+/** What most deserves saying of a language's servers: work in progress, then a failure, then readiness. */
+function mostPressing(own: readonly ServerRuntime[]): ServerRuntime | undefined {
+  const order = [...own].sort(targetFirst);
+  for (const type of ["indexing", "starting", "failed", "ready"] as const) {
+    const found = order.find((r) => r.phase.type === type);
+    if (found) return found;
+  }
+  return undefined;
 }
 
 export interface ServerLine {
@@ -72,44 +86,55 @@ export interface ServerLine {
   indexing?: { fraction?: number };
 }
 
+/** A problem with the server that is not the server's own absence or failure is said by its label alone. */
+function plain(why: Unavailable): ServerLine {
+  return { name: why.label, title: why.message };
+}
+
 /**
- * `path` is the focused file tab's file; the Changes tab holds many files, so no one server's
- * status applies there. `tasks` are the running background tasks.
+ * `path` is the focused file tab's file, served as `serving`; the Changes tab holds many files, so
+ * no one server's status applies there.
  */
 export function serverLine(
   path: string | undefined,
+  serving: Serving | undefined,
   servers: readonly ServerInfo[],
-  tasks: readonly Task[],
+  runtimes: ServerRuntimes,
   summary: SemanticSummary,
 ): ServerLine | undefined {
   if (path === undefined) return undefined;
   const { missing } = summary;
-  if (missing && missing.kind !== "serverMissing" && missing.kind !== "serverFailed") {
-    return { name: missing.label, title: missing.message };
+  if (missing && missing.kind !== "serverMissing" && missing.kind !== "serverFailed") return plain(missing);
+  const language = missing?.language ?? (serving?.type === "language" ? serving.language : undefined);
+  const server = servers.find((s) => s.language === language);
+  if (!server) return missing && plain(missing);
+  const failed = (why: Unavailable): ServerLine => ({
+    name: server.server,
+    state: why.kind === "serverMissing" ? "not installed" : "failed",
+    title: why.message,
+  });
+  if (missing) return failed(missing);
+  const shown = mostPressing(runtimesOf(server.language, runtimes));
+  const side = shown?.side === "base" ? " for the base" : "";
+  switch (shown?.phase.type) {
+    case "failed":
+      return shown.phase.why.kind === "serverMissing" || shown.phase.why.kind === "serverFailed"
+        ? failed(shown.phase.why)
+        : plain(shown.phase.why);
+    case "indexing": {
+      const fraction = fractionOf(shown.phase);
+      return {
+        name: server.server,
+        state: fraction === undefined ? "indexing" : `indexing ${Math.round(fraction * 100)}%`,
+        title: shown.phase.detail ?? `Indexing ${server.server}${side}`,
+        indexing: { fraction },
+      };
+    }
+    case "starting":
+      return { name: server.server, state: "starting", title: `Starting ${server.server}${side}` };
+    case "ready":
+      return { name: server.server, state: "ready" };
+    default:
+      return { name: server.server };
   }
-  const server = missing?.language
-    ? servers.find((s) => s.language === missing.language)
-    : servers.find((s) => serves(s, path));
-  if (!server) return missing && { name: missing.label, title: missing.message };
-  if (missing) {
-    return {
-      name: server.server,
-      state: missing.kind === "serverMissing" ? "not installed" : "failed",
-      title: missing.message,
-    };
-  }
-  const own = tasks.filter((t) => t.title.includes(server.server));
-  const indexing = own.find((t) => t.kind === "serverIndex");
-  if (indexing) {
-    const fraction = fractionOf(indexing);
-    return {
-      name: server.server,
-      state: fraction === undefined ? "indexing" : `indexing ${Math.round(fraction * 100)}%`,
-      title: indexing.detail ?? indexing.title,
-      indexing: { fraction },
-    };
-  }
-  const starting = own.find((t) => t.kind === "serverStart");
-  if (starting) return { name: server.server, state: "starting", title: starting.title };
-  return { name: server.server, state: summary.answered ? "ready" : undefined };
 }

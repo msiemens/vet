@@ -281,6 +281,16 @@ pub fn unavailable(error: &SemanticError, language: Option<String>) -> p::Unavai
     }
 }
 
+/// Why a file no language is configured for is not analysed.
+pub fn unsupported() -> p::Unavailable {
+    p::Unavailable {
+        kind: Kind::Unsupported,
+        label: label(Kind::Unsupported).to_owned(),
+        message: "No language server handles this type of file".to_owned(),
+        language: None,
+    }
+}
+
 /// What the viewer hears when the server `name` died while running.
 pub fn server_died(name: &str, outcome: Outcome) -> p::Notification {
     let text = match outcome {
@@ -572,8 +582,6 @@ pub fn servers(
                 language: s.language.0.clone(),
                 title: s.title.clone(),
                 server: s.server.clone(),
-                extensions: s.extensions.clone(),
-                file_names: s.file_names.clone(),
                 state: server_state(&s.state),
                 custom_path: s.custom_path.clone(),
                 pinned_version: s.pinned.clone(),

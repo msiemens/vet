@@ -14,20 +14,11 @@ import { queue } from "./queue.svelte";
 import { Latest } from "./resource";
 import { reviewShown } from "./reviewShown.svelte";
 import { semantic } from "./semantic.svelte";
-import { serverList } from "./serverList.svelte";
-import { languageOf } from "./serverStatus";
+import { servedBy } from "./servedBy.svelte";
 import { session } from "./session.svelte";
 
 /** Files asked about at once. */
 const FILES_AT_ONCE = 4;
-
-/** A file no language serves. */
-const UNSUPPORTED: Unavailable = {
-  kind: "unsupported",
-  label: "No language support",
-  message: "No language server handles this type of file",
-  language: null,
-};
 
 /** A file the panel lists as not analysed, and why. */
 export interface NotAnalysed {
@@ -90,9 +81,9 @@ class ProblemsState {
     if (paths.length !== this.extra.length || paths.some((p, i) => p !== this.extra[i])) this.extra = paths;
   }
 
-  /** Whether a language server serves the file; true while the servers are not known. */
+  /** Whether a language server serves the file; true while that is not known. */
   served(path: string): boolean {
-    return !serverList.servers.length || languageOf(path, serverList.servers) !== undefined;
+    return servedBy.of(path)?.type !== "unsupported";
   }
 
   private load(revision: number, paths: readonly string[]) {
@@ -148,7 +139,8 @@ class ProblemsState {
   /** Files of `paths` that have no problems list: a server is missing, failed or there is none; those still waiting are left out. */
   notAnalysed(paths: readonly string[]): NotAnalysed[] {
     return paths.flatMap((path): NotAnalysed[] => {
-      if (!this.served(path)) return [{ path, why: UNSUPPORTED }];
+      const serving = servedBy.of(path);
+      if (serving?.type === "unsupported") return [{ path, why: serving.why }];
       const why = semantic.unavailableOf(path);
       return why ? [{ path, why }] : [];
     });

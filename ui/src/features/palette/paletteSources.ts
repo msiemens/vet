@@ -5,8 +5,8 @@
 import type { ChangedSymbol } from "../../generated/ChangedSymbol";
 import type { LanguageSymbols } from "../../generated/LanguageSymbols";
 import type { ServerInfo } from "../../generated/ServerInfo";
+import type { ServerRuntimes } from "../../generated/ServerRuntimes";
 import type { SymbolInfo } from "../../generated/SymbolInfo";
-import type { Task } from "../../generated/Task";
 import type { Thread } from "../../generated/Thread";
 import type { UnavailableKind } from "../../generated/UnavailableKind";
 import type { StatusLetter } from "../../lib/changeLetter.ts";
@@ -14,7 +14,7 @@ import { splitQualified } from "../../lib/qualified.ts";
 import { shortLabel } from "../../lib/symbolLabel.ts";
 import type { CommandRegistry } from "../../lib/commands.ts";
 import type { CommandContext } from "../../state/commands.ts";
-import { fractionOf } from "../../state/taskHeadline.ts";
+import { indexingOf } from "../../state/serverStatus.ts";
 import { PALETTE_COMMANDS } from "./paletteCommands.ts";
 import type {
   ActionCandidate,
@@ -154,14 +154,13 @@ export function failedServers(languages: readonly LanguageSymbols[], servers: re
 export function indexingNotes(
   languages: readonly LanguageSymbols[],
   servers: readonly ServerInfo[],
-  tasks: readonly Task[],
+  runtimes: ServerRuntimes,
 ): string[] {
   return languages.flatMap((l) => {
     const server = servers.find((s) => s.language === l.language);
-    const indexing =
-      server && l.failure === null && tasks.find((t) => t.kind === "serverIndex" && t.title.includes(server.server));
+    const indexing = server && l.failure === null && indexingOf(l.language, runtimes);
     if (!indexing) return [];
-    const fraction = fractionOf(indexing);
+    const fraction = indexing.fraction;
     const how = fraction === undefined ? "" : ` (${Math.round(fraction * 100)}%)`;
     return [`${server.server} is still indexing${how}. Symbols of unchanged files may be incomplete.`];
   });

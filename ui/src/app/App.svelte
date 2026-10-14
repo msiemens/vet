@@ -109,6 +109,7 @@
   import { reviewShown } from "../state/reviewShown.svelte";
   import { recent } from "../state/recent.svelte";
   import { semantic } from "../state/semantic.svelte";
+  import { servedBy } from "../state/servedBy.svelte";
   import { serverList } from "../state/serverList.svelte";
   import { serverLine } from "../state/serverStatus";
   import { session } from "../state/session.svelte";
@@ -283,7 +284,13 @@
   const footer = $derived({
     commit:
       changeset.shownCommit === undefined ? undefined : `${changeset.shownCommit + 1} / ${changeset.commits.length}`,
-    languageServer: serverLine(controller?.semanticPath, serverList.servers, backgroundTasks.tasks, semanticSummary),
+    languageServer: serverLine(
+      controller?.semanticPath,
+      controller?.semanticPath === undefined ? undefined : servedBy.of(controller.semanticPath),
+      serverList.servers,
+      serverList.runtimes,
+      semanticSummary,
+    ),
     problems: problems.summary,
   });
   // The queue follows the changeset on view whichever screen shows; what the language servers answer

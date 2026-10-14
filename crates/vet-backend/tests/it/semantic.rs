@@ -869,8 +869,6 @@ async fn servers_are_listed_and_custom_paths_persist_and_notify() {
     let listed = first.servers(project).await;
     let python = listed.iter().find(|s| s.language == "python").unwrap();
     assert_eq!(python.custom_path, None);
-    // The footer finds the server of a file by its extension.
-    assert!(python.extensions.iter().any(|e| e == "py"));
     assert!(
         listed
             .iter()

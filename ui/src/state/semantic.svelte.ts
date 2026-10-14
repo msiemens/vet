@@ -17,8 +17,8 @@ import { DefinitionProbe } from "./definitionProbe";
 import { DiagnosticsBook, type FileDiagnostics } from "./diagnosticsBook";
 import { InFlight } from "./inFlight";
 import { notices } from "./notices.svelte";
-import { progress } from "./progress.svelte";
 import { type SemanticSummary, summarize } from "./semanticSummary";
+import { servedBy } from "./servedBy.svelte";
 import { serverList } from "./serverList.svelte";
 import { atWork, hasServer, serverLine } from "./serverStatus";
 import { session } from "./session.svelte";
@@ -93,7 +93,7 @@ class SemanticStore {
     signal?: AbortSignal,
   ): Promise<HoverAnswer> {
     const backend = session.backend;
-    if (!backend || !hasServer(path, serverList.servers)) return NOTHING;
+    if (!backend || !hasServer(servedBy.of(path), serverList.servers)) return NOTHING;
     try {
       return await this.hovering.share(
         JSON.stringify([revision, side, path, line, col]),
@@ -102,7 +102,7 @@ class SemanticStore {
           this.note(revision, path, r.unavailable);
           return {
             ...r,
-            server: serverLine(path, serverList.servers, progress.tasks, this.summary(path)),
+            server: serverLine(path, servedBy.of(path), serverList.servers, serverList.runtimes, this.summary(path)),
             definitionKey: commands.binding("review.goToDefinition")?.label,
           };
         },
@@ -149,7 +149,7 @@ class SemanticStore {
     col: number,
     signal?: AbortSignal,
   ): Promise<boolean> {
-    if (!session.backend || !hasServer(path, serverList.servers)) return false;
+    if (!session.backend || !hasServer(servedBy.of(path), serverList.servers)) return false;
     if (!this.enter(revision)) return false;
     return this.probe.has(JSON.stringify([revision, side, path, line, col]), signal);
   }
@@ -185,7 +185,7 @@ class SemanticStore {
     return backend.diagnostics(revision, path, againstBase, signal);
   }
 
-  /** Resolves once the server of the file's language is not starting or indexing. */
+  /** Resolves once the server of the file's language is not starting, indexing or otherwise at work. */
   private async untilIdle(path: string, signal: AbortSignal): Promise<void> {
     const stops: (() => void)[] = [];
     await new Promise<void>((resolve) => {
@@ -197,7 +197,8 @@ class SemanticStore {
       stops.push(
         $effect.root(() => {
           $effect(() => {
-            if (!atWork(path, serverList.servers, progress.tasks)) resolve();
+            // Not knowing who serves the file is nothing to wait for: the answers say if it was too early.
+            if (!atWork(servedBy.language(path), serverList.runtimes)) resolve();
           });
         }),
       );

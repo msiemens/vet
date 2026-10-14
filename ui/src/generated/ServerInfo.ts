@@ -14,16 +14,7 @@ title: string,
 /**
  * The server's name as a person knows it, e.g. "Pyright".
  */
-server: string, 
-/**
- * The file extensions (without the dot) the server serves.
- */
-extensions: Array<string>, 
-/**
- * The names of files without an extension it serves (`Dockerfile`); a name followed by a dot
- * and anything (`Dockerfile.dev`) is served too.
- */
-fileNames: Array<string>, state: ServerState, 
+server: string, state: ServerState, 
 /**
  * The path the user set; it is what `state` was resolved from if present.
  */

@@ -40,10 +40,9 @@
   } from "../../state/problemRows";
   import { chooseGroupItem, groupMenu, menuChanged } from "../../state/problemMenu";
   import { problems } from "../../state/problems.svelte";
-  import { progress as tasks } from "../../state/progress.svelte";
+  import { servedBy } from "../../state/servedBy.svelte";
   import { serverList } from "../../state/serverList.svelte";
-  import { languageOf, serverLine } from "../../state/serverStatus";
-  import { semantic } from "../../state/semantic.svelte";
+  import { indexingOf } from "../../state/serverStatus";
   import { versions } from "../../state/versions.svelte";
 
   let {
@@ -145,15 +144,9 @@
   /** No file can be analysed, so what is not analysed is all there is to say and is shown open. */
   const naShown = $derived(naOpen || everyFileUnserved);
   /** The server of the first file in scope, for what the notices say. */
-  const serverOf = $derived.by(() => {
-    const path = scopePaths.find((p) => languageOf(p, serverList.servers) !== undefined);
-    const language = path && languageOf(path, serverList.servers);
-    return serverList.servers.find((s) => s.language === language);
-  });
-  const indexing = $derived.by(() => {
-    const path = scopePaths.find((p) => languageOf(p, serverList.servers) !== undefined);
-    return path ? serverLine(path, serverList.servers, tasks.tasks, semantic.summary(path))?.indexing : undefined;
-  });
+  const language = $derived(scopePaths.map((p) => servedBy.language(p)).find((l) => l !== undefined));
+  const serverOf = $derived(serverList.servers.find((s) => s.language === language));
+  const indexing = $derived(indexingOf(language, serverList.runtimes));
   const items = $derived<Item[]>([
     ...rows,
     ...(indexing && serverOf && unanswered.length

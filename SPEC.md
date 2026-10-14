@@ -259,7 +259,7 @@ This catches base changes **within the reviewed region only**. Semantic changes 
 | Shell      | bash-language-server (with ShellCheck when installed)                                                                                                                                                                              | none                       |
 | Dockerfile | dockerfile-language-server-nodejs (offline, unlike Docker's own server, which needs Buildx and asks Docker Scout)                                                                                                                  | instruction docs           |
 
-A file is served by the language whose extension it has, or, for files like `Dockerfile`, whose file name it has; no two languages claim the same one.
+A file is served by the language whose extension it has, or, for files like `Dockerfile`, whose file name it has; no two languages claim the same one. The backend decides which language serves a file (a kind of file that several projects share, such as the `.html` of an Angular app, goes by the project's own files) and tells the window, which does not match names itself. It also tells what each language's server is doing for the base and the target side of the changeset on view (starting, indexing with the server's progress, ready, failed), pushed on every change: the footer shows that, and nothing waits for a server by a guessed time.
 
 ```rust
 enum Backend {

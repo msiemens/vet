@@ -42,7 +42,7 @@ import type { ReviewFilter } from "../generated/ReviewFilter";
 import type { ReviewSubmitted } from "../generated/ReviewSubmitted";
 import type { ReviewUpdate } from "../generated/ReviewUpdate";
 import type { SemanticLocation } from "../generated/SemanticLocation";
-import type { ServerInfo } from "../generated/ServerInfo";
+import type { Serving } from "../generated/Serving";
 import type { Side } from "../generated/Side";
 import type { SymbolAt } from "../generated/SymbolAt";
 import type { SymbolId } from "../generated/SymbolId";
@@ -88,6 +88,9 @@ export type FileContents = Extract<Response, { type: "fileContents" }>;
 export type SearchQuery = Omit<Extract<Request, { type: "search" }>, "type" | "project">;
 
 export type SearchResults = Extract<Response, { type: "searchResults" }>;
+
+/** The servers of a project and what the ones of the changeset on view are doing. */
+export type ServersAnswer = Pick<Extract<Response, { type: "servers" }>, "servers" | "runtimes">;
 
 /** The events that belong to the backend, not to a session. */
 type ProcessEvent = Extract<
@@ -681,25 +684,30 @@ export class Backend {
     return expect(await this.semantic(revision, request, signal), "workspaceSymbols").languages;
   }
 
-  /** Each language's server as it resolves for the open repository. */
-  async listServers(): Promise<ServerInfo[]> {
-    return expect(await this.conn.request({ type: "listServers", project: this.pid }), "servers").servers;
+  /** Each language's server as it resolves for the open repository, and what the servers of the changeset on view are doing. */
+  async listServers(): Promise<ServersAnswer> {
+    return expect(await this.conn.request({ type: "listServers", project: this.pid }), "servers");
+  }
+
+  /** Which server serves each of `paths`, in order. */
+  async servedBy(paths: readonly string[]): Promise<Serving[]> {
+    return expect(await this.conn.request({ type: "servedBy", project: this.pid, paths: [...paths] }), "servedBy")
+      .serving;
   }
 
   /** Installs the pinned server; output arrives as `serverInstallOutput` events. Rejects with the tool's output tail. */
-  async installServer(language: string): Promise<ServerInfo[]> {
-    return expect(await this.conn.request({ type: "installServer", project: this.pid, language }), "servers").servers;
+  async installServer(language: string): Promise<ServersAnswer> {
+    return expect(await this.conn.request({ type: "installServer", project: this.pid, language }), "servers");
   }
 
   /** `null` removes the custom path: automatic resolution again. The path is not checked; `listServers` says whether it works. */
-  async setServerPath(language: string, path: string | null): Promise<ServerInfo[]> {
-    return expect(await this.conn.request({ type: "setServerPath", project: this.pid, language, path }), "servers")
-      .servers;
+  async setServerPath(language: string, path: string | null): Promise<ServersAnswer> {
+    return expect(await this.conn.request({ type: "setServerPath", project: this.pid, language, path }), "servers");
   }
 
   /** Stops the project's servers of the language at once and starts them anew; resolves when they run. Rejects with why one did not start. */
-  async restartServer(language: string): Promise<ServerInfo[]> {
-    return expect(await this.conn.request({ type: "restartServer", project: this.pid, language }), "servers").servers;
+  async restartServer(language: string): Promise<ServersAnswer> {
+    return expect(await this.conn.request({ type: "restartServer", project: this.pid, language }), "servers");
   }
 
   /**

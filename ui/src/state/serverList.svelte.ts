@@ -5,13 +5,20 @@
 // kept, whichever page is shown.
 
 import type { ServerInfo } from "../generated/ServerInfo";
+import type { ServerRuntimes } from "../generated/ServerRuntimes";
 import { errorText } from "../lib/errorText";
+import type { ServersAnswer } from "./backend";
 import { type InstallProgress, appendLog } from "./installLog";
 import { Resource } from "./resource";
 import { session } from "./session.svelte";
 
+/** What no server is known to do, older than anything the backend says. */
+const NOTHING_KNOWN: ServerRuntimes = { serial: -1, runtimes: [] };
+
 class ServerList {
   servers = $state.raw<ServerInfo[]>([]);
+  /** What the servers of the changeset on view are doing: the backend's latest word. */
+  runtimes = $state.raw<ServerRuntimes>(NOTHING_KNOWN);
   loading = $state(false);
   loadError = $state<string>();
   installs = $state.raw<Partial<Record<string, InstallProgress>>>({});
@@ -19,9 +26,9 @@ class ServerList {
   logs = $state.raw<Record<string, string[]>>({});
   /** Whether each language's install output is shown. */
   logOpen = $state.raw<Record<string, boolean>>({});
-  private reads = new Resource<ServerInfo[]>({
+  private reads = new Resource<ServersAnswer>({
     busy: (on) => (this.loading = on),
-    apply: (servers) => this.set(servers),
+    apply: (answer) => this.set(answer),
     failed: (error) => (this.loadError = errorText(error)),
   });
 
@@ -33,18 +40,24 @@ class ServerList {
           this.logs = { ...this.logs, [event.language]: appendLog(this.logs[event.language] ?? [], event.line) };
           return;
         }
-        // A server that has started has told what it offers; indexing is the last step of a start.
-        const started = event.type === "task" && event.kind === "serverIndex" && event.state.type === "finished";
+        // A server that has started has told what it offers.
+        const started = event.type === "serverRuntimes" && this.hear(event.runtimes);
         if (event.type === "serversChanged" || started) this.reload();
       }),
     );
-    session.onOpen(() => this.reload());
+    session.onOpen(() => {
+      this.runtimes = NOTHING_KNOWN;
+      this.reload();
+    });
     session.onResync(() => {
+      // A backend that restarted numbers what it says afresh.
+      this.runtimes = NOTHING_KNOWN;
       if (session.repo !== undefined) this.reload();
     });
     session.onClose(() => {
       this.reads.cancel();
       this.servers = [];
+      this.runtimes = NOTHING_KNOWN;
       this.loadError = undefined;
       this.installs = {};
       this.logs = {};
@@ -64,14 +77,25 @@ class ServerList {
   }
 
   /** Takes the list an install, a new path or a restart answered with, which is as current as a read. */
-  private replace(servers: ServerInfo[]) {
+  private replace(answer: ServersAnswer) {
     this.reads.cancel();
-    this.set(servers);
+    this.set(answer);
   }
 
-  private set(servers: ServerInfo[]) {
+  private set({ servers, runtimes }: ServersAnswer) {
     this.servers = servers;
+    this.hear(runtimes);
     this.loadError = undefined;
+  }
+
+  /** Takes what the backend says of the servers' phases if it is newer than what is held; whether a server became ready by it. */
+  private hear(runtimes: ServerRuntimes): boolean {
+    if (runtimes.serial <= this.runtimes.serial) return false;
+    const was = new Set(
+      this.runtimes.runtimes.filter((r) => r.phase.type === "ready").map((r) => `${r.language}/${r.side}`),
+    );
+    this.runtimes = runtimes;
+    return runtimes.runtimes.some((r) => r.phase.type === "ready" && !was.has(`${r.language}/${r.side}`));
   }
 
   /** Restarts the servers of `language` in the open project; resolves with why they did not start, if so. */

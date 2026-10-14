@@ -32,8 +32,9 @@ import { reviewShown } from "../../state/reviewShown.svelte";
 import { stepInFile } from "../../state/problemRows";
 import { problems } from "../../state/problems.svelte";
 import { semantic } from "../../state/semantic.svelte";
+import { servedBy } from "../../state/servedBy.svelte";
 import { serverList } from "../../state/serverList.svelte";
-import { languageOf, withoutFeature } from "../../state/serverStatus";
+import { withoutFeature } from "../../state/serverStatus";
 import { session } from "../../state/session.svelte";
 import { type Shown, isCurrent } from "../../state/shown";
 import { sameView } from "../../state/view";
@@ -556,9 +557,10 @@ export class ReviewController {
       hunk: view?.current ?? text?.current ?? -1,
       findOpen: this.find.open.has(id),
       editor,
-      noImplementations: editor && withoutFeature(editor.path, serverList.servers, "implementations"),
+      noImplementations:
+        editor && withoutFeature(servedBy.language(editor.path), serverList.servers, "implementations"),
       noUsages: this.showsCommit(id),
-      serverLanguage: file === undefined ? undefined : languageOf(file, serverList.servers),
+      serverLanguage: file === undefined ? undefined : servedBy.language(file),
     };
   }
 

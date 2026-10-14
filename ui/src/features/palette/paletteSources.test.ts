@@ -3,7 +3,7 @@ import { test } from "node:test";
 import type { ChangedSymbol } from "../../generated/ChangedSymbol";
 import type { LanguageSymbols } from "../../generated/LanguageSymbols";
 import type { ServerInfo } from "../../generated/ServerInfo";
-import type { Task } from "../../generated/Task";
+import type { ServerRuntimes } from "../../generated/ServerRuntimes";
 import type { Thread } from "../../generated/Thread";
 import type { Unavailable } from "../../generated/Unavailable";
 import type { UnavailableKind } from "../../generated/UnavailableKind";
@@ -137,19 +137,24 @@ void test("a language whose server failed is named by its server, with why and w
 });
 
 const server = { language: "rust", server: "rust-analyzer" } as ServerInfo;
-const indexing = (title: string, done?: number): Task =>
-  ({ kind: "serverIndex", title, done: done ?? null, total: done === undefined ? null : 100 }) as Task;
+const indexing = (language: string, done?: number): ServerRuntimes => ({
+  serial: 1,
+  runtimes: [
+    {
+      language,
+      side: "target",
+      phase: { type: "indexing", done: done ?? null, total: done === undefined ? null : 100, detail: null },
+    },
+  ],
+});
 
 void test("a server still indexing is said to make the symbols incomplete, a failed or idle one is not", () => {
   const ok = [answer("rust", [])];
-  assert.deepEqual(indexingNotes(ok, [server], [indexing("Indexing rust-analyzer", 62)]), [
+  assert.deepEqual(indexingNotes(ok, [server], indexing("rust", 62)), [
     "rust-analyzer is still indexing (62%). Symbols of unchanged files may be incomplete.",
   ]);
-  assert.deepEqual(indexingNotes(ok, [server], [indexing("Indexing Pyright")]), []);
-  assert.deepEqual(
-    indexingNotes([answer("rust", [], failure("serverFailed"))], [server], [indexing("Indexing rust-analyzer")]),
-    [],
-  );
+  assert.deepEqual(indexingNotes(ok, [server], indexing("python")), []);
+  assert.deepEqual(indexingNotes([answer("rust", [], failure("serverFailed"))], [server], indexing("rust")), []);
 });
 
 const thread = (over: Partial<Thread>): Thread =>

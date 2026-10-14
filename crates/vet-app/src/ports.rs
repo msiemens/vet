@@ -800,11 +800,6 @@ pub trait ServerResolver {
     fn title(&self, language: &BackendId) -> String;
     /// The server's name as a person knows it, e.g. "Pyright".
     fn display_name(&self, language: &BackendId) -> String;
-    /// The file extensions (without the dot) the language's server serves.
-    fn extensions(&self, language: &BackendId) -> Vec<String>;
-    /// The names of files without an extension that the language's server serves, each also
-    /// followed by a dot and anything (`Dockerfile`, `Dockerfile.dev`).
-    fn file_names(&self, language: &BackendId) -> Vec<String>;
     /// The version `install` puts in place; `None` if Vet cannot install the language's server.
     fn pinned(&self, language: &BackendId) -> Option<String>;
     /// Why `install` cannot run now (a tool it needs is missing), if so.
