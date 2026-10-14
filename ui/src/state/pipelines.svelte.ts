@@ -7,7 +7,6 @@ import type { PipelineAction } from "../generated/PipelineAction";
 import type { PipelineStep } from "../generated/PipelineStep";
 import { errorText } from "../lib/errorText";
 import { toggleIn } from "../lib/foldKeys";
-import { checks } from "./checks.svelte";
 import { notices } from "./notices.svelte";
 import { Latest } from "./resource";
 import { session } from "./session.svelte";
@@ -88,8 +87,9 @@ class PipelineStore {
   /**
    * Asks the platform to change a run of `commit`'s checks; `account` is whose token it is. What the
    * platform refuses is told to the viewer, and a token it says may not do it turns the actions off.
+   * The backend looks at the checks again after it took the request and pushes them.
    */
-  async act(action: PipelineAction, commit: string, account: string | undefined) {
+  async act(action: PipelineAction, account: string | undefined) {
     const backend = session.backend;
     if (this.busy || !backend) return;
     this.busy = true;
@@ -97,7 +97,6 @@ class PipelineStore {
       const outcome = await backend.changePipeline(action);
       if (outcome.type === "accepted") {
         if (action.type === "cancel") notices.show(CANCELLING);
-        checks.refresh([commit]);
       } else if (outcome.type === "forbidden") {
         if (account !== undefined) this.denied.add(account);
         notices.show(`${outcome.message}. The actions stay off until the token changes.`);

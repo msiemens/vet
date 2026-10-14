@@ -513,48 +513,60 @@ fn elapsed(started: Option<i64>, finished: Option<i64>) -> Option<u32> {
     started.zip(finished).map(|(from, to)| unix_secs((to - from).max(0)))
 }
 
+/// The pieces of `Checks`, shared by its answer and the pushed `Event::ChecksChanged`: the commits
+/// answered for, why some were left out, and until when the platform limits requests (unix seconds).
+pub fn checks_parts(
+    found: &[CommitChecks],
+    error: Option<&PlatformError>,
+) -> (Vec<p::CommitChecks>, Option<String>, Option<u32>) {
+    let checks = found
+        .iter()
+        .map(|commit| p::CommitChecks {
+            commit: commit.commit.clone(),
+            state: commit.state().map(ci_state),
+            runs: commit
+                .checks
+                .iter()
+                .map(|check| p::CheckRun {
+                    id: check.id.clone(),
+                    name: check.name.clone(),
+                    state: ci_state(check.state),
+                    phase: check_phase(check.phase),
+                    pipeline: check.run.as_ref().map(|run| run.id.clone()),
+                    duration: elapsed(check.started, check.finished),
+                    url: check.url.clone(),
+                    log: check.log,
+                })
+                .collect(),
+            pipelines: commit
+                .runs()
+                .into_iter()
+                .map(|summary| p::Pipeline {
+                    id: summary.run.id,
+                    name: summary.run.name,
+                    detail: summary.run.detail,
+                    attempt: summary.run.attempt,
+                    state: ci_state(summary.state),
+                    phase: check_phase(summary.phase),
+                })
+                .collect(),
+            url: commit.url.clone(),
+        })
+        .collect();
+    let limited_until = match error {
+        Some(PlatformError::RateLimited { retry_at, .. }) => retry_at.map(unix_secs),
+        _ => None,
+    };
+    (checks, error.map(ToString::to_string), limited_until)
+}
+
 /// The answer to `Checks`; `error` is why some commit could not be answered for.
 pub fn checks(found: &[CommitChecks], error: Option<&PlatformError>) -> p::Response {
+    let (checks, error, limited_until) = checks_parts(found, error);
     p::Response::Checks {
-        checks: found
-            .iter()
-            .map(|commit| p::CommitChecks {
-                commit: commit.commit.clone(),
-                state: commit.state().map(ci_state),
-                runs: commit
-                    .checks
-                    .iter()
-                    .map(|check| p::CheckRun {
-                        id: check.id.clone(),
-                        name: check.name.clone(),
-                        state: ci_state(check.state),
-                        phase: check_phase(check.phase),
-                        pipeline: check.run.as_ref().map(|run| run.id.clone()),
-                        duration: elapsed(check.started, check.finished),
-                        url: check.url.clone(),
-                        log: check.log,
-                    })
-                    .collect(),
-                pipelines: commit
-                    .runs()
-                    .into_iter()
-                    .map(|summary| p::Pipeline {
-                        id: summary.run.id,
-                        name: summary.run.name,
-                        detail: summary.run.detail,
-                        attempt: summary.run.attempt,
-                        state: ci_state(summary.state),
-                        phase: check_phase(summary.phase),
-                    })
-                    .collect(),
-                url: commit.url.clone(),
-            })
-            .collect(),
-        error: error.map(ToString::to_string),
-        limited_until: match error {
-            Some(PlatformError::RateLimited { retry_at, .. }) => retry_at.map(unix_secs),
-            _ => None,
-        },
+        checks,
+        error,
+        limited_until,
     }
 }
 

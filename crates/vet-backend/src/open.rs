@@ -123,6 +123,11 @@ pub(crate) struct Wired {
     copying: TaskSlot,
     /// The details of the queue's pull requests fetched ahead; a newer list's replaces it.
     prefetching: TaskSlot,
+    /// The checks of the changeset on view, refreshed while the review screen shows it; a newer
+    /// run replaces the older, and the project closing stops it.
+    checking: TaskSlot,
+    /// How long the checks task waits between two rounds while some checks still run.
+    checks_pace: Duration,
     closed: AtomicBool,
     trees: Arc<KeptTrees>,
     /// The answers of the language servers kept between launches.
@@ -165,6 +170,22 @@ impl Wired {
     /// with the session.
     pub(crate) fn keep_prefetching(&self, task: AbortHandle) {
         self.prefetching.keep(task);
+    }
+
+    /// Hands over the task that refreshes the changeset's checks; a newer run replaces it, and it
+    /// ends with the session.
+    pub(crate) fn keep_checking(&self, task: AbortHandle) {
+        self.checking.keep(task);
+    }
+
+    /// Stops refreshing the changeset's checks: the review screen is no longer shown.
+    pub(crate) fn stop_checking(&self) {
+        self.checking.stop();
+    }
+
+    /// How long the checks task waits between two rounds while some checks still run.
+    pub(crate) fn checks_pace(&self) -> Duration {
+        self.checks_pace
     }
 
     /// Copies the working tree's content into the store in the background, so the first mark
@@ -338,6 +359,7 @@ impl Resident for Wired {
         self.settling.stop();
         self.copying.stop();
         self.prefetching.stop();
+        self.checking.stop();
         if let Some(Ok(booted)) = self.booted.get() {
             booted.semantics.shutdown().await;
         }
@@ -463,6 +485,8 @@ impl Orchestrator {
             fetching: TaskSlot::default(),
             copying: TaskSlot::default(),
             prefetching: TaskSlot::default(),
+            checking: TaskSlot::default(),
+            checks_pace: self.config.checks_pace,
             closed: AtomicBool::new(false),
             trees: self.trees.clone(),
             answers: self.answers.clone(),

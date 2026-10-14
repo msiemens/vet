@@ -25,33 +25,44 @@ use crate::common::{Client, git, init, write};
 const NOW: &str = "2024-05-01T12:00:00Z";
 
 /// One pull request the fake lists.
-struct Pr {
-    number: u64,
+pub(crate) struct Pr {
+    pub(crate) number: u64,
     /// The platform's `updatedAt`, which a later change moves.
-    updated_at: String,
+    pub(crate) updated_at: String,
     /// What the discussion's `body` says.
-    description: String,
+    pub(crate) description: String,
     /// The commit `refs/pull/<number>/head` serves.
-    head: String,
+    pub(crate) head: String,
 }
 
 /// What the fake answers, and how it goes.
 #[derive(Default)]
-struct Mock {
-    prs: Vec<Pr>,
+pub(crate) struct Mock {
+    pub(crate) prs: Vec<Pr>,
     /// The base commit every pull request is compared with.
-    base: String,
+    pub(crate) base: String,
     /// How many discussions were answered.
-    discussions: usize,
+    pub(crate) discussions: usize,
     /// After this many discussions every further one is refused as a rate limit.
-    limit_after: Option<usize>,
+    pub(crate) limit_after: Option<usize>,
     /// The status a refusal uses; 0 means a rate limit (429). A plain failure (500) is not gated
     /// by the client, so a test can tell the prefetch's own stop from the client's.
-    refusal: u16,
+    pub(crate) refusal: u16,
     /// A pull request the platform does not have, which answers 404.
-    missing: Option<u64>,
+    pub(crate) missing: Option<u64>,
     /// How long answering a discussion takes, so a viewer's read can be seen to not wait for it.
-    delay: Duration,
+    pub(crate) delay: Duration,
+    /// The JSON answered for a commit's check runs once `checks_pending_calls` is spent; empty
+    /// means a commit without runs.
+    pub(crate) check_runs: String,
+    /// The JSON answered while `checks_pending_calls` remains: a run still going.
+    pub(crate) check_runs_pending: String,
+    /// How many more check-run reads answer with `check_runs_pending` before `check_runs`.
+    pub(crate) checks_pending_calls: usize,
+    /// How many check-run reads are refused with a rate limit (429, `Retry-After: 1`) first.
+    pub(crate) checks_refusals: usize,
+    /// How many check-run reads were answered, refusals included.
+    pub(crate) checks_calls: usize,
 }
 
 fn user_json() -> String {
@@ -162,6 +173,35 @@ fn github(mock: Arc<Mutex<Mock>>) -> Fake {
         }
         if request.path.starts_with("/user/teams") {
             return Canned::json("[]").with("Cache-Control", "no-store");
+        }
+        if request.path.contains("/check-runs") {
+            let mut mock = mock.lock().unwrap();
+            mock.checks_calls += 1;
+            if mock.checks_refusals > 0 {
+                mock.checks_refusals -= 1;
+                return Canned::status(429, r#"{"message":"slow down"}"#).with("Retry-After", "1");
+            }
+            let pending = mock.checks_pending_calls > 0;
+            if pending {
+                mock.checks_pending_calls -= 1;
+            }
+            let body = if pending {
+                mock.check_runs_pending.clone()
+            } else {
+                mock.check_runs.clone()
+            };
+            let body = if body.is_empty() {
+                r#"{"total_count":0,"check_runs":[]}"#.to_owned()
+            } else {
+                body
+            };
+            return Canned::json(&body);
+        }
+        if request.path.contains("/commits/") && request.path.contains("/status") {
+            return Canned::json(r#"{"state":"success","statuses":[]}"#);
+        }
+        if request.path.contains("/actions/runs") {
+            return Canned::json(r#"{"total_count":0,"workflow_runs":[]}"#);
         }
         if request.path.starts_with("/repos/acme/app/pulls") {
             let (number, updated) = {
@@ -279,7 +319,7 @@ fn project(wrapper: &Path) -> tempfile::TempDir {
 }
 
 /// Two pull requests, 7 updated before 8, and the bare repository they are fetched from.
-fn fixture() -> (Arc<Mutex<Mock>>, Fake, tempfile::TempDir, tempfile::TempDir) {
+pub(crate) fn fixture() -> (Arc<Mutex<Mock>>, Fake, tempfile::TempDir, tempfile::TempDir) {
     let scratch = tempfile::tempdir().unwrap();
     let (base, head, wrapper) = served(scratch.path());
     let mock = Arc::new(Mutex::new(Mock {
@@ -305,21 +345,26 @@ fn fixture() -> (Arc<Mutex<Mock>>, Fake, tempfile::TempDir, tempfile::TempDir) {
     (mock, fake, repo, scratch)
 }
 
-fn config() -> Config {
+pub(crate) fn config() -> Config {
     Config {
         debounce: Duration::from_millis(150),
         poll: Duration::from_millis(300),
         orphan_grace: Duration::from_secs(60),
         prefetch_pace: Duration::ZERO,
+        checks_pace: Duration::from_millis(30),
         ..Config::default()
     }
 }
 
 /// A backend whose platforms answer at `base`, with the credential the fake accepts.
-async fn backend(data: &Path, base: &str) -> (Arc<Orchestrator>, Client) {
-    let orchestrator = Arc::new(
-        Orchestrator::new(open_store(data).await.unwrap(), config()).with_platform_endpoints(Some(base), None),
-    );
+pub(crate) async fn backend(data: &Path, base: &str) -> (Arc<Orchestrator>, Client) {
+    backend_with(data, base, config()).await
+}
+
+/// A backend on `config`, whose platforms answer at `base`, with the credential the fake accepts.
+pub(crate) async fn backend_with(data: &Path, base: &str, config: Config) -> (Arc<Orchestrator>, Client) {
+    let orchestrator =
+        Arc::new(Orchestrator::new(open_store(data).await.unwrap(), config).with_platform_endpoints(Some(base), None));
     let client = Client::new(&orchestrator);
     client
         .call(Request::SetCredentials {
@@ -368,7 +413,7 @@ async fn stored_now(data: &Path, number: u64) -> Option<String> {
         .map(|stored| stored.discussion.description)
 }
 
-fn remote() -> RemoteKey {
+pub(crate) fn remote() -> RemoteKey {
     RemoteKey {
         host: "github.com".to_owned(),
         path: "acme/app".to_owned(),

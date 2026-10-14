@@ -119,9 +119,6 @@
   import { versions } from "../state/versions.svelte";
   import ConnectionNotice from "./ConnectionNotice.svelte";
 
-  /** How many of a pull request's latest versions have their checks asked for, for the timeline. */
-  const MAX_CHECKED_VERSIONS = 20;
-
   let controller = $state.raw<ReviewController>();
   // The selected tool of each rail, and whether its sidebar is shown.
   const left = $state({ tool: "changes", open: true });
@@ -181,22 +178,6 @@
   const headId = $derived(
     changeset.facts?.target.changeset.type === "pullRequest" ? changeset.facts.target.head : undefined,
   );
-  /** The commits whose checks the views show: the commits by commit, the pushed versions and the head. */
-  const checkedCommits = $derived(
-    headId === undefined
-      ? []
-      : [
-          ...new Set([
-            ...changeset.commits.map((c) => c.commit.id),
-            ...versions.items.slice(-MAX_CHECKED_VERSIONS).flatMap((v) => (v.tip ? [v.tip.id] : [])),
-            headId,
-          ]),
-        ],
-  );
-  $effect(() => {
-    const wanted = checkedCommits;
-    untrack(() => checks.want(wanted));
-  });
   /** The commit whose runs the Pipelines tool shows: the one on view by commit, else the head. */
   const pipelineCommit = $derived(
     changeset.shownCommit === undefined ? headId : changeset.commits[changeset.shownCommit]?.commit.id,

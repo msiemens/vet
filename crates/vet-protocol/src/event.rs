@@ -4,8 +4,8 @@ use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
 use crate::{
-    ChangesetKey, Lens, Notification, PlatformStatus, ProjectId, RestoreFailure, ReviewInfo, ReviewUpdate,
-    ServerRuntimes, Task,
+    ChangesetKey, CommitChecks, Lens, Notification, PlatformStatus, ProjectId, RestoreFailure, ReviewInfo,
+    ReviewUpdate, ServerRuntimes, Task,
 };
 
 /// Events are invalidations or small state updates; the client re-requests
@@ -82,6 +82,17 @@ pub enum Event {
     /// sent for a settled snapshot, which is `SnapshotSettled`: that also
     /// invalidates the threads.
     ThreadsChanged { project: ProjectId, revision: u32 },
+    /// The checks (CI runs and statuses) of the commits the review view shows, as the backend last
+    /// read them. The backend refreshes them itself while the review screen shows the changeset, so
+    /// the client shows them without asking. `checks` are the commits answered for, in the order
+    /// asked; `error` why some were left out; `limited_until` (unix seconds) until when the
+    /// platform limits requests, which is why `error` says so.
+    ChecksChanged {
+        project: ProjectId,
+        checks: Vec<CommitChecks>,
+        error: Option<String>,
+        limited_until: Option<u32>,
+    },
     /// A line of output of an `InstallServer` in progress, to the connections of
     /// the project it was asked on.
     ServerInstallOutput {

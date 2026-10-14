@@ -50,6 +50,10 @@ impl Orchestrator {
         open.screens.set(from, shown);
         if shown {
             start_servers_in_background(open);
+        } else {
+            // The checks of the changeset on view are refreshed for the review screen only; the
+            // next `SetReviewShown` starts them again.
+            open.stop_checking();
         }
         Ok(Response::Done)
     }

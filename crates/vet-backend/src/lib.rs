@@ -9,6 +9,7 @@ mod accounts;
 mod announce;
 mod caches;
 mod changesets;
+mod checks;
 #[cfg(test)]
 mod contract;
 mod error;
@@ -80,6 +81,9 @@ pub struct Config {
     /// How long to wait between two pull requests whose details are fetched ahead of the queue,
     /// so a platform that Vet only reacts to (rather than tracks the budget of) is asked gently.
     pub prefetch_pace: Duration,
+    /// How long the backend waits before asking the platform about the checks of the commits on
+    /// view again, while some of them are still running.
+    pub checks_pace: Duration,
 }
 
 impl Default for Config {
@@ -91,6 +95,7 @@ impl Default for Config {
             orphan_grace: Duration::from_secs(15),
             fetch_interval: vet_app::fetch::DEFAULT_INTERVAL,
             prefetch_pace: Duration::from_millis(400),
+            checks_pace: Duration::from_secs(30),
         }
     }
 }
@@ -673,12 +678,14 @@ impl Orchestrator {
 
 /// Language servers take long to start; a new revision's first query should
 /// find them running. Starting never delays the reply of the request that
-/// changed the revision. Servers are for the review screen: while no connection
-/// shows it (`SetReviewShown`), nothing starts, and coming up starts them.
+/// changed the revision. Servers and the checks of the changeset on view are for
+/// the review screen: while no connection shows it (`SetReviewShown`), nothing
+/// starts, and coming up starts them.
 fn start_servers_in_background(open: Arc<Open>) {
     if !open.screens.shown() {
         return;
     }
+    checks::refresh_checks_in_background(open.clone());
     tokio::spawn(async move {
         if let Ok(booted) = open.booted().await {
             booted.start_servers().await;

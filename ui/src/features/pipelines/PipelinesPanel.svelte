@@ -87,7 +87,6 @@
   /** The run the toolbar acts on: the chosen job's, else the first. */
   const acting = $derived(chosenRun ?? checks?.pipelines[0]);
   const actingJobs = $derived(checks?.runs.filter((r) => r.pipeline === acting?.id) ?? []);
-  const anyRunning = $derived(checks?.pipelines.some((p) => !finished(p.phase)) ?? false);
   const signedOut = $derived(status?.connection.type === "signedOut" || status?.connection.type === "tokenExpired");
   const limitedUntil = $derived(checkStore.limitedUntil);
   const held = $derived(
@@ -155,11 +154,11 @@
     disabledReason(kind, { run: acting, jobs: actingJobs, held, busy: pipelines.busy });
 
   function act(kind: ActionKind) {
-    if (acting && commit) void pipelines.act({ type: kind, run: acting.id }, commit, account);
+    if (acting && commit) void pipelines.act({ type: kind, run: acting.id }, account);
   }
 
   function rerunJob(check: CheckRun) {
-    if (commit) void pipelines.act({ type: "rerunJob", check: check.id }, commit, account);
+    if (commit) void pipelines.act({ type: "rerunJob", check: check.id }, account);
   }
 
   /** Why the job's log cannot be opened, if it cannot. */
@@ -186,11 +185,7 @@
       {/if}
       <span class="grow"></span>
       {#if checkStore.loadedAt !== undefined}
-        <span class="when"
-          >Updated {clock(checkStore.loadedAt)}{anyRunning && limitedUntil === undefined
-            ? " · refreshes every 30 s"
-            : ""}</span
-        >
+        <span class="when">Updated {clock(checkStore.loadedAt)}</span>
       {/if}
       {#if checks?.url}
         {@const url = checks.url}

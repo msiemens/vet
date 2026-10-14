@@ -1,18 +1,11 @@
-// The checks (CI runs) of the commits the review view shows, as the platform of the pull request on
-// view has them. Commits whose checks are done are asked for once; while any runs they are asked
-// for again every so often, and when a fetch or a push may have changed them.
+// The checks (CI runs) of the commits the review view shows, as the platform of the pull request
+// on view has them. The backend refreshes them itself while the review screen shows the changeset
+// and pushes each round (SPEC §7.3, A13); this only applies what it hears.
 
 import { SvelteMap } from "svelte/reactivity";
 import type { CommitChecks } from "../generated/CommitChecks";
-import { Debounced } from "../lib/debounced";
-import { errorText } from "../lib/errorText";
-import { refreshDelay } from "./checkRefresh";
 import { notices } from "./notices.svelte";
-import { Latest } from "./resource";
 import { session } from "./session.svelte";
-
-/** How long after a run was changed it is asked about once more: the platform has not shown it at once. */
-const SETTLE_MS = 3_000;
 
 class CheckStore {
   /** By full commit id; a commit the platform has no checks of has an entry without runs. */
@@ -21,25 +14,22 @@ class CheckStore {
   limitedUntil = $state<number>();
   /** Unix seconds: when the checks were last answered for. */
   loadedAt = $state<number>();
-  private wanted: readonly string[] = [];
-  /** Only the latest load counts. */
-  private reads = new Latest();
-  private timer = new Debounced();
-  private again = new Debounced();
-  /** The reason last shown, so the same one does not come again with every load. */
+  /** The reason last shown, so the same one does not come again with every round. */
   private lastError?: string;
 
   constructor() {
     session.onConnect((backend) =>
       backend.onEvent((event) => {
         if (event.project !== backend.project) return;
-        if (event.type === "changesetsChanged" || event.type === "snapshotSettled") void this.load();
+        if (event.type !== "checksChanged") return;
+        this.apply(event.checks, event.error ?? undefined, event.limitedUntil ?? undefined);
       }),
     );
-    session.onResync(() => void this.load());
     session.onClose(() => {
-      this.want([]);
       this.items.clear();
+      this.limitedUntil = undefined;
+      this.loadedAt = undefined;
+      this.lastError = undefined;
     });
   }
 
@@ -48,49 +38,17 @@ class CheckStore {
     return id === undefined ? undefined : this.items.get(id);
   }
 
-  /** Asks for the checks of these commits (full ids), and keeps them current while any runs. */
-  want(commits: readonly string[]) {
-    this.wanted = commits;
-    void this.load();
-  }
-
-  /**
-   * Asks again for these commits, whatever they said before: a run was changed on the platform,
-   * which takes a moment to show it, so they are asked once more shortly after.
-   */
-  refresh(commits: readonly string[]) {
-    void this.load(commits);
-    this.again.schedule(SETTLE_MS, () => void this.load(commits));
-  }
-
-  private async load(again: readonly string[] = []) {
-    this.timer.cancel();
-    const isLatest = this.reads.begin();
-    const open = this.wanted.filter((id) => {
-      const state = this.items.get(id)?.state;
-      return state === undefined || state === "pending" || again.includes(id);
-    });
-    if (!open.length || !session.backend) return;
-    try {
-      const { checks, error, limitedUntil } = await session.backend.checks(open);
-      if (!isLatest()) return;
-      for (const commit of checks) this.items.set(commit.commit, commit);
-      this.limitedUntil = limitedUntil;
-      if (checks.length) this.loadedAt = Math.floor(Date.now() / 1000);
-      // A limit is said by the Pipelines tool and the footer; the toast would only repeat it.
-      if (error !== this.lastError && error && limitedUntil === undefined) {
-        notices.show(`Could not load the checks: ${error}`);
-      }
-      this.lastError = error;
-    } catch (error) {
-      if (!isLatest()) return;
-      const text = errorText(error);
-      if (text !== this.lastError) notices.failed("Could not load the checks", error);
-      this.lastError = text;
+  /** The backend read the checks of the changeset on view again: what it answered for replaces. */
+  private apply(checks: readonly CommitChecks[], error: string | undefined, limitedUntil: number | undefined) {
+    this.items.clear();
+    for (const commit of checks) this.items.set(commit.commit, commit);
+    this.limitedUntil = limitedUntil;
+    if (checks.length) this.loadedAt = Math.floor(Date.now() / 1000);
+    // A limit is said by the Pipelines tool and the footer; the toast would only repeat it.
+    if (error !== this.lastError && error && limitedUntil === undefined) {
+      notices.show(`Could not load the checks: ${error}`);
     }
-    if (this.wanted.some((id) => this.items.get(id)?.state === "pending")) {
-      this.timer.schedule(refreshDelay(this.limitedUntil, Date.now()), () => void this.load());
-    }
+    this.lastError = error;
   }
 }
 

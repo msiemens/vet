@@ -15,6 +15,7 @@ use vet_mapping as mapping;
 use vet_protocol::{ChangesetKey, Event, ProjectId, Response};
 
 use crate::accounts::Held;
+use crate::checks::refresh_checks_in_background;
 use crate::error::{Error, Result};
 use crate::hosting::{Hosting, Platforms};
 use crate::open::Ready;
@@ -165,6 +166,11 @@ impl Orchestrator {
         let done = hosting
             .pipeline_action(&remote, &mapping::pipeline_action(action))
             .await;
+        if done.is_ok() {
+            // What the platform makes of the action shows in the checks a moment later; look again
+            // without waiting for the window to ask.
+            refresh_checks_in_background(self.find(project).await?);
+        }
         Ok(mapping::pipeline_outcome(done)?)
     }
 
