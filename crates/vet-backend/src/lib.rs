@@ -33,7 +33,6 @@ use std::sync::Arc;
 use std::time::{Duration, SystemTime};
 
 use vet_app::gc::Retention;
-use vet_app::limits::Limiting;
 use vet_app::platform::Accounts;
 use vet_app::ports::{PreferenceStore, RecentProject, Settings, SettingsStore, StoreError};
 use vet_app::recent::RecentProjects;
@@ -94,12 +93,8 @@ impl Default for Config {
 
 type Live = LiveSession<GixRepo, SqliteStore>;
 type LanguageServers = Servers<ToolResolver, SqliteStore>;
-type Semantic = Semantics<
-    GixRepo,
-    SqliteStore,
-    LspLauncher<Arc<LanguageServers>, Limiting<ToolRestorer>>,
-    Materialize<GixRepo, SqliteStore>,
->;
+type Semantic =
+    Semantics<GixRepo, SqliteStore, LspLauncher<Arc<LanguageServers>, ToolRestorer>, Materialize<GixRepo, SqliteStore>>;
 
 /// An open project: projects are one per repository, and opening an open
 /// repository subscribes to the existing one. It may not have scanned yet; see

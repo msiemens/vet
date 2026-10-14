@@ -17,7 +17,7 @@ use vet_semantic::derived::{
     symbol_at, usages,
 };
 use vet_semantic::join::bounded;
-use vet_semantic::pool::{Phase, Pool, PoolKey, Supervision, Target};
+use vet_semantic::pool::{Phase, Pool, PoolKey, Servers, Supervision, Target};
 use vet_semantic::ports::{
     At, Backend, BackendId, Diagnostic, Features, Location, Materializer, Provenance, RestoreFailure, ServerLauncher,
     Severity, Sym, SymbolInfo, prefer_openable,
@@ -29,7 +29,6 @@ use vet_semantic::symbols::enclosing;
 use vet_semantic::trace;
 
 use crate::acquisition::Acquisition;
-use crate::limits::RestoreLimits;
 use crate::ports::{BlobRead, BlobReader, GitRepo, LiveStore, Store};
 use crate::revisions::Revisions;
 use crate::session::{RevisionView, SemanticSides, SessionError};
@@ -178,8 +177,6 @@ pub struct Links {
     /// The session's, which announces every move of its revision. Work for an older
     /// one is dropped, and with it the requests it waits for.
     pub revisions: Arc<Revisions>,
-    /// The one the launcher's restorer updates.
-    pub limits: RestoreLimits,
 }
 
 /// What the server of a language is doing for one side of the revision on view.
@@ -200,54 +197,90 @@ pub struct ServerRuntimes {
 /// Told what the servers of the revision on view are doing, after every change.
 pub type RuntimeSink = dyn Fn(ServerRuntimes) + Send + Sync;
 
+/// Told the restore steps that currently limit the analysis of the revision on view, when they change.
+pub type FailureSink = dyn Fn(Vec<RestoreFailure>) + Send + Sync;
+
 /// The revision on view, whose servers are reported, and whom to report them to.
 #[derive(Default)]
 struct Watched {
     sides: Option<(u32, Served, Served)>,
     sink: Option<Arc<RuntimeSink>>,
+    failing: Option<Arc<FailureSink>>,
     /// The latest change of the pool taken into account.
     pool_serial: u64,
     serial: u64,
+    /// The restore failures last told.
+    told: Vec<RestoreFailure>,
 }
 
 impl Watched {
-    fn runtimes(&self, phases: &[(PoolKey, Phase)]) -> Vec<ServerRuntime> {
+    /// The sides of the revision on view that the server of `key` serves.
+    fn sides_of(&self, key: &PoolKey) -> Vec<Side> {
         let Some((_, base, target)) = &self.sides else {
             return Vec::new();
         };
-        let mut runtimes: Vec<_> = phases
-            .iter()
+        [(Side::Base, base), (Side::Target, target)]
+            .into_iter()
+            .filter(|(_, served)| key.target == served.target && key.policy == served.policy)
+            .map(|(side, _)| side)
+            .collect()
+    }
+
+    fn runtimes(&self, servers: &Servers) -> Vec<ServerRuntime> {
+        let mut runtimes: Vec<_> = (servers.phases.iter())
             .flat_map(|(key, phase)| {
-                [(Side::Base, base), (Side::Target, target)]
-                    .into_iter()
-                    .filter(|(_, served)| key.target == served.target && key.policy == served.policy)
-                    .map(|(side, _)| ServerRuntime {
-                        language: key.backend.clone(),
-                        side,
-                        phase: phase.clone(),
-                    })
+                self.sides_of(key).into_iter().map(|side| ServerRuntime {
+                    language: key.backend.clone(),
+                    side,
+                    phase: phase.clone(),
+                })
             })
             .collect();
         runtimes.sort_by(|a, b| (&a.language.0, a.side as u8).cmp(&(&b.language.0, b.side as u8)));
         runtimes
     }
 
-    /// Tells the sink what the servers are doing, as of the pool's change `pool_serial`; what is
-    /// older than what was told already is dropped.
-    fn pooled(&mut self, pool_serial: u64, phases: &[(PoolKey, Phase)]) {
-        if pool_serial >= self.pool_serial {
-            self.pool_serial = pool_serial;
-            self.announce(phases);
+    /// The restore steps that failed for the trees of the servers of the revision on view. A
+    /// failure of the base's tree stands whatever the target's restores do.
+    fn failures(&self, servers: &Servers) -> Vec<RestoreFailure> {
+        let mut failures: Vec<RestoreFailure> = Vec::new();
+        for (key, failed) in &servers.restore_failures {
+            if self.sides_of(key).is_empty() {
+                continue;
+            }
+            for failure in failed {
+                if !failures.contains(failure) {
+                    failures.push(failure.clone());
+                }
+            }
+        }
+        failures.sort_by(|a, b| (&a.project, &a.tool).cmp(&(&b.project, &b.tool)));
+        failures
+    }
+
+    /// Tells the sinks what the servers are doing, as of the pool's change; what is older than what
+    /// was told already is dropped.
+    fn pooled(&mut self, servers: &Servers) {
+        if servers.changes >= self.pool_serial {
+            self.pool_serial = servers.changes;
+            self.announce(servers);
         }
     }
 
-    fn announce(&mut self, phases: &[(PoolKey, Phase)]) {
+    fn announce(&mut self, servers: &Servers) {
         if let Some(sink) = self.sink.clone() {
             self.serial += 1;
             sink(ServerRuntimes {
                 serial: self.serial,
-                runtimes: self.runtimes(phases),
+                runtimes: self.runtimes(servers),
             });
+        }
+        let failures = self.failures(servers);
+        if failures != self.told {
+            self.told.clone_from(&failures);
+            if let Some(failing) = self.failing.clone() {
+                failing(failures);
+            }
         }
     }
 }
@@ -265,8 +298,6 @@ where
     /// semantic lane reads them on its own budget.
     texts: Option<Arc<Acquisition<G, S>>>,
     revisions: Arc<Revisions>,
-    /// Kept current by the launcher's restorer (`Limiting`).
-    limits: RestoreLimits,
     /// The languages that have a file in the target of a revision, found once per revision: finding
     /// them walks every file of the snapshot.
     languages: Mutex<Option<(u32, Vec<BackendId>)>>,
@@ -407,7 +438,6 @@ where
             watched: Arc::default(),
             texts: None,
             revisions: links.revisions,
-            limits: links.limits,
             languages: Mutex::new(None),
         }
     }
@@ -450,13 +480,18 @@ where
         self.semantic.pool().forget_answers();
     }
 
-    /// Tells `sink` what the servers of the revision on view are doing, after every change.
-    pub fn observing(self, sink: Arc<RuntimeSink>) -> Self {
-        self.watched.lock().expect("not poisoned").sink = Some(sink);
+    /// Tells `runtimes` what the servers of the revision on view are doing, and `failing` which
+    /// restore steps limit their analysis, after every change.
+    pub fn observing(self, runtimes: Arc<RuntimeSink>, failing: Arc<FailureSink>) -> Self {
+        {
+            let mut watched = self.watched.lock().expect("not poisoned");
+            watched.sink = Some(runtimes);
+            watched.failing = Some(failing);
+        }
         let watched = self.watched.clone();
         self.configured(|semantic| {
-            semantic.observed(Arc::new(move |pool_serial, phases| {
-                watched.lock().expect("not poisoned").pooled(pool_serial, &phases);
+            semantic.observed(Arc::new(move |servers| {
+                watched.lock().expect("not poisoned").pooled(&servers);
             }))
         })
     }
@@ -464,10 +499,9 @@ where
     /// What the servers of the revision on view are doing now.
     pub fn runtimes(&self) -> ServerRuntimes {
         let watched = self.watched.lock().expect("not poisoned");
-        let (_, phases) = self.semantic.pool().phases();
         ServerRuntimes {
             serial: watched.serial,
-            runtimes: watched.runtimes(&phases),
+            runtimes: watched.runtimes(&self.semantic.pool().servers()),
         }
     }
 
@@ -481,9 +515,12 @@ where
         self.semantic.pool().features(language)
     }
 
-    /// Restores that failed and have not succeeded since.
+    /// The restore steps that failed for the trees of the running servers of the revision on view:
+    /// as long as a server runs on a tree whose restore failed, its analysis is limited, whatever
+    /// the other side's restore did.
     pub fn restore_failures(&self) -> Vec<RestoreFailure> {
-        self.limits.all()
+        let watched = self.watched.lock().expect("not poisoned");
+        watched.failures(&self.semantic.pool().servers())
     }
 
     async fn pair(&self, view: &RevisionView<G, S>, revision: u32) -> Fallible<Pair<M, L>> {
@@ -503,9 +540,9 @@ where
             _ => {}
         }
         watched.sides = Some((revision, base, target));
-        let (pool_serial, phases) = self.semantic.pool().phases();
-        watched.pool_serial = watched.pool_serial.max(pool_serial);
-        watched.announce(&phases);
+        let servers = self.semantic.pool().servers();
+        watched.pool_serial = watched.pool_serial.max(servers.changes);
+        watched.announce(&servers);
     }
 
     /// Runs the work of a request for `revision`, which fails as stale, with the work
@@ -1216,6 +1253,17 @@ mod tests {
         executing_started: AtomicUsize,
         /// The languages of the servers that were stopped, in order.
         stopped: Mutex<Vec<String>>,
+        /// The restore of a snapshot's tree fails.
+        restore_fails: std::sync::atomic::AtomicBool,
+    }
+
+    fn restore_failure() -> RestoreFailure {
+        RestoreFailure {
+            kind: vet_semantic::ports::RestoreFailureKind::Failed,
+            project: "web".into(),
+            tool: "pnpm".into(),
+            message: "no network".into(),
+        }
     }
 
     /// Counts a hover as given up on when its request is dropped.
@@ -1266,6 +1314,10 @@ mod tests {
                 c.live_started.fetch_add(1, Ordering::SeqCst);
             }
             Ok(Started {
+                restore_failures: (tree == Tree::Immutable && c.restore_fails.load(Ordering::SeqCst))
+                    .then(restore_failure)
+                    .into_iter()
+                    .collect(),
                 server: FakeServer(c.clone(), tree, language.clone()),
                 identity: self.identify(root, backend, policy).await?,
                 restore: match tree {
@@ -1437,7 +1489,6 @@ mod tests {
             vec![backend("rust", "rs"), backend("python", "py"), backend("go", "go")],
             Links {
                 revisions: fx.session.revisions(),
-                limits: RestoreLimits::default(),
             },
         )
         .keeping(limit);
@@ -1524,7 +1575,6 @@ mod tests {
             languages.iter().map(|l| backend(l, l)).collect(),
             Links {
                 revisions: fx.session.revisions(),
-                limits: RestoreLimits::default(),
             },
         );
         // Five changed languages on two sides want ten servers, and the pool holds eight.
@@ -1553,13 +1603,15 @@ mod tests {
             vec![backend("l0", "l0"), backend("l1", "l1")],
             Links {
                 revisions: fx.session.revisions(),
-                limits: RestoreLimits::default(),
             },
         )
-        .observing({
-            let told = told.clone();
-            Arc::new(move |runtimes| told.lock().unwrap().push(runtimes))
-        });
+        .observing(
+            {
+                let told = told.clone();
+                Arc::new(move |runtimes| told.lock().unwrap().push(runtimes))
+            },
+            Arc::new(|_| {}),
+        );
         assert!(semantics.runtimes().runtimes.is_empty());
 
         semantics.start_servers(&fx.view, 0).await.unwrap();
@@ -1581,6 +1633,33 @@ mod tests {
             ]
         );
         assert_eq!(semantics.runtimes(), *last);
+    }
+
+    #[tokio::test]
+    async fn the_restore_failures_of_the_trees_of_the_revision_on_view_are_told_when_they_change() {
+        let fx = Fixture::open(&[("a.l0", "one\n")], &[("a.l0", "two\n")]).await;
+        let counters = Arc::new(Counters::default());
+        counters.restore_fails.store(true, Ordering::SeqCst);
+        let told = Arc::new(Mutex::new(Vec::<Vec<RestoreFailure>>::new()));
+        let semantics = Semantics::new(
+            FakeMaterializer(counters.clone()),
+            FakeLauncher(counters.clone()),
+            "/live".into(),
+            vec![backend("l0", "l0")],
+            Links {
+                revisions: fx.session.revisions(),
+            },
+        )
+        .observing(Arc::new(|_| {}), {
+            let told = told.clone();
+            Arc::new(move |failures| told.lock().unwrap().push(failures))
+        });
+        assert_eq!(semantics.restore_failures(), []);
+
+        // The base is a snapshot, restored and failed; the live target is not restored at all.
+        semantics.start_servers(&fx.view, 0).await.unwrap();
+        assert_eq!(semantics.restore_failures(), [restore_failure()]);
+        assert_eq!(*told.lock().unwrap(), [vec![restore_failure()]]);
     }
 
     #[tokio::test]
@@ -2108,7 +2187,6 @@ mod tests {
                 vec![backend("rust", "rs"), backend("python", "py"), backend("go", "go")],
                 Links {
                     revisions: fx.session.revisions(),
-                    limits: RestoreLimits::default(),
                 },
             )
             .persisting(store.clone());
@@ -2184,7 +2262,6 @@ mod tests {
                     vec![backend("rust", "rs")],
                     Links {
                         revisions: fx.session.revisions(),
-                        limits: RestoreLimits::default(),
                     },
                 )
                 .persisting(store.clone())

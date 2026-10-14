@@ -16,7 +16,6 @@ use tokio::task::AbortHandle;
 use vet_app::changeset::Source;
 use vet_app::fetch::Fetch;
 use vet_app::ignore::IgnoringWatcher;
-use vet_app::limits::{Limiting, RestoreLimits};
 use vet_app::platform::PlatformKind;
 use vet_app::progress::Tasks;
 use vet_app::registry::{Resident, Subscribers};
@@ -259,21 +258,10 @@ impl Wired {
             git.budgeted(budgets.semantic_io.clone()),
             store.budgeted(budgets.semantic_io.clone()),
         ));
-        let limits = RestoreLimits::default();
-        let restorer = Limiting::new(
-            ToolRestorer::new()
-                .budgeted(budgets)
-                .reusing(repo.clone())
-                .reporting(self.tasks.clone()),
-            limits.clone(),
-            {
-                let subscribers = subscribers.clone();
-                Box::new(move |failures| {
-                    let failures = mapping::semantic::restore_failures(&failures);
-                    subscribers.broadcast(Event::RestoreFailed { project: id, failures });
-                })
-            },
-        );
+        let restorer = ToolRestorer::new()
+            .budgeted(budgets)
+            .reusing(repo.clone())
+            .reporting(self.tasks.clone());
         let mut semantics = Semantics::new(
             Materialize::new(reading.clone(), self.trees.clone()),
             LspLauncher::new(servers.clone(), restorer)
@@ -283,7 +271,6 @@ impl Wired {
             backends.to_vec(),
             Links {
                 revisions: session.revisions(),
-                limits,
             },
         )
         .reading(reading)
@@ -307,15 +294,24 @@ impl Wired {
                 })
             },
         })
-        .observing({
-            let subscribers = subscribers.clone();
-            Arc::new(move |runtimes| {
-                subscribers.broadcast(Event::ServerRuntimes {
-                    project: id,
-                    runtimes: mapping::semantic::runtimes(&runtimes),
-                });
-            })
-        });
+        .observing(
+            {
+                let subscribers = subscribers.clone();
+                Arc::new(move |runtimes| {
+                    subscribers.broadcast(Event::ServerRuntimes {
+                        project: id,
+                        runtimes: mapping::semantic::runtimes(&runtimes),
+                    });
+                })
+            },
+            {
+                let subscribers = subscribers.clone();
+                Arc::new(move |failures| {
+                    let failures = mapping::semantic::restore_failures(&failures);
+                    subscribers.broadcast(Event::RestoreFailed { project: id, failures });
+                })
+            },
+        );
         if let Some(store) = self.answers.store().await {
             semantics = semantics.persisting(store);
         }

@@ -597,7 +597,6 @@ impl ToolRestorer {
                 records.push(step.record(Outcome::Failed("an earlier step of the project failed".into())));
                 continue;
             }
-            restored.ran.push((label(&step.project), step.program.to_owned()));
             if let Some(donor) = &self.donor
                 && let Some(reused) = reuse::reuse(&self.semantic_io, donor, root, step).await
             {
@@ -792,10 +791,6 @@ impl ToolRestorer {
                         }),
                         _ => None,
                     }))
-                    .collect(),
-                ran: steps
-                    .iter()
-                    .map(|s| (label(&s.project), s.program.to_owned()))
                     .collect(),
                 env: environment(root, language, plan),
                 fingerprint: Some(record.fingerprint()),

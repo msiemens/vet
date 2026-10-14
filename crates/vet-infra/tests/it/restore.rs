@@ -220,7 +220,7 @@ async fn a_copy_with_the_same_lockfile_links_the_working_trees_node_modules_and_
     let missing = tempfile::tempdir().unwrap().path().join("none");
     let reusing = ToolRestorer::with_env(env("npm_config_cache", &missing)).reusing(donor.path().to_owned());
     let restored = restore(&reusing, copy.path(), &config::typescript(), false).await;
-    assert_eq!(restored.ran, [(".".to_owned(), "npm".to_owned())]);
+    assert_eq!(restored.failures, []);
     let linked = copy.path().join("node_modules");
     assert!(linked.symlink_metadata().unwrap().file_type().is_symlink());
     assert!(linked.join("picocolors/package.json").is_file());

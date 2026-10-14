@@ -37,8 +37,8 @@ use crate::gate::Gate;
 use crate::policy::AnalysisPolicy;
 use crate::ports::{
     Answered, At, Backend, BackendId, Detach, Diagnostic, Features, LanguageServer, LaunchError, Location,
-    Materializer, NotMaterializable, Provenance, QueryError, Readiness, ServerIdentity, ServerLauncher, StartProgress,
-    Started, SymbolInfo, Tree,
+    Materializer, NotMaterializable, Provenance, QueryError, Readiness, RestoreFailure, ServerIdentity, ServerLauncher,
+    StartProgress, Started, SymbolInfo, Tree,
 };
 use crate::reuse::{Answers, Basis, Computed, Given, KEPT, Key, ProjectQuery, Restore, Reused, SemanticCache};
 
@@ -176,9 +176,18 @@ impl<M: Materializer, L: ServerLauncher> StartProgress for Indexing<M, L> {
     }
 }
 
-/// Told, after any change of a phase, the phases there are now and a number that rises with
-/// every change.
-pub type Observer = dyn Fn(u64, Vec<(PoolKey, Phase)>) + Send + Sync;
+/// What the pool knows of its servers.
+#[derive(Clone, Debug)]
+pub struct Servers {
+    /// Rises with every change of a phase.
+    pub changes: u64,
+    pub phases: Vec<(PoolKey, Phase)>,
+    /// The restore steps that failed for the trees of the servers that run, by server.
+    pub restore_failures: Vec<(PoolKey, Vec<RestoreFailure>)>,
+}
+
+/// Told what the servers are, after any change of a phase.
+pub type Observer = dyn Fn(Servers) + Send + Sync;
 
 /// The least time between two announcements of a server's progress while it starts.
 const PROGRESS_INTERVAL: Duration = Duration::from_millis(250);
@@ -256,6 +265,8 @@ pub struct Entry<S, G> {
     answers: Arc<Answers>,
     /// What the tree is, for the answers that depend on all of it; none for the live tree.
     basis: Option<Basis>,
+    /// The restore steps of its tree that failed.
+    restore_failures: Vec<RestoreFailure>,
     leases: AtomicUsize,
     /// When it was last used, in the pool's ticks.
     used: AtomicU64,
@@ -686,9 +697,9 @@ impl<M: Materializer, L: ServerLauncher> Pool<M, L> {
         self
     }
 
-    /// What the servers are doing now, and the number of changes so far.
-    pub fn phases(&self) -> (u64, Vec<(PoolKey, Phase)>) {
-        self.inner.phases()
+    /// What the servers are doing now.
+    pub fn servers(&self) -> Servers {
+        self.inner.servers()
     }
 
     /// Watches the servers it starts: one that dies while running is started anew once,
@@ -855,7 +866,16 @@ impl<M: Materializer, L: ServerLauncher> Inner<M, L> {
             last: Mutex::new(None),
         };
         let launched = self.launch(&key, &backend, &progress).await;
-        let (Started { server, identity, .. }, basis, dir_guard) = match launched {
+        let (
+            Started {
+                server,
+                identity,
+                restore_failures,
+                ..
+            },
+            basis,
+            dir_guard,
+        ) = match launched {
             Ok(launched) => launched,
             Err(e) => {
                 if let PoolError::Launch(error) = &e {
@@ -884,6 +904,7 @@ impl<M: Materializer, L: ServerLauncher> Inner<M, L> {
                 identity,
                 answers: self.answers.clone(),
                 basis,
+                restore_failures,
                 leases: AtomicUsize::new(1),
                 used: AtomicU64::new(state.tick),
                 credit: AtomicU64::new(credit),
@@ -980,19 +1001,22 @@ impl<M: Materializer, L: ServerLauncher> Inner<M, L> {
         changed
     }
 
-    fn phases(&self) -> (u64, Vec<(PoolKey, Phase)>) {
+    fn servers(&self) -> Servers {
         let state = self.lock();
-        (
-            state.changes,
-            state.phases.iter().map(|(k, p)| (k.clone(), p.clone())).collect(),
-        )
+        Servers {
+            changes: state.changes,
+            phases: state.phases.iter().map(|(k, p)| (k.clone(), p.clone())).collect(),
+            restore_failures: (state.slots.iter())
+                .filter(|(_, entry)| !entry.restore_failures.is_empty())
+                .map(|(key, entry)| (key.clone(), entry.restore_failures.clone()))
+                .collect(),
+        }
     }
 
     /// Tells the observer what the servers are doing now.
     fn announce(&self) {
         if let Some(observer) = &self.observer {
-            let (changes, phases) = self.phases();
-            observer(changes, phases);
+            observer(self.servers());
         }
     }
 
@@ -1402,6 +1426,8 @@ mod tests {
         fail_start: AtomicBool,
         /// A start goes on only when this is false.
         hold_start: AtomicBool,
+        /// A started server reports that the restore of its tree failed.
+        restore_fails: AtomicBool,
         /// A start reports the progress of the server's indexing.
         indexes_on_start: AtomicBool,
         /// The version of the server binary: part of its identity and of what it answers.
@@ -1440,6 +1466,7 @@ mod tests {
                 hover_calls: AtomicUsize::new(0),
                 fail_start: AtomicBool::new(false),
                 hold_start: AtomicBool::new(false),
+                restore_fails: AtomicBool::new(false),
                 indexes_on_start: AtomicBool::new(false),
                 version: AtomicU8::new(1),
                 restore: AtomicU8::new(5),
@@ -1536,10 +1563,15 @@ mod tests {
                 Tree::Immutable => self.recorded_restore(root, backend, policy).await,
                 Tree::Live => None,
             };
+            let restore_failures = match self.0.restore_fails.load(Ordering::SeqCst) {
+                true => vec![failed_restore()],
+                false => vec![],
+            };
             Ok(Started {
                 server: FakeServer(self.0.clone()),
                 identity: self.identify(root, backend, policy).await?,
                 restore,
+                restore_failures,
             })
         }
 
@@ -2695,12 +2727,11 @@ mod tests {
     fn observing(pool: TestPool, language: &str) -> (TestPool, PhaseLog) {
         let log = PhaseLog::default();
         let (seen, language) = (log.clone(), language.to_owned());
-        let observer = move |n: u64, phases: Vec<(PoolKey, Phase)>| {
-            let phase = phases
-                .into_iter()
+        let observer = move |servers: Servers| {
+            let phase = (servers.phases.into_iter())
                 .find(|(k, _)| k.backend.0 == language)
                 .map(|(_, p)| p);
-            seen.lock().unwrap().push((n, phase));
+            seen.lock().unwrap().push((servers.changes, phase));
         };
         (pool.observed(Arc::new(observer)), log)
     }
@@ -2795,6 +2826,43 @@ mod tests {
             shown(&log),
             [Some(Phase::Starting), Some(Phase::Ready), indexing, Some(Phase::Ready)]
         );
+    }
+
+    fn failed_restore() -> RestoreFailure {
+        RestoreFailure {
+            kind: crate::ports::RestoreFailureKind::Failed,
+            project: "web".into(),
+            tool: "pnpm".into(),
+            message: "no network".into(),
+        }
+    }
+
+    fn failures_of(pool: &TestPool) -> Vec<(Target, Vec<RestoreFailure>)> {
+        let mut failing: Vec<_> = (pool.servers().restore_failures.into_iter())
+            .map(|(key, failures)| (key.target, failures))
+            .collect();
+        failing.sort_by_key(|(target, _)| format!("{target:?}"));
+        failing
+    }
+
+    #[test]
+    fn a_restore_that_failed_limits_the_server_of_its_tree_whatever_the_other_trees_restores_do() {
+        let (pool, counters) = pool(4);
+        let backend = backend(false);
+        block_on(async {
+            counters.restore_fails.store(true, Ordering::SeqCst);
+            pool.lease(&snapshot_key(1), &backend).await.unwrap().release().await;
+            counters.restore_fails.store(false, Ordering::SeqCst);
+            pool.lease(&snapshot_key(2), &backend).await.unwrap().release().await;
+            assert_eq!(
+                failures_of(&pool),
+                [(snapshot_key(1).target, vec![failed_restore()])],
+                "the second tree's restore did not lift the first's failure"
+            );
+
+            pool.restart(&BackendId("rust".into())).await;
+            assert_eq!(failures_of(&pool), [], "a server that is gone limits nothing");
+        });
     }
 
     #[test]

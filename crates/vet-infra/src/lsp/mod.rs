@@ -26,8 +26,8 @@ use vet_app::progress::{TaskKind, Tasks};
 use vet_core::content::Hash;
 use vet_semantic::policy::AnalysisPolicy;
 use vet_semantic::ports::{
-    Backend, BackendId, LaunchError, Restored, Restorer, ServerConfig, ServerIdentity, ServerLauncher, StartProgress,
-    Started, Tree,
+    Backend, BackendId, LaunchError, RestoreFailure, Restored, Restorer, ServerConfig, ServerIdentity, ServerLauncher,
+    StartProgress, Started, Tree,
 };
 
 use crate::budget::{Budget, Budgets, SEMANTIC_IO};
@@ -222,6 +222,8 @@ struct Launched {
     identity: ServerIdentity,
     /// The fingerprint of the restore its tree was started on.
     restore: Option<Hash>,
+    /// The restore steps of its tree that failed.
+    restore_failures: Vec<RestoreFailure>,
     offered: Offered,
     phases: Phases,
 }
@@ -299,6 +301,7 @@ impl<L: ServerLocator + Sync, R: Restorer + Sync> LspLauncher<L, R> {
             root,
             identity,
             restore: restored.fingerprint,
+            restore_failures: restored.failures,
             offered,
             phases,
         })
@@ -340,6 +343,7 @@ impl<L: ServerLocator + Send + Sync + 'static, R: Restorer + Send + Sync + 'stat
             root,
             identity,
             restore,
+            restore_failures,
             offered,
             mut phases,
         } = launched?;
@@ -401,6 +405,7 @@ impl<L: ServerLocator + Send + Sync + 'static, R: Restorer + Send + Sync + 'stat
             ),
             identity,
             restore,
+            restore_failures,
         })
     }
 

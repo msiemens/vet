@@ -525,9 +525,6 @@ pub struct Restored {
     /// Steps that failed. The server still starts: what does not need the
     /// dependencies still works.
     pub failures: Vec<RestoreFailure>,
-    /// `(project, tool)` of every step that ran, failed or not: a success is
-    /// what lifts an earlier failure of the same step.
-    pub ran: Vec<(String, String)>,
     /// Hash of the restore record of the kept tree: tool versions, each step's
     /// argv and environment and its outcome. Equal fingerprints mean equal
     /// dependencies; `None` for a restore nothing was recorded of.
@@ -614,6 +611,9 @@ pub struct Started<S> {
     /// The fingerprint of the restore its immutable tree was started on (see
     /// [`Restored::fingerprint`]); `None` if none was recorded, or the tree is live.
     pub restore: Option<Hash>,
+    /// The restore steps of its tree that failed (see [`Restored::failures`]): its analysis is
+    /// limited as long as it runs.
+    pub restore_failures: Vec<RestoreFailure>,
 }
 
 /// Implemented by `vet-infra::lsp`. The pool needs a launcher, not a server
