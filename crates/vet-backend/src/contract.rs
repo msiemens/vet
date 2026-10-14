@@ -15,6 +15,8 @@ pub enum Kind {
     CredentialsNeeded,
     AccountsChanged,
     RecentProjectsChanged,
+    SettingsChanged,
+    PreferenceChanged,
     SnapshotSettled,
     EditsPending,
     ChangesetOpened,
@@ -38,6 +40,8 @@ impl Kind {
             Event::CredentialsNeeded { .. } => Self::CredentialsNeeded,
             Event::AccountsChanged => Self::AccountsChanged,
             Event::RecentProjectsChanged => Self::RecentProjectsChanged,
+            Event::SettingsChanged => Self::SettingsChanged,
+            Event::PreferenceChanged { .. } => Self::PreferenceChanged,
             Event::SnapshotSettled { .. } => Self::SnapshotSettled,
             Event::EditsPending { .. } => Self::EditsPending,
             Event::ChangesetOpened { .. } => Self::ChangesetOpened,
@@ -98,6 +102,7 @@ pub fn effect(request: &Request) -> Effect {
         | Request::Accounts
         | Request::SemanticCacheUsage
         | Request::Settings
+        | Request::Preferences { .. }
         | Request::LogDirectory
         | Request::OpenProject { .. }
         | Request::ListChangesets { .. }
@@ -148,9 +153,8 @@ pub fn effect(request: &Request) -> Effect {
         Request::ClearSemanticCaches => Effect::Unannounced(
             "only speed is lost; the disk use it answers with is read by the Settings page when it opens",
         ),
-        Request::SetSettings { .. } => {
-            Effect::Unannounced("read by the Settings pages when they open; nothing else shows them")
-        }
+        Request::SetSettings { .. } => tested(&[SettingsChanged]),
+        Request::SetPreference { .. } => tested(&[PreferenceChanged]),
         Request::RecordRecentProject { .. } | Request::ForgetRecentProject { .. } => tested(&[RecentProjectsChanged]),
         // Not for a token handed back unchecked that is held already. The open pull requests of
         // the host are synced again, in the background.
@@ -315,6 +319,12 @@ mod tests {
                     semantic_cache_mb: 1,
                     finished_review_days: 1,
                 },
+            },
+            Request::Preferences { scope: None },
+            Request::SetPreference {
+                scope: None,
+                key: "theme".into(),
+                value: None,
             },
             Request::LogDirectory,
             Request::OpenProject { repo: path() },
@@ -835,6 +845,21 @@ mod tests {
 
         world.drive(Request::RecordRecentProject { path: root.into() }).await;
         world.drive(Request::ForgetRecentProject { path: root.into() }).await;
+        world
+            .drive(Request::SetSettings {
+                settings: BackendSettings {
+                    semantic_cache_mb: 128,
+                    finished_review_days: 14,
+                },
+            })
+            .await;
+        world
+            .drive(Request::SetPreference {
+                scope: Some(root.into()),
+                key: "tabs".into(),
+                value: Some("[]".into()),
+            })
+            .await;
 
         let revision = world.manifest().await.revision;
         let view = View::Changeset;

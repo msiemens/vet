@@ -821,6 +821,59 @@ pub trait RecentStore {
     fn set_recent_projects(&self, projects: Vec<RecentProject>) -> impl Future<Output = Result<(), StoreError>> + Send;
 }
 
+/// The backend's own settings (SPEC §8): app-wide, not per project.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub struct Settings {
+    /// Megabytes the semantic cache's answers may take.
+    pub semantic_cache_mb: u32,
+    /// Days a changeset is kept after its last review was finished.
+    pub finished_review_days: u32,
+}
+
+impl Default for Settings {
+    fn default() -> Self {
+        Self {
+            semantic_cache_mb: 256,
+            finished_review_days: 30,
+        }
+    }
+}
+
+impl Settings {
+    pub fn semantic_cache_bytes(&self) -> u64 {
+        u64::from(self.semantic_cache_mb) << 20
+    }
+
+    pub fn finished_review_retention(&self) -> Duration {
+        Duration::from_secs(u64::from(self.finished_review_days) * 24 * 3600)
+    }
+}
+
+/// The backend's own settings, kept across launches.
+pub trait SettingsStore {
+    /// The settings kept; a setting that was never kept has its default.
+    fn backend_settings(&self) -> impl Future<Output = Result<Settings, StoreError>> + Send;
+    fn set_backend_settings(&self, settings: Settings) -> impl Future<Output = Result<(), StoreError>> + Send;
+}
+
+/// What the window remembers of how the viewer left it: a value the window chose the text of,
+/// under a key it chose, either for the whole app (`scope` none) or for one project (`scope` the
+/// project's root).
+pub trait PreferenceStore {
+    /// The values kept in `scope`, by key.
+    fn preferences(
+        &self,
+        scope: Option<String>,
+    ) -> impl Future<Output = Result<Vec<(String, String)>, StoreError>> + Send;
+    /// `None` forgets the value.
+    fn set_preference(
+        &self,
+        scope: Option<String>,
+        key: String,
+        value: Option<String>,
+    ) -> impl Future<Output = Result<(), StoreError>> + Send;
+}
+
 /// The custom server path per language, kept across launches.
 pub trait ServerSettings {
     fn custom_server_path(&self, language: String) -> impl Future<Output = Result<Option<String>, StoreError>> + Send;

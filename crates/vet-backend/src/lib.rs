@@ -34,7 +34,7 @@ use std::time::{Duration, SystemTime};
 use vet_app::gc::Retention;
 use vet_app::limits::Limiting;
 use vet_app::platform::Accounts;
-use vet_app::ports::{RecentProject, StoreError};
+use vet_app::ports::{PreferenceStore, RecentProject, Settings, SettingsStore, StoreError};
 use vet_app::recent::RecentProjects;
 use vet_app::registry::{Entry, Registry, Subscribers};
 use vet_app::semantics::Semantics;
@@ -52,9 +52,8 @@ use vet_infra::platform::azure_devops::AzureDevOpsClient;
 use vet_infra::platform::github::GitHubClient;
 use vet_infra::restore::ToolRestorer;
 use vet_infra::servers::ToolResolver;
-use vet_infra::settings::Settings;
 use vet_infra::store::SqliteStore;
-use vet_protocol::{BackendSettings, Event, ProjectId, Request, Response};
+use vet_protocol::{BackendSettings, Event, Preference, ProjectId, Request, Response};
 use vet_semantic::ports::Backend;
 use vet_transport::{Events, Handler};
 
@@ -122,8 +121,9 @@ pub struct Orchestrator {
     trees: Arc<KeptTrees>,
     /// The answers of the language servers kept between launches (§8).
     answers: Arc<PersistentAnswers>,
-    /// The backend's own settings, as kept in the data directory.
-    settings: tokio::sync::Mutex<Settings>,
+    /// Held while the backend's own settings change, so that what a change applies is the
+    /// difference to the settings it replaces.
+    settings_changing: tokio::sync::Mutex<()>,
     /// Credentials for hosting platforms: per host and app-wide, not per project.
     accounts: Arc<PlatformAccounts>,
     /// The client for GitHub, with the lists it has kept, for every project.
@@ -162,7 +162,6 @@ impl Orchestrator {
         let referenced = Arc::new(StoreReferences(store.clone()));
         let trees = KeptTrees::new(store.dir().join("materialized"), Limits::default(), referenced)
             .budgeted(budgets.semantic_io.clone());
-        let settings = vet_infra::settings::load(store.dir());
         let process_subscribers = Subscribers::<Connection>::default();
         let needed = process_subscribers.clone();
         let accounts = Arc::new(Accounts::new(
@@ -183,11 +182,8 @@ impl Orchestrator {
             highlighter: highlight::Highlighter::new(budgets.review_io.clone()),
             budgets,
             trees: Arc::new(trees),
-            answers: Arc::new(PersistentAnswers::new(
-                store.dir().to_owned(),
-                settings.semantic_cache_bytes(),
-            )),
-            settings: tokio::sync::Mutex::new(settings),
+            answers: Arc::new(PersistentAnswers::new(store.clone())),
+            settings_changing: tokio::sync::Mutex::new(()),
             recent: RecentProjects::new(store.clone()),
             store,
             config,
@@ -247,14 +243,16 @@ impl Orchestrator {
         }
     }
 
-    async fn settings(&self) -> Response {
-        let settings = *self.settings.lock().await;
-        Response::Settings {
+    /// The settings, and this connection subscribed to the events of the backend.
+    async fn settings(&self, from: &Connection) -> Result<Response, String> {
+        self.process_subscribers.subscribe(from.clone());
+        let settings = self.store.backend_settings().await.map_err(|e| e.0)?;
+        Ok(Response::Settings {
             settings: BackendSettings {
                 semantic_cache_mb: settings.semantic_cache_mb,
                 finished_review_days: settings.finished_review_days,
             },
-        }
+        })
     }
 
     /// Keeps the settings, then applies them. How long finished reviews are kept applies
@@ -270,16 +268,48 @@ impl Orchestrator {
             semantic_cache_mb: new.semantic_cache_mb,
             finished_review_days: new.finished_review_days,
         };
-        let old = {
-            let mut current = self.settings.lock().await;
-            vet_infra::settings::save(self.store.dir(), &settings)
-                .map_err(|e| format!("the settings cannot be kept: {e}"))?;
-            std::mem::replace(&mut *current, settings)
-        };
-        if old.semantic_cache_mb != settings.semantic_cache_mb {
-            self.answers.set_budget(settings.semantic_cache_bytes()).await;
+        {
+            let _changing = self.settings_changing.lock().await;
+            let old = self.store.backend_settings().await.map_err(|e| e.0)?;
+            self.store
+                .set_backend_settings(settings)
+                .await
+                .map_err(|e| format!("the settings cannot be kept: {}", e.0))?;
+            if old.semantic_cache_mb != settings.semantic_cache_mb {
+                self.answers.set_budget(settings.semantic_cache_bytes()).await;
+            }
         }
-        Ok(self.settings().await)
+        self.process_subscribers.broadcast(Event::SettingsChanged);
+        Ok(Response::Settings { settings: new })
+    }
+
+    /// What the window remembers in `scope`, and this connection subscribed to the events of
+    /// the backend.
+    async fn preferences(&self, scope: Option<String>, from: &Connection) -> Result<Response, String> {
+        self.process_subscribers.subscribe(from.clone());
+        let values = self.store.preferences(scope).await.map_err(|e| e.0)?;
+        Ok(Response::Preferences {
+            values: values
+                .into_iter()
+                .map(|(key, value)| Preference { key, value })
+                .collect(),
+        })
+    }
+
+    /// Keeps a value of the window, or forgets it, and tells every connection.
+    async fn set_preference(
+        &self,
+        scope: Option<String>,
+        key: String,
+        value: Option<String>,
+    ) -> Result<Response, String> {
+        self.store
+            .set_preference(scope.clone(), key.clone(), value.clone())
+            .await
+            .map_err(|e| e.0)?;
+        self.process_subscribers
+            .broadcast(Event::PreferenceChanged { scope, key, value });
+        Ok(Response::Done)
     }
 }
 
@@ -324,8 +354,10 @@ impl Orchestrator {
                 Ok(self.semantic_cache_usage())
             }),
             Request::SemanticCacheUsage => reply(async move { Ok(self.semantic_cache_usage()) }),
-            Request::Settings => reply(async move { Ok(self.settings().await) }),
+            Request::Settings => reply(self.settings(from)),
             Request::SetSettings { settings } => reply(self.set_settings(settings)),
+            Request::Preferences { scope } => reply(self.preferences(scope, from)),
+            Request::SetPreference { scope, key, value } => reply(self.set_preference(scope, key, value)),
             Request::LogDirectory => reply(async move {
                 Ok(Response::LogDirectory {
                     path: self.store.dir().join(vet_log::LOGS).to_string_lossy().into_owned(),
@@ -652,12 +684,16 @@ fn scan_in_background(open: Arc<Open>) {
     });
 }
 
-/// Opens the store and collects what its retention, as the settings in `dir` have it, no
+/// Opens the store and collects what its retention, as the settings in the store have it, no
 /// longer keeps. A failed collection only leaves the garbage for the next start.
 pub async fn open_store(dir: &Path) -> Result<SqliteStore, String> {
     let store = SqliteStore::open(dir).await.map_err(|e| e.0)?;
     let retention = Retention {
-        closed_changesets: vet_infra::settings::load(store.dir()).finished_review_retention(),
+        closed_changesets: store
+            .backend_settings()
+            .await
+            .map_err(|e| e.0)?
+            .finished_review_retention(),
         ..Retention::default()
     };
     if let Err(e) = vet_app::gc::collect(&store, unix_now(), &retention).await {

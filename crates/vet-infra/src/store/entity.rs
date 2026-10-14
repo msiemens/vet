@@ -548,6 +548,45 @@ pub mod server_path {
     impl ActiveModelBehavior for ActiveModel {}
 }
 
+/// A setting of the backend; a key without a row has its default.
+pub mod backend_setting {
+    use sea_orm::entity::prelude::*;
+
+    #[derive(Clone, Debug, PartialEq, DeriveEntityModel)]
+    #[sea_orm(table_name = "backend_setting")]
+    pub struct Model {
+        #[sea_orm(primary_key, auto_increment = false)]
+        pub key: String,
+        pub value: i64,
+    }
+
+    #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]
+    pub enum Relation {}
+
+    impl ActiveModelBehavior for ActiveModel {}
+}
+
+/// A value the window remembers (`PreferenceStore`). `scope` is empty for the whole app, else
+/// the root of the project it belongs to.
+pub mod preference {
+    use sea_orm::entity::prelude::*;
+
+    #[derive(Clone, Debug, PartialEq, DeriveEntityModel)]
+    #[sea_orm(table_name = "preference")]
+    pub struct Model {
+        #[sea_orm(primary_key, auto_increment = false)]
+        pub scope: String,
+        #[sea_orm(primary_key, auto_increment = false)]
+        pub key: String,
+        pub value: String,
+    }
+
+    #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]
+    pub enum Relation {}
+
+    impl ActiveModelBehavior for ActiveModel {}
+}
+
 /// A recently opened repository. The newest has the highest id.
 pub mod recent_project {
     use sea_orm::entity::prelude::*;

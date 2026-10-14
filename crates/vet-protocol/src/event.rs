@@ -29,6 +29,18 @@ pub enum Event {
     /// `RecentProjects` again. Sent to every connection that asked for `Accounts` or
     /// `RecentProjects`.
     RecentProjectsChanged,
+    /// The backend's own settings changed (`SetSettings`): ask for `Settings` again. Sent to
+    /// every connection that asked for `Settings`, `Preferences`, `Accounts` or
+    /// `RecentProjects`.
+    SettingsChanged,
+    /// A preference was kept or forgotten (`SetPreference`): `value` is the new one, none for
+    /// a forgotten one. Sent to every connection that asked for `Settings`, `Preferences`,
+    /// `Accounts` or `RecentProjects`.
+    PreferenceChanged {
+        scope: Option<String>,
+        key: String,
+        value: Option<String>,
+    },
     /// A snapshot settled and the changeset moved to a new `revision`. The
     /// manifest, with review state remapped onto it, is stale: fetch it again.
     SnapshotSettled { project: ProjectId, revision: u32 },

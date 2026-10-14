@@ -16,10 +16,16 @@ pub(super) struct Migrator;
 
 impl MigratorTrait for Migrator {
     fn migrations() -> Vec<Box<dyn MigrationTrait>> {
-        vec![Box::new(Sql {
-            name: "m20261014_000001_baseline",
-            sql: include_str!("migration/baseline.sql"),
-        })]
+        vec![
+            Box::new(Sql {
+                name: "m20261014_000001_baseline",
+                sql: include_str!("migration/baseline.sql"),
+            }),
+            Box::new(Sql {
+                name: "m20261014_000002_settings",
+                sql: include_str!("migration/settings.sql"),
+            }),
+        ]
     }
 }
 
@@ -115,7 +121,9 @@ mod tests {
             thread::Entity,
             message::Entity,
             server_path::Entity,
-            recent_project::Entity
+            recent_project::Entity,
+            backend_setting::Entity,
+            preference::Entity
         );
         out
     }

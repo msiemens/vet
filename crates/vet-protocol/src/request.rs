@@ -68,13 +68,32 @@ pub enum Request {
     /// How much disk the answers of the language servers kept between launches take. They
     /// belong to the backend, not to a project. Answers with `Response::SemanticCacheUsage`.
     SemanticCacheUsage,
-    /// The backend's own settings. Answers with `Response::Settings`.
+    /// The backend's own settings. Subscribes this connection to the events of the backend,
+    /// as `RecentProjects` does. Answers with `Response::Settings`.
     Settings,
     /// Replaces the backend's own settings and keeps them across launches. A smaller
-    /// semantic cache budget removes the answers used least recently at once. Answers with
+    /// semantic cache budget removes the answers used least recently at once. Every connection
+    /// subscribed to the events of the backend gets `SettingsChanged`. Answers with
     /// `Response::Settings`.
     SetSettings {
         settings: BackendSettings,
+    },
+    /// What the window remembers of how the viewer left it (theme, key bindings, open tabs,
+    /// panel sizes): the values kept for the whole app (`scope` none) or for the project whose
+    /// repository root is `scope`. They belong to the backend, not to a connection. Subscribes
+    /// this connection to the events of the backend, as `RecentProjects` does. Answers with
+    /// `Response::Preferences`.
+    Preferences {
+        scope: Option<String>,
+    },
+    /// Keeps `value` under `key` in `scope`, replacing an earlier one, or with none forgets
+    /// it. The backend does not look into the value. Every connection subscribed to the
+    /// events of the backend, the requester included, gets `PreferenceChanged`. Answers with
+    /// `Response::Done`.
+    SetPreference {
+        scope: Option<String>,
+        key: String,
+        value: Option<String>,
     },
     /// Where the backend writes its log files, as a path of the machine it runs on. They belong to
     /// the backend, not to a project. Answers with `Response::LogDirectory`.

@@ -1,26 +1,24 @@
 //! The answers of the language servers that outlive a launch: one file for all projects,
 //! opened by the first project that has semantics.
 
-use std::path::PathBuf;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicU64, Ordering};
 
 use tokio::sync::OnceCell;
+use vet_app::ports::SettingsStore;
 use vet_infra::semantic_cache::{SqliteSemanticCache, size_on_disk};
+use vet_infra::store::SqliteStore;
 use vet_semantic::reuse::SemanticCache;
 
 pub(crate) struct PersistentAnswers {
-    dir: PathBuf,
-    /// The bytes the file may hold, for when it opens.
-    budget: AtomicU64,
+    /// Where the file lives, and the settings that say how much it may hold when it opens.
+    store: SqliteStore,
     file: OnceCell<Option<Arc<SqliteSemanticCache>>>,
 }
 
 impl PersistentAnswers {
-    pub(crate) fn new(dir: PathBuf, budget: u64) -> Self {
+    pub(crate) fn new(store: SqliteStore) -> Self {
         Self {
-            dir,
-            budget: AtomicU64::new(budget),
+            store,
             file: OnceCell::new(),
         }
     }
@@ -28,7 +26,14 @@ impl PersistentAnswers {
     async fn file(&self) -> Option<&Arc<SqliteSemanticCache>> {
         self.file
             .get_or_init(|| async {
-                match SqliteSemanticCache::open(&self.dir, self.budget.load(Ordering::Relaxed)).await {
+                let budget = match self.store.backend_settings().await {
+                    Ok(settings) => settings.semantic_cache_bytes(),
+                    Err(why) => {
+                        tracing::warn!(error = %why.0, "no semantic cache between launches");
+                        return None;
+                    }
+                };
+                match SqliteSemanticCache::open(self.store.dir(), budget).await {
                     Ok(cache) => Some(Arc::new(cache)),
                     // Only speed is lost without it.
                     Err(why) => {
@@ -53,9 +58,8 @@ impl PersistentAnswers {
         }
     }
 
-    /// Holds the file to `budget` bytes from now on, and at once.
+    /// Holds the file to `budget` bytes at once. The settings the store keeps already say so.
     pub(crate) async fn set_budget(&self, budget: u64) {
-        self.budget.store(budget, Ordering::Relaxed);
         if let Some(file) = self.file().await {
             file.set_budget(budget).await;
         }
@@ -63,6 +67,6 @@ impl PersistentAnswers {
 
     /// The bytes the file takes on disk.
     pub(crate) fn usage(&self) -> u64 {
-        size_on_disk(&self.dir)
+        size_on_disk(self.store.dir())
     }
 }

@@ -8,6 +8,7 @@ mod checks;
 mod common;
 mod fetch;
 mod load;
+mod preferences;
 mod progress;
 mod python;
 mod recent;

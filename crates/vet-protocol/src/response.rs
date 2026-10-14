@@ -6,10 +6,10 @@ use ts_rs::TS;
 use crate::{
     Account, BackendSettings, BaseDiff, BlobContent, Calls, ChangesetKey, ChangesetRow, CheckLog, CommitChecks,
     CommitUnit, Diagnostic, DirEntry, FileOutline, FileSymbols, Highlights, Lens, LineDelta, LocationRows, Locations,
-    Manifest, MappedLine, PatternMatch, PipelineOutcome, PipelineStep, ProjectId, PullRequestInfo, PullRequestRow,
-    PullRequestSource, Reachability, RecentProject, RemovalImpact, ReviewSubmitted, ReviewUpdate, SearchFile,
-    ServerInfo, Side, SymbolAt, SymbolSignature, Task, TextChange, TextContent, Thread, ThreadTarget, Unavailable,
-    Usages, VersionInfo, WorkspaceSymbols,
+    Manifest, MappedLine, PatternMatch, PipelineOutcome, PipelineStep, Preference, ProjectId, PullRequestInfo,
+    PullRequestRow, PullRequestSource, Reachability, RecentProject, RemovalImpact, ReviewSubmitted, ReviewUpdate,
+    SearchFile, ServerInfo, Side, SymbolAt, SymbolSignature, Task, TextChange, TextContent, Thread, ThreadTarget,
+    Unavailable, Usages, VersionInfo, WorkspaceSymbols,
 };
 
 #[derive(Clone, PartialEq, Debug, Serialize, Deserialize, TS)]
@@ -38,6 +38,10 @@ pub enum Response {
     /// The backend's own settings.
     Settings {
         settings: BackendSettings,
+    },
+    /// The values the window remembered in the scope asked for, by key.
+    Preferences {
+        values: Vec<Preference>,
     },
     /// The recent list after the request, most recent first.
     RecentProjects {

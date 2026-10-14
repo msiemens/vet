@@ -51,9 +51,6 @@ pub mod servers;
 /// `vet_semantic::reuse::SemanticCache`.
 pub mod semantic_cache;
 
-/// The backend's own settings.
-pub mod settings;
-
 /// `vet_app::search::LineMatcher` over the `regex` crate.
 pub mod search;
 

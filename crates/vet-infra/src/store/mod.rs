@@ -15,6 +15,7 @@ mod gc;
 mod migration;
 mod recent;
 mod servers;
+mod settings;
 #[cfg(test)]
 mod tests;
 mod writes;

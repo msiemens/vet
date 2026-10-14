@@ -22,6 +22,7 @@ import type { MappedLine } from "./MappedLine";
 import type { PatternMatch } from "./PatternMatch";
 import type { PipelineOutcome } from "./PipelineOutcome";
 import type { PipelineStep } from "./PipelineStep";
+import type { Preference } from "./Preference";
 import type { PullRequestInfo } from "./PullRequestInfo";
 import type { PullRequestRow } from "./PullRequestRow";
 import type { PullRequestSource } from "./PullRequestSource";
@@ -49,7 +50,7 @@ export type Response = { "type": "pong", payload: string, } | { "type": "project
 /**
  * The root of the repository the opened path belongs to.
  */
-root: string, } | { "type": "done" } | { "type": "logDirectory", path: string, } | { "type": "semanticCacheUsage", bytes: number, } | { "type": "settings", settings: BackendSettings, } | { "type": "recentProjects", projects: Array<RecentProject>, } | { "type": "accounts", accounts: Array<Account>, } | { "type": "account" } & Account | { "type": "tasks", tasks: Array<Task>, } | { "type": "changesets", rows: Array<ChangesetRow>, onView: ChangesetKey, } | { "type": "pullRequests", rows: Array<PullRequestRow>, sources: Array<PullRequestSource>, } | { "type": "changesetLines", lines: LineDelta | null, } | { "type": "checks", checks: Array<CommitChecks>, 
+root: string, } | { "type": "done" } | { "type": "logDirectory", path: string, } | { "type": "semanticCacheUsage", bytes: number, } | { "type": "settings", settings: BackendSettings, } | { "type": "preferences", values: Array<Preference>, } | { "type": "recentProjects", projects: Array<RecentProject>, } | { "type": "accounts", accounts: Array<Account>, } | { "type": "account" } & Account | { "type": "tasks", tasks: Array<Task>, } | { "type": "changesets", rows: Array<ChangesetRow>, onView: ChangesetKey, } | { "type": "pullRequests", rows: Array<PullRequestRow>, sources: Array<PullRequestSource>, } | { "type": "changesetLines", lines: LineDelta | null, } | { "type": "checks", checks: Array<CommitChecks>, 
 /**
  * Why the commits that are left out could not be answered for, fit to show.
  */
