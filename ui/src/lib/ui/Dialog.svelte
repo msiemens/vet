@@ -1,7 +1,7 @@
 <script lang="ts">
   import type { Snippet } from "svelte";
   import { onMount } from "svelte";
-  import { readJson, writeStored } from "../storage";
+  import { Preference } from "../preferences.svelte";
   import IconButton from "./IconButton.svelte";
   import ScrollArea from "./ScrollArea.svelte";
 
@@ -23,7 +23,7 @@
     width?: string;
     /** Any CSS length; without it the dialog is as tall as its content, up to the window. */
     height?: string;
-    /** Lets the viewer drag the dialog's edges; the size is kept under this name. */
+    /** Lets the viewer drag the dialog's edges; the size is kept as a preference under this name. */
     resizable?: string;
     /** Without it the content runs edge to edge and does not scroll, for a dialog that lays out its own panes. */
     padded?: boolean;
@@ -39,25 +39,27 @@
   const MIN = { w: 360, h: 240 };
   // The dialog sits at a fixed distance from the top and is centred sideways.
   const TOP = 0.12;
-  const storageKey = (name: string) => `vet.dialog.${name}`;
 
   interface Size {
     w: number;
     h: number;
   }
 
-  function storedSize(name: string | undefined): Size | undefined {
-    if (!name) return undefined;
-    return readJson(storageKey(name), (value) => {
-      const { w, h } = (value ?? {}) as Partial<Size>;
-      return typeof w === "number" && typeof h === "number" && w >= MIN.w && h >= MIN.h ? { w, h } : undefined;
-    });
-  }
-
   let sheet: HTMLDialogElement;
   // `resizable` does not change for a mounted dialog.
   // svelte-ignore state_referenced_locally
-  let size = $state(storedSize(resizable));
+  const kept = resizable
+    ? new Preference<Size | undefined>(
+        "app",
+        `dialog.${resizable}`,
+        (value) => {
+          const { w, h } = (value ?? {}) as Partial<Size>;
+          return typeof w === "number" && typeof h === "number" && w >= MIN.w && h >= MIN.h ? { w, h } : undefined;
+        },
+        undefined,
+      )
+    : undefined;
+  let size = $state(kept?.value);
   let drag: { x: number; y: number; start: Size; dx: -1 | 0 | 1; dy: 0 | 1 } | undefined;
 
   const EDGES = [
@@ -83,7 +85,7 @@
   }
 
   function keep() {
-    if (resizable) writeStored(storageKey(resizable), JSON.stringify(size));
+    if (kept) kept.value = size;
   }
 
   function onpointermove(e: PointerEvent) {

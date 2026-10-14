@@ -4,7 +4,10 @@
 import type { View } from "../../src/generated/View.ts";
 import type { Request } from "../../src/generated/Request.ts";
 import { changeset } from "../../src/state/changeset.svelte.ts";
+import { preferences } from "../../src/lib/preferences.svelte.ts";
 import { problems } from "../../src/state/problems.svelte.ts";
+import { session } from "../../src/state/session.svelte.ts";
+import { structure } from "../../src/state/structure.svelte.ts";
 import { queue } from "../../src/state/queue.svelte.ts";
 import { reviewShown } from "../../src/state/reviewShown.svelte.ts";
 import { serverList } from "../../src/state/serverList.svelte.ts";
@@ -288,6 +291,37 @@ export const sessions: Record<string, (h: Harness) => Promise<void>> = {
       await changeset.openChangeset({ type: "branch", name: "feature" });
       await sleep(500);
       if (asked() !== before) throw new Error("the queue asked the language servers for something");
+    });
+  },
+
+  /** What the window remembers reaches the backend, another window's changes are followed, and a connection that dropped reads them anew. */
+  async preferences(h) {
+    const kept = async (scope: string | null, key: string) =>
+      (await h.other.preferences(scope)).find((p) => p.key === key)?.value;
+    const eventually = async (what: string, read: () => Promise<unknown>, want: unknown) => {
+      for (let i = 0; i < 200; i++) {
+        if ((await read()) === want) return;
+        await sleep(25);
+      }
+      throw new Error(`timed out waiting for ${what}`);
+    };
+    await h.step("a change here is the backend's", async () => {
+      structure.setSort(true);
+      preferences.write("project", "tabs", "[1]");
+      await eventually("the app preference", () => kept(null, "structure.sort"), "true");
+      await eventually("the project preference", () => kept(session.repo ?? null, "tabs"), "[1]");
+    });
+    await h.step("a change in another window is followed", async () => {
+      await h.other.setPreference(null, "structure.sort", undefined);
+      await h.until(() => !structure.sort, "the sort to be forgotten");
+      await h.other.setPreference(session.repo ?? null, "tabs", "[2]");
+      await h.until(() => preferences.read("project", "tabs") === "[2]", "the project preference");
+    });
+    await h.step("preferences changed while the socket is down are read anew", async () => {
+      const back = h.dropSocket();
+      await h.other.setPreference(null, "structure.changedOnly", "true");
+      await back;
+      await h.until(() => structure.changedOnly, "the preference after reconnecting");
     });
   },
 

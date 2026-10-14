@@ -1,8 +1,7 @@
 // What the review screen remembers of a changeset while another is on view and across restarts: its
 // open tabs, their view modes, where each pane was scrolled to and had its caret, and the hunk the
-// Changes tab was at. `ViewMemory` keeps it per repository in the browser storage.
+// Changes tab was at. `ViewMemory` keeps it per repository, as the project's preference `tabs`.
 
-import { parseJson, readStored, writeStored } from "../../lib/storage.ts";
 import type { Mode, ViewMode } from "../../lib/viewMode.ts";
 import type { HunkAnchor, PanePosition, ScrollPosition } from "./editor/ChangesetView.ts";
 import type { TabId } from "../../state/commands.ts";
@@ -131,12 +130,21 @@ export function encodeView(view: SavedView): unknown {
 /** The most changesets of a repository whose views are kept; the least recently left go first. */
 export const MAX_REMEMBERED = 40;
 
+/** Where one repository's views are kept, as text. */
 export interface Storage {
-  read(key: string): string | undefined;
-  write(key: string, value: string | undefined): void;
+  read(): string | undefined;
+  write(value: string | undefined): void;
 }
 
-const browserStorage: Storage = { read: readStored, write: writeStored };
+/** The JSON in `text`; none when there is no text or it is damaged. */
+function parseJson(text: string | undefined): unknown {
+  if (text === undefined) return undefined;
+  try {
+    return JSON.parse(text);
+  } catch {
+    return undefined;
+  }
+}
 
 /**
  * The views of one repository's changesets, by changeset key. The storage holds the
@@ -145,12 +153,10 @@ const browserStorage: Storage = { read: readStored, write: writeStored };
  */
 export class ViewMemory {
   private own = new Map<string, SavedView>();
-  private readonly storageKey: string;
   private readonly storage: Storage;
   private readonly max: number;
 
-  constructor(repo: string, storage: Storage = browserStorage, max = MAX_REMEMBERED) {
-    this.storageKey = `vet.tabs:${repo}`;
+  constructor(storage: Storage, max = MAX_REMEMBERED) {
     this.storage = storage;
     this.max = max;
   }
@@ -158,7 +164,7 @@ export class ViewMemory {
   /** The stored views, least recently set first. */
   private stored(): Map<string, SavedView> {
     const views = new Map<string, SavedView>();
-    const entries = parseJson(this.storage.read(this.storageKey));
+    const entries = parseJson(this.storage.read());
     for (const entry of Array.isArray(entries) ? (entries as unknown[]) : []) {
       if (!Array.isArray(entry) || typeof entry[0] !== "string") continue;
       const view = decodeView(entry[1]);
@@ -181,6 +187,6 @@ export class ViewMemory {
       views.delete(oldest);
     }
     const entries = [...views].map(([k, v]) => [k, encodeView(v)]);
-    this.storage.write(this.storageKey, JSON.stringify(entries));
+    this.storage.write(JSON.stringify(entries));
   }
 }

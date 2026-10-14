@@ -17,6 +17,7 @@ import { Debounced } from "../../lib/debounced";
 import type { LocationRow } from "../../generated/LocationRow";
 import { nextPaint } from "../../lib/nextPaint";
 import { platformName } from "../../lib/platformName";
+import { preferences } from "../../lib/preferences.svelte";
 import type { Backend } from "../../state/backend";
 import type { Changeset } from "../../state/changeset.svelte";
 import { contextMenus } from "../../state/contextMenu.svelte";
@@ -114,6 +115,12 @@ export type ChangesetSource = Pick<
 >;
 
 const NO_HOVER = { text: "", code: [] };
+
+/** Where the views of the changesets of the repository on view are kept. */
+const projectViews = {
+  read: () => preferences.read("project", "tabs"),
+  write: (value: string | undefined) => preferences.write("project", "tabs", value),
+};
 
 const FIND_TYPING_MS = 120;
 
@@ -1273,7 +1280,7 @@ export class ReviewController {
   private saveView() {
     const repo = session.repo;
     if (repo === undefined || this.key === undefined) return;
-    this.memory ??= new ViewMemory(repo);
+    this.memory ??= new ViewMemory(projectViews);
     this.memory.set(this.key, this.capture(this.key));
   }
 
@@ -1550,7 +1557,7 @@ export class ReviewController {
   /** Sets the tabs the changeset `key` had, and what its panes are put at when they are built. Each tab is judged by the view it reads. */
   private bringBack(key: string): SavedView | undefined {
     const repo = session.repo;
-    if (repo !== undefined) this.memory ??= new ViewMemory(repo);
+    if (repo !== undefined) this.memory ??= new ViewMemory(projectViews);
     const saved = this.memory?.get(key);
     this.dropScopes();
     this.frozen = false;

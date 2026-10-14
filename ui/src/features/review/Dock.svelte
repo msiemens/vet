@@ -15,7 +15,7 @@
   <Splitter
     orientation="horizontal"
     label="Resize the bottom panel"
-    storageKey="vet.dock"
+    name="dock"
     direction={-1}
     current={() => root?.offsetHeight ?? DOCK_MIN}
     limits={() => dockLimits(root?.parentElement?.clientHeight ?? 0)}

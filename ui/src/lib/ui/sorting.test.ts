@@ -1,8 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import type { Column } from "./columns.ts";
-import { parseJson } from "../storage.ts";
-import { type Sort, nextSort, parseSort, serializeSort, sortRows } from "./sorting.ts";
+import { type Sort, nextSort, parseSort, sortRows } from "./sorting.ts";
 
 interface Row {
   name: string;
@@ -65,22 +64,20 @@ void test("without a sort, or by a column that cannot sort, the rows keep their 
   assert.deepEqual(names(sortRows(rows, COLUMNS, { column: "note", direction: "ascending" })), ["b", "a"]);
 });
 
-void test("a stored sort comes back as it was written, and the default order stores nothing", () => {
+void test("a stored sort comes back as it was written", () => {
   const sort: Sort = { column: "at", direction: "ascending" };
-  assert.deepEqual(parseSort(COLUMNS, parseJson(serializeSort(sort))), sort);
-  assert.equal(serializeSort(undefined), undefined);
+  assert.deepEqual(parseSort(COLUMNS, JSON.parse(JSON.stringify(sort)) as unknown), sort);
   assert.equal(parseSort(COLUMNS, undefined), undefined);
 });
 
 void test("a stored sort by a column that is gone or cannot sort, or that is not a sort, gives the default order", () => {
-  const texts = [
-    JSON.stringify({ column: "gone", direction: "ascending" }),
-    JSON.stringify({ column: "note", direction: "ascending" }),
-    JSON.stringify({ column: "name", direction: "up" }),
+  const values = [
+    { column: "gone", direction: "ascending" },
+    { column: "note", direction: "ascending" },
+    { column: "name", direction: "up" },
     "",
-    "{",
-    "null",
-    "[1]",
+    null,
+    [1],
   ];
-  for (const text of texts) assert.equal(parseSort(COLUMNS, parseJson(text)), undefined, text);
+  for (const value of values) assert.equal(parseSort(COLUMNS, value), undefined, JSON.stringify(value));
 });

@@ -1,24 +1,22 @@
 // Search Everywhere's state: whether the popup is up, its tab and query, what was chosen lately in
-// the open project, and the viewer's two settings. The popup (`Palette.svelte`) draws it.
+// the open project, and the viewer's setting. The popup (`Palette.svelte`) draws it.
 
 import { errorText } from "../../lib/errorText";
-import { readJson, storeFlag, storedFlag, writeStored } from "../../lib/storage";
+import { Preference, flagPreference } from "../../lib/preferences.svelte";
 import { type CommandContext, commands } from "../../state/commands";
 import { session } from "../../state/session.svelte";
 import { type PaletteTab, remember } from "./paletteRows";
 import { type Found, SymbolSearch } from "./symbolSearch";
 
-const UNCHANGED_KEY = "vet.palette.unchanged";
-const recentKey = (repo: string) => `vet.palette.recent:${repo}`;
+const unchangedPreference = flagPreference("app", "palette.unchanged", false);
 
-/** The results chosen last in a project, newest first, as kept in the browser storage. */
-function storedRecent(repo: string | undefined): string[] {
-  if (repo === undefined) return [];
-  const ids = readJson(recentKey(repo), (value) =>
-    Array.isArray(value) ? value.filter((id): id is string => typeof id === "string") : undefined,
-  );
-  return ids ?? [];
-}
+/** The results chosen last in the open project, newest first. */
+const recentPreference = new Preference<string[]>(
+  "project",
+  "palette.recent",
+  (value) => (Array.isArray(value) ? value.filter((id): id is string => typeof id === "string") : undefined),
+  [],
+);
 
 class PaletteState {
   open = $state(false);
@@ -32,7 +30,9 @@ class PaletteState {
    */
   context = $state.raw<CommandContext>(commands.context());
   /** Files of the changeset's target that the changeset does not change are searched too. */
-  unchanged = $state(storedFlag(UNCHANGED_KEY, false));
+  get unchanged(): boolean {
+    return unchangedPreference.value;
+  }
   /** The paths of every file of the project, as of the snapshot `revision`; none until asked for. */
   files = $state.raw<{ revision: number; paths: string[] }>();
   /** The file list is being asked for. */
@@ -81,8 +81,7 @@ class PaletteState {
   }
 
   setUnchanged(on: boolean) {
-    this.unchanged = on;
-    storeFlag(UNCHANGED_KEY, on, false);
+    unchangedPreference.value = on;
   }
 
   /** Asks for the list of all files; an answer that an newer ask overtook is dropped. */
@@ -108,7 +107,7 @@ class PaletteState {
       return;
     }
     this.context = commands.context();
-    this.recent = storedRecent(session.repo);
+    this.recent = session.repo === undefined ? [] : recentPreference.value;
     this.query = "";
     this.tab = tab;
     this.open = true;
@@ -122,7 +121,7 @@ class PaletteState {
   /** Remembers the result chosen, so it breaks ties from now on. */
   choose(id: string) {
     this.recent = remember(this.recent, id);
-    if (session.repo !== undefined) writeStored(recentKey(session.repo), JSON.stringify(this.recent));
+    if (session.repo !== undefined) recentPreference.value = this.recent;
   }
 }
 

@@ -47,11 +47,6 @@ export function sortRows<R>(
     .map(({ row }) => row);
 }
 
-/** The text to store, or none for the default order. */
-export function serializeSort(sort: Sort | undefined): string | undefined {
-  return sort && JSON.stringify(sort);
-}
-
 /** A stored sort, if it names a sortable column of these. */
 export function parseSort<R>(columns: readonly Column<R>[], value: unknown): Sort | undefined {
   if (typeof value !== "object" || value === null) return undefined;

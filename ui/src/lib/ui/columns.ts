@@ -72,11 +72,6 @@ export function withoutWidth(widths: Widths, id: string): Widths {
   return Object.fromEntries(Object.entries(widths).filter(([key]) => key !== id));
 }
 
-/** The text to store, or none when every column has its default. */
-export function serializeWidths(widths: Widths): string | undefined {
-  return Object.keys(widths).length ? JSON.stringify(widths) : undefined;
-}
-
 /** Stored widths for these columns: others are dropped, and none is narrower than its minimum. */
 export function parseWidths(columns: readonly Sized[], value: unknown): Widths {
   if (typeof value !== "object" || value === null) return {};

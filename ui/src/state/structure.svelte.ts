@@ -1,5 +1,5 @@
 // The Structure tool's state: the outline of the file the active tab shows, the viewer's choices
-// (sort and changed only, which are remembered) and the symbol selected in it. The backend derives the outline (SPEC §7.3, I5); this loads and holds it. The
+// (sort and changed only, which are preferences) and the symbol selected in it. The backend derives the outline (SPEC §7.3, I5); this loads and holds it. The
 // outline belongs to a tab: switching tabs starts it over, with every holder open.
 
 import { untrack } from "svelte";
@@ -8,7 +8,7 @@ import type { FileOutline } from "../generated/FileOutline";
 import { isAbort } from "../lib/abort";
 import { errorText } from "../lib/errorText";
 import { toggleIn } from "../lib/foldKeys";
-import { storeFlag, storedFlag } from "../lib/storage";
+import { flagPreference } from "../lib/preferences.svelte";
 import type { SymbolChange } from "../generated/SymbolChange";
 import type { SymbolInfo } from "../generated/SymbolInfo";
 import type { TabId } from "./commands";
@@ -42,12 +42,17 @@ interface Place {
   col: number;
 }
 
-const PREFS = { sort: "vet.structure.sort", changedOnly: "vet.structure.changedOnly" };
+const sortPreference = flagPreference("app", "structure.sort", false);
+const changedOnlyPreference = flagPreference("app", "structure.changedOnly", false);
 
 class StructureState {
   /** The symbols under each holder alphabetically. */
-  sort = $state(storedFlag(PREFS.sort, false));
-  changedOnly = $state(storedFlag(PREFS.changedOnly, false));
+  get sort(): boolean {
+    return sortPreference.value;
+  }
+  get changedOnly(): boolean {
+    return changedOnlyPreference.value;
+  }
   target = $state.raw<StructureTarget>();
   load = $state.raw<OutlineLoad>({ state: "loading" });
   /** The keys of the rows of holders that are shut. */
@@ -154,13 +159,11 @@ class StructureState {
   }
 
   setSort(on: boolean) {
-    this.sort = on;
-    storeFlag(PREFS.sort, on, false);
+    sortPreference.value = on;
   }
 
   setChangedOnly(on: boolean) {
-    this.changedOnly = on;
-    storeFlag(PREFS.changedOnly, on, false);
+    changedOnlyPreference.value = on;
   }
 }
 

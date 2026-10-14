@@ -13,6 +13,11 @@ class BackendSettingsStore {
   /** The semantic caches are being cleared. */
   clearing = $state(false);
 
+  constructor() {
+    // Another window changing them is heard once this one has read them.
+    session.onConnect((backend) => backend.onSettingsChanged(() => this.settings && void this.load()));
+  }
+
   /** Reads the settings and the cache's size again. */
   async load() {
     const backend = session.backend;

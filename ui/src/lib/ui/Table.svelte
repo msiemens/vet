@@ -2,7 +2,7 @@
      `row` in the body is laid out on the header's grid, and a divider in the header parts each two
      columns. The viewer resizes a column by dragging its divider or with the arrow keys on it, and a
      double click puts it back. A click on a sortable column's header sets `sort`, by which the owner
-     orders its rows (`sortRows`). The widths and the sort are kept under `name`. The rest props go
+     orders its rows (`sortRows`). The widths and the sort are kept as preferences under `name`. The rest props go
      to the element holding the rows, `body`.
 
      Its owner sizes it with `--table-gap` (between columns), `--table-pad` and `--table-pad-end`
@@ -11,21 +11,21 @@
 <script lang="ts">
   import type { Snippet } from "svelte";
   import type { HTMLAttributes } from "svelte/elements";
-  import { readJson, writeStored } from "../storage";
+  import { Preference } from "../preferences.svelte";
   import Icon from "./Icon.svelte";
   import {
     type Column,
+    type Widths,
     gridTemplate,
     handleSide,
     minOf,
     parseWidths,
     resized,
-    serializeWidths,
     withWidth,
     withoutWidth,
   } from "./columns";
   import ScrollArea from "./ScrollArea.svelte";
-  import { type Sort, nextSort, parseSort, serializeSort } from "./sorting";
+  import { type Sort, nextSort, parseSort } from "./sorting";
 
   let {
     name,
@@ -55,15 +55,21 @@
   const STEP = 16;
   // The name and the columns do not change for a mounted table.
   // svelte-ignore state_referenced_locally
-  const storageKey = `vet.table.${name}`;
-  let widths = $state(readJson(storageKey, (value) => parseWidths(columns, value)) ?? {});
+  const widthsKept = new Preference<Widths>("app", `table.${name}`, (value) => parseWidths(columns, value), {});
+  // svelte-ignore state_referenced_locally
+  const sortKept = new Preference<Sort | undefined>(
+    "app",
+    `table.${name}.sort`,
+    (value) => parseSort(columns, value),
+    undefined,
+  );
+  let widths = $state(widthsKept.value);
   const template = $derived(gridTemplate(columns, widths));
-  const sortKey = `${storageKey}.sort`;
-  sort = readJson(sortKey, (value) => parseSort(columns, value));
+  sort = sortKept.value;
 
   function sortBy(column: Column<never>) {
     sort = nextSort(sort, column);
-    writeStored(sortKey, serializeSort(sort));
+    sortKept.value = sort;
   }
 
   function ariaSort(column: Column<never>) {
@@ -89,7 +95,7 @@
     if (side) widths = withWidth(widths, column.id, resized(column, side, start, delta, room));
   }
 
-  const keep = () => writeStored(storageKey, serializeWidths(widths));
+  const keep = () => (widthsKept.value = widths);
 
   function onpointerdown(e: PointerEvent, index: number) {
     if (e.button !== 0) return;

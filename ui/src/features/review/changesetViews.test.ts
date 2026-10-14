@@ -17,16 +17,15 @@ const changed =
 const noLogs = () => false;
 
 /** A storage that outlives the memories built on it, as the browser's does a restart. */
-function fakeStorage(): Storage & { items: Map<string, string> } {
-  const items = new Map<string, string>();
-  return {
-    items,
-    read: (key) => items.get(key),
-    write: (key, value) => {
-      if (value === undefined) items.delete(key);
-      else items.set(key, value);
+function fakeStorage(): Storage & { text: string | undefined } {
+  const kept = {
+    text: undefined as string | undefined,
+    read: () => kept.text,
+    write: (value: string | undefined) => {
+      kept.text = value;
     },
   };
+  return kept;
 }
 
 void test("a changeset seen for the first time has the Changes tab alone, in the diff mode last chosen", () => {
@@ -84,8 +83,8 @@ void test("a tab that stays at a commit comes back whatever the changeset change
   assert.deepEqual(open, ["changes", pinned]);
   assert.equal(active, pinned);
   const storage = fakeStorage();
-  new ViewMemory("/repo", storage).set("k", view);
-  assert.deepEqual(new ViewMemory("/repo", storage).get("k")?.open, ["changes", pinned]);
+  new ViewMemory(storage).set("k", view);
+  assert.deepEqual(new ViewMemory(storage).get("k")?.open, ["changes", pinned]);
 });
 
 void test("a stored tab that stays at a commit is kept only if its id says a commit", () => {
@@ -129,29 +128,29 @@ const layout = (): SavedView => ({
 
 void test("tabs, modes, positions and the hunk survive a restart", () => {
   const storage = fakeStorage();
-  new ViewMemory("/repo", storage).set("pr:1", layout());
-  const back = new ViewMemory("/repo", storage).get("pr:1");
+  new ViewMemory(storage).set("pr:1", layout());
+  const back = new ViewMemory(storage).get("pr:1");
   assert.deepEqual(back, layout());
 });
 
 void test("changesets of one repository keep their own views, and other repositories theirs", () => {
   const storage = fakeStorage();
-  const memory = new ViewMemory("/repo", storage);
+  const memory = new ViewMemory(storage);
   memory.set("pr:1", layout());
   memory.set("pr:2", saved(["changes", "file:z.rs"], "changes", { "file:z.rs": "split" }));
   assert.deepEqual(memory.get("pr:1"), layout());
   assert.deepEqual(memory.get("pr:2")?.open, ["changes", "file:z.rs"]);
-  assert.equal(new ViewMemory("/other", storage).get("pr:1"), undefined);
+  assert.equal(new ViewMemory(fakeStorage()).get("pr:1"), undefined);
 });
 
 void test("a window that saves does not undo what another window saved meanwhile", () => {
   const storage = fakeStorage();
-  const first = new ViewMemory("/repo", storage);
-  const second = new ViewMemory("/repo", storage);
+  const first = new ViewMemory(storage);
+  const second = new ViewMemory(storage);
   first.set("pr:1", layout());
   second.set("pr:2", saved(["changes", "file:z.rs"], "changes", { "file:z.rs": "file" }));
   first.set("pr:3", saved(["changes"], "changes"));
-  const back = new ViewMemory("/repo", storage);
+  const back = new ViewMemory(storage);
   assert.deepEqual(back.get("pr:1"), layout());
   assert.deepEqual(back.get("pr:2")?.open, ["changes", "file:z.rs"]);
   assert.ok(back.get("pr:3"));
@@ -159,22 +158,22 @@ void test("a window that saves does not undo what another window saved meanwhile
 
 void test("log tabs stay in memory but are not stored", () => {
   const storage = fakeStorage();
-  const memory = new ViewMemory("/repo", storage);
+  const memory = new ViewMemory(storage);
   memory.set("pr:1", saved(["changes", "log:9", "file:a.rs"], "log:9", { "file:a.rs": "unified" }));
   assert.deepEqual(memory.get("pr:1")?.open, ["changes", "log:9", "file:a.rs"]);
-  const back = new ViewMemory("/repo", storage).get("pr:1");
+  const back = new ViewMemory(storage).get("pr:1");
   assert.deepEqual(back?.open, ["changes", "file:a.rs"]);
   assert.equal(back.active, "changes");
 });
 
 void test("only the most recently set changesets are kept", () => {
   const storage = fakeStorage();
-  const memory = new ViewMemory("/repo", storage, 2);
+  const memory = new ViewMemory(storage, 2);
   memory.set("a", saved(["changes"], "changes"));
   memory.set("b", saved(["changes"], "changes"));
   memory.set("a", saved(["changes", "file:x.rs"], "changes", { "file:x.rs": "file" }));
   memory.set("c", saved(["changes"], "changes"));
-  const back = new ViewMemory("/repo", storage, 2);
+  const back = new ViewMemory(storage, 2);
   assert.equal(back.get("b"), undefined);
   assert.deepEqual(back.get("a")?.open, ["changes", "file:x.rs"]);
   assert.ok(back.get("c"));
@@ -182,25 +181,22 @@ void test("only the most recently set changesets are kept", () => {
 
 void test("damaged storage gives no views, and damaged parts are left out of the rest", () => {
   const storage = fakeStorage();
-  storage.items.set("vet.tabs:/repo", "{");
-  assert.equal(new ViewMemory("/repo", storage).get("a"), undefined);
-  storage.items.set(
-    "vet.tabs:/repo",
-    JSON.stringify([
-      [
-        "a",
-        {
-          open: ["file:x.rs", "bogus", 3],
-          active: "bogus",
-          modes: { "file:x.rs": "sideways", changes: "split" },
-          panes: { "file:x.rs": { diff: { top: -1, caret: 2 }, text: { top: 1.5, caret: 0 } } },
-          changes: { path: "x.rs" },
-        },
-      ],
-      ["b", 7],
-    ]),
-  );
-  const memory = new ViewMemory("/repo", storage);
+  storage.text = "{";
+  assert.equal(new ViewMemory(storage).get("a"), undefined);
+  storage.text = JSON.stringify([
+    [
+      "a",
+      {
+        open: ["file:x.rs", "bogus", 3],
+        active: "bogus",
+        modes: { "file:x.rs": "sideways", changes: "split" },
+        panes: { "file:x.rs": { diff: { top: -1, caret: 2 }, text: { top: 1.5, caret: 0 } } },
+        changes: { path: "x.rs" },
+      },
+    ],
+    ["b", 7],
+  ]);
+  const memory = new ViewMemory(storage);
   assert.equal(memory.get("b"), undefined);
   const a = memory.get("a");
   assert.deepEqual(a?.open, ["changes", "file:x.rs"]);

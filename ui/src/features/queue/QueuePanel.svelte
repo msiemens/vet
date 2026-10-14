@@ -2,12 +2,10 @@
   // The side panel of the queue: what the changeset on view is, why it is blocked, where the viewer's
   // review stands, its comments, checks and reviewers. It is for reading: the review is where to act.
   import type { Snippet } from "svelte";
-  import { SvelteSet } from "svelte/reactivity";
   import type { CheckRun } from "../../generated/CheckRun";
   import type { Thread } from "../../generated/Thread";
   import { errorText } from "../../lib/errorText";
-  import { toggleIn } from "../../lib/foldKeys";
-  import { storeFlag, storedFlag } from "../../lib/storage";
+  import { flagPreference } from "../../lib/preferences.svelte";
   import { platformName } from "../../lib/platformName";
   import Avatar from "../../lib/ui/Avatar.svelte";
   import CiStatus from "../../lib/ui/CiStatus.svelte";
@@ -55,23 +53,23 @@
     onbasechanged: () => void;
   } = $props();
 
-  const SECTION_KEY = "vet.queue.section.";
-  const RESOLVED_KEY = "vet.queue.resolvedOpen";
-
-  // Folded sections, remembered; every one starts open.
-  const shut = new SvelteSet<string>(
-    ["description", "review", "comments", "checks", "reviewers"].filter((id) => !storedFlag(SECTION_KEY + id, true)),
+  // Whether each section is open, remembered; every one starts open.
+  const sections = new Map(
+    ["description", "review", "comments", "checks", "reviewers"].map((id) => [
+      id,
+      flagPreference("app", `queue.section.${id}`, true),
+    ]),
   );
+  const isShut = (id: string) => sections.get(id)?.value === false;
   function fold(id: string) {
-    toggleIn(shut, id);
-    storeFlag(SECTION_KEY + id, !shut.has(id), true);
+    const section = sections.get(id);
+    if (section) section.value = !section.value;
   }
 
   // Whether resolved threads show open or as one row: one setting for every changeset.
-  let resolvedOpen = $state(storedFlag(RESOLVED_KEY, false));
+  const resolvedOpen = flagPreference("app", "queue.resolvedOpen", false);
   function flipResolved() {
-    resolvedOpen = !resolvedOpen;
-    storeFlag(RESOLVED_KEY, resolvedOpen, false);
+    resolvedOpen.value = !resolvedOpen.value;
   }
 
   const pull = $derived(row?.pullRequest);
@@ -139,11 +137,11 @@
     <SectionHead
       {title}
       {count}
-      open={!shut.has(id)}
+      open={!isShut(id)}
       ontoggle={() => fold(id)}
-      summary={shut.has(id) ? folded : undefined}
+      summary={isShut(id) ? folded : undefined}
     />
-    {#if !shut.has(id)}{@render body()}{/if}
+    {#if !isShut(id)}{@render body()}{/if}
   </section>
 {/snippet}
 
@@ -260,7 +258,7 @@
           {#if groups.resolved.length}
             <GroupLabel count={groups.resolved.length}>Resolved</GroupLabel>
             <div class="cards">
-              <ThreadCards list={groups.resolved} {card} isOpen={() => resolvedOpen} ontoggle={flipResolved} />
+              <ThreadCards list={groups.resolved} {card} isOpen={() => resolvedOpen.value} ontoggle={flipResolved} />
             </div>
           {/if}
         {/snippet}

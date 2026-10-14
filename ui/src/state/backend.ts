@@ -29,6 +29,7 @@ import type { PatternMatch } from "../generated/PatternMatch";
 import type { PipelineAction } from "../generated/PipelineAction";
 import type { PipelineOutcome } from "../generated/PipelineOutcome";
 import type { PipelineStep } from "../generated/PipelineStep";
+import type { Preference } from "../generated/Preference";
 import type { PullRequestInfo } from "../generated/PullRequestInfo";
 import type { PullRequestRow } from "../generated/PullRequestRow";
 import type { PullRequestSource } from "../generated/PullRequestSource";
@@ -89,13 +90,23 @@ export type SearchQuery = Omit<Extract<Request, { type: "search" }>, "type" | "p
 export type SearchResults = Extract<Response, { type: "searchResults" }>;
 
 /** The events that belong to the backend, not to a session. */
-type ProcessEvent = Extract<ServerEvent, { type: "credentialsNeeded" | "accountsChanged" | "recentProjectsChanged" }>;
+type ProcessEvent = Extract<
+  ServerEvent,
+  { type: "credentialsNeeded" | "accountsChanged" | "recentProjectsChanged" | "settingsChanged" | "preferenceChanged" }
+>;
 
 /** The events of a session. */
 export type SessionEvent = Exclude<ServerEvent, ProcessEvent>;
 
-const isProcessEvent = (event: ServerEvent): event is ProcessEvent =>
-  event.type === "credentialsNeeded" || event.type === "accountsChanged" || event.type === "recentProjectsChanged";
+const PROCESS_EVENTS: ReadonlySet<string> = new Set<ProcessEvent["type"]>([
+  "credentialsNeeded",
+  "accountsChanged",
+  "recentProjectsChanged",
+  "settingsChanged",
+  "preferenceChanged",
+]);
+
+const isProcessEvent = (event: ServerEvent): event is ProcessEvent => PROCESS_EVENTS.has(event.type);
 
 /** A language server's Markdown, with the highlights of each of its fenced code blocks, in order. */
 export interface HoverText {
@@ -274,9 +285,36 @@ export class Backend {
     return expect(await this.conn.request({ type: "semanticCacheUsage" }), "semanticCacheUsage").bytes;
   }
 
-  /** The backend's own settings, app-wide. */
+  /** The backend's own settings, app-wide. Asking also subscribes this connection to the backend's events. */
   async settings(): Promise<BackendSettings> {
     return expect(await this.conn.request({ type: "settings" }), "settings").settings;
+  }
+
+  /** Calls `listener` when the backend's own settings changed, by this window or another. */
+  onSettingsChanged(listener: () => void): () => void {
+    return this.conn.onEvent((event) => {
+      if (event.type === "settingsChanged") listener();
+    });
+  }
+
+  /**
+   * What the window remembered in `scope`: the whole app (`null`) or the project with that repository root.
+   * Asking also subscribes this connection to the backend's events.
+   */
+  async preferences(scope: string | null): Promise<Preference[]> {
+    return expect(await this.conn.request({ type: "preferences", scope }), "preferences").values;
+  }
+
+  /** Keeps `value` (JSON text) under `key`, or forgets the key for `undefined`. */
+  async setPreference(scope: string | null, key: string, value: string | undefined): Promise<void> {
+    expect(await this.conn.request({ type: "setPreference", scope, key, value: value ?? null }), "done");
+  }
+
+  /** Calls `listener` when a preference was kept or forgotten, by this window or another. */
+  onPreferenceChanged(listener: (scope: string | null, key: string, value: string | undefined) => void): () => void {
+    return this.conn.onEvent((event) => {
+      if (event.type === "preferenceChanged") listener(event.scope, event.key, event.value ?? undefined);
+    });
   }
 
   /** Replaces the backend's own settings; resolves with them as kept, rejects with the backend's message. */

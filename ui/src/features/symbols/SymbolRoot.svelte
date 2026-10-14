@@ -4,7 +4,7 @@
   // "N more"; a root with nothing to list is one muted line.
   import type { Snippet } from "svelte";
   import { letterOfChange } from "../../lib/changeLetter";
-  import { storeFlag, storedFlag } from "../../lib/storage";
+  import { flagPreference } from "../../lib/preferences.svelte";
   import { onChevron } from "../../lib/ui/chevron";
   import FileIcon from "../../lib/ui/FileIcon.svelte";
   import IconButton from "../../lib/ui/IconButton.svelte";
@@ -46,10 +46,10 @@
     find?: { label: string; onclick: () => void };
   } = $props();
 
-  const KEY = "vet.symbols.section.";
   // The root keeps the state it was first shown with.
   // svelte-ignore state_referenced_locally
-  let shown = $state(storedFlag(KEY + id, true));
+  const kept = flagPreference("app", `symbols.section.${id}`, true);
+  const shown = $derived(kept.value);
   // Rows the reviewer opened or shut against what they start as, and lists asked to show all.
   const flipped = new SvelteSet<string>();
   const all = new SvelteSet<string>();
@@ -59,8 +59,7 @@
   const FATE = { bad: "var(--del-text)", warn: "var(--old-base)", mute: "var(--text-3)" } as const;
 
   function toggle() {
-    shown = !shown;
-    storeFlag(KEY + id, shown, true);
+    kept.value = !shown;
   }
 
   const holds = (e: Entry) => e.children.length > 0 && !e.fixed;

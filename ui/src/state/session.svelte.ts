@@ -5,6 +5,7 @@
 import { errorText } from "../lib/errorText";
 import { Backend, type LinkState } from "./backend";
 import { hasNativeDialogs, pickRepository, restartBackend, setWindowMode } from "./host";
+import { preferenceSync } from "./preferenceSync";
 import { recent } from "./recent.svelte";
 import { RepoOpener } from "./repoOpener";
 
@@ -25,7 +26,11 @@ class SessionStore {
   private resyncListeners = new Set<(backend: Backend) => void>();
   private opener = new RepoOpener({
     release: () => this.release(),
-    open: (path) => this.connected().open(path),
+    open: async (path) => {
+      const root = await this.connected().open(path);
+      await preferenceSync.openProject(root);
+      return root;
+    },
     setWindowMode,
     opened: (repo) => {
       this.repo = repo;
@@ -38,6 +43,7 @@ class SessionStore {
   async connect() {
     try {
       const backend = await Backend.connect();
+      await preferenceSync.start(backend);
       backend.onLinkState((state) => (this.link = state));
       backend.onReconnect(() => void this.resync(backend));
       for (const listener of this.connectListeners) listener(backend);
@@ -64,6 +70,7 @@ class SessionStore {
       }
     }
     void recent.load(backend);
+    void preferenceSync.load(backend).catch(console.error);
     for (const listener of this.resyncListeners) listener(backend);
   }
 
@@ -158,6 +165,7 @@ class SessionStore {
   /** Closes the open repository without touching the window, for a caller that opens another. */
   private async release() {
     this.repo = undefined;
+    preferenceSync.closeProject();
     for (const listener of this.closeListeners) listener();
     await this.connected().close();
   }

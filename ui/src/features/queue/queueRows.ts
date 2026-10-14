@@ -72,8 +72,8 @@ export const TABS: { id: QueueTab; label: string }[] = [
 ];
 
 /** The tab a stored value names; the first for anything else. */
-export function parseTab(text: string | undefined): QueueTab {
-  return TABS.find((t) => t.id === text)?.id ?? TABS[0].id;
+export function parseTab(value: unknown): QueueTab {
+  return TABS.find((t) => t.id === value)?.id ?? TABS[0].id;
 }
 
 /** The tab `delta` places after `tab`, wrapping around the row. */

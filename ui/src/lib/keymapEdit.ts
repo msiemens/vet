@@ -44,11 +44,7 @@ export function withReplacedBinding(overrides: Overrides, listing: CommandListin
   return command ? withBinding(next, command, spec) : next;
 }
 
-/** The overrides as they are kept. */
-export const serializeOverrides = (overrides: Overrides): string | undefined =>
-  Object.keys(overrides).length ? JSON.stringify(overrides) : undefined;
-
-/** The overrides kept in `text`; whatever is not a binding is dropped, so a damaged value costs only itself. */
+/** The overrides kept as `value`; whatever is not a binding is dropped, so a damaged value costs only itself. */
 export function parseOverrides(value: unknown): Overrides {
   if (typeof value !== "object" || value === null || Array.isArray(value)) return {};
   const overrides: Overrides = {};

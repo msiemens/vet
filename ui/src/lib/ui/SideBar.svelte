@@ -29,7 +29,7 @@
   <Splitter
     orientation="vertical"
     label="Resize sidebar"
-    storageKey="vet.sidebar.{side}"
+    name="sidebar.{side}"
     direction={side === "left" ? 1 : -1}
     current={() => panel.offsetWidth}
     {limits}

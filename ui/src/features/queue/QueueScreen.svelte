@@ -3,7 +3,7 @@
   import type { CheckRun } from "../../generated/CheckRun";
   import type { Thread } from "../../generated/Thread";
   import { plural } from "../../lib/format";
-  import { readStored, writeStored } from "../../lib/storage";
+  import { Preference } from "../../lib/preferences.svelte";
   import Avatar from "../../lib/ui/Avatar.svelte";
   import CiStatus from "../../lib/ui/CiStatus.svelte";
   import EmptyState from "../../lib/ui/EmptyState.svelte";
@@ -80,9 +80,8 @@
     },
   ];
 
-  const TAB_KEY = "vet.queue.tab";
-
-  let tab = $state(parseTab(readStored(TAB_KEY)));
+  const tabKept = new Preference("app", "queue.tab", parseTab, parseTab(undefined));
+  const tab = $derived(tabKept.value);
   let query = $state("");
   let sort = $state<Sort>();
 
@@ -97,8 +96,7 @@
   const own = $derived(queue.onViewFrame);
 
   function showTab(id: QueueTab) {
-    tab = id;
-    writeStored(TAB_KEY, id);
+    tabKept.value = id;
   }
 
   /** The panel's link to the lines seen against an older base: the review shows them. */

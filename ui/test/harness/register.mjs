@@ -8,4 +8,3 @@ registerHooks({ resolve, load });
 
 globalThis.window = globalThis;
 globalThis.addEventListener = () => {};
-globalThis.localStorage = { getItem: () => null, setItem: () => {}, removeItem: () => {} };

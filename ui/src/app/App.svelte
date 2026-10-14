@@ -68,8 +68,9 @@
   import { clock } from "../lib/format";
   import { repoName } from "../lib/paths";
   import { platformName } from "../lib/platformName";
-  import { type SoftWrap, storeSoftWrap, storedSoftWrap } from "../lib/softWrap";
-  import { type Theme, applyTheme, storedTheme } from "../lib/theme/theme";
+  import type { SoftWrap } from "../lib/softWrap";
+  import { applyTheme } from "../lib/theme/theme";
+  import { softWrapPreference, themePreference } from "./appPreferences.svelte";
   import ContextMenu from "../lib/ui/ContextMenu.svelte";
   import { setDoubleClickMs } from "../lib/ui/doubleClick";
   import Toast from "../lib/ui/Toast.svelte";
@@ -126,8 +127,14 @@
   const right = $state({ tool: "symbol", open: true });
   // The bottom tool whose panel is shown; they exclude each other.
   let bottomTool = $state<string>();
-  let theme = $state<Theme>(storedTheme());
-  let softWrap = $state<SoftWrap>(storedSoftWrap());
+  const theme = $derived(themePreference.value);
+  const softWrap = $derived(softWrapPreference.value);
+  $effect(() => applyTheme(theme));
+  // The viewer's choice, here or in another window, rebuilds the views.
+  $effect(() => {
+    const wrap = softWrap;
+    untrack(() => controller?.setSoftWrap(wrap));
+  });
   let dialog = $state<"settings" | "about" | "finish" | "pullRequest">();
   let settingsPage = $state<ComponentProps<typeof SettingsDialog>["page"]>("general");
   let switcherOpen = $state(false);
@@ -326,7 +333,7 @@
         Object.assign(side, toggleTool(side, id));
       },
       stepProblem: (delta) => void controller?.stepProblem(delta),
-      setTheme: (t) => applyTheme((theme = t)),
+      setTheme: (t) => (themePreference.value = t),
       commentOnChangeset,
       postComments: () => {
         screen = "review";
@@ -443,7 +450,6 @@
       if (!(e.target instanceof Element && e.target.closest("input, textarea"))) e.preventDefault();
     };
     window.addEventListener("contextmenu", onContextMenu);
-    applyTheme(theme);
     // The viewer may change the mouse settings while the window stays open.
     const readDoubleClick = () =>
       void systemDoubleClickMs().then(
@@ -658,9 +664,7 @@
   }
 
   function setSoftWrap(next: SoftWrap) {
-    softWrap = next;
-    storeSoftWrap(next);
-    controller?.setSoftWrap(next);
+    softWrapPreference.value = next;
   }
 </script>
 

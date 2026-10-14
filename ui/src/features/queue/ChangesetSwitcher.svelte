@@ -1,6 +1,6 @@
 <script lang="ts">
   import { untrack } from "svelte";
-  import { readStored, writeStored } from "../../lib/storage";
+  import { Preference } from "../../lib/preferences.svelte";
   import Chip from "../../lib/ui/Chip.svelte";
   import Icon from "../../lib/ui/Icon.svelte";
   import Segmented from "../../lib/ui/Segmented.svelte";
@@ -40,10 +40,10 @@
     open?: boolean;
   } = $props();
 
-  const FILTER_KEY = "vet.switcher.filter";
+  const kept = new Preference("app", "switcher.filter", parseTab, parseTab(undefined));
 
   let query = $state("");
-  let filter = $state(parseTab(readStored(FILTER_KEY)));
+  const filter = $derived(kept.value);
 
   const rows = $derived(queueRows(queue.local, queue.pullRequests));
   const shown = $derived(filterRows(rows, filter, query));
@@ -92,8 +92,7 @@
       options={SWITCHER_FILTERS}
       value={filter}
       onchange={(id) => {
-        filter = id;
-        writeStored(FILTER_KEY, id);
+        kept.value = id;
         reset();
       }}
     />

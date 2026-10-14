@@ -1,12 +1,12 @@
 <script lang="ts">
   // A draggable divider that sizes the pane next to it: by pointer, by arrow keys, back to the
-  // default on a double click. The size is remembered under `storageKey`.
-  import { readStored, writeStored } from "../storage";
+  // default on a double click. The size is remembered as the preference `name`.
+  import { numberPreference } from "../preferences.svelte";
 
   let {
     orientation,
     label,
-    storageKey,
+    name,
     direction,
     current,
     limits,
@@ -16,7 +16,7 @@
     /** "vertical" divides left from right (it moves along x), "horizontal" top from bottom. */
     orientation: "vertical" | "horizontal";
     label: string;
-    storageKey: string;
+    name: string;
     /** +1 when moving right/down grows the pane, -1 when it shrinks it. */
     direction: 1 | -1;
     /** The pane's size in px as laid out now. */
@@ -32,10 +32,10 @@
   const STEP = 16;
   const horizontal = $derived(orientation === "horizontal");
 
-  // The key does not change for a mounted splitter.
+  // The name does not change for a mounted splitter.
   // svelte-ignore state_referenced_locally
-  const stored = Number(readStored(storageKey));
-  if (size === undefined && stored > 0) size = stored;
+  const kept = numberPreference("app", `splitter.${name}`);
+  if (size === undefined && kept.value !== undefined && kept.value > 0) size = kept.value;
 
   let drag: { at: number; size: number } | undefined;
   let dragging = $state(false);
@@ -62,7 +62,7 @@
     if (!drag) return;
     drag = undefined;
     dragging = false;
-    writeStored(storageKey, size === undefined ? undefined : String(size));
+    kept.value = size;
   }
 
   function onkeydown(e: KeyboardEvent) {
@@ -71,12 +71,12 @@
     if (!sign) return;
     e.preventDefault();
     resize(current() + sign * direction * STEP);
-    writeStored(storageKey, String(size));
+    kept.value = size;
   }
 
   function reset() {
     size = undefined;
-    writeStored(storageKey, undefined);
+    kept.value = undefined;
   }
 </script>
 

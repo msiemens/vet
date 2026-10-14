@@ -1,15 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { CommandRegistry, type KeyEventLike } from "./commands.ts";
-import {
-  type Overrides,
-  conflictsOf,
-  parseOverrides,
-  serializeOverrides,
-  withBinding,
-  withReplacedBinding,
-} from "./keymapEdit.ts";
-import { parseJson } from "./storage.ts";
+import { type Overrides, conflictsOf, parseOverrides, withBinding, withReplacedBinding } from "./keymapEdit.ts";
 
 const registry = () => {
   const r = new CommandRegistry<object>({}, "Ctrl");
@@ -97,11 +89,8 @@ void test("a further key of a command clashes like its main key, and taking it o
 
 void test("overrides survive being kept, and damaged ones cost only themselves", () => {
   const overrides: Overrides = { "a.next": "Alt-n", "a.open": null };
-  const kept = (text: string | undefined) => parseOverrides(parseJson(text));
-  assert.deepEqual(kept(serializeOverrides(overrides)), overrides);
-  assert.equal(serializeOverrides({}), undefined);
-  assert.deepEqual(kept(undefined), {});
-  assert.deepEqual(kept("{not json"), {});
+  const kept = (text: string) => parseOverrides(JSON.parse(text) as unknown);
+  assert.deepEqual(kept(JSON.stringify(overrides)), overrides);
   assert.deepEqual(kept("[1]"), {});
   assert.deepEqual(kept('{"a.next":"Alt-n","a.open":3,"b.free":""}'), { "a.next": "Alt-n" });
 });
