@@ -104,6 +104,7 @@
   import { problems } from "../state/problems.svelte";
   import { progress as backgroundTasks } from "../state/progress.svelte";
   import { queue } from "../state/queue.svelte";
+  import { reviewShown } from "../state/reviewShown.svelte";
   import { recent } from "../state/recent.svelte";
   import { semantic } from "../state/semantic.svelte";
   import { serverList } from "../state/serverList.svelte";
@@ -275,11 +276,13 @@
     languageServer: serverLine(controller?.semanticPath, serverList.servers, backgroundTasks.tasks, semanticSummary),
     problems: problems.summary,
   });
-  // The changeset's problems are asked about while the review is on screen.
+  // The queue follows the changeset on view whichever screen shows; what the language servers answer
+  // (problems, symbols, outlines, marks in the editors) is asked for only while the review is on screen.
   $effect(() => {
     if (!session.backend || !session.repo) return;
-    return problems.start();
+    return queue.watch();
   });
+  $effect(() => reviewShown.set(screen === "review"));
 
   const openLocation: OpenLocation = (path, line, side) => void controller?.openLocation(ON_SCREEN, path, line, side);
 

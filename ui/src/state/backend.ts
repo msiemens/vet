@@ -655,6 +655,14 @@ export class Backend {
   }
 
   /**
+   * Says whether this window shows the review screen. The project's language servers start for the
+   * changeset on view only while a window does, and start when it comes up.
+   */
+  async setReviewShown(shown: boolean): Promise<void> {
+    expect(await this.conn.request({ type: "setReviewShown", project: this.pid, shown }), "done");
+  }
+
+  /**
    * What the changeset did to the symbols of the changed file `path`, as of `revision` (the
    * manifest's; a stale one is rejected).
    */

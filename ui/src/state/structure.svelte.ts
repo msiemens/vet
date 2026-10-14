@@ -12,6 +12,7 @@ import { storeFlag, storedFlag } from "../lib/storage";
 import type { SymbolChange } from "../generated/SymbolChange";
 import type { SymbolInfo } from "../generated/SymbolInfo";
 import type { TabId } from "./commands";
+import { reviewShown } from "./reviewShown.svelte";
 import { session } from "./session.svelte";
 import type { Shown } from "./shown";
 import { enclosingId, holdersOf } from "./structureRows";
@@ -64,7 +65,7 @@ class StructureState {
     $effect.root(() => {
       $effect(() => {
         const { backend } = session;
-        const target = this.target;
+        const target = this.wanted;
         untrack(() => this.fetch(backend, target));
       });
     });
@@ -95,8 +96,13 @@ class StructureState {
     if (!same) this.target = target;
   }
 
+  /** The file whose outline is asked for: none while the review screen is away. */
+  private get wanted(): StructureTarget | undefined {
+    return reviewShown.on ? this.target : undefined;
+  }
+
   private reload() {
-    this.fetch(session.backend, this.target);
+    this.fetch(session.backend, this.wanted);
   }
 
   private fetch(backend: typeof session.backend, target: StructureTarget | undefined) {

@@ -2,8 +2,13 @@
 // settled, and then the stores are compared with the backend.
 
 import type { View } from "../../src/generated/View.ts";
+import type { Request } from "../../src/generated/Request.ts";
 import { changeset } from "../../src/state/changeset.svelte.ts";
+import { problems } from "../../src/state/problems.svelte.ts";
 import { queue } from "../../src/state/queue.svelte.ts";
+import { reviewShown } from "../../src/state/reviewShown.svelte.ts";
+// Asks for the changeset's symbols while it is shown.
+import "../../src/state/symbols.svelte.ts";
 import { threads } from "../../src/state/threads.svelte.ts";
 import { defaultRange } from "../../src/state/timelineRange.ts";
 import { versions } from "../../src/state/versions.svelte.ts";
@@ -12,6 +17,11 @@ import type { Harness } from "./harness.ts";
 import { watchFromEffect } from "./watching.svelte.ts";
 
 const CHANGESET: View = { type: "changeset" };
+
+/** The requests that start the language servers or ask them. */
+const ANALYSES = new Set<Request["type"]>(["diagnostics", "fileSymbols", "fileOutline", "symbolAt"]);
+
+const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
 
 /** A step that sends one review request. */
 const ONE = { marks: 1 };
@@ -245,6 +255,34 @@ export const sessions: Record<string, (h: Harness) => Promise<void>> = {
       { listings: 2 },
     );
     await h.step("the list is not watched any more", () => stop?.());
+  },
+
+  /** Choosing rows of the queue puts changesets on view without asking the language servers for anything; the review screen does. */
+  async queue(h) {
+    const asked = () => h.sent.filter((r) => ANALYSES.has(r.type)).length;
+    const told = (shown: boolean) => h.sent.filter((r) => r.type === "setReviewShown" && r.shown === shown).length;
+    await h.step("rows chosen on the queue", async () => {
+      await changeset.openChangeset({ type: "branch", name: "feature" });
+      await h.until(() => changeset.facts?.target.changeset.type === "branch", "the branch");
+      await changeset.openChangeset({ type: "workingTree" });
+      await h.until(() => changeset.facts?.target.changeset.type === "workingTree", "the working tree");
+      if (!problems.analysable.length) throw new Error("the changeset has no file to analyse");
+      await sleep(500);
+      if (asked() || told(true)) throw new Error("the queue asked the language servers for something");
+    });
+    await h.step("review screen shown", async () => {
+      reviewShown.set(true);
+      await h.until(() => told(true) === 1, "the backend to be told");
+      await h.until(() => h.sent.some((r) => r.type === "fileSymbols"), "the symbols");
+    });
+    await h.step("back on the queue", async () => {
+      reviewShown.set(false);
+      await h.until(() => told(false) === 1, "the backend to be told");
+      const before = asked();
+      await changeset.openChangeset({ type: "branch", name: "feature" });
+      await sleep(500);
+      if (asked() !== before) throw new Error("the queue asked the language servers for something");
+    });
   },
 
   /** Toggles sent without waiting for each other. */

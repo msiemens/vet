@@ -21,6 +21,7 @@ import { errorText } from "../lib/errorText";
 import type { Backend } from "./backend";
 import { changeset } from "./changeset.svelte";
 import { CursorFollow } from "./cursorFollow";
+import { reviewShown } from "./reviewShown.svelte";
 import { session } from "./session.svelte";
 import { keyOf } from "./symbolKey";
 import { analyseFiles, isGone, planLoad, reconcile, type Shown } from "./symbolLoad";
@@ -73,6 +74,10 @@ class SymbolsState {
   reach = $state.raw<Load<Reachability>>();
   removal = $state.raw<Load<RemovalImpact>>();
 
+  /** Where the cursor moved while the review screen was away; followed when it comes up. */
+  private held?: CursorPlace;
+  /** The analysis has to be asked again when the review screen comes up: the servers changed while it was away. */
+  private reloadDue = false;
   private backend?: Backend;
   private revision?: number;
   private paths: readonly string[] = [];
@@ -108,11 +113,18 @@ class SymbolsState {
         const analysable = changeset.shownCommit === undefined && layout?.interdiff === undefined;
         const revision = layout?.shown.revision;
         const paths = layout?.files.filter((f) => f.hunks.length > 0).map((f) => f.path);
+        // The analysis is for the review screen: the files wait until it is shown.
+        const shown = reviewShown.on;
         untrack(() => {
           if (repo === undefined || revision === undefined || !analysable || !paths) this.reset();
-          else if (backend) this.load(backend, revision, paths, false);
+          else if (backend && shown) this.load(backend, revision, paths, this.reloadDue);
         });
       });
+    });
+    reviewShown.onShown(() => {
+      const place = this.held;
+      this.held = undefined;
+      if (place) this.cursor.move(place);
     });
     // What was asked while the connection was down may have failed.
     session.onResync((backend) => {
@@ -140,11 +152,14 @@ class SymbolsState {
     this.files.clear();
     this.progress = { done: 0, total: 0 };
     this.cursor.reset();
+    this.held = undefined;
     this.clearSelection();
   }
 
   private reload() {
-    if (this.backend && this.revision !== undefined) this.load(this.backend, this.revision, this.paths, true);
+    if (!this.backend || this.revision === undefined) return;
+    if (reviewShown.on) this.load(this.backend, this.revision, this.paths, true);
+    else this.reloadDue = true;
   }
 
   /**
@@ -158,6 +173,7 @@ class SymbolsState {
       this.backend && this.revision !== undefined ? { backend: this.backend, revision: this.revision } : undefined;
     const plan = planLoad(had, { backend, revision }, force);
     if (plan === "skip") return;
+    this.reloadDue = false;
     this.backend = backend;
     this.revision = revision;
     this.paths = paths;
@@ -201,7 +217,9 @@ class SymbolsState {
 
   /** The cursor of an editor is at a position of `side`'s text of `path` as of `revision`. */
   follow(revision: number, side: Side, path: string, line: number, col: number) {
-    this.cursor.move({ revision, side, path, line, col });
+    const place = { revision, side, path, line, col };
+    if (reviewShown.on) this.cursor.move(place);
+    else this.held = place;
   }
 
   /** Puts `shown` on show, unless it is. Answers whether it was not. */

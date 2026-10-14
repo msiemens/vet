@@ -26,6 +26,7 @@ import { platform } from "../../state/platform.svelte";
 import { locationPicker } from "../../state/locationPicker.svelte";
 import { LocationSearch } from "../../state/locationSearch";
 import type { FileLayout, Frame, ViewLayout } from "../../state/reviewModel";
+import { reviewShown } from "../../state/reviewShown.svelte";
 import { stepInFile } from "../../state/problemRows";
 import { problems } from "../../state/problems.svelte";
 import { semantic } from "../../state/semantic.svelte";
@@ -189,10 +190,8 @@ export class ReviewController {
     const offCommands = provideActions(this.viewActions());
     const offContext = commands.provide(() => this.facts());
     const offResync = session.onResync(() => this.reloadScopes());
-    const offOrigins = semantic.onOrigins((path) => {
-      for (const view of this.views.values()) view.refreshDiagnostics(path);
-      for (const text of this.texts.values()) text.refreshDiagnostics(path);
-    });
+    const offOrigins = semantic.onOrigins((path) => this.refreshDiagnostics(path));
+    const offShown = reviewShown.onShown(() => this.refreshDiagnostics());
     // The open tabs are the old changeset's until the new one's manifest has come and brought its tabs back.
     const offOpening = changeset.onOpening((opening) => {
       if (opening.type === "requested") {
@@ -210,6 +209,7 @@ export class ReviewController {
       offContext();
       offResync();
       offOrigins();
+      offShown();
       offOpening();
     };
     this.unsubscribeEvents = backend.onEvent((event) => {
@@ -217,8 +217,7 @@ export class ReviewController {
       // A server installed or reconfigured elsewhere may answer differently now.
       if (event.type === "serversChanged") {
         semantic.invalidate();
-        for (const view of this.views.values()) view.refreshDiagnostics();
-        for (const text of this.texts.values()) text.refreshDiagnostics();
+        this.refreshDiagnostics();
       } else if (event.type === "reviewChanged") {
         for (const { scope } of this.scopes.values()) scope.heard(event.update, event.revision);
       } else if (event.type === "snapshotSettled" || event.type === "targetChanged") {
@@ -229,6 +228,12 @@ export class ReviewController {
 
   private unsubscribe: () => void;
   private unsubscribeEvents: () => void;
+
+  /** The mounted editors ask for their diagnostics again (those of `path` only, if given). */
+  private refreshDiagnostics(path?: string) {
+    for (const view of this.views.values()) view.refreshDiagnostics(path);
+    for (const text of this.texts.values()) text.refreshDiagnostics(path);
+  }
 
   /**
    * The semantic layer of the tab `id`, which reads the changeset's snapshots: not in a commit, and
@@ -268,8 +273,9 @@ export class ReviewController {
       findUsages: (_revision, side, path, at, subject) => {
         if (this.analysable(id, side)) findSets.findUsages({ type: "usages", symbol: subject.name, side, path, ...at });
       },
+      // Asked again for the mounted editors when the review screen comes up.
       diagnostics: (revision, path) =>
-        this.analysable(id, "target") ? semantic.diagnostics(revision, path) : Promise.resolve([]),
+        reviewShown.on && this.analysable(id, "target") ? semantic.diagnostics(revision, path) : Promise.resolve([]),
       cursor: (revision, side, path, line, col) => {
         if (this.analysable(id, side)) symbols.follow(revision, side, path, line, col);
       },

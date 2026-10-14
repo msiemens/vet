@@ -11,6 +11,7 @@ import type { FileDiagnostics } from "./diagnosticsBook";
 import { type Counts, type FileHunks, type Problem, countsOf, problemsOf } from "./problemRows";
 import { type Origins, type Summary, originsOf, summarize } from "./problemsSummary";
 import { queue } from "./queue.svelte";
+import { reviewShown } from "./reviewShown.svelte";
 import { semantic } from "./semantic.svelte";
 import { serverList } from "./serverList.svelte";
 import { languageOf } from "./serverStatus";
@@ -38,7 +39,6 @@ class ProblemsState {
   private extra = $state.raw<readonly string[]>([]);
   private gate = new Gate(FILES_AT_ONCE);
   private run = 0;
-  private watchers = $state(0);
 
   /** The changeset's files that have text to analyse, whatever view the review shows. */
   readonly changed = $derived.by(() => {
@@ -72,8 +72,9 @@ class ProblemsState {
         const { backend } = session;
         const revision = changeset.layout?.shown.revision;
         // The files being looked at are asked first.
-        const paths =
-          this.watchers > 0 ? [...new Set([...this.extra.filter((p) => this.served(p)), ...this.analysable])] : [];
+        const paths = reviewShown.on
+          ? [...new Set([...this.extra.filter((p) => this.served(p)), ...this.analysable])]
+          : [];
         // eslint-disable-next-line @typescript-eslint/no-unused-expressions -- answers dropped are asked for again
         semantic.generation;
         untrack(() => {
@@ -81,16 +82,6 @@ class ProblemsState {
         });
       });
     });
-  }
-
-  /** The review screen is up: the changeset's files are watched and asked about. Returns the function that ends that. */
-  start(): () => void {
-    untrack(() => this.watchers++);
-    const stopQueue = queue.watch();
-    return () => {
-      untrack(() => this.watchers--);
-      stopQueue();
-    };
   }
 
   /** The files with a tab open: asked about first, for as long as they are the ones open. */
