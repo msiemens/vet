@@ -77,6 +77,9 @@ pub struct Config {
     pub orphan_grace: Duration,
     /// How often an open session's remotes are fetched, after the fetch at open.
     pub fetch_interval: Duration,
+    /// How long to wait between two pull requests whose details are fetched ahead of the queue,
+    /// so a platform that Vet only reacts to (rather than tracks the budget of) is asked gently.
+    pub prefetch_pace: Duration,
 }
 
 impl Default for Config {
@@ -87,6 +90,7 @@ impl Default for Config {
             poll: Duration::from_secs(2),
             orphan_grace: Duration::from_secs(15),
             fetch_interval: vet_app::fetch::DEFAULT_INTERVAL,
+            prefetch_pace: Duration::from_millis(400),
         }
     }
 }
@@ -190,6 +194,19 @@ impl Orchestrator {
     /// The budgets every project's blocking work and probes draw on.
     pub fn budgets(&self) -> &Budgets {
         &self.budgets
+    }
+
+    /// The same orchestrator, its platforms talking to the API at `base` instead of the hosts',
+    /// for the tests' fake servers. Only a debug build has it, so a release build cannot be
+    /// pointed at another endpoint.
+    #[cfg(debug_assertions)]
+    pub fn with_platform_endpoints(mut self, github: Option<&str>, azure_devops: Option<&str>) -> Self {
+        self.platforms = Arc::new(Platforms::new(
+            Arc::new(GitHubClient::with_endpoints(self.accounts.clone(), github)),
+            Arc::new(AzureDevOpsClient::with_endpoints(self.accounts.clone(), azure_devops)),
+            self.process_subscribers.clone(),
+        ));
+        self
     }
 
     /// The open project `id`. The request being answered is about it from here on, and its

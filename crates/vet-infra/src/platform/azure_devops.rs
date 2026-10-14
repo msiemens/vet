@@ -116,6 +116,15 @@ impl Endpoints {
             identities: "https://vssps.dev.azure.com".to_owned(),
         }
     }
+
+    /// The endpoints of a local server a test runs, which answers every service at one base.
+    #[cfg(debug_assertions)]
+    fn at(base: &str) -> Self {
+        Self {
+            api: base.to_owned(),
+            identities: base.to_owned(),
+        }
+    }
 }
 
 /// What a pull request needs a request of its own for.
@@ -205,6 +214,15 @@ impl<C: CredentialProvider + Sync> AzureDevOpsClient<C> {
             state: Mutex::new(State::new()),
             limits: Arc::default(),
         }
+    }
+
+    /// The client against the services at `base` instead of Azure DevOps's, for a test's local
+    /// server. A release build has no such constructor.
+    #[cfg(debug_assertions)]
+    pub fn with_endpoints(credentials: C, base: Option<&str>) -> Self {
+        let mut client = Self::new(credentials);
+        client.endpoints = base.map(Endpoints::at);
+        client
     }
 
     fn state(&self) -> MutexGuard<'_, State> {

@@ -5,5 +5,5 @@ mod limits;
 pub(crate) mod message;
 pub(crate) mod time;
 
-#[cfg(test)]
-pub(crate) mod fake;
+#[cfg(any(test, debug_assertions))]
+pub mod fake;

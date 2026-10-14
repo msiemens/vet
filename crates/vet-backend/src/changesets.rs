@@ -1,19 +1,22 @@
 //! Requests about which changeset is on view and which there are.
 
 use std::sync::Arc;
+use std::time::Duration;
 
 use vet_app::changeset::{RemoteKey, Source};
 use vet_app::fetch::FetchMark;
-use vet_app::platform::{Platform, PlatformError, PlatformKind, commits_checks};
+use vet_app::platform::{Platform, PlatformError, PlatformKind, PullRequestCache, Standing, commits_checks};
+use vet_app::ports::{ChangesetStore, LiveStore, ReviewWrites};
 use vet_app::pull_request::{self, FetchError, PullRequestList, hosted_repositories, hosts_to_ask_about, on_github};
 use vet_app::session::RowReview;
 use vet_infra::clock::unix_now;
+use vet_infra::store::SqliteStore;
 use vet_mapping as mapping;
 use vet_protocol::{ChangesetKey, Event, ProjectId, Response};
 
 use crate::accounts::Held;
 use crate::error::{Error, Result};
-use crate::hosting::Hosting;
+use crate::hosting::{Hosting, Platforms};
 use crate::open::Ready;
 use crate::sync::sync_in_background;
 use crate::{Live, Open, Orchestrator, start_servers_in_background};
@@ -74,6 +77,13 @@ impl Orchestrator {
             tracing::warn!(%error, "deleting the refs of pull requests no longer listed failed");
         }
         fetch_heads_in_background(open.open.clone(), list.clone());
+        prefetch_details(
+            self.platforms.clone(),
+            self.store.clone(),
+            self.platforms.known(),
+            list.clone(),
+            self.config.prefetch_pace,
+        );
         for source in &list.sources {
             if let Some(error) = &source.error {
                 // The client told of a rate limit once, when it began.
@@ -182,6 +192,80 @@ impl Orchestrator {
         }
         Ok(Response::Done)
     }
+}
+
+/// How many of the newest listed pull requests have their details fetched ahead of the queue:
+/// enough that the ones the viewer is likely to open are ready, few enough to stay gentle on the
+/// platform.
+const PREFETCH_LIMIT: usize = 20;
+
+/// Fetches the details of the newest listed pull requests whose `updatedAt` the stored copy does
+/// not have, in the background, so a revisit shows them at once. An unchanged pull request is not
+/// asked for. The platform is asked `pace` between two; a list whose account is limited or failing
+/// stops there. Spawned, so it never delays the list the viewer asked for.
+fn prefetch_details(
+    platforms: Arc<Platforms>,
+    store: SqliteStore,
+    known: Arc<PullRequestCache>,
+    list: PullRequestList,
+    pace: Duration,
+) {
+    tokio::spawn(async move {
+        let mut stopped: std::collections::HashSet<String> = std::collections::HashSet::new();
+        let mut fetched = 0usize;
+        for listed in &list.rows {
+            if fetched >= PREFETCH_LIMIT {
+                break;
+            }
+            let account = listed.remote.account();
+            if stopped.contains(&account) {
+                continue;
+            }
+            if matches!(platforms.standing(&account), Some(Standing::Failing(_))) {
+                stopped.insert(account);
+                continue;
+            }
+            let stored = store.stored_discussion(listed.remote.clone(), listed.row.number).await;
+            if let Ok(Some(stored)) = &stored
+                && stored.updated_at == listed.row.updated_at
+            {
+                // Nothing changed since the copy that is kept: no call is made.
+                continue;
+            }
+            fetched += 1;
+            let hosting = platforms.hosting(listed.remote.kind());
+            match hosting.discussion(&listed.remote, listed.row.number).await {
+                Ok(discussion) => {
+                    let at = unix_now();
+                    known.record_discussion(&listed.remote, listed.row.number, at, discussion.clone());
+                    if let Err(error) = store
+                        .writes()
+                        .set_discussion(
+                            listed.remote.clone(),
+                            listed.row.number,
+                            listed.row.head.clone(),
+                            listed.row.updated_at,
+                            at,
+                            &discussion,
+                        )
+                        .await
+                    {
+                        tracing::warn!(error = %error.0, "storing a prefetched pull request's details failed");
+                    }
+                }
+                Err(error) => {
+                    tracing::debug!(
+                        repository = %listed.remote,
+                        number = listed.row.number,
+                        %error,
+                        "prefetching a pull request's details failed"
+                    );
+                    stopped.insert(account);
+                }
+            }
+            tokio::time::sleep(pace).await;
+        }
+    });
 }
 
 /// Brings in the pull requests of `list` that are not in the repository, so the queue can count

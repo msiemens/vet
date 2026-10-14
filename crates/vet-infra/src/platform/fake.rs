@@ -1,4 +1,5 @@
 //! A local server that answers like a platform, for the tests of the clients.
+#![allow(clippy::disallowed_methods)] // The fake server runs on a thread of its own.
 
 use std::collections::HashMap;
 use std::io::{BufRead, BufReader, Read, Write};
@@ -10,7 +11,7 @@ use std::thread::JoinHandle;
 use vet_app::platform::{Credential, CredentialProvider, CredentialSource, Token};
 
 #[derive(Clone, Debug)]
-pub(crate) struct Seen {
+pub struct Seen {
     pub method: String,
     pub path: String,
     pub headers: HashMap<String, String>,
@@ -23,7 +24,7 @@ impl Seen {
     }
 }
 
-pub(crate) struct Canned {
+pub struct Canned {
     status: u16,
     headers: Vec<(&'static str, String)>,
     body: String,
@@ -53,7 +54,7 @@ impl Canned {
 
 /// A server on a local port that answers each request as the handler says, one request
 /// per connection.
-pub(crate) struct Fake {
+pub struct Fake {
     addr: SocketAddr,
     seen: Arc<Mutex<Vec<Seen>>>,
     stop: Arc<AtomicBool>,
@@ -155,7 +156,7 @@ fn write_response(stream: &mut TcpStream, canned: &Canned, base: &str) {
 }
 
 /// Hands out one token, or none.
-pub(crate) struct Signed(pub Option<&'static str>, pub CredentialSource);
+pub struct Signed(pub Option<&'static str>, pub CredentialSource);
 
 impl Signed {
     pub fn cli(token: &'static str) -> Self {

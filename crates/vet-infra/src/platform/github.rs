@@ -156,6 +156,15 @@ impl Endpoints {
             }
         }
     }
+
+    /// The endpoints of a local server a test runs, which answers both APIs at one base.
+    #[cfg(debug_assertions)]
+    pub(crate) fn at(base: &str) -> Self {
+        Self {
+            graphql: base.to_owned(),
+            rest: base.to_owned(),
+        }
+    }
 }
 
 /// The rate-limit bucket a request is counted in.
@@ -241,6 +250,15 @@ impl<C: CredentialProvider + Sync> GitHubClient<C> {
             state: Mutex::new(State::new()),
             limits: Arc::default(),
         }
+    }
+
+    /// The client against the API at `base` instead of the host's, for a test's local server.
+    /// A release build has no such constructor; only the tests' fake platform uses it.
+    #[cfg(debug_assertions)]
+    pub fn with_endpoints(credentials: C, base: Option<&str>) -> Self {
+        let mut client = Self::new(credentials);
+        client.endpoints = base.map(Endpoints::at);
+        client
     }
 
     fn state(&self) -> MutexGuard<'_, State> {

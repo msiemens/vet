@@ -9,6 +9,7 @@ mod common;
 mod fetch;
 mod load;
 mod preferences;
+mod prefetch;
 mod progress;
 mod python;
 mod recent;
