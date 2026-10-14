@@ -12,6 +12,7 @@
     name,
     columns,
     gap = "8px",
+    row = "30px",
     sort = $bindable(),
     body = $bindable(),
     children,
@@ -24,6 +25,8 @@
     columns: readonly Column<never>[];
     /** Between the columns. */
     gap?: string;
+    /** The height of a row; `auto` for rows that hold more lines than the cells. */
+    row?: string;
     sort?: Sort;
     /** The element holding the rows. */
     body?: HTMLElement;
@@ -45,7 +48,7 @@
     --table-gap={gap}
     --table-pad="10px"
     --table-pad-end="6px"
-    --table-row="30px"
+    --table-row={row}
     --table-head="30px"
     --table-head-color="var(--text-3)"
   >

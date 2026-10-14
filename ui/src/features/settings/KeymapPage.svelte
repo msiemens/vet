@@ -1,12 +1,32 @@
+<script module lang="ts">
+  import { SvelteSet } from "svelte/reactivity";
+
+  /** The areas the viewer folded; kept while the window lives. */
+  const folded = new SvelteSet<string>();
+</script>
+
 <script lang="ts">
+  import type { ContextMenuRequest } from "../../lib/contextMenu";
   import { bindingOf, specOf } from "../../lib/keymap";
   import { conflictsOf } from "../../lib/keymapEdit";
+  import type { Column } from "../../lib/ui/columns";
+  import ContextMenu from "../../lib/ui/ContextMenu.svelte";
+  import Kbd from "../../lib/ui/Kbd.svelte";
+  import { ListNav, revealCurrent } from "../../lib/ui/listNav";
+  import type { MenuItem } from "../../lib/ui/menuItem";
   import SearchField from "../../lib/ui/SearchField.svelte";
-  import SettingsSection from "../../lib/ui/SettingsSection.svelte";
+  import TreeRow from "../../lib/ui/TreeRow.svelte";
   import { commands } from "../../state/commands";
+  import { contextMenus } from "../../state/contextMenu.svelte";
   import { isMac } from "../../state/host";
   import { keymap } from "../../state/keymap.svelte";
-  import { keymapGroups } from "./keymapRows";
+  import SettingsTable from "./SettingsTable.svelte";
+  import { type KeymapEntry, type KeymapRow, keymapEntries, keymapGroups } from "./keymapRows";
+
+  const COLUMNS: Column<never>[] = [
+    { id: "command", label: "Command", flex: true, min: 120 },
+    { id: "binding", label: "Binding", width: 250, min: 120 },
+  ];
 
   let query = $state("");
   /** The command whose new key is being read from the keyboard. */
@@ -14,9 +34,14 @@
   /** A key that another command has: waits for the viewer to take it over or give it up. */
   let clash = $state<{ id: string; spec: string; key: string; others: string[] }>();
   let problem = $state<string>();
+  let highlighted = $state(-1);
+  let body = $state<HTMLElement>();
+  /** The row menu, drawn here: the dialog is modal, so the window's own menu would lie behind it. */
+  let menu = $state.raw<ContextMenuRequest>();
 
   const listing = $derived(commands.list());
   const groups = $derived(keymapGroups(listing, keymap.overrides, query));
+  const entries = $derived(keymapEntries(groups, folded, query.trim() !== ""));
   const anyChanged = $derived(Object.keys(keymap.overrides).length > 0);
 
   // While a key is being read, every key goes here and runs nothing.
@@ -48,117 +73,214 @@
     problem = undefined;
     recording = id;
   }
+
+  function toggle(area: string) {
+    if (!folded.delete(area)) folded.add(area);
+  }
+
+  const nav = new ListNav<KeymapEntry>({
+    element: () => body,
+    items: () => entries,
+    single: (entry) => entry.kind === "group" && toggle(entry.area),
+    double: (entry) => (entry.kind === "group" ? toggle(entry.area) : record(entry.row.id)),
+    highlight: { get: () => highlighted, set: (i) => (highlighted = i) },
+    reveal: () => void revealCurrent(body),
+  });
+  $effect(() => () => nav.cancel());
+
+  function menuOf(row: KeymapRow): MenuItem[] {
+    return [
+      { id: "change", label: "Change" },
+      { id: "remove", label: "Remove", enabled: row.binding !== undefined },
+      { id: "reset", label: "Reset", enabled: row.changed },
+    ];
+  }
+
+  /** A right click highlights the row and opens its menu. */
+  function openMenu(e: MouseEvent, row: KeymapRow, index: number) {
+    nav.cancel();
+    highlighted = index;
+    void contextMenus.show(
+      {
+        x: e.clientX,
+        y: e.clientY,
+        items: menuOf(row),
+        onselect: (choice) => {
+          if (choice === "change") record(row.id);
+          else if (choice === "remove") keymap.unbind(row.id);
+          else keymap.reset(row.id);
+        },
+      },
+      (request) => (menu = request),
+    );
+  }
+
+  function onkeydown(e: KeyboardEvent) {
+    if (recording !== undefined || !nav.keydown(e)) return;
+    e.preventDefault();
+    e.stopPropagation();
+  }
 </script>
 
-<div class="bar">
-  <SearchField bind:value={query} label="Search commands and keys" placeholder="Search commands and keys" />
-  <button class="ctl" type="button" disabled={!anyChanged} onclick={() => keymap.resetAll()}>Reset all</button>
-</div>
+<!-- Escape ends the menu, not the dialog. -->
+<svelte:window
+  onpointerdown={(e) => {
+    if (recording !== undefined && !(e.target as Element).closest(`[data-command="${recording}"]`))
+      recording = undefined;
+  }}
+  onkeydown={(e) => {
+    if (menu && e.key === "Escape") e.preventDefault();
+  }}
+/>
 
-{#if problem}<p class="settings-problem line">{problem}</p>{/if}
+{#if menu}
+  <ContextMenu {...menu} onclose={() => (menu = undefined)} />
+{/if}
 
-<div>
-  {#each groups as group (group.area)}
-    <SettingsSection title={group.label}>
-      <ul>
-        {#each group.rows as row (row.id)}
-          <li data-command={row.id}>
-            <span class="label">{row.label}</span>
+<div class="page">
+  <div class="bar">
+    <SearchField bind:value={query} label="Search commands and keys" placeholder="Search commands and keys" />
+    <button class="ctl" type="button" disabled={!anyChanged} onclick={() => keymap.resetAll()}>Reset all</button>
+  </div>
+
+  {#if problem}<p class="settings-problem">{problem}</p>{/if}
+
+  <SettingsTable
+    name="keymap"
+    columns={COLUMNS}
+    gap="4px"
+    row="auto"
+    bind:body
+    role="listbox"
+    aria-label="Commands"
+    {onkeydown}
+    {...nav.attributes}
+  >
+    {#each entries as entry, index (entry.kind === "group" ? `group:${entry.area}` : entry.row.id)}
+      {#if entry.kind === "group"}
+        <div class="group">
+          <TreeRow
+            open={entry.open}
+            heading
+            letters={false}
+            count={entry.count}
+            cur={index === highlighted}
+            tabindex={-1}
+            onclick={(e) => nav.click(e, index)}
+          >
+            {entry.label}
+          </TreeRow>
+        </div>
+      {:else}
+        {@const row = entry.row}
+        <!-- svelte-ignore a11y_click_events_have_key_events -->
+        <div
+          class="flat pick row entry"
+          class:on={index === highlighted}
+          role="option"
+          tabindex="-1"
+          aria-selected={index === highlighted}
+          data-command={row.id}
+          onclick={(e) => nav.click(e, index)}
+          oncontextmenu={(e) => {
+            e.preventDefault();
+            openMenu(e, row, index);
+          }}
+        >
+          <span class="cell name">{row.label}</span>
+          <span class="cell">
             {#if recording === row.id}
               <span class="settings-hint">Press a key combination, Esc to cancel</span>
-              <button class="ctl" type="button" onclick={() => (recording = undefined)}>Cancel</button>
-            {:else}
-              {#if row.binding}
-                <kbd class:changed={row.changed}>{row.binding.label}</kbd>
-              {:else}
-                <span class="none">{row.changed ? "Removed" : "None"}</span>
-              {/if}
+            {:else if row.binding}
+              <Kbd keys={row.binding.label} accent={row.changed} />
               {#each row.alsoBindings as also (also.spec)}
-                <kbd>{also.label}</kbd>
+                <Kbd keys={also.label} />
               {/each}
-              <span class="actions">
-                <button class="ctl" type="button" onclick={() => record(row.id)}>Change</button>
-                <button class="ctl" type="button" disabled={!row.binding} onclick={() => keymap.unbind(row.id)}>
-                  Remove
-                </button>
-                <button class="ctl" type="button" disabled={!row.changed} onclick={() => keymap.reset(row.id)}>
-                  Reset
-                </button>
-              </span>
+            {:else}
+              <span class="none">{row.changed ? "Removed" : "None"}</span>
             {/if}
-            {#if row.sharedWith.length}
-              <p class="settings-problem line">Also used by {row.sharedWith.join(", ")}.</p>
-            {/if}
-            {#if clash?.id === row.id}
-              <p class="settings-problem line">
-                <kbd>{clash.key}</kbd> is already used by {clash.others.join(", ")}.
+          </span>
+          {#if row.sharedWith.length > 0 || clash?.id === row.id}
+            <!-- svelte-ignore a11y_no_static_element_interactions -->
+            <div class="sub" onclick={(e) => e.stopPropagation()} ondblclick={(e) => e.stopPropagation()}>
+              {#if row.sharedWith.length}
+                <span class="settings-problem">Also used by {row.sharedWith.join(", ")}.</span>
+              {/if}
+              {#if clash?.id === row.id}
+                <span class="settings-problem">
+                  <Kbd keys={clash.key} /> is already used by {clash.others.join(", ")}.
+                </span>
                 <button
-                  class="ctl"
+                  class="ctl small"
                   type="button"
                   onclick={() => {
                     if (clash) keymap.bind(clash.id, clash.spec);
                     clash = undefined;
                   }}>Take it over</button
                 >
-                <button class="ctl" type="button" onclick={() => (clash = undefined)}>Keep as is</button>
-              </p>
-            {/if}
-          </li>
-        {/each}
-      </ul>
-    </SettingsSection>
-  {:else}
-    <p class="empty">No command matches.</p>
-  {/each}
+                <button class="ctl small" type="button" onclick={() => (clash = undefined)}>Keep as is</button>
+              {/if}
+            </div>
+          {/if}
+        </div>
+      {/if}
+    {:else}
+      <p class="empty">No command matches.</p>
+    {/each}
+  </SettingsTable>
 </div>
 
 <style>
+  .page {
+    font-size: var(--fs-ctl);
+  }
+  p {
+    margin: 0;
+  }
   .bar {
     display: flex;
     gap: 8px;
     margin-bottom: 12px;
   }
-  ul {
-    list-style: none;
-    margin: 0;
-    padding: 0;
+  .group {
+    border-bottom: 1px solid var(--line-soft);
+    background: var(--bg-panel);
   }
-  li {
+  .group :global(.tw) {
+    height: var(--h-ctl);
+  }
+  .row.entry {
+    align-items: start;
+    user-select: none;
+    -webkit-user-select: none;
+  }
+  .entry:not(.on):hover {
+    background: var(--hover);
+  }
+  .cell {
+    min-height: 29px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    min-width: 0;
+  }
+  .name {
+    padding-left: var(--inset-tree-name);
+  }
+  .sub {
+    grid-column: 1 / -1;
     display: flex;
     flex-wrap: wrap;
     align-items: center;
-    gap: 4px 10px;
-    padding: 4px 0;
-    border-bottom: 1px solid var(--line-soft);
-    font-size: var(--fs-ctl);
-  }
-  .label {
-    flex: 1;
-    min-width: 0;
-  }
-  kbd {
-    font-family: var(--font-mono);
-    font-size: var(--fs-mono-s);
-    padding: 1px 6px;
-    border: 1px solid var(--line);
-    border-radius: var(--radius);
-  }
-  kbd.changed {
-    border-color: var(--accent);
+    gap: 4px 8px;
+    padding: 0 0 6px var(--inset-tree-name);
   }
   .none {
     color: var(--text-3);
     font-size: var(--fs-mono);
   }
-  .actions {
-    display: flex;
-    gap: 4px;
-  }
-  .line {
-    flex-basis: 100%;
-    margin: 0;
-  }
   .empty {
+    padding: 12px 10px;
     color: var(--text-3);
   }
 </style>

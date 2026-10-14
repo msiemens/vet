@@ -18,6 +18,28 @@ export interface KeymapGroup {
   rows: KeymapRow[];
 }
 
+/** A line of the Keymap table: an area's own line, or one of its commands. */
+export type KeymapEntry =
+  { kind: "group"; area: string; label: string; count: number; open: boolean } | { kind: "row"; row: KeymapRow };
+
+/**
+ * The table's lines top down: each group's line, and under an open one its commands. A search opens
+ * every group it found something in, whatever the viewer folded.
+ */
+export function keymapEntries(
+  groups: readonly KeymapGroup[],
+  folded: ReadonlySet<string>,
+  searching: boolean,
+): KeymapEntry[] {
+  return groups.flatMap(({ area, label, rows }): KeymapEntry[] => {
+    const open = searching || !folded.has(area);
+    return [
+      { kind: "group", area, label, count: rows.length, open },
+      ...(open ? rows.map((row): KeymapEntry => ({ kind: "row", row })) : []),
+    ];
+  });
+}
+
 /** The areas in the order the page shows them; others follow alphabetically. */
 const AREAS: [area: string, label: string][] = [
   ["file", "File"],

@@ -10,13 +10,14 @@ class ContextMenus {
   /** The menu the page draws, if one is open. */
   drawn = $state.raw<ContextMenuRequest>();
 
-  show(request: ContextMenuRequest): Promise<void> {
+  /** `draw` shows the menu when the host has none; the window's by default. A dialog is modal, so its own menus are drawn inside it. */
+  show(
+    request: ContextMenuRequest,
+    draw: (request: ContextMenuRequest) => void = (r) => (this.drawn = r),
+  ): Promise<void> {
     const previous = document.activeElement instanceof HTMLElement ? document.activeElement : undefined;
-    return openContextMenu(
-      request,
-      hasNativeContextMenu ? popUpNativeMenu : undefined,
-      (r) => (this.drawn = r),
-      () => previous?.focus({ preventScroll: true }),
+    return openContextMenu(request, hasNativeContextMenu ? popUpNativeMenu : undefined, draw, () =>
+      previous?.focus({ preventScroll: true }),
     );
   }
 

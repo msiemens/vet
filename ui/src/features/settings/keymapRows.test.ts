@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { CommandRegistry } from "../../lib/commands.ts";
-import { keymapGroups } from "./keymapRows.ts";
+import { keymapEntries, keymapGroups } from "./keymapRows.ts";
 
 const run = () => undefined;
 
@@ -36,6 +36,30 @@ void test("a search keeps the commands whose name, id, area or key contains ever
   assert.deepEqual(ids("REVIEW comm"), ["review.comment"]);
   assert.deepEqual(ids("ctrl+alt+s"), ["app.settings"]);
   assert.deepEqual(ids("nothing like this"), []);
+});
+
+void test("a folded group shows its line and count but not its commands, and a search opens every group it found", () => {
+  const groups = keymapGroups(listing(), {}, "");
+  const shape = (folded: string[], searching: boolean) =>
+    keymapEntries(groups, new Set(folded), searching).map((e) =>
+      e.kind === "group" ? `${e.label} ${e.count} ${e.open ? "open" : "folded"}` : e.row.label,
+    );
+  assert.deepEqual(shape(["review"], false), [
+    "Review 2 folded",
+    "Application 1 open",
+    "Settings…",
+    "Zeta 1 open",
+    "A thing",
+  ]);
+  assert.deepEqual(shape(["review", "zeta"], true), [
+    "Review 2 open",
+    "Add comment",
+    "Next hunk",
+    "Application 1 open",
+    "Settings…",
+    "Zeta 1 open",
+    "A thing",
+  ]);
 });
 
 void test("a row says whether its key was changed and which commands share it", () => {
