@@ -21,6 +21,7 @@ pub fn answered<T>(value: T) -> Asked<T> {
             },
             from_cache: false,
         },
+        complete: true,
     })
 }
 

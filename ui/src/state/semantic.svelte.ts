@@ -39,7 +39,6 @@ class SemanticStore {
   private book = new DiagnosticsBook(
     {
       ask: (revision, path, againstBase, signal) => this.askDiagnostics(revision, path, againstBase, signal),
-      busy: (path) => atWork(path, serverList.servers, progress.tasks),
       untilIdle: (path, signal) => this.untilIdle(path, signal),
       drop: () => {
         this.generation++;

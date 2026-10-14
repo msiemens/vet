@@ -646,13 +646,20 @@ export class Backend {
    * The diagnostics of a file of the target side, and how many of them to tell the viewer about;
    * the language server may take seconds on a cold start. With `againstBase` each carries whether
    * the change introduced it, which waits for the base side's analysis; without it every origin is pending.
+   * `incomplete` is set when a server was at work on its own while it answered: ask again once it is done.
    */
   async diagnostics(
     revision: number,
     path: string,
     againstBase: boolean,
     signal?: AbortSignal,
-  ): Promise<{ diagnostics: Diagnostic[]; count: number; unavailable?: Unavailable; originUnavailable?: Unavailable }> {
+  ): Promise<{
+    diagnostics: Diagnostic[];
+    count: number;
+    unavailable?: Unavailable;
+    originUnavailable?: Unavailable;
+    incomplete?: Unavailable;
+  }> {
     const request = { type: "diagnostics", project: this.pid, revision, path, againstBase } as const;
     const r = expect(await this.semantic(revision, request, signal), "diagnostics");
     return {
@@ -660,6 +667,7 @@ export class Backend {
       count: r.count,
       unavailable: r.unavailable ?? undefined,
       originUnavailable: r.originUnavailable ?? undefined,
+      incomplete: r.incomplete ?? undefined,
     };
   }
 

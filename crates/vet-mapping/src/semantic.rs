@@ -257,6 +257,7 @@ fn label(kind: p::UnavailableKind) -> &'static str {
         Kind::AnalysisLimited => "Analysis limited",
         Kind::SnapshotUnavailable => "Base not available",
         Kind::QueryFailed => "Language server query failed",
+        Kind::Incomplete => "Language server still working",
     }
 }
 
@@ -270,6 +271,7 @@ pub fn unavailable(error: &SemanticError, language: Option<String>) -> p::Unavai
         SemanticError::Pool(PoolError::NotMaterializable(_)) => Kind::SnapshotUnavailable,
         SemanticError::Query(_) => Kind::QueryFailed,
         SemanticError::NotOffered { .. } => Kind::NotOffered,
+        SemanticError::Incomplete { .. } => Kind::Incomplete,
     };
     p::Unavailable {
         language: language.filter(|_| kind != Kind::Unsupported),

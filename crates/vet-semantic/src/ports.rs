@@ -556,6 +556,9 @@ impl fmt::Display for Provenance {
 pub struct Answered<T> {
     pub value: T,
     pub provenance: Provenance,
+    /// The server was not at work on its own while it answered, so the answer is as complete as
+    /// the server can give it. If not, what is missing from it is unknown, and it is never kept.
+    pub complete: bool,
 }
 
 impl<T> Answered<T> {
@@ -563,6 +566,7 @@ impl<T> Answered<T> {
         Answered {
             value: f(self.value),
             provenance: self.provenance,
+            complete: self.complete,
         }
     }
 }

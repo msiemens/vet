@@ -39,7 +39,7 @@ use crate::ports::{
     Answered, At, Backend, BackendId, Detach, Diagnostic, Features, LanguageServer, LaunchError, Location,
     Materializer, NotMaterializable, Provenance, QueryError, ServerIdentity, ServerLauncher, Started, SymbolInfo, Tree,
 };
-use crate::reuse::{Answers, Basis, Computed, KEPT, Key, ProjectQuery, Restore, Reused, SemanticCache};
+use crate::reuse::{Answers, Basis, Computed, Given, KEPT, Key, ProjectQuery, Restore, Reused, SemanticCache};
 
 /// Requests in flight on one server at once. A server answers one at a time or a few, so
 /// more only wait in its queue, where they cannot be told from a hung server.
@@ -172,10 +172,11 @@ fn named_after(file: &RepoPath, symbols: &mut [SymbolInfo]) {
     }
 }
 
-fn answered<T>(value: T, server: ServerIdentity, from_cache: bool) -> Answered<T> {
+fn answered<T>(value: T, server: ServerIdentity, from_cache: bool, complete: bool) -> Answered<T> {
     Answered {
         value,
         provenance: Provenance { server, from_cache },
+        complete,
     }
 }
 
@@ -226,8 +227,8 @@ impl<S: LanguageServer + 'static, G: Send + Sync + 'static> Entry<S, G> {
         self.basis.map(|basis| project_key(&self.identity, basis, query))
     }
 
-    /// The answer under `key`, or the server's. The server's answer is kept only if
-    /// it was not at work on its own when it was asked, and did not begin work before
+    /// The answer under `key`, or the server's. The server's answer is complete, and so kept,
+    /// only if it was not at work on its own when it was asked, and did not begin work before
     /// it answered: an answer given while it indexes may be a partial one. The
     /// question is asked by a flight that outlives the caller that began it, so
     /// `ask` gets the entry and owns what it asks with.
@@ -251,11 +252,15 @@ impl<S: LanguageServer + 'static, G: Send + Sync + 'static> Entry<S, G> {
                 }
                 Err(e) => return Err(e),
             };
-            let keep = before.idle && before.epoch == entry.server.readiness().epoch;
-            Ok(Computed { value, keep })
+            let complete = before.idle && before.epoch == entry.server.readiness().epoch;
+            Ok(Computed { value, complete })
         };
-        let (value, from_cache) = self.answers.get(key.as_ref(), asked).await?;
-        Ok(answered(value, self.identity.clone(), from_cache))
+        let Given {
+            value,
+            from_cache,
+            complete,
+        } = self.answers.get(key.as_ref(), asked).await?;
+        Ok(answered(value, self.identity.clone(), from_cache, complete))
     }
 
     /// Without a text the symbols are those of the file as the tree has it: only a tree that never changes has them under a key.
@@ -940,7 +945,7 @@ impl<M: Materializer, L: ServerLauncher> Pool<M, L> {
             .answers
             .recall(&project_key(&identity, basis?, query))
             .await?;
-        Some(answered(value, identity, true))
+        Some(answered(value, identity, true, true))
     }
 
     /// Like [`Pool::recall`], for the symbols `text` declares as the content of `file`.
@@ -954,7 +959,7 @@ impl<M: Materializer, L: ServerLauncher> Pool<M, L> {
         let (root, _) = self.inner.foreseen_root(key, backend).await?;
         let identity = self.inner.foreseen_identity(key, backend, &root).await?;
         let value: Vec<SymbolInfo> = self.inner.answers.recall(&text_key(&identity, file, text)).await?;
-        let mut recalled = answered(value, identity, true);
+        let mut recalled = answered(value, identity, true, true);
         named_after(file, &mut recalled.value);
         Some(recalled)
     }
@@ -2063,6 +2068,28 @@ mod tests {
         counters.begins_work.store(false, Ordering::SeqCst);
         hover(false);
         hover(true);
+    }
+
+    #[test]
+    fn an_answer_says_whether_the_server_was_free_of_work_of_its_own_while_it_gave_it() {
+        let (pool, counters) = pool(4);
+        let key = snapshot_key(1);
+        let complete = || {
+            block_on(async {
+                let lease = pool.lease(&key, &backend(false)).await.unwrap();
+                let answered = lease.hover(&at()).await.unwrap();
+                lease.release().await;
+                answered.complete
+            })
+        };
+        counters.busy.store(true, Ordering::SeqCst);
+        assert!(!complete());
+        counters.busy.store(false, Ordering::SeqCst);
+        counters.begins_work.store(true, Ordering::SeqCst);
+        assert!(!complete());
+        counters.begins_work.store(false, Ordering::SeqCst);
+        assert!(complete());
+        assert!(complete(), "and a kept answer is complete");
     }
 
     #[test]

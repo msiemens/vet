@@ -11,15 +11,8 @@ import { Latest } from "./resource.ts";
 /** Files compared with the base at once. */
 const COMPARED_AT_ONCE = 2;
 
-/** Times a comparison is asked again because the server went to work while it was answered. */
-const COMPARISON_TRIES = 3;
-
-const BUSY: Unavailable = {
-  kind: "queryFailed",
-  label: "Comparison failed",
-  message: "The language server kept working while the base side was analysed",
-  language: null,
-};
+/** Times a file is asked about because the server was at work on its own while it answered. */
+const TRIES = 3;
 
 /** A file's target-side diagnostics, each with its origin. */
 export interface FileDiagnostics {
@@ -34,12 +27,12 @@ export interface Answered {
   diagnostics: Diagnostic[];
   unavailable?: Unavailable;
   originUnavailable?: Unavailable;
+  /** A server was at work on its own while it answered: the answer is not final, and asking again once it is done gives the rest. */
+  incomplete?: Unavailable;
 }
 
 export interface BookHost {
   ask(revision: number, path: string, againstBase: boolean, signal: AbortSignal): Promise<Answered>;
-  /** Whether the server of the file's language is at work (starting, indexing). */
-  busy(path: string): boolean;
   /** Resolves once the server of the file's language is not at work, or `signal` aborts. */
   untilIdle(path: string, signal: AbortSignal): Promise<void>;
   /** What the store keeps beside the diagnostics is dropped with them. */
@@ -123,33 +116,45 @@ export class DiagnosticsBook {
       const r = await this.host.ask(revision, path, false, signal);
       if (this.epoch.movedSince(epoch)) return;
       this.take(path, r, false);
-      if (!r.unavailable) void this.compare(revision, path, epoch, signal);
+      if (!r.unavailable) void this.compare(revision, path, epoch, signal, r.incomplete !== undefined);
     } catch {
       if (!this.epoch.movedSince(epoch)) this.pending.delete(path); // stale: the next revision asks again
     }
   }
 
-  private async compare(revision: number, path: string, epoch: number, signal: AbortSignal) {
-    let failure: Unavailable | undefined;
+  /** Asks the target side again while its server keeps working, which the answers say; false if the file has none now. */
+  private async refresh(revision: number, path: string, epoch: number, signal: AbortSignal): Promise<boolean> {
+    for (let tries = 1; tries < TRIES; tries++) {
+      await this.host.untilIdle(path, signal);
+      if (signal.aborted || this.epoch.movedSince(epoch)) return false;
+      const r = await this.host.ask(revision, path, false, signal);
+      if (this.epoch.movedSince(epoch)) return false;
+      this.take(path, r, false);
+      if (r.unavailable) return false;
+      if (!r.incomplete) break;
+    }
+    return true;
+  }
+
+  private async compare(revision: number, path: string, epoch: number, signal: AbortSignal, partial: boolean) {
+    let failure: Unavailable;
     try {
-      for (let tries = 0; tries < COMPARISON_TRIES; tries++) {
+      if (partial && !(await this.refresh(revision, path, epoch, signal))) return;
+      for (let tries = 1; ; tries++) {
         await this.host.untilIdle(path, signal);
         const r = await this.comparing.run(() =>
           signal.aborted ? Promise.resolve(undefined) : this.host.ask(revision, path, true, signal),
         );
         if (!r || this.epoch.movedSince(epoch)) return;
-        // An answer taken while the server went to work may lack what it had not analysed yet.
-        if (this.host.busy(path)) {
-          if (tries + 1 < COMPARISON_TRIES) continue;
-          failure = BUSY;
-        } else if (r.unavailable) {
+        // An answer given while the server was at work may lack what it had not got to yet.
+        if (r.incomplete && tries < TRIES) continue;
+        if (r.unavailable) {
           failure = r.unavailable;
-        } else {
-          this.take(path, r, true);
-          this.announce(path);
-          return;
+          break;
         }
-        break;
+        this.take(path, r, true);
+        this.announce(path);
+        return;
       }
     } catch (error) {
       failure = {
@@ -160,7 +165,7 @@ export class DiagnosticsBook {
       };
     }
     if (this.epoch.movedSince(epoch)) return;
-    if (failure) this.unknown(path, failure);
+    this.unknown(path, failure);
     this.announce(path);
   }
 

@@ -240,6 +240,10 @@ pub enum UnavailableKind {
     SnapshotUnavailable,
     /// The server failed this query.
     QueryFailed,
+    /// The server was at work on its own while it gave the answer, so what it lacks is unknown,
+    /// not absent: the origins of diagnostics whose base side was given so. Asking again once
+    /// the server is done gives the answer.
+    Incomplete,
 }
 
 /// What a derived result was computed from (I6: derived results show their inputs).

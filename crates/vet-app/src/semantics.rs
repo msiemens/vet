@@ -59,6 +59,9 @@ pub struct Answer<T> {
     /// The server that answered and whether the answer was reused (I6); none if no
     /// server did, or the answer is made of more than one server's.
     pub provenance: Option<Provenance>,
+    /// No server of the answer was at work on its own while it answered (see
+    /// [`vet_semantic::ports::Answered::complete`]).
+    pub complete: bool,
 }
 
 impl<T> Answer<T> {
@@ -68,12 +71,19 @@ impl<T> Answer<T> {
                 revision,
                 result: Ok(answered.value),
                 provenance: Some(answered.provenance),
+                complete: answered.complete,
             },
-            Err(e) => Self {
-                revision,
-                result: Err(e),
-                provenance: None,
-            },
+            Err(e) => Self::derived(revision, Err(e)),
+        }
+    }
+
+    /// An answer made of more than one server's, or of none: no one to name.
+    pub fn derived(revision: u32, result: Result<T, SemanticError>) -> Self {
+        Self {
+            revision,
+            result,
+            provenance: None,
+            complete: true,
         }
     }
 }
@@ -487,6 +497,7 @@ where
                 revision,
                 result: Ok(located(pair, side, answered.value).await.value),
                 provenance: Some(answered.provenance),
+                complete: answered.complete,
             },
             Err(e) => Answer::of(revision, Err(e)),
         }
@@ -554,11 +565,7 @@ where
                 };
                 let pair = self.pair(view, revision).await?;
                 let judged = judged(&pair, old, file, hunks).await;
-                Ok(Answer {
-                    revision,
-                    result: judged.value,
-                    provenance: None,
-                })
+                Ok(Answer::derived(revision, judged.value))
             }),
         )
         .await
@@ -708,11 +715,7 @@ where
                     }
                 };
                 trace::log(|| format!("outline of {}", path.to_string_lossy()), started);
-                Ok(Answer {
-                    revision,
-                    result,
-                    provenance: None,
-                })
+                Ok(Answer::derived(revision, result))
             }),
         )
         .await
@@ -731,11 +734,7 @@ where
             revision,
             Box::pin(async move {
                 let pair = self.pair(view, revision).await?;
-                Ok(Answer {
-                    revision,
-                    result: unmarked(&pair, path, text).await,
-                    provenance: None,
-                })
+                Ok(Answer::derived(revision, unmarked(&pair, path, text).await))
             }),
         )
         .await
@@ -761,14 +760,13 @@ where
                     Side::Target => f.new_path.as_ref() == Some(&at.file),
                 };
                 Ok(match files.iter().find(on_side) {
-                    Some(file) => Answer {
+                    Some(file) => Answer::derived(
                         revision,
-                        result: compared(&pair, &self.content(view), file)
+                        compared(&pair, &self.content(view), file)
                             .await
                             .value
                             .map(|found| symbol_at(&found, side, at.pos)),
-                        provenance: None,
-                    },
+                    ),
                     None => Answer::of(
                         revision,
                         pair.document_symbols(side, &at.file).await.map(|answered| {
@@ -836,9 +834,8 @@ where
                 );
                 Ok(match signed {
                     Ok((signature, provenance)) => Answer {
-                        revision,
-                        result: Ok(signature),
                         provenance,
+                        ..Answer::derived(revision, Ok(signature))
                     },
                     Err(e) => Answer::of(revision, Err(e)),
                 })

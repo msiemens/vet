@@ -125,6 +125,7 @@ function actionsFor(kind: UnavailableKind): FailureAction[] {
       return ["restart", "settings"];
     case "serverMissing":
       return ["settings"];
+    case "incomplete":
     case "analysisLimited":
     case "unsupported":
     case "notOffered":

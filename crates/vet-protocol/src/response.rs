@@ -150,6 +150,10 @@ pub enum Response {
         unavailable: Option<Unavailable>,
         /// Why the origins are unknown, when the base side could not be compared.
         origin_unavailable: Option<Unavailable>,
+        /// Set (to `Incomplete`) when the server was at work on its own while it gave
+        /// `diagnostics`, so some may be missing; they are not kept, and asking again once the
+        /// server has finished gives the rest.
+        incomplete: Option<Unavailable>,
     },
     FileSymbols(FileSymbols),
     FileOutline(FileOutline),

@@ -36,12 +36,19 @@ pub enum SemanticError {
         /// The server as a person knows it.
         server: String,
     },
+    /// The server was at work on its own while it gave the answer that was to be compared with:
+    /// what it had not got to yet is unknown, not absent.
+    Incomplete {
+        /// The server as a person knows it.
+        server: String,
+    },
 }
 
 impl fmt::Display for SemanticError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::NotOffered { feature, server } => write!(f, "{server} does not offer {}", feature.name()),
+            Self::Incomplete { server } => write!(f, "{server} is still at work, so its answer is not final"),
             Self::NoBackend(file) => write!(f, "no language backend for {}", file.to_string_lossy()),
             Self::Pool(e) => e.fmt(f),
             Self::Query(e) => e.fmt(f),

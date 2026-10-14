@@ -8,7 +8,7 @@ use vet_core::review::Side;
 
 use super::{Derived, Inputs};
 use crate::join::join;
-use crate::ports::Diagnostic;
+use crate::ports::{Answered, Diagnostic};
 use crate::query::{Asked, Primitives, SemanticError};
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -33,7 +33,11 @@ pub struct Judged {
 pub struct Judgement {
     pub diagnostics: Vec<Judged>,
     /// Why the base side's diagnostics are missing, if they are: every origin is then unknown.
+    /// A base answer given while its server was at work counts as missing: comparing with it
+    /// would call new what the server had not got to yet.
     pub base: Option<SemanticError>,
+    /// The target side's answer was given while its server was at work, so it may lack diagnostics.
+    pub complete: bool,
 }
 
 /// The diagnostics of the file `new` on the target side, each with its origin against the diagnostics
@@ -70,12 +74,22 @@ pub async fn judged(
             base.as_ref().ok().map(|a| &a.provenance),
         );
     }
-    let value = target.map(|target| judge(target.value, base, hunks));
+    let value = target.map(|target| judge(target, base, hunks));
     Derived { value, inputs }
 }
 
-fn judge(target: Vec<Diagnostic>, base: Option<Asked<Vec<Diagnostic>>>, hunks: &[Hunk]) -> Judgement {
-    match base.map_or(Ok(Vec::new()), |base| base.map(|answered| answered.value)) {
+fn judge(target: Answered<Vec<Diagnostic>>, base: Option<Asked<Vec<Diagnostic>>>, hunks: &[Hunk]) -> Judgement {
+    let complete = target.complete;
+    let target = target.value;
+    let base = base.map_or(Ok(Vec::new()), |base| {
+        base.and_then(|answered| match answered.complete {
+            true => Ok(answered.value),
+            false => Err(SemanticError::Incomplete {
+                server: answered.provenance.server.label,
+            }),
+        })
+    });
+    match base {
         Ok(base) => {
             let origins = origins(&target, &base, hunks);
             Judgement {
@@ -83,6 +97,7 @@ fn judge(target: Vec<Diagnostic>, base: Option<Asked<Vec<Diagnostic>>>, hunks: &
                     .map(|(diagnostic, origin)| Judged { diagnostic, origin })
                     .collect(),
                 base: None,
+                complete,
             }
         }
         Err(e) => Judgement {
@@ -93,6 +108,7 @@ fn judge(target: Vec<Diagnostic>, base: Option<Asked<Vec<Diagnostic>>>, hunks: &
                 })
                 .collect(),
             base: Some(e),
+            complete,
         },
     }
 }

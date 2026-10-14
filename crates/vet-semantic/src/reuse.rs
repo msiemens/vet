@@ -112,10 +112,28 @@ reused!(Vec<Location>, Locations);
 reused!(Option<String>, Hover);
 reused!(Vec<Diagnostic>, Diagnostics);
 
-/// A computed value and whether it may be kept.
+/// An answer computed by a server, and whether the server was free of work of its own while it
+/// gave it. Only a complete one is kept.
 pub struct Computed<V> {
     pub value: V,
-    pub keep: bool,
+    pub complete: bool,
+}
+
+/// What the engine holds under a key: an answer and whether it was complete. Only complete ones
+/// are kept, so what is read from memory or the store is complete; an incomplete one is held for
+/// the callers that were waiting for it, and for none that come later.
+#[derive(Clone, Debug)]
+pub struct Held {
+    value: Value,
+    complete: bool,
+}
+
+/// What [`Answers::get`] yields.
+pub struct Given<T> {
+    pub value: T,
+    /// An earlier answer was reused: no server was asked.
+    pub from_cache: bool,
+    pub complete: bool,
 }
 
 impl Key {
@@ -145,7 +163,7 @@ pub trait SemanticCache: Send + Sync {
 }
 
 impl Kind for Key {
-    type Value = Value;
+    type Value = Held;
     type Error = QueryError;
 
     fn retention(&self) -> Retention {
@@ -189,31 +207,34 @@ impl Answers {
     /// The answer under `key` if one is kept, in memory or in the store; no server is
     /// asked and nothing is computed. An answer from the store is kept in memory too.
     pub async fn recall<T: Reused>(&self, key: &Key) -> Option<T> {
-        if let Some(value) = self.engine.peek(key) {
-            return T::from_kept(value);
+        if let Some(held) = self.engine.peek(key) {
+            return T::from_kept(held.value);
         }
         let store = self.store.as_deref().filter(|_| key.persists())?;
         let value = store.get(key).await?;
         let recalled = T::from_kept(value.clone())?;
-        self.engine.keep(key, value);
+        self.engine.keep(key, Held { value, complete: true });
         Some(recalled)
     }
 
-    /// The answer under `key` and whether it was reused. Without a key, or if the
-    /// answer cannot be kept, `ask` decides: the second part of what it answers says
-    /// whether the answer may be kept. `ask` only builds the question, which is
-    /// asked by whichever caller is polled while the key is in flight.
+    /// The answer under `key`, whether it was reused and whether it is complete. Without a key,
+    /// or if the answer is incomplete and so cannot be kept, `ask` decides. `ask` only builds
+    /// the question, which is asked by whichever caller is polled while the key is in flight.
     pub async fn get<T, F>(
         &self,
         key: Option<&Key>,
         ask: impl FnOnce() -> F + Send + 'static,
-    ) -> Result<(T, bool), QueryError>
+    ) -> Result<Given<T>, QueryError>
     where
         T: Reused + Send,
         F: Future<Output = Result<Computed<T>, QueryError>> + Send + 'static,
     {
         let Some(key) = key else {
-            return ask().await.map(|c| (c.value, false));
+            return ask().await.map(|c| Given {
+                value: c.value,
+                from_cache: false,
+                complete: c.complete,
+            });
         };
         let store = self.store.clone().filter(|_| key.persists());
         let owned = key.clone();
@@ -223,18 +244,26 @@ impl Answers {
                 if let Some(store) = &store
                     && let Some(found) = store.get(&owned).await.and_then(T::from_kept)
                 {
-                    return Ok(engine::Computed::restored(found.kept()));
+                    let held = Held {
+                        value: found.kept(),
+                        complete: true,
+                    };
+                    return Ok(engine::Computed::restored(held));
                 }
-                let Computed { value, keep } = ask().await?;
+                let Computed { value, complete } = ask().await?;
                 let value = value.kept();
-                if let (true, Some(store)) = (keep, &store) {
+                if let (true, Some(store)) = (complete, &store) {
                     store.put(&owned, &value);
                 }
-                Ok(engine::Computed::new(value, keep))
+                Ok(engine::Computed::new(Held { value, complete }, complete))
             })
             .await?;
-        match T::from_kept(got.value) {
-            Some(value) => Ok((value, got.reused)),
+        match T::from_kept(got.value.value) {
+            Some(value) => Ok(Given {
+                value,
+                from_cache: got.reused,
+                complete: got.value.complete,
+            }),
             None => unreachable!("a key names the type of its answer"),
         }
     }

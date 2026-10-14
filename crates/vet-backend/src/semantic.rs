@@ -42,6 +42,20 @@ async fn read_outside(answerer: Option<&str>, file: &RepoPath) -> Option<String>
     Some(String::from_utf8_lossy(&bytes).into_owned())
 }
 
+/// Why an answer of the server of `language` may lack what the server had not got to yet.
+fn incomplete(language: &Option<String>) -> vet_protocol::Unavailable {
+    let server = language
+        .as_deref()
+        .and_then(language::by_id)
+        .map_or("The language server", |l| l.display_name);
+    map::unavailable(
+        &SemanticError::Incomplete {
+            server: server.to_owned(),
+        },
+        language.clone(),
+    )
+}
+
 /// A file's text as the lines of a list of places need it.
 struct FileLines {
     text: String,
@@ -237,6 +251,7 @@ impl Booted {
         let language = self.language_of(&file);
         if !against_base {
             let answer = (self.semantics).diagnostics(&self.view, revision, &file).await?;
+            let incomplete = (answer.result.is_ok() && !answer.complete).then(|| incomplete(&language));
             let (found, unavailable) = map::answer(answer.result, language);
             return Ok(Response::Diagnostics {
                 revision,
@@ -245,20 +260,23 @@ impl Booted {
                 count: vet_app::semantics::countable(&found),
                 unavailable,
                 origin_unavailable: None,
+                incomplete,
             });
         }
         let answer = (self.semantics).judged_diagnostics(&self.view, revision, &file).await?;
-        let (diagnostics, count, unavailable, origin_unavailable) = match answer.result {
+        let (diagnostics, count, unavailable, origin_unavailable, incomplete) = match answer.result {
             Ok(judgement) => {
                 let found: Vec<_> = judgement.diagnostics.iter().map(|j| j.diagnostic.clone()).collect();
+                let waiting = !judgement.complete || matches!(judgement.base, Some(SemanticError::Incomplete { .. }));
                 (
                     map::judged_diagnostics(&judgement.diagnostics),
                     vet_app::semantics::countable(&found),
                     None,
-                    judgement.base.map(|e| map::unavailable(&e, language)),
+                    judgement.base.map(|e| map::unavailable(&e, language.clone())),
+                    waiting.then(|| incomplete(&language)),
                 )
             }
-            Err(e) => (Vec::new(), 0, Some(map::unavailable(&e, language)), None),
+            Err(e) => (Vec::new(), 0, Some(map::unavailable(&e, language)), None, None),
         };
         Ok(Response::Diagnostics {
             revision,
@@ -267,6 +285,7 @@ impl Booted {
             count,
             unavailable,
             origin_unavailable,
+            incomplete,
         })
     }
 
@@ -289,11 +308,7 @@ impl Booted {
             // the outline of its text, with no marks.
             other => {
                 if self.semantics.language_of(&file).is_none() {
-                    Answer {
-                        revision,
-                        result: Err(SemanticError::NoBackend(file.clone())),
-                        provenance: None,
-                    }
+                    Answer::derived(revision, Err(SemanticError::NoBackend(file.clone())))
                 } else {
                     let text = self.session.target_text(other, path).await?;
                     if text.revision != revision {
@@ -306,11 +321,7 @@ impl Booted {
                                 .await?
                         }
                         // No text to read symbols from: the file is not there at this commit.
-                        Err(_) => Answer {
-                            revision,
-                            result: Ok(Vec::new()),
-                            provenance: None,
-                        },
+                        Err(_) => Answer::derived(revision, Ok(Vec::new())),
                     }
                 }
             }

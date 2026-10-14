@@ -94,6 +94,8 @@ struct Fake {
     failing_problems: Vec<Side>,
     /// Every answer is one reused from an earlier question.
     cached: bool,
+    /// The sides whose server was at work on its own while it gave diagnostics.
+    working: Vec<Side>,
 }
 
 /// No content is available.
@@ -163,7 +165,9 @@ impl Primitives for Fake {
         if self.failing_problems.contains(&side) {
             return Err(SemanticError::Query(crate::ports::QueryError("server crashed".into())));
         }
-        self.answer(self.problems.get(&(side, f.clone())).cloned().unwrap_or_default())
+        let mut answered = self.answer(self.problems.get(&(side, f.clone())).cloned().unwrap_or_default())?;
+        answered.complete = !self.working.contains(&side);
+        Ok(answered)
     }
 }
 
@@ -1130,6 +1134,33 @@ fn a_new_file_has_only_new_diagnostics_and_asks_no_base_server() {
     assert_eq!(judgement.diagnostics[0].origin, Origin::New);
     assert!(judgement.base.is_none());
     assert_eq!(found.inputs.primitives, ["diagnostics(target:new.rs) [fake]"]);
+}
+
+#[test]
+fn a_base_answer_given_while_its_server_worked_makes_no_diagnostic_new() {
+    let mut fake = Fake::default();
+    fake.problems
+        .insert((Side::Target, file("a.rs")), vec![problem(2, Severity::Error, "boom")]);
+    fake.working.push(Side::Base);
+    let found = block_on(judged(&fake, Some(&file("a.rs")), &file("a.rs"), &[]))
+        .value
+        .unwrap();
+    assert_eq!(found.diagnostics[0].origin, Origin::Unknown);
+    assert!(matches!(found.base, Some(SemanticError::Incomplete { .. })));
+    assert!(found.complete);
+}
+
+#[test]
+fn a_target_answer_given_while_its_server_worked_is_judged_and_says_it_may_lack_diagnostics() {
+    let mut fake = Fake::default();
+    fake.problems
+        .insert((Side::Target, file("a.rs")), vec![problem(2, Severity::Error, "boom")]);
+    fake.working.push(Side::Target);
+    let found = block_on(judged(&fake, Some(&file("a.rs")), &file("a.rs"), &[]))
+        .value
+        .unwrap();
+    assert_eq!(found.diagnostics[0].origin, Origin::New);
+    assert!(!found.complete);
 }
 
 #[test]

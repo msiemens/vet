@@ -18,14 +18,13 @@ interface Call {
 }
 
 /** A host whose answers are given by the test, one call at a time. */
-function setup(options: { busy?: () => boolean; idle?: () => Promise<void> } = {}) {
+function setup(options: { idle?: () => Promise<void> } = {}) {
   const calls: Call[] = [];
   const hold: ReadonlyMap<string, FileDiagnostics>[] = [];
   let drops = 0;
   const host: BookHost = {
     ask: (_revision, path, againstBase, signal) =>
       new Promise((resolve, reject) => calls.push({ path, againstBase, signal, answer: resolve, fail: reject })),
-    busy: options.busy ?? (() => false),
     untilIdle: options.idle ?? (() => Promise.resolve()),
     drop: () => drops++,
     hold: (held) => hold.push(held),
@@ -170,23 +169,38 @@ void test("the comparison waits for the server to finish its work", async () => 
   assert.equal(calls[1].againstBase, true);
 });
 
-void test("an answer taken while the server went to work is asked for again, and never trusted when it keeps working", async () => {
-  let busy = false;
-  const { book, calls, files } = setup({ busy: () => busy });
+const working: Unavailable = { kind: "incomplete", label: "working", message: "still working", language: "rust" };
+
+void test("an answer the backend says was given while the server worked is asked for again, and the last is taken as it is", async () => {
+  const { book, calls, files } = setup();
   const first = book.diagnostics(1, "a.rs");
   calls[0].answer({ diagnostics: [diagnostic("x")] });
   await first;
   await settle();
-  busy = true;
-  calls[1].answer({ diagnostics: [] });
+  calls[1].answer({ diagnostics: [], incomplete: working, originUnavailable: working });
   await settle();
   assert.equal(calls.length, 3, "asked again");
-  calls[2].answer({ diagnostics: [] });
+  assert.equal(calls[2].againstBase, true);
+  calls[2].answer({ diagnostics: [], incomplete: working, originUnavailable: working });
   await settle();
   assert.equal(calls.length, 4);
-  calls[3].answer({ diagnostics: [] });
+  calls[3].answer({ diagnostics: [diagnostic("x", "unknown")], incomplete: working, originUnavailable: working });
   await settle();
+  assert.equal(calls.length, 4, "given up");
   assert.equal(files.get("a.rs")?.compared, true);
-  assert.ok(files.get("a.rs")?.originUnavailable, "still unknown");
+  assert.equal(files.get("a.rs")?.originUnavailable, working, "still unknown");
   assert.equal(files.get("a.rs")?.diagnostics[0].origin, "unknown");
+});
+
+void test("diagnostics the backend says may lack some are asked for again once the server is idle, and replaced", async () => {
+  const { book, calls, files } = setup();
+  const first = book.diagnostics(1, "a.rs");
+  calls[0].answer({ diagnostics: [], incomplete: working });
+  await first;
+  await settle();
+  assert.equal(calls[1].againstBase, false, "the target side is asked again before it is compared");
+  calls[1].answer({ diagnostics: [diagnostic("x")] });
+  await settle();
+  assert.equal(files.get("a.rs")?.diagnostics[0].message, "x");
+  assert.equal(calls[2].againstBase, true);
 });

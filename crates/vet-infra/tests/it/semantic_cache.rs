@@ -124,30 +124,30 @@ async fn run(answers: &Answers) -> (Vec<String>, usize) {
         let (said, asked) = (question.answer(), asked.clone());
         match &question {
             Question::Symbols { .. } => {
-                let (symbols, _) = answers
+                let symbols = answers
                     .get(Some(&key), move || async move {
                         asked.fetch_add(1, Ordering::SeqCst);
                         Ok(Computed {
                             value: said.symbols(),
-                            keep: true,
+                            complete: true,
                         })
                     })
                     .await
                     .unwrap();
-                results.push(format!("{symbols:?}"));
+                results.push(format!("{:?}", symbols.value));
             }
             Question::Hover { .. } => {
-                let (hover, _) = answers
+                let hover = answers
                     .get(Some(&key), move || async move {
                         asked.fetch_add(1, Ordering::SeqCst);
                         Ok(Computed {
                             value: said.hover(),
-                            keep: true,
+                            complete: true,
                         })
                     })
                     .await
                     .unwrap();
-                results.push(format!("{hover:?}"));
+                results.push(format!("{:?}", hover.value));
             }
         }
     }
