@@ -449,30 +449,61 @@ async fn write_loop(mut writer: impl AsyncWrite + Unpin, mut queued: mpsc::Unbou
     }
 }
 
+/// What a server may send in one header line, in header lines per message, and in one body.
+const MAX_HEADER_LINE: u64 = 8 * 1024;
+const MAX_HEADERS: usize = 64;
+const MAX_BODY: usize = 256 * 1024 * 1024;
+
+fn framing_error(why: impl Into<Box<dyn std::error::Error + Send + Sync>>) -> std::io::Error {
+    std::io::Error::new(std::io::ErrorKind::InvalidData, why)
+}
+
+/// The next message, or `None` when the stream ended between messages. A server that
+/// breaks the framing (or the limits above) is an `InvalidData` error.
 pub(super) async fn read_message(reader: &mut BufReader<impl AsyncRead + Unpin>) -> std::io::Result<Option<Value>> {
     let mut length = None;
-    loop {
+    for _ in 0..=MAX_HEADERS {
         let mut line = String::new();
-        if reader.read_line(&mut line).await? == 0 {
+        let read = (&mut *reader).take(MAX_HEADER_LINE).read_line(&mut line).await?;
+        if read == 0 {
             return Ok(None);
+        }
+        if read as u64 == MAX_HEADER_LINE && !line.ends_with('\n') {
+            return Err(framing_error("a header line is too long"));
         }
         let line = line.trim_end();
         if line.is_empty() {
-            break;
+            let length = length.ok_or_else(|| framing_error("message without Content-Length"))?;
+            if length > MAX_BODY {
+                return Err(framing_error(format!("a message of {length} bytes is too large")));
+            }
+            let mut body = Vec::new();
+            (&mut *reader).take(length as u64).read_to_end(&mut body).await?;
+            if body.len() < length {
+                return Err(std::io::ErrorKind::UnexpectedEof.into());
+            }
+            return Ok(Some(serde_json::from_slice(&body)?));
         }
         if let Some(n) = line.strip_prefix("Content-Length:") {
             length = n.trim().parse::<usize>().ok();
         }
     }
-    let length = length.ok_or_else(|| std::io::Error::other("message without Content-Length"))?;
-    let mut body = vec![0; length];
-    reader.read_exact(&mut body).await?;
-    Ok(Some(serde_json::from_slice(&body)?))
+    Err(framing_error("a message has too many headers"))
 }
 
 async fn read_loop(reader: impl AsyncRead + Unpin, shared: Arc<Shared>, outbox: Outbox) {
     let mut reader = BufReader::new(reader);
-    while let Ok(Some(message)) = read_message(&mut reader).await {
+    loop {
+        let message = match read_message(&mut reader).await {
+            Ok(Some(message)) => message,
+            Ok(None) => break,
+            Err(e) => {
+                if e.kind() == std::io::ErrorKind::InvalidData {
+                    tracing::warn!(error = %e, "a language server broke the protocol framing; dropping the connection");
+                }
+                break;
+            }
+        };
         let method = message.get("method").and_then(Value::as_str).map(str::to_owned);
         let id = message.get("id").cloned();
         match (method, id) {
@@ -753,6 +784,24 @@ mod tests {
         conn.request::<Shutdown>(()).await.unwrap();
         assert_eq!(pending(&conn), 0);
         assert!(!conn.with_state(|s| s.exited));
+    }
+
+    async fn read(bytes: &[u8]) -> std::io::Result<Option<Value>> {
+        read_message(&mut BufReader::new(bytes)).await
+    }
+
+    #[tokio::test]
+    async fn a_server_that_breaks_the_framing_limits_is_refused_without_reading_on() {
+        let ok = read(b"Content-Length: 2\r\nContent-Type: x\r\n\r\n{}").await.unwrap();
+        assert_eq!(ok, Some(json!({})));
+
+        let huge = format!("Content-Length: {}\r\n\r\n", MAX_BODY + 1);
+        let endless_line = format!("X: {}", "a".repeat(100_000));
+        let many_headers = "X: 1\r\n".repeat(MAX_HEADERS + 1) + "Content-Length: 2\r\n\r\n{}";
+        for bytes in [huge, endless_line, many_headers] {
+            let error = read(bytes.as_bytes()).await.unwrap_err();
+            assert_eq!(error.kind(), std::io::ErrorKind::InvalidData, "{error}");
+        }
     }
 
     fn shared_with(replies: Replies) -> Shared {
