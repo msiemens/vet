@@ -333,23 +333,32 @@ impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> L
                 .zip(add)
                 .map(|(&id, (span, origin))| Arc::new(RecordedSpan { id, span, origin })),
         );
-        if mark == Mark::Seen(true) {
-            self.note_reviewed(writes, st).await?;
+        // The spans are stored and recorded. If they cannot be placed in the views, the views are
+        // dropped, to be derived again from the spans by the next request, and the mark is told as
+        // failed to show.
+        if let Err(e) = self.remap_marks(st, &remove, &ids).await {
+            st.changes = None;
+            return Err(e);
         }
-        self.remap_marks(st, &remove, &ids).await?;
-        self.note_progress(writes, st).await
+        if mark == Mark::Seen(true) {
+            self.note_reviewed(writes, st).await;
+        }
+        self.note_progress(writes, st).await;
+        Ok(())
     }
 
     /// Records that something was marked in the changeset's latest version, for
-    /// the next review to start from.
-    async fn note_reviewed(&self, writes: &S::Writes, st: &mut State) -> Result<()> {
+    /// the next review to start from. What cannot be stored is only logged: it only tells where
+    /// the next review starts from.
+    async fn note_reviewed(&self, writes: &S::Writes, st: &mut State) {
         if let Some(review) = &mut st.review
             && review.last_reviewed != Some(review.version)
         {
-            writes.set_last_reviewed(review.id, review.version).await?;
-            review.last_reviewed = Some(review.version);
+            match writes.set_last_reviewed(review.id, review.version).await {
+                Ok(()) => review.last_reviewed = Some(review.version),
+                Err(e) => tracing::warn!(error = %e.0, "could not store where the review was last marked"),
+            }
         }
-        Ok(())
     }
 
     pub(super) async fn mark_item(
@@ -394,9 +403,10 @@ impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> L
             remapped.completion = remapped.completion + after - before;
         }
         if acknowledged {
-            self.note_reviewed(writes, st).await?;
+            self.note_reviewed(writes, st).await;
         }
-        self.note_progress(writes, st).await
+        self.note_progress(writes, st).await;
+        Ok(())
     }
 }
 

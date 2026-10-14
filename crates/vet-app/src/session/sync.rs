@@ -240,127 +240,138 @@ impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> L
             }
         };
 
-        for data in &plan.added {
-            let target = self.target_of_remote(&store, st, data, now).await?;
-            let mut comments = data.comments.iter().map(message_of);
-            let Some(opener) = comments.next() else { continue };
-            let platform = PlatformThread {
-                remote_id: Some(data.id.clone()),
-                resolvable: true,
-                resolved_by: data.resolved_by.clone(),
-                status_pending: false,
-            };
-            let status = if data.resolved {
-                ThreadStatus::Resolved
-            } else {
-                ThreadStatus::Open
-            };
-            let (thread, _) = store
-                .add_thread(changeset, None, target, opener, Some(platform), status)
-                .await?;
-            for reply in comments {
-                store.add_message(thread, reply).await?;
+        // The writes below land one by one: whatever landed before one failed is read back.
+        let stored: Result<()> = async {
+            for data in &plan.added {
+                let target = self.target_of_remote(&store, st, data, now).await?;
+                let mut comments = data.comments.iter().map(message_of);
+                let Some(opener) = comments.next() else { continue };
+                let platform = PlatformThread {
+                    remote_id: Some(data.id.clone()),
+                    resolvable: true,
+                    resolved_by: data.resolved_by.clone(),
+                    status_pending: false,
+                };
+                let status = if data.resolved {
+                    ThreadStatus::Resolved
+                } else {
+                    ThreadStatus::Open
+                };
+                let (thread, _) = store
+                    .add_thread(changeset, None, target, opener, Some(platform), status)
+                    .await?;
+                report.changed = true;
+                for reply in comments {
+                    store.add_message(thread, reply).await?;
+                }
             }
-            report.changed = true;
-        }
 
-        for sync in &plan.threads {
-            let Ok(thread) = find_thread(st, sync.thread) else {
-                continue;
-            };
-            let mut platform = thread.platform.clone().expect("a posted thread");
-            let own = thread.messages.clone();
-            match &sync.status {
-                StatusSync::Unchanged => {}
-                StatusSync::Remote { status, resolved_by } => {
-                    store.set_thread_status(sync.thread, *status).await?;
-                    platform.resolved_by.clone_from(resolved_by);
-                    report.changed = true;
-                }
-                StatusSync::Settled { resolved_by } => {
-                    platform.resolved_by.clone_from(resolved_by);
-                    platform.status_pending = false;
-                }
-                StatusSync::PushLocal { .. } => {
-                    if pushed.statuses.contains(&sync.thread) {
-                        platform.status_pending = false;
-                    }
-                }
-            }
-            if Some(&platform) != find_thread(st, sync.thread)?.platform.as_ref() {
-                store.set_thread_platform(sync.thread, platform).await?;
-                report.changed = true;
-            }
-            for id in &sync.removed {
-                store.delete_message(*id).await?;
-                report.changed = true;
-            }
-            for comment in &sync.added {
-                store.add_message(sync.thread, message_of(comment)).await?;
-                report.changed = true;
-            }
-            for (id, change) in &sync.messages {
-                let Some(old) = own.iter().find(|m| m.id == *id) else {
+            for sync in &plan.threads {
+                let Ok(thread) = find_thread(st, sync.thread) else {
                     continue;
                 };
-                let mut message = old.clone();
-                let remote = message.remote.as_mut().expect("posted");
-                match change {
-                    MessageSync::Unchanged => continue,
-                    MessageSync::TakeRemote { body, .. } => {
-                        message.body.clone_from(body);
-                        remote.synced.clone_from(body);
-                        remote.conflict = None;
+                let mut platform = thread.platform.clone().expect("a posted thread");
+                let own = thread.messages.clone();
+                match &sync.status {
+                    StatusSync::Unchanged => {}
+                    StatusSync::Remote { status, resolved_by } => {
+                        store.set_thread_status(sync.thread, *status).await?;
+                        platform.resolved_by.clone_from(resolved_by);
+                        report.changed = true;
                     }
-                    MessageSync::Agreed { body } => {
-                        remote.synced.clone_from(body);
-                        remote.conflict = None;
+                    StatusSync::Settled { resolved_by } => {
+                        platform.resolved_by.clone_from(resolved_by);
+                        platform.status_pending = false;
                     }
-                    MessageSync::PushLocal => {
-                        let Some(sent) = pushed.edits.get(id) else { continue };
-                        remote.synced.clone_from(sent);
-                        remote.conflict = None;
-                    }
-                    MessageSync::Conflict { remote_body, remote_at } => {
-                        remote.conflict = Some(EditConflict {
-                            remote_body: remote_body.clone(),
-                            remote_at: *remote_at,
-                        });
+                    StatusSync::PushLocal { .. } => {
+                        if pushed.statuses.contains(&sync.thread) {
+                            platform.status_pending = false;
+                        }
                     }
                 }
-                store.replace_message(message).await?;
+                if Some(&platform) != find_thread(st, sync.thread)?.platform.as_ref() {
+                    store.set_thread_platform(sync.thread, platform).await?;
+                    report.changed = true;
+                }
+                for id in &sync.removed {
+                    store.delete_message(*id).await?;
+                    report.changed = true;
+                }
+                for comment in &sync.added {
+                    store.add_message(sync.thread, message_of(comment)).await?;
+                    report.changed = true;
+                }
+                for (id, change) in &sync.messages {
+                    let Some(old) = own.iter().find(|m| m.id == *id) else {
+                        continue;
+                    };
+                    let mut message = old.clone();
+                    let remote = message.remote.as_mut().expect("posted");
+                    match change {
+                        MessageSync::Unchanged => continue,
+                        MessageSync::TakeRemote { body, .. } => {
+                            message.body.clone_from(body);
+                            remote.synced.clone_from(body);
+                            remote.conflict = None;
+                        }
+                        MessageSync::Agreed { body } => {
+                            remote.synced.clone_from(body);
+                            remote.conflict = None;
+                        }
+                        MessageSync::PushLocal => {
+                            let Some(sent) = pushed.edits.get(id) else { continue };
+                            remote.synced.clone_from(sent);
+                            remote.conflict = None;
+                        }
+                        MessageSync::Conflict { remote_body, remote_at } => {
+                            remote.conflict = Some(EditConflict {
+                                remote_body: remote_body.clone(),
+                                remote_at: *remote_at,
+                            });
+                        }
+                    }
+                    store.replace_message(message).await?;
+                    report.changed = true;
+                }
+            }
+
+            for removed in &plan.removed {
+                let Ok(thread) = find_thread(st, removed.thread) else {
+                    continue;
+                };
+                report
+                    .notices
+                    .extend((!removed.drafts.is_empty()).then(|| SyncNotice::ThreadDeleted {
+                        place: place_of(thread),
+                        dropped: removed.drafts.clone(),
+                    }));
+                store.delete_thread(removed.thread).await?;
                 report.changed = true;
             }
+            Ok(())
         }
+        .await;
 
-        for removed in &plan.removed {
-            let Ok(thread) = find_thread(st, removed.thread) else {
-                continue;
-            };
-            report
-                .notices
-                .extend((!removed.drafts.is_empty()).then(|| SyncNotice::ThreadDeleted {
-                    place: place_of(thread),
-                    dropped: removed.drafts.clone(),
-                }));
-            store.delete_thread(removed.thread).await?;
-            report.changed = true;
-        }
-
-        st.discussion = Some((now, discussion.clone()));
         if report.changed {
             self.reload_threads(st, changeset).await?;
         }
+        stored?;
+        st.discussion = Some((now, discussion.clone()));
         Ok(report)
     }
 
     /// Reads the threads from the store again, as they are after something changed them there.
+    /// If their anchors cannot be placed, the threads stay as they were.
     async fn reload_threads(&self, st: &mut State, changeset: crate::changeset::ChangesetId) -> Result<()> {
         let open = st.review.as_ref().map(|r| r.id);
-        st.threads = visible_threads(self.acquisition.store.threads(changeset).await?, open);
+        let threads = visible_threads(self.acquisition.store.threads(changeset).await?, open);
+        let previous = std::mem::replace(&mut st.threads, threads);
         // Without the diff the anchors are resolved with the remap that comes with it.
-        if st.changes.is_some() {
-            self.resolve_threads(st).await?;
+        if st.changes.is_some()
+            && let Err(e) = self.resolve_threads(st).await
+        {
+            st.threads = previous;
+            return Err(e);
         }
         Ok(())
     }
@@ -1399,7 +1410,7 @@ type Place = (String, DiffSide, Option<(u32, u32)>);
 /// `None` for a thread with no place left, which includes one whose lines a push deleted: it shows
 /// at the deletion point, but there is no code there to comment on.
 fn place_for_posting(st: &State, thread: &Thread) -> Option<Place> {
-    let view = thread_view(st, thread);
+    let view = thread_view(st, thread).ok()?;
     if matches!(
         view.state,
         Some(AnchorState::Inferred {

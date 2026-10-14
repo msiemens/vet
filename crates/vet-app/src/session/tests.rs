@@ -113,6 +113,8 @@ pub(crate) struct FakeGit {
     refs: Arc<Mutex<Vec<(String, CommitId)>>>,
     /// When set, deleting the changeset refs fails.
     refs_stuck: Arc<AtomicBool>,
+    /// When set, `read_blob` fails; the capped read, which looks at the cap first, does not.
+    reads_fail: Arc<AtomicBool>,
     /// What revisions (`merge-base <ref>` for merge bases) resolve to, with the commit's tree.
     commits: Arc<Mutex<HashMap<String, (CommitId, Snapshot)>>>,
     /// Largest blob `read_blob_capped` returns.
@@ -288,6 +290,9 @@ impl Checkout for FakeGit {
 
 impl BlobReader for FakeGit {
     async fn read_blob(&self, _: &RepoPath, blob: BlobId) -> std::result::Result<Option<Vec<u8>>, GitError> {
+        if self.reads_fail.load(Ordering::Relaxed) {
+            return Err(GitError("the object cannot be read".into()));
+        }
         self.reads.lock().unwrap().push(blob);
         drop(self.paused.lock().await);
         Ok(self.blobs.lock().unwrap().get(&blob).cloned())
@@ -2623,6 +2628,49 @@ impl Fixture {
         let all = self.session.threads(View::Changeset).await.unwrap();
         all.threads.into_iter().find(|t| t.id == id).unwrap()
     }
+}
+
+#[tokio::test]
+async fn a_thread_whose_anchor_cannot_be_placed_is_not_created() {
+    let text = numbered(10, &[]);
+    let fx = Fixture::open(
+        &[("a.txt", "one\n"), ("b.txt", &text)],
+        &[("a.txt", "two\n"), ("b.txt", &text)],
+    )
+    .await;
+
+    // The unchanged file's text is only in git, which cannot be read.
+    fx.git.reads_fail.store(true, Ordering::Relaxed);
+    let created = fx
+        .session
+        .create_thread(0, View::Changeset, on("b.txt", 2, 4), "why?".into(), 100)
+        .await;
+    fx.git.reads_fail.store(false, Ordering::Relaxed);
+
+    assert!(created.is_err());
+    assert!(fx.store.0.lock().unwrap().threads.is_empty());
+    assert!(fx.session.threads(View::Changeset).await.unwrap().threads.is_empty());
+    assert_eq!(fx.session.lifecycle().await, Lifecycle::Browsing);
+}
+
+#[tokio::test]
+async fn a_range_thread_that_has_no_place_yet_is_an_error_not_a_panic() {
+    let fx = Fixture::open(&[("a.txt", &numbered(10, &[]))], &[("a.txt", &numbered(10, &[3]))]).await;
+    fx.thread(on("a.txt", 2, 4)).await;
+    fx.session
+        .hold()
+        .await
+        .changes
+        .as_mut()
+        .unwrap()
+        .remapped
+        .resolutions
+        .clear();
+
+    assert!(matches!(
+        fx.session.threads(View::Changeset).await,
+        Err(SessionError::Invalid(_))
+    ));
 }
 
 const EXACT: AnchorState = AnchorState::Exact {

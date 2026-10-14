@@ -842,7 +842,7 @@ impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> L
         }
         st.publish();
         self.revisions.advance(st.revision);
-        self.note_progress(&writes, st).await?;
+        self.note_progress(&writes, st).await;
         Ok(st.revision)
     }
 

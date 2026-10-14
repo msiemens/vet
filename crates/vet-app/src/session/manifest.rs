@@ -67,21 +67,25 @@ impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> L
 impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> LiveSession<G, S> {
     /// Stores how far the open review is when it differs from what is stored, so that the list of
     /// changesets shows it without remapping the marks of every review. Does nothing while the
-    /// changes are not computed: the next remap measures.
-    pub(super) async fn note_progress(&self, writes: &S::Writes, st: &mut State) -> Result<()> {
+    /// changes are not computed: the next remap measures. What cannot be stored is only logged:
+    /// the summary is a cache of what the review shows, and the command it follows has been done.
+    pub(super) async fn note_progress(&self, writes: &S::Writes, st: &mut State) {
         let (Some(review), Some(_)) = (&st.review, &st.changes) else {
-            return Ok(());
+            return;
         };
         let summary = ReviewSummary::of(&stored_completion(st));
         if review.summary == Some(summary) {
-            return Ok(());
+            return;
         }
         let id = review.id;
-        writes.set_review_summary(id, summary).await?;
-        if let Some(review) = &mut st.review {
-            review.summary = Some(summary);
+        match writes.set_review_summary(id, summary).await {
+            Ok(()) => {
+                if let Some(review) = &mut st.review {
+                    review.summary = Some(summary);
+                }
+            }
+            Err(e) => tracing::warn!(error = %e.0, "could not store how far the review is"),
         }
-        Ok(())
     }
 }
 

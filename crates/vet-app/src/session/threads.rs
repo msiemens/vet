@@ -107,7 +107,9 @@ impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> L
         };
         Ok(ThreadsView {
             revision: st.revision,
-            threads: st.threads.iter().filter(on_view).map(|t| thread_view(&st, t)).collect(),
+            threads: (st.threads.iter().filter(on_view))
+                .map(|t| thread_view(&st, t))
+                .collect::<Result<_>>()?,
         })
     }
 
@@ -243,6 +245,16 @@ impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> L
             }
             NewThread::Changeset => CommentTarget::Changeset,
         };
+        // Where the anchor is placed is worked out before anything is stored: a thread in the
+        // state always has its place.
+        let unplaced = Thread {
+            id: ThreadId(0),
+            target: target.clone(),
+            messages: Vec::new(),
+            status: ThreadStatus::Open,
+            platform: None,
+        };
+        let resolution = self.resolve_thread(&mut st, &unplaced).await?;
         let started = self.begin(&mut st).await?;
         let review = st.review.as_ref().expect("begun").id;
         let changeset = st.changeset.expect("begun");
@@ -273,9 +285,9 @@ impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> L
             status: ThreadStatus::Open,
             platform,
         });
-        self.resolve_threads(&mut st).await?;
+        place(&mut st, id, resolution);
         // A review the thread started has its progress stored from the start.
-        self.note_progress(&writes, &mut st).await?;
+        self.note_progress(&writes, &mut st).await;
         Ok(outcome(&st, thread_by_id(&st, id)?, started))
     }
 
@@ -363,9 +375,14 @@ impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> L
             _ => return Err(SessionError::Invalid("only a range thread has an anchor".into())),
         };
         let target = CommentTarget::Range(self.anchor_at(st, side, &location.file, location.range).await?);
+        let anchored = Thread {
+            target: target.clone(),
+            ..find_thread(st, thread)?.clone()
+        };
+        let resolution = self.resolve_thread(st, &anchored).await?;
         st.writes().set_thread_target(thread, target.clone()).await?;
         edit_thread(st, thread, |t| t.target = target);
-        self.resolve_threads(st).await?;
+        place(st, thread, resolution);
         thread_by_id(st, thread)
     }
 
@@ -400,6 +417,15 @@ pub(super) fn find_thread(st: &State, id: ThreadId) -> Result<&Thread> {
         .ok_or_else(|| SessionError::NotFound(format!("thread {}", id.0)))
 }
 
+/// Records where the anchor of thread `id` is in the changeset now.
+fn place(st: &mut State, id: ThreadId, resolution: Option<Resolution>) {
+    let resolutions = &mut st.remapped_in_mut(View::Changeset).resolutions;
+    match resolution {
+        Some(resolution) => resolutions.insert(id, resolution),
+        None => resolutions.remove(&id),
+    };
+}
+
 pub(super) fn edit_thread(st: &mut State, id: ThreadId, edit: impl FnOnce(&mut Thread)) {
     if let Some(t) = st.threads.iter_mut().find(|t| t.id == id) {
         edit(t);
@@ -417,16 +443,19 @@ fn resolution_of(st: &State, id: ThreadId) -> Result<&Resolution> {
 }
 
 pub(super) fn thread_by_id(st: &State, id: ThreadId) -> Result<ThreadView> {
-    Ok(thread_view(st, find_thread(st, id)?))
+    thread_view(st, find_thread(st, id)?)
 }
 
 /// File threads follow a git-detected rename and detach only when the file is
-/// gone; changeset threads never detach.
-pub(super) fn thread_view(st: &State, t: &Thread) -> ThreadView {
+/// gone; changeset threads never detach. Every range thread of the state has its place
+/// resolved; one that has not is an error, not a reason to stop.
+pub(super) fn thread_view(st: &State, t: &Thread) -> Result<ThreadView> {
     let changes = st.changes();
     let (path, state, location) = match &t.target {
         CommentTarget::Range(a) => {
-            let r = &changes.remapped.resolutions[&t.id];
+            let r = changes.remapped.resolutions.get(&t.id).ok_or_else(|| {
+                SessionError::Invalid(format!("the anchor of thread {} has not been placed yet", t.id.0))
+            })?;
             let path = r.location.as_ref().map_or(&a.file, |l| &l.file);
             (Some(path.clone()), Some(r.state.clone()), r.location.clone())
         }
@@ -452,7 +481,7 @@ pub(super) fn thread_view(st: &State, t: &Thread) -> ThreadView {
         (CommentTarget::Range(a), Some(l)) => Some(card_line(&changes.diffed, a.side, l)),
         _ => None,
     };
-    ThreadView {
+    Ok(ThreadView {
         id: t.id,
         target: t.target.clone(),
         path,
@@ -462,7 +491,7 @@ pub(super) fn thread_view(st: &State, t: &Thread) -> ThreadView {
         messages: t.messages.clone(),
         status: t.status,
         platform: t.platform.clone(),
-    }
+    })
 }
 
 /// The target line a range thread's card is shown below: the line its range ends on, as the

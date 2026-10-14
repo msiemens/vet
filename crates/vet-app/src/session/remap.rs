@@ -99,6 +99,8 @@ enum Remapping<'a> {
     Threads,
     /// These recorded spans only.
     Spans(&'a [SpanId]),
+    /// These threads only, which need not be in the state yet.
+    Only(&'a [&'a Thread]),
 }
 
 /// Counts the completion of `view` from all of its review state.
@@ -276,7 +278,8 @@ where
             }
         }
         result?;
-        self.note_progress(writes, st).await
+        self.note_progress(writes, st).await;
+        Ok(())
     }
 
     /// Remaps onto one view of the changeset or of a commit, and counts its completion; only the
@@ -295,6 +298,14 @@ where
         let (_, resolutions) = self.remapped(st, View::Changeset, Remapping::Threads).await?;
         st.remapped_in_mut(View::Changeset).resolutions = resolutions;
         Ok(())
+    }
+
+    /// Where the anchor of `thread` is in the changeset now, worked out for a thread that is not in
+    /// the state yet or whose anchor is about to change. Nothing in the state changes; none for a
+    /// thread that is not a range thread.
+    pub(super) async fn resolve_thread(&self, st: &mut State, thread: &Thread) -> Result<Option<Resolution>> {
+        let (_, mut resolutions) = self.remapped(st, View::Changeset, Remapping::Only(&[thread])).await?;
+        Ok(resolutions.remove(&thread.id))
     }
 
     /// Brings every view up to date with a mark, which recorded the spans `added` and dropped the
@@ -341,11 +352,12 @@ where
             let recorded = st.recorded.iter().map(|r| &**r);
             let spans: Vec<&RecordedSpan> = match remapping {
                 Remapping::All => recorded.collect(),
-                Remapping::Threads => Vec::new(),
+                Remapping::Threads | Remapping::Only(_) => Vec::new(),
                 Remapping::Spans(ids) => recorded.filter(|r| ids.contains(&r.id)).collect(),
             };
             let threads: Vec<&Thread> = match remapping {
                 Remapping::All | Remapping::Threads if view == View::Changeset => st.threads.iter().collect(),
+                Remapping::Only(threads) if view == View::Changeset => threads.to_vec(),
                 _ => Vec::new(),
             };
             #[cfg(test)]
