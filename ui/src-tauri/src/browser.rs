@@ -1,8 +1,6 @@
 //! Showing a web address in the user's browser, and a folder in the file manager. The address comes
 //! from the backend (a platform's page for a check), so only web addresses are opened, and of the
-//! system's opener only folders.
-
-use std::process::Command;
+//! opener only folders.
 
 use crate::backend::wsl_distro;
 
@@ -16,32 +14,10 @@ fn web_address(url: &str) -> Result<&str, String> {
     }
 }
 
-/// Hands `target` (a web address or a folder) to the system's opener.
-fn open(target: &str, what: &str) -> Result<(), String> {
-    let mut opener = if cfg!(target_os = "macos") {
-        Command::new("open")
-    } else if cfg!(target_os = "windows") {
-        let mut command = Command::new("rundll32");
-        command.arg("url.dll,FileProtocolHandler");
-        command
-    } else {
-        Command::new("xdg-open")
-    };
-    let status = opener
-        .arg(target)
-        .status()
-        .map_err(|e| format!("cannot open {what}: {e}"))?;
-    if status.success() {
-        Ok(())
-    } else {
-        Err(format!("the system did not open {target}"))
-    }
-}
-
 /// Opens `url` in the default browser.
 #[tauri::command]
 pub async fn open_url(url: String) -> Result<(), String> {
-    open(web_address(&url)?, "the browser")
+    tauri_plugin_opener::open_url(web_address(&url)?, None::<&str>).map_err(|e| format!("cannot open the browser: {e}"))
 }
 
 /// `path`, a path of the machine the backend runs on, as this machine names it: in WSL, the
@@ -60,7 +36,7 @@ pub async fn show_folder(path: String) -> Result<(), String> {
     if !std::path::Path::new(&path).is_dir() {
         return Err(format!("{path} is not a folder"));
     }
-    open(&path, "the folder")
+    tauri_plugin_opener::open_path(&path, None::<&str>).map_err(|e| format!("cannot open the folder: {e}"))
 }
 
 #[cfg(test)]

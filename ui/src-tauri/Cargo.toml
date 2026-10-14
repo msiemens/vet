@@ -27,6 +27,8 @@ serde_json = "1"
 tempfile = "3"
 tauri-plugin-dialog = "2"
 tauri-plugin-decoration = "3"
+# Opens web addresses in the browser and folders in the file manager.
+tauri-plugin-opener = "2.7.1"
 # The OS keychain (macOS Keychain, Windows Credential Manager) for personal access tokens.
 keyring = "4.2"
 
