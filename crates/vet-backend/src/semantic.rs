@@ -76,7 +76,7 @@ impl FileLines {
 
 impl Booted {
     /// The language that serves `file`, as `ListServers` names it.
-    fn language_of(&self, file: &RepoPath) -> Option<String> {
+    pub(crate) fn language_of(&self, file: &RepoPath) -> Option<String> {
         self.semantics.language_of(file).map(|language| language.0.clone())
     }
 

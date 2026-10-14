@@ -17,7 +17,7 @@ use vet_semantic::derived::{
     symbol_at, usages,
 };
 use vet_semantic::join::bounded;
-use vet_semantic::pool::{Pool, Supervision, Target};
+use vet_semantic::pool::{Phase, Pool, PoolKey, Supervision, Target};
 use vet_semantic::ports::{
     At, Backend, BackendId, Diagnostic, Features, Location, Materializer, Provenance, RestoreFailure, ServerLauncher,
     Severity, Sym, SymbolInfo, prefer_openable,
@@ -182,6 +182,76 @@ pub struct Links {
     pub limits: RestoreLimits,
 }
 
+/// What the server of a language is doing for one side of the revision on view.
+#[derive(Clone, Debug, PartialEq)]
+pub struct ServerRuntime {
+    pub language: BackendId,
+    pub side: Side,
+    pub phase: Phase,
+}
+
+/// What the servers of the revision on view are doing. A later `serial` is newer.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct ServerRuntimes {
+    pub serial: u64,
+    pub runtimes: Vec<ServerRuntime>,
+}
+
+/// Told what the servers of the revision on view are doing, after every change.
+pub type RuntimeSink = dyn Fn(ServerRuntimes) + Send + Sync;
+
+/// The revision on view, whose servers are reported, and whom to report them to.
+#[derive(Default)]
+struct Watched {
+    sides: Option<(u32, Served, Served)>,
+    sink: Option<Arc<RuntimeSink>>,
+    /// The latest change of the pool taken into account.
+    pool_serial: u64,
+    serial: u64,
+}
+
+impl Watched {
+    fn runtimes(&self, phases: &[(PoolKey, Phase)]) -> Vec<ServerRuntime> {
+        let Some((_, base, target)) = &self.sides else {
+            return Vec::new();
+        };
+        let mut runtimes: Vec<_> = phases
+            .iter()
+            .flat_map(|(key, phase)| {
+                [(Side::Base, base), (Side::Target, target)]
+                    .into_iter()
+                    .filter(|(_, served)| key.target == served.target && key.policy == served.policy)
+                    .map(|(side, _)| ServerRuntime {
+                        language: key.backend.clone(),
+                        side,
+                        phase: phase.clone(),
+                    })
+            })
+            .collect();
+        runtimes.sort_by(|a, b| (&a.language.0, a.side as u8).cmp(&(&b.language.0, b.side as u8)));
+        runtimes
+    }
+
+    /// Tells the sink what the servers are doing, as of the pool's change `pool_serial`; what is
+    /// older than what was told already is dropped.
+    fn pooled(&mut self, pool_serial: u64, phases: &[(PoolKey, Phase)]) {
+        if pool_serial >= self.pool_serial {
+            self.pool_serial = pool_serial;
+            self.announce(phases);
+        }
+    }
+
+    fn announce(&mut self, phases: &[(PoolKey, Phase)]) {
+        if let Some(sink) = self.sink.clone() {
+            self.serial += 1;
+            sink(ServerRuntimes {
+                serial: self.serial,
+                runtimes: self.runtimes(phases),
+            });
+        }
+    }
+}
+
 pub struct Semantics<G, S, L, M>
 where
     G: GitRepo + Send + Sync,
@@ -190,6 +260,7 @@ where
     M: Materializer,
 {
     semantic: Arc<Semantic<M, L>>,
+    watched: Arc<Mutex<Watched>>,
     /// Where the texts of the files come from when they are not the session's own: the
     /// semantic lane reads them on its own budget.
     texts: Option<Arc<Acquisition<G, S>>>,
@@ -333,6 +404,7 @@ where
         let pool = Pool::new(materializer, launcher, live_root, POOL_CAPACITY);
         Self {
             semantic: Arc::new(Semantic::new(pool, backends)),
+            watched: Arc::default(),
             texts: None,
             revisions: links.revisions,
             limits: links.limits,
@@ -378,6 +450,27 @@ where
         self.semantic.pool().forget_answers();
     }
 
+    /// Tells `sink` what the servers of the revision on view are doing, after every change.
+    pub fn observing(self, sink: Arc<RuntimeSink>) -> Self {
+        self.watched.lock().expect("not poisoned").sink = Some(sink);
+        let watched = self.watched.clone();
+        self.configured(|semantic| {
+            semantic.observed(Arc::new(move |pool_serial, phases| {
+                watched.lock().expect("not poisoned").pooled(pool_serial, &phases);
+            }))
+        })
+    }
+
+    /// What the servers of the revision on view are doing now.
+    pub fn runtimes(&self) -> ServerRuntimes {
+        let watched = self.watched.lock().expect("not poisoned");
+        let (_, phases) = self.semantic.pool().phases();
+        ServerRuntimes {
+            serial: watched.serial,
+            runtimes: watched.runtimes(&phases),
+        }
+    }
+
     /// The language that serves `file`; `None`: it is unsupported.
     pub fn language_of(&self, file: &RepoPath) -> Option<&BackendId> {
         self.semantic.language_of(file)
@@ -396,7 +489,23 @@ where
     async fn pair(&self, view: &RevisionView<G, S>, revision: u32) -> Fallible<Pair<M, L>> {
         let sides = view.semantic_sides(revision).await?;
         let (base, target) = served(&view.trust(&sides.source).await?, &sides);
+        self.view(revision, base, target);
         Ok(self.semantic.pair(base, target))
+    }
+
+    /// The servers of `base` and `target` are those whose state is reported, unless a newer
+    /// revision is on view.
+    fn view(&self, revision: u32, base: Served, target: Served) {
+        let mut watched = self.watched.lock().expect("not poisoned");
+        match &watched.sides {
+            Some((at, ..)) if *at > revision => return,
+            Some((at, b, t)) if *at == revision && *b == base && *t == target => return,
+            _ => {}
+        }
+        watched.sides = Some((revision, base, target));
+        let (pool_serial, phases) = self.semantic.pool().phases();
+        watched.pool_serial = watched.pool_serial.max(pool_serial);
+        watched.announce(&phases);
     }
 
     /// Runs the work of a request for `revision`, which fails as stale, with the work
@@ -1426,6 +1535,52 @@ mod tests {
         let mut stopped = counters.stopped.lock().unwrap().clone();
         stopped.sort();
         assert_eq!(stopped, ["l4", "l5", "l6"]);
+    }
+
+    #[tokio::test]
+    async fn what_the_servers_of_the_revision_on_view_do_is_reported_per_language_and_side() {
+        let fx = Fixture::open(
+            &[("a.l0", "one\n"), ("a.l1", "one\n")],
+            &[("a.l0", "two\n"), ("a.l1", "two\n")],
+        )
+        .await;
+        let counters = Arc::new(Counters::default());
+        let told = Arc::new(Mutex::new(Vec::<ServerRuntimes>::new()));
+        let semantics = Semantics::new(
+            FakeMaterializer(counters.clone()),
+            FakeLauncher(counters.clone()),
+            "/live".into(),
+            vec![backend("l0", "l0"), backend("l1", "l1")],
+            Links {
+                revisions: fx.session.revisions(),
+                limits: RestoreLimits::default(),
+            },
+        )
+        .observing({
+            let told = told.clone();
+            Arc::new(move |runtimes| told.lock().unwrap().push(runtimes))
+        });
+        assert!(semantics.runtimes().runtimes.is_empty());
+
+        semantics.start_servers(&fx.view, 0).await.unwrap();
+        let told = told.lock().unwrap();
+        assert!(told.windows(2).all(|w| w[0].serial < w[1].serial), "{told:?}");
+        let last = told.last().unwrap();
+        let shown: Vec<_> = last
+            .runtimes
+            .iter()
+            .map(|r| (r.language.0.as_str(), r.side, r.phase.clone()))
+            .collect();
+        assert_eq!(
+            shown,
+            [
+                ("l0", Side::Base, Phase::Ready),
+                ("l0", Side::Target, Phase::Ready),
+                ("l1", Side::Base, Phase::Ready),
+                ("l1", Side::Target, Phase::Ready),
+            ]
+        );
+        assert_eq!(semantics.runtimes(), *last);
     }
 
     #[tokio::test]

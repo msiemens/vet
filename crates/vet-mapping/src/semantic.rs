@@ -2,7 +2,7 @@
 
 use p::UnavailableKind as Kind;
 use vet_app::ports::{FoundServer, ServerOrigin, ServerState, Tsserver};
-use vet_app::semantics::WorkspaceSymbols;
+use vet_app::semantics::{ServerRuntimes, WorkspaceSymbols};
 use vet_app::servers::ServerStatus;
 use vet_core::content::{FileDiff, LineRange, RepoPath};
 use vet_core::num::sat_u32;
@@ -12,7 +12,7 @@ use vet_semantic::derived::{
     Bounds, CallSite, Calls, Change, ChangedSymbol, Derived, Fate, FileChanges, Inputs, Judged, Located, Origin,
     OutlineSymbol, Reach, Reference, RemovalImpact, Usages,
 };
-use vet_semantic::pool::{Outcome, PoolError};
+use vet_semantic::pool::{Outcome, Phase, PoolError};
 use vet_semantic::ports::{
     At, BackendId, Diagnostic, Feature, Features, LaunchError, Location, Pos, RestoreFailure, RestoreFailureKind,
     Severity, Span, Sym, SymbolInfo, SymbolKind,
@@ -531,9 +531,41 @@ fn server_features(f: Features) -> p::ServerFeatures {
     }
 }
 
+/// What the servers of the changeset on view are doing.
+pub fn runtimes(now: &ServerRuntimes) -> p::ServerRuntimes {
+    p::ServerRuntimes {
+        serial: now.serial,
+        runtimes: now
+            .runtimes
+            .iter()
+            .map(|r| p::ServerRuntime {
+                language: r.language.0.clone(),
+                side: super::side(r.side),
+                phase: match &r.phase {
+                    Phase::Starting => p::ServerPhase::Starting,
+                    Phase::Indexing { done_of_total, detail } => p::ServerPhase::Indexing {
+                        done: done_of_total.map(|(done, _)| done),
+                        total: done_of_total.map(|(_, total)| total),
+                        detail: detail.clone(),
+                    },
+                    Phase::Ready => p::ServerPhase::Ready,
+                    Phase::Failed(e) => p::ServerPhase::Failed {
+                        why: unavailable(&SemanticError::Pool(e.clone()), Some(r.language.0.clone())),
+                    },
+                },
+            })
+            .collect(),
+    }
+}
+
 /// `features` tells for a language what its server advertised.
-pub fn servers(all: &[ServerStatus], features: impl Fn(&BackendId) -> Option<Features>) -> p::Response {
+pub fn servers(
+    all: &[ServerStatus],
+    features: impl Fn(&BackendId) -> Option<Features>,
+    now: &ServerRuntimes,
+) -> p::Response {
     p::Response::Servers {
+        runtimes: runtimes(now),
         servers: all
             .iter()
             .map(|s| p::ServerInfo {

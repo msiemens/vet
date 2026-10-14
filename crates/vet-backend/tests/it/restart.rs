@@ -14,7 +14,10 @@ use std::time::Duration;
 use tokio::sync::Mutex;
 use tokio::sync::mpsc::UnboundedReceiver;
 use vet_backend::{Orchestrator, open_store};
-use vet_protocol::{Event, Notification, Request, ServerMessage, Side, UnavailableKind};
+use vet_protocol::{
+    Event, Notification, Request, Response, ServerMessage, ServerPhase, ServerRuntime, ServerRuntimes, Side,
+    UnavailableKind,
+};
 use vet_transport::Events;
 
 use crate::common::{Client, config, repo_with};
@@ -297,6 +300,79 @@ async fn changing_trust_stops_the_servers_started_under_the_old_policy_and_the_n
     );
     let again = rig.pid().await;
     assert!(again != untrusted && again != trusted);
+}
+
+impl Rig {
+    /// What the backend pushed about the servers' phases so far, oldest first.
+    async fn heard_runtimes(&self) -> Vec<ServerRuntimes> {
+        let mut inbox = self.inbox.lock().await;
+        let mut heard = Vec::new();
+        while let Ok(message) = inbox.try_recv() {
+            if let ServerMessage::Event {
+                event: Event::ServerRuntimes { runtimes, .. },
+            } = message
+            {
+                heard.push(runtimes);
+            }
+        }
+        heard
+    }
+
+    /// The phase of the target side's rust server in what `ListServers` says.
+    async fn listed_phase(&self) -> Option<ServerPhase> {
+        let Response::Servers { runtimes, .. } =
+            self.call(Request::ListServers { project: self.project }).await.unwrap()
+        else {
+            panic!("not servers");
+        };
+        let phase = |runtimes: &ServerRuntimes| {
+            let own = |r: &&ServerRuntime| r.language == "rust" && r.side == Side::Target;
+            runtimes.runtimes.iter().find(own).map(|r| r.phase.clone())
+        };
+        phase(&runtimes)
+    }
+}
+
+#[tokio::test]
+#[ignore = "needs python3"]
+async fn the_phases_of_the_servers_are_pushed_and_listed_from_starting_to_ready_or_failed() {
+    let rig = Rig::start_with(true).await;
+    assert_eq!(rig.listed_phase().await, None, "no server was needed yet");
+
+    rig.hover(0).await;
+    let Some(ServerPhase::Failed { why }) = rig.listed_phase().await else {
+        panic!("the broken server did not start");
+    };
+    assert_eq!(why.kind, UnavailableKind::ServerFailed);
+    assert!(why.message.contains("the fake server is broken"), "{}", why.message);
+
+    std::fs::remove_file(&rig.broken).unwrap();
+    rig.restart().await.unwrap();
+    assert_eq!(rig.listed_phase().await, Some(ServerPhase::Ready));
+
+    let heard = rig.heard_runtimes().await;
+    assert!(heard.windows(2).all(|w| w[0].serial < w[1].serial), "{heard:?}");
+    let phases: Vec<_> = heard
+        .iter()
+        .filter_map(|r| {
+            r.runtimes
+                .iter()
+                .find(|r| r.language == "rust" && r.side == Side::Target)
+        })
+        .map(|r| std::mem::discriminant(&r.phase))
+        .collect();
+    let of = |phase: ServerPhase| std::mem::discriminant(&phase);
+    for wanted in [ServerPhase::Starting, ServerPhase::Ready] {
+        assert!(
+            phases.contains(&of(wanted.clone())),
+            "{wanted:?} was not pushed: {heard:?}"
+        );
+    }
+    assert_eq!(
+        rig.heard_runtimes().await,
+        [],
+        "nothing is pushed while nothing changes"
+    );
 }
 
 #[tokio::test]

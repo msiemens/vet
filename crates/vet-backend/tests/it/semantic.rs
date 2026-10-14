@@ -10,8 +10,8 @@ use std::time::Duration;
 use crate::common::{Client, config, find, git, repo_with, write};
 use vet_backend::{Orchestrator, open_store};
 use vet_protocol::{
-    CallFate, ChangesetKey, Event, LocationChange, Reach, Request, Response, ServerMessage, ServerState, Side,
-    SymbolChange, SymbolId, SymbolKind, SymbolName, UnavailableKind, View,
+    CallFate, ChangesetKey, Event, LocationChange, ProjectId, Reach, Request, Response, ServerMessage, ServerState,
+    Serving, Side, SymbolChange, SymbolId, SymbolKind, SymbolName, UnavailableKind, View,
 };
 
 const BASE: &str = "\
@@ -197,7 +197,7 @@ async fn rust_semantics_through_the_protocol() {
     );
 
     // A server that ran says what it offers; one that has not started does not.
-    let Response::Servers { servers } = client.call(Request::ListServers { project }).await.unwrap() else {
+    let Response::Servers { servers, .. } = client.call(Request::ListServers { project }).await.unwrap() else {
         panic!("not servers");
     };
     let offers = |language: &str| {
@@ -817,6 +817,47 @@ async fn a_language_without_a_server_degrades_and_never_fails_the_project() {
     assert_eq!(client.revision(project).await, revision);
 }
 
+/// The languages that serve `paths`, as the backend names them.
+async fn served_by(client: &Client, project: ProjectId, paths: &[&str]) -> Vec<Option<String>> {
+    let paths = paths.iter().map(|p| (*p).to_owned()).collect();
+    match client.call(Request::ServedBy { project, paths }).await.unwrap() {
+        Response::ServedBy { serving } => serving
+            .into_iter()
+            .map(|s| match s {
+                Serving::Language { language } => Some(language),
+                Serving::Unsupported { why } => {
+                    assert_eq!(why.kind, UnavailableKind::Unsupported);
+                    None
+                }
+            })
+            .collect(),
+        other => panic!("{other:?}"),
+    }
+}
+
+#[tokio::test]
+async fn a_html_file_is_served_by_angular_only_in_a_project_that_has_an_angular_json() {
+    let plain = repo_with(&[("page.html", "<p>x</p>\n"), ("src/a.rs", "fn a() {}\n")], &[]);
+    let angular = repo_with(&[("angular.json", "{}\n"), ("src/app/page.html", "<p>x</p>\n")], &[]);
+    let data = tempfile::tempdir().unwrap();
+    let handler = Arc::new(Orchestrator::new(open_store(data.path()).await.unwrap(), config()));
+    let client = Client::new(&handler);
+
+    let project = client.open(plain.path()).await;
+    client.revision(project).await;
+    assert_eq!(
+        served_by(&client, project, &["page.html", "src/a.rs", "notes.unknown"]).await,
+        [None, Some("rust".to_owned()), None]
+    );
+
+    let project = client.open(angular.path()).await;
+    client.revision(project).await;
+    assert_eq!(
+        served_by(&client, project, &["src/app/page.html"]).await,
+        [Some("angular".to_owned())]
+    );
+}
+
 #[tokio::test]
 async fn servers_are_listed_and_custom_paths_persist_and_notify() {
     let repo = repo_with(&[("a.txt", "x\n")], &[]);
@@ -845,7 +886,7 @@ async fn servers_are_listed_and_custom_paths_persist_and_notify() {
     let tool = data.path().join("my-pyright");
     std::fs::write(&tool, "").unwrap();
     let path = tool.to_str().unwrap().to_owned();
-    let Response::Servers { servers } = second
+    let Response::Servers { servers, .. } = second
         .call(Request::SetServerPath {
             project,
             language: "python".into(),

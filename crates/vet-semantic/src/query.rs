@@ -10,7 +10,7 @@ use vet_core::review::Side;
 
 use crate::join::bounded;
 use crate::policy::AnalysisPolicy;
-use crate::pool::{Lease, Pool, PoolError, PoolKey, Supervision, Target};
+use crate::pool::{Lease, Observer, Pool, PoolError, PoolKey, Supervision, Target};
 use crate::ports::{
     Answered, At, Backend, BackendId, Diagnostic, Feature, Location, Materializer, QueryError, ServerLauncher,
     SymbolInfo, backend_for,
@@ -121,6 +121,12 @@ impl<M: Materializer, L: ServerLauncher> Semantic<M, L> {
     /// Starts a server that dies while running anew once, and tells `supervision` what became of it.
     pub fn supervised(mut self, supervision: Supervision) -> Self {
         self.pool = self.pool.supervised(supervision);
+        self
+    }
+
+    /// Tells `observer` of every change of what the servers are doing.
+    pub fn observed(mut self, observer: Arc<Observer>) -> Self {
+        self.pool = self.pool.observed(observer);
         self
     }
 

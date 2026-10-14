@@ -129,7 +129,7 @@ impl Client {
 
     pub async fn servers(&self, project: ProjectId) -> Vec<ServerInfo> {
         match self.call(Request::ListServers { project }).await.unwrap() {
-            Response::Servers { servers } => servers,
+            Response::Servers { servers, .. } => servers,
             other => panic!("{other:?}"),
         }
     }
@@ -141,7 +141,7 @@ impl Client {
             language: language.into(),
         };
         match self.call(request).await.unwrap() {
-            Response::Servers { servers } => {
+            Response::Servers { servers, .. } => {
                 let server = servers.iter().find(|s| s.language == language).unwrap();
                 assert!(matches!(server.state, ServerState::Found { .. }), "{server:?}");
             }

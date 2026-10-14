@@ -33,6 +33,8 @@ import type { ReviewSubmitted } from "./ReviewSubmitted";
 import type { ReviewUpdate } from "./ReviewUpdate";
 import type { SearchFile } from "./SearchFile";
 import type { ServerInfo } from "./ServerInfo";
+import type { ServerRuntimes } from "./ServerRuntimes";
+import type { Serving } from "./Serving";
 import type { Side } from "./Side";
 import type { SymbolAt } from "./SymbolAt";
 import type { SymbolSignature } from "./SymbolSignature";
@@ -86,7 +88,11 @@ originUnavailable: Unavailable | null,
  * `diagnostics`, so some may be missing; they are not kept, and asking again once the
  * server has finished gives the rest.
  */
-incomplete: Unavailable | null, } | { "type": "fileSymbols" } & FileSymbols | { "type": "fileOutline" } & FileOutline | { "type": "workspaceSymbols" } & WorkspaceSymbols | { "type": "symbolAt" } & SymbolAt | { "type": "signature", revision: number, signature: SymbolSignature | null, unavailable: Unavailable | null, } | { "type": "calls" } & Calls | { "type": "usages" } & Usages | { "type": "removalImpact" } & RemovalImpact | { "type": "reachability" } & Reachability | { "type": "servers", servers: Array<ServerInfo>, } | { "type": "reviewFinished", complete: boolean, } | { "type": "directory", revision: number, entries: Array<DirEntry>, } | { "type": "files", revision: number, paths: Array<string>, } | { "type": "patternMatches", revision: number, roots: Array<number>, include: Array<PatternMatch>, exclude: Array<PatternMatch>, } | { "type": "fileText", revision: number, content: TextContent, } | { "type": "searchResults", revision: number, 
+incomplete: Unavailable | null, } | { "type": "fileSymbols" } & FileSymbols | { "type": "fileOutline" } & FileOutline | { "type": "workspaceSymbols" } & WorkspaceSymbols | { "type": "symbolAt" } & SymbolAt | { "type": "signature", revision: number, signature: SymbolSignature | null, unavailable: Unavailable | null, } | { "type": "calls" } & Calls | { "type": "usages" } & Usages | { "type": "removalImpact" } & RemovalImpact | { "type": "reachability" } & Reachability | { "type": "servers", servers: Array<ServerInfo>, 
+/**
+ * What the servers of the changeset on view are doing as the answer is made.
+ */
+runtimes: ServerRuntimes, } | { "type": "servedBy", serving: Array<Serving>, } | { "type": "reviewFinished", complete: boolean, } | { "type": "directory", revision: number, entries: Array<DirEntry>, } | { "type": "files", revision: number, paths: Array<string>, } | { "type": "patternMatches", revision: number, roots: Array<number>, include: Array<PatternMatch>, exclude: Array<PatternMatch>, } | { "type": "fileText", revision: number, content: TextContent, } | { "type": "searchResults", revision: number, 
 /**
  * The files with matches, in path order.
  */

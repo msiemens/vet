@@ -1,9 +1,11 @@
 //! Requests about the language servers, which are shared by all projects.
 
+use vet_core::content::RepoPath;
 use vet_mapping as mapping;
-use vet_protocol::{Event, ProjectId, Response};
+use vet_protocol::{Event, ProjectId, Response, Serving};
 use vet_semantic::policy::AnalysisPolicy;
 use vet_semantic::ports::BackendId;
+use vet_semantic::query::SemanticError;
 
 use crate::error::Result;
 use crate::{Open, Orchestrator};
@@ -12,6 +14,24 @@ impl Orchestrator {
     pub(crate) async fn list_servers(&self, project: ProjectId) -> Result<Response> {
         let open = self.find(project).await?;
         self.servers_of(&open).await
+    }
+
+    /// The language whose server serves each of `paths`.
+    pub(crate) async fn served_by(&self, project: ProjectId, paths: Vec<String>) -> Result<Response> {
+        let ready = self.ready(project).await?;
+        let serving = paths
+            .iter()
+            .map(|path| {
+                let file = RepoPath::from(path.as_str());
+                match ready.language_of(&file) {
+                    Some(language) => Serving::Language { language },
+                    None => Serving::Unsupported {
+                        why: mapping::semantic::unavailable(&SemanticError::NoBackend(file), None),
+                    },
+                }
+            })
+            .collect();
+        Ok(Response::ServedBy { serving })
     }
 
     pub(crate) async fn install_server(&self, project: ProjectId, language: String) -> Result<Response> {
@@ -72,7 +92,8 @@ impl Orchestrator {
                 .chain(booted.iter().filter_map(|o| o.booted_now()));
             projects.find_map(|b| b.semantics.features(language))
         };
-        Ok(mapping::semantic::servers(&all, features))
+        let runtimes = open.booted_now().map(|b| b.semantics.runtimes()).unwrap_or_default();
+        Ok(mapping::semantic::servers(&all, features, &runtimes))
     }
 
     /// The language's executable changed: its running servers restart in every project, and

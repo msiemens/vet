@@ -306,6 +306,15 @@ impl Wired {
                     subscribers.broadcast(Event::ServersChanged { project: id });
                 })
             },
+        })
+        .observing({
+            let subscribers = subscribers.clone();
+            Arc::new(move |runtimes| {
+                subscribers.broadcast(Event::ServerRuntimes {
+                    project: id,
+                    runtimes: mapping::semantic::runtimes(&runtimes),
+                });
+            })
         });
         if let Some(store) = self.answers.store().await {
             semantics = semantics.persisting(store);

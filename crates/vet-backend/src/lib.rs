@@ -646,6 +646,7 @@ impl Orchestrator {
                 symbol,
             } => reply(async move { self.ready(project).await?.reachability(revision, &symbol).await }),
             Request::ListServers { project } => reply(self.list_servers(project)),
+            Request::ServedBy { project, paths } => reply(self.served_by(project, paths)),
             Request::InstallServer { project, language } => reply(self.install_server(project, language)),
             Request::SetServerPath {
                 project,

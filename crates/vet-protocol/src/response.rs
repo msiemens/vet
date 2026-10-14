@@ -8,8 +8,8 @@ use crate::{
     CommitUnit, Diagnostic, DirEntry, FileOutline, FileSymbols, Highlights, Lens, LineDelta, LocationRows, Locations,
     Manifest, MappedLine, PatternMatch, PipelineOutcome, PipelineStep, Preference, ProjectId, PullRequestInfo,
     PullRequestRow, PullRequestSource, Reachability, RecentProject, RemovalImpact, ReviewSubmitted, ReviewUpdate,
-    SearchFile, ServerInfo, Side, SymbolAt, SymbolSignature, Task, TextChange, TextContent, Thread, ThreadTarget,
-    Unavailable, Usages, VersionInfo, WorkspaceSymbols,
+    SearchFile, ServerInfo, ServerRuntimes, Serving, Side, SymbolAt, SymbolSignature, Task, TextChange, TextContent,
+    Thread, ThreadTarget, Unavailable, Usages, VersionInfo, WorkspaceSymbols,
 };
 
 #[derive(Clone, PartialEq, Debug, Serialize, Deserialize, TS)]
@@ -171,6 +171,12 @@ pub enum Response {
     Reachability(Reachability),
     Servers {
         servers: Vec<ServerInfo>,
+        /// What the servers of the changeset on view are doing as the answer is made.
+        runtimes: ServerRuntimes,
+    },
+    /// The answer to `ServedBy`: which server serves each path, in order.
+    ServedBy {
+        serving: Vec<Serving>,
     },
     /// After `FinishReview`: whether every change was seen when it ended.
     ReviewFinished {

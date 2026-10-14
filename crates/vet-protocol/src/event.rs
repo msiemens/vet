@@ -4,7 +4,8 @@ use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
 use crate::{
-    ChangesetKey, Lens, Notification, PlatformStatus, ProjectId, RestoreFailure, ReviewInfo, ReviewUpdate, Task,
+    ChangesetKey, Lens, Notification, PlatformStatus, ProjectId, RestoreFailure, ReviewInfo, ReviewUpdate,
+    ServerRuntimes, Task,
 };
 
 /// Events are invalidations or small state updates; the client re-requests
@@ -92,6 +93,12 @@ pub enum Event {
     /// language's servers in every project: what `ListServers` says, and what the
     /// servers answer, may have changed. Sent to the connections of every project.
     ServersChanged { project: ProjectId },
+    /// What the servers of the changeset on view are doing changed: one started, indexes, is
+    /// ready, failed or was stopped, or another changeset came on view.
+    ServerRuntimes {
+        project: ProjectId,
+        runtimes: ServerRuntimes,
+    },
     /// A dependency restore failed, so analysis is limited. `failures` is every
     /// failure of the project so far, as in `Manifest::restore_failures`.
     RestoreFailed {

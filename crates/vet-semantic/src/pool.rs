@@ -1189,7 +1189,7 @@ impl<M: Materializer, L: ServerLauncher> Pool<M, L> {
     /// Those leased right now are stopped when their last lease ends, and a start of one in
     /// flight lands retired.
     pub async fn retire_executing_except(&self, allowed: &[AnalysisPolicy]) {
-        let stop = {
+        let (stop, changed) = {
             let mut state = self.inner.lock();
             let keys: Vec<_> = state
                 .slots
@@ -1197,10 +1197,10 @@ impl<M: Materializer, L: ServerLauncher> Pool<M, L> {
                 .filter(|k| k.policy.allow_executing && !allowed.contains(&k.policy))
                 .cloned()
                 .collect();
-            let mut stop = Vec::new();
+            let (mut stop, mut changed) = (Vec::new(), false);
             for key in keys {
                 *state.generations.entry(key.backend.clone()).or_default() += 1;
-                Inner::<M, L>::put(&mut state, &key, None);
+                changed |= Inner::<M, L>::put(&mut state, &key, None);
                 if let Some(entry) = state.slots.remove(&key) {
                     entry.retired.store(true, Ordering::SeqCst);
                     if entry.leases.load(Ordering::SeqCst) == 0 {
@@ -1208,21 +1208,24 @@ impl<M: Materializer, L: ServerLauncher> Pool<M, L> {
                     }
                 }
             }
-            stop
+            (stop, changed)
         };
-        self.inner.announce();
+        if changed {
+            self.inner.announce();
+        }
         Inner::<M, L>::stop(stop).await;
     }
 
     /// Takes the servers of `backend` out of the pool, for a new generation to replace; returns
     /// the ones nobody leases, to stop now, and the leased ones, which stop with their last lease.
     fn retire(&self, backend: &BackendId) -> (Entries<M, L>, Entries<M, L>) {
-        let (idle, leased) = {
+        let (idle, leased, changed) = {
             let mut state = self.inner.lock();
             *state.generations.entry(backend.clone()).or_default() += 1;
             state.features.remove(backend);
             state.health.retain(|key, _| &key.backend != backend);
             let shown: Vec<_> = state.phases.keys().filter(|k| &k.backend == backend).cloned().collect();
+            let changed = !shown.is_empty();
             for key in shown {
                 Inner::<M, L>::put(&mut state, &key, None);
             }
@@ -1238,9 +1241,11 @@ impl<M: Materializer, L: ServerLauncher> Pool<M, L> {
                     }
                 }
             }
-            (idle, leased)
+            (idle, leased, changed)
         };
-        self.inner.announce();
+        if changed {
+            self.inner.announce();
+        }
         self.inner.launcher.restarted(backend);
         (idle, leased)
     }
@@ -1252,7 +1257,7 @@ impl<M: Materializer, L: ServerLauncher> Pool<M, L> {
 
     /// Stop every server that is not leased.
     pub async fn shutdown(&self) {
-        let stop = {
+        let (stop, changed) = {
             let mut state = self.inner.lock();
             let keys: Vec<_> = state
                 .slots
@@ -1260,12 +1265,15 @@ impl<M: Materializer, L: ServerLauncher> Pool<M, L> {
                 .filter(|(_, e)| e.leases.load(Ordering::SeqCst) == 0)
                 .map(|(k, _)| k.clone())
                 .collect();
+            let mut changed = false;
             for key in &keys {
-                Inner::<M, L>::put(&mut state, key, None);
+                changed |= Inner::<M, L>::put(&mut state, key, None);
             }
-            keys.iter().filter_map(|k| state.slots.remove(k)).collect()
+            (keys.iter().filter_map(|k| state.slots.remove(k)).collect(), changed)
         };
-        self.inner.announce();
+        if changed {
+            self.inner.announce();
+        }
         Inner::<M, L>::stop(stop).await;
     }
 

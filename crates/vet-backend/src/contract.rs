@@ -28,6 +28,7 @@ pub enum Kind {
     ThreadsChanged,
     ServerInstallOutput,
     ServersChanged,
+    ServerRuntimes,
     RestoreFailed,
     Task,
     PlatformStatus,
@@ -53,6 +54,7 @@ impl Kind {
             Event::ThreadsChanged { .. } => Self::ThreadsChanged,
             Event::ServerInstallOutput { .. } => Self::ServerInstallOutput,
             Event::ServersChanged { .. } => Self::ServersChanged,
+            Event::ServerRuntimes { .. } => Self::ServerRuntimes,
             Event::RestoreFailed { .. } => Self::RestoreFailed,
             Event::Task(_) => Self::Task,
             Event::PlatformStatus { .. } => Self::PlatformStatus,
@@ -133,6 +135,7 @@ pub fn effect(request: &Request) -> Effect {
         | Request::RemovalImpact { .. }
         | Request::Reachability { .. }
         | Request::ListServers { .. }
+        | Request::ServedBy { .. }
         | Request::ListDirectory { .. }
         | Request::ListFiles { .. }
         | Request::PatternMatches { .. }
@@ -503,6 +506,10 @@ mod tests {
                 symbol: symbol(),
             },
             Request::ListServers { project },
+            Request::ServedBy {
+                project,
+                paths: vec!["a.rs".into()],
+            },
             Request::InstallServer {
                 project,
                 language: "rust".into(),

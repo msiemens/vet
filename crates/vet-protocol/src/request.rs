@@ -445,6 +445,13 @@ pub enum Request {
     ListServers {
         project: ProjectId,
     },
+    /// The language whose server serves each of `paths` in the project: the extension or name
+    /// decides, and where a kind of file belongs to several projects (a `.html` of an Angular
+    /// app), the project's own files do. Answers with `Response::ServedBy`.
+    ServedBy {
+        project: ProjectId,
+        paths: Vec<String>,
+    },
     /// Installs the pinned server of a language into Vet's data directory and
     /// restarts that language's running servers. Output lines arrive as
     /// `ServerInstallOutput` events until the answer, which is `Response::Servers`
