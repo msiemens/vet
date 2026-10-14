@@ -29,6 +29,8 @@ use super::uri::path_of;
 use crate::exec::{Tail, command};
 
 pub(super) const REQUEST_TIMEOUT: Duration = Duration::from_secs(60);
+/// No server message for this long, none in progress: the server is done with what it was at.
+const QUIET: Duration = Duration::from_millis(750);
 const STDERR_LINES: usize = 20;
 const STDERR_SETTLE: Duration = Duration::from_millis(100);
 const CONTENT_MODIFIED: i64 = -32801;
@@ -46,6 +48,13 @@ struct Work {
     title: String,
     message: Option<String>,
     percentage: Option<u32>,
+}
+
+/// What a server says it is working on.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub(super) struct Doing {
+    pub done_of_total: Option<(u32, u32)>,
+    pub detail: Option<String>,
 }
 
 #[derive(Default)]
@@ -349,6 +358,57 @@ impl Connection {
         }
     }
 
+    /// Waits until the server has been quiet (see [`State::is_idle`]), for at most `timeout`; the
+    /// timeout only guards against a server that never settles.
+    pub(super) async fn until_quiet(&self, timeout: Duration) -> bool {
+        self.wait_for(timeout, |s| s.is_idle(QUIET)).await
+    }
+
+    /// Tells `each` what the server is doing, now and whenever that changes, until it exits.
+    pub(super) async fn report_work(&self, mut each: impl FnMut(Doing)) {
+        let mut shown = None;
+        loop {
+            let notified = self.shared.changed.notified();
+            tokio::pin!(notified);
+            notified.as_mut().enable();
+            let (doing, exited) = {
+                let state = self.shared.state.lock().expect("not poisoned");
+                (state.doing(), state.exited)
+            };
+            if shown.as_ref() != Some(&doing) {
+                each(doing.clone());
+                shown = Some(doing);
+            }
+            if exited {
+                return;
+            }
+            notified.await;
+        }
+    }
+
+    /// Completes with the readiness once it differs from `seen`, and with `None` once the server
+    /// exited. Owns what it waits on.
+    pub(super) fn readiness_changed(&self, seen: Readiness) -> Pin<Box<dyn Future<Output = Option<Readiness>> + Send>> {
+        let shared = self.shared.clone();
+        Box::pin(async move {
+            loop {
+                let notified = shared.changed.notified();
+                tokio::pin!(notified);
+                notified.as_mut().enable();
+                {
+                    let state = shared.state.lock().expect("not poisoned");
+                    if state.readiness() != seen {
+                        return Some(state.readiness());
+                    }
+                    if state.exited {
+                        return None;
+                    }
+                }
+                notified.await;
+            }
+        })
+    }
+
     /// `shutdown` then `exit`; kills the process if it lingers.
     pub(super) async fn close(&self) {
         let _ = self
@@ -406,17 +466,26 @@ impl State {
             _ => {}
         }
         if let Some(index) = &self.index {
-            match self.active_progress.last() {
-                Some(work) => {
-                    let detail = match (&work.title, &work.message) {
-                        (title, Some(message)) if !title.is_empty() => format!("{title}: {message}"),
-                        (title, None) => title.clone(),
-                        (_, Some(message)) => message.clone(),
-                    };
-                    index.report(work.percentage.map(|p| (p, 100)), Some(detail));
+            let Doing { done_of_total, detail } = self.doing();
+            index.report(done_of_total, detail);
+        }
+    }
+
+    /// The work that reported last, with its percentage if it has one.
+    fn doing(&self) -> Doing {
+        match self.active_progress.last() {
+            Some(work) => {
+                let detail = match (&work.title, &work.message) {
+                    (title, Some(message)) if !title.is_empty() => format!("{title}: {message}"),
+                    (title, None) => title.clone(),
+                    (_, Some(message)) => message.clone(),
+                };
+                Doing {
+                    done_of_total: work.percentage.map(|p| (p, 100)),
+                    detail: Some(detail),
                 }
-                None => index.report(None, None),
             }
+            None => Doing::default(),
         }
     }
 
@@ -763,6 +832,61 @@ mod tests {
 
         state.progress(&progress("end", "cache", json!({})));
         assert_eq!(shown(), (None, None));
+    }
+
+    #[tokio::test]
+    async fn the_readiness_changes_when_the_server_begins_work_and_when_it_ends_it() {
+        let (conn, fake) = fake::start(|_| Reply::Result(Value::Null));
+        let idle = conn.with_state(|s| s.readiness());
+        assert!(idle.idle);
+
+        let begun = conn.readiness_changed(idle);
+        fake.notify("$/progress", progress("begin", "t", json!({"title": "Indexing"})))
+            .await;
+        let busy = tokio::time::timeout(Duration::from_secs(5), begun)
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(!busy.idle);
+        assert!(busy.epoch > idle.epoch);
+
+        let ended = conn.readiness_changed(busy);
+        fake.notify("$/progress", progress("end", "t", json!({}))).await;
+        let done = tokio::time::timeout(Duration::from_secs(5), ended)
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(done.idle);
+    }
+
+    #[tokio::test]
+    async fn the_work_of_the_server_is_reported_as_it_changes() {
+        let (conn, fake) = fake::start(|_| Reply::Result(Value::Null));
+        let seen = Mutex::new(Vec::new());
+        let report = conn.report_work(|doing| seen.lock().unwrap().push(doing));
+        let seen = &seen;
+        let reported = |count: usize| async move {
+            while seen.lock().unwrap().len() < count {
+                tokio::time::sleep(Duration::from_millis(5)).await;
+            }
+        };
+        let drive = async {
+            let work = progress("begin", "t", json!({"title": "Roots", "percentage": 10}));
+            reported(1).await;
+            fake.notify("$/progress", work).await;
+            reported(2).await;
+            fake.notify("$/progress", progress("end", "t", json!({}))).await;
+            reported(3).await;
+        };
+        tokio::select! {
+            () = report => unreachable!("the server is still there"),
+            done = tokio::time::timeout(Duration::from_secs(5), drive) => done.expect("every change is reported"),
+        }
+        let want = Doing {
+            done_of_total: Some((10, 100)),
+            detail: Some("Roots".into()),
+        };
+        assert_eq!(*seen.lock().unwrap(), [Doing::default(), want, Doing::default()]);
     }
 
     #[tokio::test]

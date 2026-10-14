@@ -17,7 +17,7 @@ use vet_infra::restore::ToolRestorer;
 use vet_infra::servers::ToolResolver;
 use vet_infra::store::SqliteStore;
 use vet_semantic::policy::AnalysisPolicy;
-use vet_semantic::ports::{At, BackendId, LanguageServer, Pos, Restorer, ServerLauncher, Tree};
+use vet_semantic::ports::{At, BackendId, LanguageServer, Pos, Restorer, ServerLauncher, Tree, Unwatched};
 
 fn path(p: &str) -> RepoPath {
     RepoPath(p.as_bytes().to_vec())
@@ -108,6 +108,7 @@ async fn typescript_installs_and_uses_the_project_typescript() {
             Tree::Immutable,
             &config::typescript(),
             AnalysisPolicy::LIMITED,
+            &Unwatched,
         )
         .await
         .expect("the installed server starts and has every required capability")
@@ -158,6 +159,7 @@ async fn the_projects_tsserver_runs_only_where_analysis_may_execute_project_code
             Tree::Immutable,
             &config::typescript(),
             AnalysisPolicy::LIMITED,
+            &Unwatched,
         )
         .await;
     assert!(!marker.exists(), "the project's tsserver ran without trust");
@@ -170,6 +172,7 @@ async fn the_projects_tsserver_runs_only_where_analysis_may_execute_project_code
             Tree::Immutable,
             &config::typescript(),
             AnalysisPolicy::EXECUTING,
+            &Unwatched,
         )
         .await;
     assert!(marker.exists(), "the project's tsserver did not run when trusted");
@@ -207,7 +210,7 @@ async fn the_projects_angular_language_service_runs_only_where_analysis_may_exec
     // the answers do not matter.
     for (policy, runs) in [(AnalysisPolicy::LIMITED, false), (AnalysisPolicy::EXECUTING, true)] {
         let started = launcher
-            .start(project.path(), Tree::Immutable, &config::angular(), policy)
+            .start(project.path(), Tree::Immutable, &config::angular(), policy, &Unwatched)
             .await;
         if let Ok(started) = started {
             let _ = started.server.document_symbols(&path("a.html")).await;
@@ -239,7 +242,13 @@ async fn csharp_installs_and_starts() {
 
     let launcher = LspLauncher::new(servers(&setup), NoRestore);
     let server = launcher
-        .start(project.path(), Tree::Live, &config::roslyn(), AnalysisPolicy::EXECUTING)
+        .start(
+            project.path(),
+            Tree::Live,
+            &config::roslyn(),
+            AnalysisPolicy::EXECUTING,
+            &Unwatched,
+        )
         .await
         .expect("the installed server starts and has every required capability")
         .server;
@@ -321,7 +330,7 @@ async fn csharp_resolves_packages_in_a_copy_that_took_the_working_trees_restore_
 
     let launcher = LspLauncher::new(servers(&setup), NoRestore);
     let server = launcher
-        .start(copy.path(), Tree::Immutable, &backend, policy)
+        .start(copy.path(), Tree::Immutable, &backend, policy, &Unwatched)
         .await
         .expect("the server loads the copy")
         .server;
@@ -359,6 +368,7 @@ async fn python_installs_and_starts() {
             Tree::Immutable,
             &config::pyright(),
             AnalysisPolicy::LIMITED,
+            &Unwatched,
         )
         .await
         .expect("the installed server starts and has every required capability")

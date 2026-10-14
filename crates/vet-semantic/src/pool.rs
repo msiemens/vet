@@ -37,7 +37,8 @@ use crate::gate::Gate;
 use crate::policy::AnalysisPolicy;
 use crate::ports::{
     Answered, At, Backend, BackendId, Detach, Diagnostic, Features, LanguageServer, LaunchError, Location,
-    Materializer, NotMaterializable, Provenance, QueryError, ServerIdentity, ServerLauncher, Started, SymbolInfo, Tree,
+    Materializer, NotMaterializable, Provenance, QueryError, Readiness, ServerIdentity, ServerLauncher, StartProgress,
+    Started, SymbolInfo, Tree,
 };
 use crate::reuse::{Answers, Basis, Computed, Given, KEPT, Key, ProjectQuery, Restore, Reused, SemanticCache};
 
@@ -119,6 +120,88 @@ pub struct Supervision {
 
 /// Told which backend's server stopped on its own and what became of it.
 pub type Told = dyn Fn(&BackendId, Outcome) + Send + Sync;
+
+/// What the server of a key is doing. A key with no phase has no server: none was needed yet, or
+/// it was stopped to make room.
+#[derive(Clone, Debug)]
+pub enum Phase {
+    /// Being started: its dependencies restored, its process launched.
+    Starting,
+    /// Working on its own: indexing the project after a start, analysing after an edit. It
+    /// answers, but not completely.
+    Indexing {
+        done_of_total: Option<(u32, u32)>,
+        detail: Option<String>,
+    },
+    Ready,
+    /// There is none, and why.
+    Failed(PoolError),
+}
+
+impl PartialEq for Phase {
+    fn eq(&self, other: &Self) -> bool {
+        match (self, other) {
+            (Self::Starting, Self::Starting) | (Self::Ready, Self::Ready) => true,
+            (
+                Self::Indexing {
+                    done_of_total: a,
+                    detail: x,
+                },
+                Self::Indexing {
+                    done_of_total: b,
+                    detail: y,
+                },
+            ) => (a, x) == (b, y),
+            (Self::Failed(a), Self::Failed(b)) => a.to_string() == b.to_string(),
+            _ => false,
+        }
+    }
+}
+
+/// What a server that answers with the readiness `now` is doing.
+fn phase_of(now: Readiness) -> Phase {
+    if now.idle {
+        Phase::Ready
+    } else {
+        Phase::Indexing {
+            done_of_total: None,
+            detail: None,
+        }
+    }
+}
+
+/// Shows what the start of a server reports as its phase.
+struct Indexing<M: Materializer, L: ServerLauncher> {
+    pool: Arc<Inner<M, L>>,
+    key: PoolKey,
+    generation: u64,
+    /// When the progress was last shown.
+    last: Mutex<Option<Instant>>,
+}
+
+impl<M: Materializer, L: ServerLauncher> StartProgress for Indexing<M, L> {
+    fn indexing(&self, done_of_total: Option<(u32, u32)>, detail: Option<String>) {
+        {
+            let mut last = self.last.lock().expect("not poisoned");
+            if last.is_some_and(|at| at.elapsed() < PROGRESS_INTERVAL) {
+                return;
+            }
+            *last = Some(Instant::now());
+        }
+        self.pool.set_phase(
+            &self.key,
+            self.generation,
+            Some(Phase::Indexing { done_of_total, detail }),
+        );
+    }
+}
+
+/// Told, after any change of a phase, the phases there are now and a number that rises with
+/// every change.
+pub type Observer = dyn Fn(u64, Vec<(PoolKey, Phase)>) + Send + Sync;
+
+/// The least time between two announcements of a server's progress while it starts.
+const PROGRESS_INTERVAL: Duration = Duration::from_millis(250);
 
 /// What the pool knows of a server's key after a server of it died.
 enum Health {
@@ -373,6 +456,9 @@ struct State<S, G> {
     /// What a backend's server offers, as of the server started last; not known before one has
     /// started.
     features: HashMap<BackendId, Features>,
+    phases: HashMap<PoolKey, Phase>,
+    /// Counts the changes of `phases`.
+    changes: u64,
 }
 
 /// A server being started: the key of the flight that starts it. Callers of
@@ -519,6 +605,7 @@ struct Inner<M: Materializer, L: ServerLauncher> {
     state: Mutex<State<L::Server, M::Guard>>,
     starts: Engine<Start<M, L>>,
     supervision: Option<Supervision>,
+    observer: Option<Arc<Observer>>,
 }
 
 pub struct Pool<M: Materializer, L: ServerLauncher> {
@@ -603,11 +690,25 @@ impl<M: Materializer, L: ServerLauncher> Pool<M, L> {
                     slots: HashMap::new(),
                     health: HashMap::new(),
                     features: HashMap::new(),
+                    phases: HashMap::new(),
+                    changes: 0,
                 }),
                 starts: Engine::new(Limits::entries(0)),
                 supervision: None,
+                observer: None,
             }),
         }
+    }
+
+    /// Tells `observer` of every change of what the servers are doing.
+    pub fn observed(mut self, observer: Arc<Observer>) -> Self {
+        self.unshared().observer = Some(observer);
+        self
+    }
+
+    /// What the servers are doing now, and the number of changes so far.
+    pub fn phases(&self) -> (u64, Vec<(PoolKey, Phase)>) {
+        self.inner.phases()
     }
 
     /// Watches the servers it starts: one that dies while running is started anew once,
@@ -766,13 +867,21 @@ impl<M: Materializer, L: ServerLauncher> Inner<M, L> {
         if let Some(lease) = self.join(&key) {
             return Ok(engine::Computed::new(lease, false));
         }
-        let launched = self.launch(&key, &backend).await;
+        self.set_phase(&key, generation, Some(Phase::Starting));
+        let progress = Indexing {
+            pool: self.clone(),
+            key: key.clone(),
+            generation,
+            last: Mutex::new(None),
+        };
+        let launched = self.launch(&key, &backend, &progress).await;
         let (Started { server, identity, .. }, basis, dir_guard) = match launched {
             Ok(launched) => launched,
             Err(e) => {
                 if let PoolError::Launch(error) = &e {
                     self.note_failed_start(&key, generation, error);
                 }
+                self.set_phase(&key, generation, Some(Phase::Failed(e.clone())));
                 return Err(e);
             }
         };
@@ -785,6 +894,7 @@ impl<M: Materializer, L: ServerLauncher> Inner<M, L> {
             state.tick += 1;
             if !stale {
                 state.features.insert(key.backend.clone(), server.features());
+                Self::put(&mut state, &key, Some(phase_of(server.readiness())));
             }
             let credit = state.clock + backend.config().warmup.weight();
             let entry = Arc::new(Entry {
@@ -808,6 +918,7 @@ impl<M: Materializer, L: ServerLauncher> Inner<M, L> {
             entry
         };
         self.bases.clear();
+        self.announce();
         self.watch(&entry);
         Ok(engine::Computed::new(
             Lease {
@@ -818,17 +929,91 @@ impl<M: Materializer, L: ServerLauncher> Inner<M, L> {
         ))
     }
 
-    /// Has `entry` handled when its server dies. The watching holds neither the pool nor the
-    /// entry, so it does not keep a server alive that nobody wants.
+    /// Has `entry` handled when its server dies, and follows whether it is at work on its own.
+    /// The watching holds neither the pool nor the entry, so it does not keep a server alive
+    /// that nobody wants.
     fn watch(self: &Arc<Self>, entry: &Arc<EntryOf<M, L>>) {
         let Some(supervision) = &self.supervision else { return };
-        let (exited, pool, entry) = (entry.server.exited(), Arc::downgrade(self), Arc::downgrade(entry));
+        let (exited, pool, weak) = (entry.server.exited(), Arc::downgrade(self), Arc::downgrade(entry));
         supervision.detach.detach(Box::pin(async move {
             let why = exited.await;
-            if let (Some(pool), Some(entry)) = (pool.upgrade(), entry.upgrade()) {
+            if let (Some(pool), Some(entry)) = (pool.upgrade(), weak.upgrade()) {
                 pool.died(entry, why).await;
             }
         }));
+        let (pool, weak, mut seen) = (Arc::downgrade(self), Arc::downgrade(entry), entry.server.readiness());
+        supervision.detach.detach(Box::pin(async move {
+            loop {
+                let Some(entry) = weak.upgrade() else { return };
+                let changed = entry.server.readiness_changed(seen);
+                drop(entry);
+                let Some(now) = changed.await else { return };
+                seen = now;
+                let (Some(pool), Some(entry)) = (pool.upgrade(), weak.upgrade()) else {
+                    return;
+                };
+                pool.worked(&entry, now);
+            }
+        }));
+    }
+
+    /// The server of `entry`, if it is still the key's, is at work on its own or no longer.
+    fn worked(&self, entry: &Arc<EntryOf<M, L>>, now: Readiness) {
+        let changed = {
+            let mut state = self.lock();
+            match state.slots.get(&entry.key) {
+                Some(pooled) if Arc::ptr_eq(pooled, entry) => Self::put(&mut state, &entry.key, Some(phase_of(now))),
+                _ => false,
+            }
+        };
+        if changed {
+            self.announce();
+        }
+    }
+
+    /// Sets the phase of `key` (none: the key has no server), unless the backend was restarted by
+    /// hand since `generation`, and tells the observer if it changed.
+    fn set_phase(&self, key: &PoolKey, generation: u64, phase: Option<Phase>) {
+        let changed = {
+            let mut state = self.lock();
+            state.generations.get(&key.backend).copied().unwrap_or(0) == generation && Self::put(&mut state, key, phase)
+        };
+        if changed {
+            self.announce();
+        }
+    }
+
+    /// Whether the phase of `key` changed.
+    fn put(state: &mut State<L::Server, M::Guard>, key: &PoolKey, phase: Option<Phase>) -> bool {
+        let changed = match (&phase, state.phases.get(key)) {
+            (Some(new), Some(old)) => new != old,
+            (None, None) => false,
+            _ => true,
+        };
+        if changed {
+            match phase {
+                Some(phase) => state.phases.insert(key.clone(), phase),
+                None => state.phases.remove(key),
+            };
+            state.changes += 1;
+        }
+        changed
+    }
+
+    fn phases(&self) -> (u64, Vec<(PoolKey, Phase)>) {
+        let state = self.lock();
+        (
+            state.changes,
+            state.phases.iter().map(|(k, p)| (k.clone(), p.clone())).collect(),
+        )
+    }
+
+    /// Tells the observer what the servers are doing now.
+    fn announce(&self) {
+        if let Some(observer) = &self.observer {
+            let (changes, phases) = self.phases();
+            observer(changes, phases);
+        }
     }
 
     /// The server of `entry` is gone. Unless that was asked for, it is started anew, and the
@@ -854,8 +1039,14 @@ impl<M: Materializer, L: ServerLauncher> Inner<M, L> {
             if again {
                 state.health.insert(key.clone(), Health::Stopped(why.clone()));
             }
+            Self::put(
+                &mut state,
+                key,
+                again.then(|| Phase::Failed(PoolError::Stopped(why.clone()))),
+            );
             (generation, again)
         };
+        self.announce();
         let outcome = if again {
             Outcome::Stopped
         } else {
@@ -866,7 +1057,9 @@ impl<M: Materializer, L: ServerLauncher> Inner<M, L> {
                     Outcome::Restarted
                 }
                 Err(e) => {
-                    self.remember(key, generation, Health::Stopped(format!("{why}\n{e}")));
+                    let why = format!("{why}\n{e}");
+                    self.remember(key, generation, Health::Stopped(why.clone()));
+                    self.set_phase(key, generation, Some(Phase::Failed(PoolError::Stopped(why))));
                     Outcome::Stopped
                 }
             }
@@ -905,7 +1098,10 @@ impl<M: Materializer, L: ServerLauncher> Inner<M, L> {
 
     /// The server for `key`: the running one, the one being started, or a new one.
     async fn lease(self: &Arc<Self>, key: &PoolKey, backend: &Backend) -> Result<Lease<M, L>, PoolError> {
-        admit(backend, key.policy)?;
+        if let Err(refused) = admit(backend, key.policy) {
+            self.set_phase(key, self.generation(&key.backend), Some(Phase::Failed(refused.clone())));
+            return Err(refused);
+        }
         match self.lock().health.get(key) {
             Some(Health::Stopped(why)) => return Err(PoolError::Stopped(why.clone())),
             Some(Health::Failed { error, retry_at, .. }) if Instant::now() < *retry_at => {
@@ -1004,6 +1200,7 @@ impl<M: Materializer, L: ServerLauncher> Pool<M, L> {
             let mut stop = Vec::new();
             for key in keys {
                 *state.generations.entry(key.backend.clone()).or_default() += 1;
+                Inner::<M, L>::put(&mut state, &key, None);
                 if let Some(entry) = state.slots.remove(&key) {
                     entry.retired.store(true, Ordering::SeqCst);
                     if entry.leases.load(Ordering::SeqCst) == 0 {
@@ -1013,6 +1210,7 @@ impl<M: Materializer, L: ServerLauncher> Pool<M, L> {
             }
             stop
         };
+        self.inner.announce();
         Inner::<M, L>::stop(stop).await;
     }
 
@@ -1024,6 +1222,10 @@ impl<M: Materializer, L: ServerLauncher> Pool<M, L> {
             *state.generations.entry(backend.clone()).or_default() += 1;
             state.features.remove(backend);
             state.health.retain(|key, _| &key.backend != backend);
+            let shown: Vec<_> = state.phases.keys().filter(|k| &k.backend == backend).cloned().collect();
+            for key in shown {
+                Inner::<M, L>::put(&mut state, &key, None);
+            }
             let keys: Vec<_> = state.slots.keys().filter(|k| &k.backend == backend).cloned().collect();
             let (mut idle, mut leased) = (Vec::new(), Vec::new());
             for key in keys {
@@ -1038,6 +1240,7 @@ impl<M: Materializer, L: ServerLauncher> Pool<M, L> {
             }
             (idle, leased)
         };
+        self.inner.announce();
         self.inner.launcher.restarted(backend);
         (idle, leased)
     }
@@ -1057,8 +1260,12 @@ impl<M: Materializer, L: ServerLauncher> Pool<M, L> {
                 .filter(|(_, e)| e.leases.load(Ordering::SeqCst) == 0)
                 .map(|(k, _)| k.clone())
                 .collect();
+            for key in &keys {
+                Inner::<M, L>::put(&mut state, key, None);
+            }
             keys.iter().filter_map(|k| state.slots.remove(k)).collect()
         };
+        self.inner.announce();
         Inner::<M, L>::stop(stop).await;
     }
 
@@ -1073,6 +1280,7 @@ impl<M: Materializer, L: ServerLauncher> Inner<M, L> {
         &self,
         key: &PoolKey,
         backend: &Backend,
+        progress: &dyn StartProgress,
     ) -> Result<(Started<L::Server>, Option<Basis>, Option<M::Guard>), PoolError> {
         let (root, tree, guard) = match key.target {
             Target::Live => (self.live_root.clone(), Tree::Live, None),
@@ -1087,7 +1295,7 @@ impl<M: Materializer, L: ServerLauncher> Inner<M, L> {
         };
         let started = self
             .launcher
-            .start(&root, tree, backend, key.policy)
+            .start(&root, tree, backend, key.policy, progress)
             .await
             .map_err(PoolError::Launch)?;
         let basis = match key.target {
@@ -1113,6 +1321,7 @@ impl<M: Materializer, L: ServerLauncher> Inner<M, L> {
         if left == 0 && entry.retired.load(Ordering::SeqCst) {
             stop.push(entry);
         }
+        let mut evicted = false;
         while evict && state.slots.len() > self.capacity {
             let weakest = state
                 .slots
@@ -1123,10 +1332,16 @@ impl<M: Materializer, L: ServerLauncher> Inner<M, L> {
             match weakest.and_then(|k| state.slots.remove(&k)) {
                 Some(e) => {
                     state.clock = state.clock.max(e.credit.load(Ordering::SeqCst));
+                    Self::put(&mut state, &e.key, None);
+                    evicted = true;
                     stop.push(e);
                 }
                 None => break,
             }
+        }
+        drop(state);
+        if evicted {
+            self.announce();
         }
         stop
     }
@@ -1144,15 +1359,18 @@ impl<M: Materializer, L: ServerLauncher> Inner<M, L> {
 
 #[cfg(test)]
 mod tests {
+    use std::pin::Pin;
     use std::sync::atomic::{AtomicU8, AtomicUsize};
-    use std::task::{Context, Waker};
+    use std::task::{Context, Poll, Waker};
 
     use vet_core::content::Hash;
 
     use super::*;
     use crate::join::{bounded, join};
     use crate::policy::AnalysisPolicy;
-    use crate::ports::{Feature, Materialized, Pos, Readiness, ServerConfig, Severity, Span, Sym, SymbolKind, Warmup};
+    use crate::ports::{
+        Feature, Materialized, Pos, Readiness, ReadinessChanged, ServerConfig, Severity, Span, Sym, SymbolKind, Warmup,
+    };
     use crate::reuse::Value;
     use crate::testutil::{block_on, yield_once};
 
@@ -1196,6 +1414,8 @@ mod tests {
         fail_start: AtomicBool,
         /// A start goes on only when this is false.
         hold_start: AtomicBool,
+        /// A start reports the progress of the server's indexing.
+        indexes_on_start: AtomicBool,
         /// The version of the server binary: part of its identity and of what it answers.
         version: AtomicU8,
         /// The fingerprint of the restore of an immutable tree; 0: none was recorded.
@@ -1232,6 +1452,7 @@ mod tests {
                 hover_calls: AtomicUsize::new(0),
                 fail_start: AtomicBool::new(false),
                 hold_start: AtomicBool::new(false),
+                indexes_on_start: AtomicBool::new(false),
                 version: AtomicU8::new(1),
                 restore: AtomicU8::new(5),
                 asked: Mutex::default(),
@@ -1310,9 +1531,13 @@ mod tests {
             tree: Tree,
             backend: &Backend,
             policy: AnalysisPolicy,
+            progress: &dyn StartProgress,
         ) -> Result<Started<FakeServer>, LaunchError> {
             self.0.started.fetch_add(1, Ordering::SeqCst);
             yield_once().await;
+            if self.0.indexes_on_start.load(Ordering::SeqCst) {
+                progress.indexing(Some((3, 12)), Some("crates".into()));
+            }
             while self.0.hold_start.load(Ordering::SeqCst) {
                 yield_once().await;
             }
@@ -1413,6 +1638,20 @@ mod tests {
                 idle: !self.0.busy.load(Ordering::SeqCst),
                 epoch: self.0.epoch.load(Ordering::SeqCst),
             }
+        }
+        fn readiness_changed(&self, seen: Readiness) -> ReadinessChanged {
+            let counters = self.0.clone();
+            Box::pin(std::future::poll_fn(move |_| {
+                let now = Readiness {
+                    idle: !counters.busy.load(Ordering::SeqCst),
+                    epoch: counters.epoch.load(Ordering::SeqCst),
+                };
+                if now == seen {
+                    Poll::Pending
+                } else {
+                    Poll::Ready(Some(now))
+                }
+            }))
         }
         fn features(&self) -> Features {
             let lacking = self.0.lacking.lock().unwrap();
@@ -2459,6 +2698,153 @@ mod tests {
             used(&pool, "bash", Warmup::Quick).await;
             assert_eq!(languages(&pool).len(), 1);
         });
+    }
+
+    /// The phases of the server of `key_of(language)` as the observer was told them, with the
+    /// number each announcement carried.
+    type PhaseLog = Arc<Mutex<Vec<(u64, Option<Phase>)>>>;
+
+    fn observing(pool: TestPool, language: &str) -> (TestPool, PhaseLog) {
+        let log = PhaseLog::default();
+        let (seen, language) = (log.clone(), language.to_owned());
+        let observer = move |n: u64, phases: Vec<(PoolKey, Phase)>| {
+            let phase = phases
+                .into_iter()
+                .find(|(k, _)| k.backend.0 == language)
+                .map(|(_, p)| p);
+            seen.lock().unwrap().push((n, phase));
+        };
+        (pool.observed(Arc::new(observer)), log)
+    }
+
+    fn shown(log: &PhaseLog) -> Vec<Option<Phase>> {
+        let log = log.lock().unwrap();
+        assert!(log.windows(2).all(|w| w[0].0 < w[1].0), "numbers rise: {log:?}");
+        let mut phases: Vec<_> = log.iter().map(|(_, p)| p.clone()).collect();
+        phases.dedup();
+        phases
+    }
+
+    #[test]
+    fn a_server_shows_that_it_starts_then_what_it_reports_while_it_indexes_then_ready() {
+        let (pool, counters) = pool(2);
+        let (pool, log) = observing(pool, "rust");
+        counters.indexes_on_start.store(true, Ordering::SeqCst);
+        block_on(used(&pool, "rust", Warmup::Quick));
+        assert_eq!(
+            shown(&log),
+            [
+                Some(Phase::Starting),
+                Some(Phase::Indexing {
+                    done_of_total: Some((3, 12)),
+                    detail: Some("crates".into())
+                }),
+                Some(Phase::Ready),
+            ]
+        );
+    }
+
+    #[test]
+    fn a_server_that_fails_to_start_shows_why() {
+        let (pool, counters) = pool(2);
+        let (pool, log) = observing(pool, "rust");
+        counters.fail_start.store(true, Ordering::SeqCst);
+        block_on(async {
+            assert!(
+                pool.lease(&key_of("rust"), &configured("rust", false, Warmup::Quick))
+                    .await
+                    .is_err()
+            );
+        });
+        let shown = shown(&log);
+        assert_eq!(shown.len(), 2);
+        assert!(
+            matches!(&shown[1], Some(Phase::Failed(PoolError::Launch(_)))),
+            "{shown:?}"
+        );
+    }
+
+    #[test]
+    fn a_server_that_is_refused_for_the_policy_shows_that() {
+        let (pool, _) = pool(2);
+        let (pool, log) = observing(pool, "rust");
+        let key = PoolKey {
+            policy: AnalysisPolicy::LIMITED,
+            ..key_of("rust")
+        };
+        block_on(async {
+            assert!(
+                pool.lease(&key, &configured("rust", true, Warmup::Quick))
+                    .await
+                    .is_err()
+            );
+        });
+        assert!(matches!(
+            shown(&log).as_slice(),
+            [Some(Phase::Failed(PoolError::AnalysisLimited(_)))]
+        ));
+    }
+
+    #[test]
+    fn a_running_server_shows_when_it_starts_to_work_on_its_own_and_when_it_is_done() {
+        let (pool, counters) = pool(2);
+        let collected = Arc::new(Collected::default());
+        let pool = pool.supervised(Supervision {
+            detach: collected.clone(),
+            told: Arc::new(|_, _| {}),
+        });
+        let (pool, log) = observing(pool, "rust");
+        block_on(used(&pool, "rust", Warmup::Quick));
+        counters.busy.store(true, Ordering::SeqCst);
+        collected.run();
+        counters.busy.store(false, Ordering::SeqCst);
+        collected.run();
+        let indexing = Some(Phase::Indexing {
+            done_of_total: None,
+            detail: None,
+        });
+        assert_eq!(
+            shown(&log),
+            [Some(Phase::Starting), Some(Phase::Ready), indexing, Some(Phase::Ready)]
+        );
+    }
+
+    #[test]
+    fn a_server_that_is_stopped_shows_no_phase() {
+        let (pool, _) = pool(1);
+        let (pool, log) = observing(pool, "rust");
+        block_on(async {
+            used(&pool, "rust", Warmup::Quick).await;
+            used(&pool, "json", Warmup::Quick).await;
+        });
+        assert_eq!(shown(&log).last(), Some(&None));
+
+        let (pool, log) = observing(self::pool(1).0, "rust");
+        block_on(async {
+            used(&pool, "rust", Warmup::Quick).await;
+            pool.restart(&BackendId("rust".into())).await;
+        });
+        assert_eq!(shown(&log).last(), Some(&None));
+    }
+
+    /// Runs what the pool detaches, by hand.
+    #[derive(Default)]
+    struct Collected(Mutex<Vec<Pin<Box<dyn Future<Output = ()> + Send>>>>);
+
+    impl Detach for Collected {
+        fn detach(&self, work: Pin<Box<dyn Future<Output = ()> + Send>>) {
+            self.0.lock().unwrap().push(work);
+        }
+    }
+
+    impl Collected {
+        /// Polls everything once.
+        fn run(&self) {
+            let mut cx = Context::from_waker(Waker::noop());
+            for work in self.0.lock().unwrap().iter_mut() {
+                let _ = work.as_mut().poll(&mut cx);
+            }
+        }
     }
 
     #[test]

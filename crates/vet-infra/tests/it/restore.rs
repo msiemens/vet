@@ -13,7 +13,7 @@ use vet_core::content::RepoPath;
 use vet_infra::lsp::{BinaryLocator, LspLauncher, NoRestore, config};
 use vet_infra::restore::ToolRestorer;
 use vet_semantic::policy::AnalysisPolicy;
-use vet_semantic::ports::{At, Backend, LanguageServer, Pos, Restored, Restorer, ServerLauncher, Tree};
+use vet_semantic::ports::{At, Backend, LanguageServer, Pos, Restored, Restorer, ServerLauncher, Tree, Unwatched};
 
 fn write(dir: &Path, name: &str, content: &str) {
     std::fs::write(dir.join(name), content).unwrap();
@@ -232,6 +232,7 @@ async fn a_copy_with_the_same_lockfile_links_the_working_trees_node_modules_and_
             Tree::Immutable,
             &config::typescript(),
             AnalysisPolicy::LIMITED,
+            &Unwatched,
         )
         .await
         .expect("typescript-language-server starts")

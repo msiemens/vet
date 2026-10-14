@@ -14,7 +14,7 @@ use vet_core::content::RepoPath;
 use vet_infra::exec::dotnet_env;
 use vet_infra::lsp::{BinaryLocator, LspLauncher, NoRestore, config};
 use vet_semantic::policy::AnalysisPolicy;
-use vet_semantic::ports::{At, Backend, Feature, LanguageServer, Pos, ServerLauncher, Tree};
+use vet_semantic::ports::{At, Backend, Feature, LanguageServer, Pos, ServerLauncher, Tree, Unwatched};
 
 const LIB: &str = "\
 pub struct Counter {
@@ -97,6 +97,7 @@ async fn rust_analyzer_answers_the_primitive_queries() {
             Tree::Live,
             &config::rust_analyzer(),
             AnalysisPolicy::EXECUTING,
+            &Unwatched,
         )
         .await
         .expect("rust-analyzer starts and has every required capability")
@@ -204,6 +205,7 @@ async fn typescript_language_server_answers_the_primitive_queries() {
             Tree::Immutable,
             &config::typescript(),
             AnalysisPolicy::LIMITED,
+            &Unwatched,
         )
         .await
         .expect("typescript-language-server starts and has every required capability")
@@ -289,6 +291,7 @@ export class Widget {
             Tree::Immutable,
             &config::typescript(),
             AnalysisPolicy::LIMITED,
+            &Unwatched,
         )
         .await
         .expect("typescript-language-server starts and has every required capability")
@@ -362,6 +365,7 @@ pub static VALUE: std::sync::LazyLock<u32> = std::sync::LazyLock::new(|| helper(
             Tree::Live,
             &config::rust_analyzer(),
             AnalysisPolicy::EXECUTING,
+            &Unwatched,
         )
         .await
         .expect("rust-analyzer starts and has every required capability")
@@ -421,7 +425,13 @@ handler = lambda: helper()
 ";
     std::fs::write(dir.path().join("m.py"), src).unwrap();
     let server = LspLauncher::new(BinaryLocator, NoRestore)
-        .start(dir.path(), Tree::Immutable, &config::pyright(), AnalysisPolicy::LIMITED)
+        .start(
+            dir.path(),
+            Tree::Immutable,
+            &config::pyright(),
+            AnalysisPolicy::LIMITED,
+            &Unwatched,
+        )
         .await
         .expect("pyright starts and has every required capability")
         .server;
@@ -511,6 +521,7 @@ public class W
             Tree::Immutable,
             &config::roslyn(),
             AnalysisPolicy::EXECUTING,
+            &Unwatched,
         )
         .await
         .expect("roslyn starts")
@@ -563,7 +574,13 @@ async fn roslyn_answers_a_hover_on_a_newly_opened_file() {
 
     for tree in [Tree::Immutable, Tree::Live] {
         let server = LspLauncher::new(BinaryLocator, NoRestore)
-            .start(dir.path(), tree, &config::roslyn(), AnalysisPolicy::EXECUTING)
+            .start(
+                dir.path(),
+                tree,
+                &config::roslyn(),
+                AnalysisPolicy::EXECUTING,
+                &Unwatched,
+            )
             .await
             .expect("roslyn starts")
             .server;
@@ -600,6 +617,7 @@ async fn typescript_pushed_diagnostics_are_found_for_a_path_the_server_spells_di
             Tree::Immutable,
             &config::typescript(),
             AnalysisPolicy::LIMITED,
+            &Unwatched,
         )
         .await
         .expect("typescript-language-server starts")
@@ -646,6 +664,7 @@ async fn typescript_namespaces_are_counted_as_modules() {
             Tree::Immutable,
             &config::typescript(),
             AnalysisPolicy::LIMITED,
+            &Unwatched,
         )
         .await
         .expect("typescript-language-server starts and has every required capability")
@@ -689,6 +708,7 @@ async fn rust_analyzer_modules_are_counted_as_modules() {
             Tree::Live,
             &config::rust_analyzer(),
             AnalysisPolicy::EXECUTING,
+            &Unwatched,
         )
         .await
         .expect("rust-analyzer starts and has every required capability")
@@ -716,7 +736,7 @@ fn symbol_names(mut symbols: Vec<vet_semantic::ports::SymbolInfo>) -> Vec<String
 /// A server of `backend` on `dir` for the language servers without dependencies to restore.
 async fn start_server(dir: &Path, backend: &Backend, policy: AnalysisPolicy) -> vet_infra::lsp::LspServer {
     LspLauncher::new(BinaryLocator, NoRestore)
-        .start(dir, Tree::Immutable, backend, policy)
+        .start(dir, Tree::Immutable, backend, policy, &Unwatched)
         .await
         .unwrap_or_else(|e| panic!("{} starts: {e}", backend.config().binary))
         .server
@@ -1013,6 +1033,7 @@ async fn svelte_language_server_answers_through_typescript() {
             Tree::Immutable,
             &config::svelte(),
             AnalysisPolicy::EXECUTING,
+            &Unwatched,
         )
         .await
         .expect("svelteserver starts")
@@ -1070,7 +1091,13 @@ async fn angular_language_server_checks_a_template() {
         ..LspLauncher::new(BinaryLocator, NoRestore)
     };
     let server = launcher
-        .start(dir.path(), Tree::Immutable, &config::angular(), AnalysisPolicy::LIMITED)
+        .start(
+            dir.path(),
+            Tree::Immutable,
+            &config::angular(),
+            AnalysisPolicy::LIMITED,
+            &Unwatched,
+        )
         .await
         .expect("ngserver starts")
         .server;

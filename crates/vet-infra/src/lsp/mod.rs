@@ -26,7 +26,8 @@ use vet_app::progress::{TaskKind, Tasks};
 use vet_core::content::Hash;
 use vet_semantic::policy::AnalysisPolicy;
 use vet_semantic::ports::{
-    Backend, BackendId, LaunchError, Restored, Restorer, ServerConfig, ServerIdentity, ServerLauncher, Started, Tree,
+    Backend, BackendId, LaunchError, Restored, Restorer, ServerConfig, ServerIdentity, ServerLauncher, StartProgress,
+    Started, Tree,
 };
 
 use crate::budget::{Budget, Budgets, SEMANTIC_IO};
@@ -42,10 +43,8 @@ use uri::{directory_uri, file_uri};
 pub use identity::{Identities, UserEnv};
 pub use server::LspServer;
 
-/// No server message for this long, none in progress: indexing is done.
-const QUIET: Duration = Duration::from_millis(750);
-
-/// How long a start waits for a server to ask for its settings.
+/// How long a start waits for a server to ask for its settings. Servers that do not ask are
+/// not waited for, so this only bounds a server that would never answer.
 const SETTINGS_TIMEOUT: Duration = Duration::from_secs(10);
 
 pub struct LspLauncher<L, R> {
@@ -319,6 +318,7 @@ impl<L: ServerLocator + Send + Sync + 'static, R: Restorer + Send + Sync + 'stat
         tree: Tree,
         backend: &Backend,
         policy: AnalysisPolicy,
+        progress: &dyn StartProgress,
     ) -> Result<Started<LspServer>, LaunchError> {
         let started = Instant::now();
         let config = backend.config();
@@ -352,7 +352,10 @@ impl<L: ServerLocator + Send + Sync + 'static, R: Restorer + Send + Sync + 'stat
             state.index = Some(indexing);
             state.touch();
         });
-        let ready = conn.wait_for(self.ready_timeout, |s| s.is_idle(QUIET)).await;
+        let ready = tokio::select! {
+            ready = conn.until_quiet(self.ready_timeout) => ready,
+            () = conn.report_work(|doing| progress.indexing(doing.done_of_total, doing.detail)) => false,
+        };
         let indexing = conn.with_state(|state| state.index.take());
         if ready {
             drop(indexing);

@@ -988,7 +988,7 @@ mod tests {
     use vet_semantic::policy::AnalysisPolicy;
     use vet_semantic::ports::{
         Diagnostic, LanguageServer, LaunchError, Materialized, NotMaterializable, Pos, QueryError, Readiness,
-        ServerConfig, ServerIdentity, Span, Started, SymbolKind, Tree, Warmup,
+        ServerConfig, ServerIdentity, Span, StartProgress, Started, SymbolKind, Tree, Warmup,
     };
 
     use vet_semantic::derived::ChangedSymbol;
@@ -1133,6 +1133,7 @@ mod tests {
             tree: Tree,
             backend: &Backend,
             policy: AnalysisPolicy,
+            _: &dyn StartProgress,
         ) -> Result<Started<FakeServer>, LaunchError> {
             let c = &self.0;
             let language = &backend.config().backend.0;

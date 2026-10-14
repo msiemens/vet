@@ -27,12 +27,11 @@ use lsp_types::request::{
 use vet_core::content::RepoPath;
 use vet_semantic::join::bounded;
 use vet_semantic::ports::{
-    At, Diagnostic, Exited, Features, LanguageServer, Location, Pos, QueryError, Readiness, Severity, Span, Sym,
-    SymbolInfo, SymbolKind, Tree,
+    At, Diagnostic, Exited, Features, LanguageServer, Location, Pos, QueryError, Readiness, ReadinessChanged, Severity,
+    Span, Sym, SymbolInfo, SymbolKind, Tree,
 };
 use vet_semantic::symbols::{self, Outline};
 
-use super::QUIET;
 use super::capabilities::{Diagnostics, Offered};
 use super::rpc::{Connection, State};
 use super::uri::{file_uri, key, path_of};
@@ -403,7 +402,7 @@ impl LspServer {
     async fn settle(&self) -> Duration {
         let from = Instant::now();
         self.conn.with_state(State::touch);
-        self.conn.wait_for(OPEN_TIMEOUT, |s| s.is_idle(QUIET)).await;
+        self.conn.until_quiet(OPEN_TIMEOUT).await;
         let mut docs = self.docs.lock().await;
         docs.quiet_from = docs.quiet_from.max(Some(from));
         from.elapsed()
@@ -730,6 +729,10 @@ fn convert_diagnostic(d: lsp::Diagnostic) -> Diagnostic {
 impl LanguageServer for LspServer {
     fn readiness(&self) -> Readiness {
         self.conn.with_state(|state| state.readiness())
+    }
+
+    fn readiness_changed(&self, seen: Readiness) -> ReadinessChanged {
+        self.conn.readiness_changed(seen)
     }
 
     fn features(&self) -> Features {

@@ -438,12 +438,35 @@ pub trait LanguageServer: Send + Sync {
     fn exited(&self) -> Exited {
         Box::pin(std::future::pending())
     }
+    /// Completes with the readiness once it differs from `seen`, and with `None` once the server
+    /// is gone; never for a server whose readiness does not change. Owns what it waits on, so it
+    /// does not keep the server alive.
+    fn readiness_changed(&self, _seen: Readiness) -> ReadinessChanged {
+        Box::pin(std::future::pending())
+    }
     /// Ask the server to exit. It is killed if it does not.
     fn shutdown(&self) -> impl Future<Output = ()> + Send;
 }
 
 /// See [`LanguageServer::exited`].
 pub type Exited = Pin<Box<dyn Future<Output = String> + Send>>;
+
+/// See [`LanguageServer::readiness_changed`].
+pub type ReadinessChanged = Pin<Box<dyn Future<Output = Option<Readiness>> + Send>>;
+
+/// Told how the start of a server gets on, which the pool shows as the server's phase.
+pub trait StartProgress: Send + Sync {
+    /// The server works at indexing its project, `done` of `total` units far if it says, and what
+    /// it is doing now. Until the first call it is starting: restoring, launching, handshaking.
+    fn indexing(&self, done_of_total: Option<(u32, u32)>, detail: Option<String>);
+}
+
+/// For a start nobody follows.
+pub struct Unwatched;
+
+impl StartProgress for Unwatched {
+    fn indexing(&self, _: Option<(u32, u32)>, _: Option<String>) {}
+}
 
 /// Runs work on its own, since the semantic layer has no runtime of its own.
 pub trait Detach: Send + Sync {
@@ -593,6 +616,7 @@ pub trait ServerLauncher: Send + Sync + 'static {
         tree: Tree,
         backend: &Backend,
         policy: AnalysisPolicy,
+        progress: &dyn StartProgress,
     ) -> impl Future<Output = Result<Started<Self::Server>, LaunchError>> + Send;
 
     /// The identity a server started on `root` under `policy` now would have, without starting
