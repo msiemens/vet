@@ -47,4 +47,4 @@ export function seenNow(
 
 /** What the time is remembered under: the pull request, whichever clone of its repository shows it. */
 export const seenKey = (key: ChangesetKey | undefined): string | undefined =>
-  key?.type === "pullRequest" ? `commentsSeen.${key.remote}#${key.number}` : undefined;
+  key?.type === "pullRequest" ? `${key.remote}#${key.number}` : undefined;
