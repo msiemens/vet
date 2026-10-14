@@ -93,6 +93,11 @@ impl<'a, W> Held<'a, W> {
         self.published.publish(&self.state);
     }
 
+    /// The state this command works on, shared as it is.
+    pub(super) fn shared(&self) -> Arc<State> {
+        Arc::clone(&self.state)
+    }
+
     pub(super) fn parked(&mut self) -> &mut HashMap<Source, Arc<State>> {
         &mut self.writer.parked
     }

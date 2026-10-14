@@ -3468,6 +3468,26 @@ async fn switching_away_from_a_changeset_and_back_keeps_its_review_and_revisions
 }
 
 #[tokio::test]
+async fn the_working_tree_is_found_when_it_comes_on_view_while_the_lookup_waits_for_the_token() {
+    let fx = Fixture::open(&[("a.txt", "one\n")], &[("a.txt", "two\n")]).await;
+    fx.git.feature(&[("a.txt", "one\n")], &[("a.txt", "branch\n")]);
+    view_feature(&fx).await;
+    let mut held = fx.session.hold().await;
+
+    // The lookup starts first, sees the branch on view and waits; then the tree is switched back.
+    let looking = fx.session.working_tree();
+    let switching = async {
+        let tree = held.parked().remove(&Source::WorkingTree).unwrap();
+        let branch = held.replace(tree);
+        held.parked().insert(branch.source.clone(), branch);
+        drop(held);
+    };
+    let (tree, ()) = tokio::join!(looking, switching);
+
+    assert_eq!(tree.source, Source::WorkingTree);
+}
+
+#[tokio::test]
 async fn a_review_of_a_branch_is_resumed_when_the_branch_is_opened_in_a_new_session() {
     let fx = Fixture::open(&[("a.txt", "one\n")], &[("a.txt", "one\n")]).await;
     fx.git.feature(&[("a.txt", "one\n")], &[("a.txt", "two\n")]);

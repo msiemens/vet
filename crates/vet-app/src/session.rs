@@ -906,6 +906,10 @@ impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> L
             return st;
         }
         let mut held = self.hold().await;
+        // It may have come on view while this waited for the token.
+        if held.source == Source::WorkingTree {
+            return held.shared();
+        }
         let tree = held.parked().get(&Source::WorkingTree);
         Arc::clone(tree.expect("the working tree is parked while another changeset is on view"))
     }
