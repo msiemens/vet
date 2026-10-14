@@ -73,9 +73,11 @@ pub async fn capture(
     let mut stdout = child.stdout.take().expect("piped");
     let mut stderr = child.stderr.take().expect("piped");
     let run = async {
-        let (mut out, mut err) = (String::new(), String::new());
-        let (a, b) = tokio::join!(stdout.read_to_string(&mut out), stderr.read_to_string(&mut err));
-        a.and(b).map_err(|e| e.to_string())?;
+        let (out, err) = tokio::join!(
+            read_tail(&mut stdout, CAPTURE_LIMIT),
+            read_tail(&mut stderr, CAPTURE_LIMIT)
+        );
+        let (out, err) = (out.map_err(|e| e.to_string())?, err.map_err(|e| e.to_string())?);
         let status = child.wait().await.map_err(|e| e.to_string())?;
         Ok(Captured {
             ok: status.success(),
@@ -86,6 +88,28 @@ pub async fn capture(
     tokio::time::timeout(timeout, run)
         .await
         .map_err(|_| format!("{program} did not finish within {}s", timeout.as_secs()))?
+}
+
+/// How many bytes of each output stream `capture` keeps.
+const CAPTURE_LIMIT: usize = 8 * 1024 * 1024;
+
+/// Reads `stream` to its end and decodes the last `limit` bytes lossily. Failure messages
+/// quote the end of the output, so that is the part kept; the rest is read and dropped.
+async fn read_tail(stream: &mut (impl AsyncRead + Unpin), limit: usize) -> std::io::Result<String> {
+    let mut kept = Vec::new();
+    let mut buf = vec![0; 16 * 1024];
+    loop {
+        let n = stream.read(&mut buf).await?;
+        if n == 0 {
+            break;
+        }
+        kept.extend_from_slice(&buf[..n]);
+        if kept.len() > 2 * limit {
+            kept.drain(..kept.len() - limit);
+        }
+    }
+    let start = kept.len().saturating_sub(limit);
+    Ok(String::from_utf8_lossy(&kept[start..]).into_owned())
 }
 
 /// How long a killed process gets to wind down before its tree is killed.
@@ -210,6 +234,24 @@ mod tests {
         assert_eq!(out, b"hi\n");
         assert_eq!(err, b"oops\n");
         assert_eq!(exit, ProcessEvent::Exit(Some(3)));
+    }
+
+    #[tokio::test]
+    async fn capture_decodes_output_that_is_not_utf8() {
+        let args = ["-c".to_owned(), r"printf 'ok \377 end'".to_owned()];
+        let captured = capture(&Budget::new(1), "sh", &args, None, &[], Duration::from_secs(10))
+            .await
+            .unwrap();
+        assert!(captured.ok);
+        assert_eq!(captured.stdout, "ok \u{fffd} end");
+    }
+
+    #[tokio::test]
+    async fn the_end_of_long_output_is_kept() {
+        let mut stream: &[u8] = b"head-0123456789-tail";
+        assert_eq!(read_tail(&mut stream, 4).await.unwrap(), "tail");
+        let mut short: &[u8] = b"abc";
+        assert_eq!(read_tail(&mut short, 4).await.unwrap(), "abc");
     }
 
     #[tokio::test]
