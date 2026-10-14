@@ -632,20 +632,31 @@ pub fn by_id(id: &str) -> Option<&'static Language> {
     ALL.into_iter().find(|l| l.id == id)
 }
 
-/// The LSP `languageId` for a file: by its extension, else by its name.
-pub fn language_id(file: &RepoPath) -> &'static str {
+/// The language that has `file` by its extension, else by its name, with the file's LSP `languageId`.
+fn language_of(file: &RepoPath) -> Option<(&'static Language, &'static str)> {
     let name = String::from_utf8_lossy(file.0.rsplit(|&b| b == b'/').next().unwrap_or_default()).into_owned();
     let extension = file.extension().map(|e| String::from_utf8_lossy(e).into_owned());
-    ALL.into_iter()
-        .find_map(|l| {
-            let by_extension = l.files.iter().find(|(ext, _)| Some(*ext) == extension.as_deref());
-            let by_name = l
-                .names
-                .iter()
-                .find(|(n, _)| name == *n || (name.starts_with(n) && name.as_bytes().get(n.len()) == Some(&b'.')));
-            by_extension.or(by_name).map(|(_, id)| *id)
-        })
-        .unwrap_or("plaintext")
+    ALL.into_iter().find_map(|l| {
+        let by_extension = l.files.iter().find(|(ext, _)| Some(*ext) == extension.as_deref());
+        let by_name = l
+            .names
+            .iter()
+            .find(|(n, _)| name == *n || (name.starts_with(n) && name.as_bytes().get(n.len()) == Some(&b'.')));
+        by_extension.or(by_name).map(|(_, id)| (l, *id))
+    })
+}
+
+/// The LSP `languageId` for a file: by its extension, else by its name.
+pub fn language_id(file: &RepoPath) -> &'static str {
+    language_of(file).map_or("plaintext", |(_, id)| id)
+}
+
+/// Whether the server of language `answerer` may name `file` as a place to show: the file is
+/// of that language, or of the TypeScript the Svelte and Angular servers answer through.
+pub fn is_source_of(answerer: &str, file: &RepoPath) -> bool {
+    language_of(file).is_some_and(|(language, _)| {
+        language.id == answerer || (language.id == TYPESCRIPT.id && matches!(answerer, "svelte" | "angular"))
+    })
 }
 
 impl Language {

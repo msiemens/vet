@@ -26,10 +26,11 @@ const MAX_OUTSIDE_FILE: u64 = 8 * 1024 * 1024;
 
 /// The text of a file outside the repository (a dependency or toolchain source), which is
 /// named by its absolute path; `None` if it cannot be read. A language server names the place,
-/// and a repository can steer it, so only a file of a kind Vet serves is read: library and
-/// toolchain sources have the extension of their language, a key or a dotfile has none.
-async fn read_outside(file: &RepoPath) -> Option<String> {
-    if language::language_id(file) == "plaintext" {
+/// and a repository can steer it, so only a source file of the language `answerer` that named
+/// it is read: library and toolchain sources have the extension of their language, a key, a
+/// dotfile or another tool's configuration does not.
+async fn read_outside(answerer: Option<&str>, file: &RepoPath) -> Option<String> {
+    if !answerer.is_some_and(|language| language::is_source_of(language, file)) {
         return None;
     }
     let path = std::path::PathBuf::from(file.to_string_lossy());
@@ -193,7 +194,8 @@ impl Booted {
         limit: usize,
     ) -> Result<vet_protocol::LocationRows, String> {
         let revision = answer.revision;
-        let (found, unavailable) = map::answer(answer.result, self.language_of(&at.file));
+        let answerer = self.language_of(&at.file);
+        let (found, unavailable) = map::answer(answer.result, answerer.clone());
         let files = self.view.changed_files(revision).await.map_err(message)?;
         let mut texts: HashMap<RepoPath, Option<FileLines>> = HashMap::new();
         let mut rows = Vec::with_capacity(found.len());
@@ -201,7 +203,7 @@ impl Booted {
             let file = &r.location.file;
             if !texts.contains_key(file) {
                 let text = if r.location.external {
-                    read_outside(file).await
+                    read_outside(answerer.as_deref(), file).await
                 } else {
                     self.view
                         .side_text(revision, core_side(side), file)
@@ -431,18 +433,33 @@ mod tests {
     use super::*;
 
     #[tokio::test]
-    async fn only_files_of_a_served_kind_are_read_from_outside_the_repository() {
+    async fn only_sources_of_the_answering_servers_language_are_read_from_outside_the_repository() {
         let dir = tempfile::tempdir().unwrap();
         let file = |name: &str| {
             let path = dir.path().join(name);
             std::fs::write(&path, "secret = 1\n").unwrap();
             RepoPath::from(path.to_string_lossy().as_ref())
         };
-        for source in ["lib.rs", "index.d.ts", "typing.pyi", "Dockerfile"] {
-            assert!(read_outside(&file(source)).await.is_some(), "{source}");
+        for (language, source) in [
+            ("rust", "lib.rs"),
+            ("typescript", "index.d.ts"),
+            ("typescript", "index.js"),
+            ("svelte", "index.d.ts"),
+            ("python", "typing.pyi"),
+            ("dockerfile", "Dockerfile"),
+        ] {
+            assert!(read_outside(Some(language), &file(source)).await.is_some(), "{source}");
         }
-        for other in ["config", "id_rsa", ".env", "notes.txt"] {
-            assert!(read_outside(&file(other)).await.is_none(), "{other}");
+        for (language, other) in [
+            ("rust", "config"),
+            ("rust", "hosts.yml"),
+            ("typescript", "secrets.json"),
+            ("typescript", "lib.rs"),
+            ("python", ".env"),
+            ("python", "id_rsa"),
+        ] {
+            assert!(read_outside(Some(language), &file(other)).await.is_none(), "{other}");
         }
+        assert!(read_outside(None, &file("lib.rs")).await.is_none());
     }
 }
