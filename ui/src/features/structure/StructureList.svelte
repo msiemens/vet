@@ -3,6 +3,7 @@
   // name, and the letter of what the change did to it. The window and the popup both show this.
   import { letterOfChange } from "../../lib/changeLetter";
   import { fullName } from "../../lib/symbolLabel";
+  import { onChevron } from "../../lib/ui/chevron";
   import Marked from "../../lib/ui/Marked.svelte";
   import TreeRow from "../../lib/ui/TreeRow.svelte";
   import VirtualRows from "../../lib/ui/VirtualRows.svelte";
@@ -49,7 +50,7 @@
         status={r.change && letterOfChange(r.change)}
         statusTitle={r.change}
         tabindex={-1}
-        onclick={(e) => onclick(e, i, e.target instanceof Element && !!e.target.closest(".chev"))}
+        onclick={(e) => onclick(e, i, onChevron(e))}
         onmousemove={(e) => onhover?.(e, i)}
       >
         {#snippet glyph()}<SymbolGlyph kind={r.symbol.kind} />{/snippet}

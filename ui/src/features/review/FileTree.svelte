@@ -14,6 +14,7 @@
   import Icon from "../../lib/ui/Icon.svelte";
   import IconButton from "../../lib/ui/IconButton.svelte";
   import SeverityIcon from "../../lib/ui/SeverityIcon.svelte";
+  import { onChevron } from "../../lib/ui/chevron";
   import DiffBar from "../../lib/ui/DiffBar.svelte";
   import EmptyState from "../../lib/ui/EmptyState.svelte";
   import { deltaText } from "../../lib/ui/lineDelta";
@@ -153,9 +154,6 @@
     reveal: (i) => void rowList()?.reveal(i),
   });
   $effect(() => () => rowNav.cancel());
-
-  /** Whether a click was on the chevron, which opens or shuts what is below the row without choosing it. */
-  const onChevron = (e: MouseEvent) => e.target instanceof Element && !!e.target.closest(".chev");
 
   function clickFile(e: MouseEvent, path: string, index: number) {
     if (onChevron(e) && hasSymbols(path)) {

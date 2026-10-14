@@ -5,6 +5,7 @@
   import type { Snippet } from "svelte";
   import { letterOfChange } from "../../lib/changeLetter";
   import { readStored, writeStored } from "../../lib/storage";
+  import { onChevron } from "../../lib/ui/chevron";
   import FileIcon from "../../lib/ui/FileIcon.svelte";
   import IconButton from "../../lib/ui/IconButton.svelte";
   import SectionHead from "../../lib/ui/SectionHead.svelte";
@@ -70,8 +71,7 @@
   }
 
   function click(e: Entry, event: MouseEvent) {
-    const chevron = event.target instanceof Element && !!event.target.closest(".chev");
-    if (holds(e) && (chevron || !e.go)) fold(e);
+    if (holds(e) && (onChevron(event) || !e.go)) fold(e);
     else if (e.go) ongo?.(e.go);
   }
 </script>
