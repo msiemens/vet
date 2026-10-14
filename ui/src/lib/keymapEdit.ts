@@ -49,14 +49,7 @@ export const serializeOverrides = (overrides: Overrides): string | undefined =>
   Object.keys(overrides).length ? JSON.stringify(overrides) : undefined;
 
 /** The overrides kept in `text`; whatever is not a binding is dropped, so a damaged value costs only itself. */
-export function parseOverrides(text: string | undefined): Overrides {
-  if (text === undefined) return {};
-  let value: unknown;
-  try {
-    value = JSON.parse(text);
-  } catch {
-    return {};
-  }
+export function parseOverrides(value: unknown): Overrides {
   if (typeof value !== "object" || value === null || Array.isArray(value)) return {};
   const overrides: Overrides = {};
   for (const [id, spec] of Object.entries(value as Record<string, unknown>)) {

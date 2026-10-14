@@ -4,7 +4,7 @@
   // "N more"; a root with nothing to list is one muted line.
   import type { Snippet } from "svelte";
   import { letterOfChange } from "../../lib/changeLetter";
-  import { readStored, writeStored } from "../../lib/storage";
+  import { storeFlag, storedFlag } from "../../lib/storage";
   import { onChevron } from "../../lib/ui/chevron";
   import FileIcon from "../../lib/ui/FileIcon.svelte";
   import IconButton from "../../lib/ui/IconButton.svelte";
@@ -49,7 +49,7 @@
   const KEY = "vet.symbols.section.";
   // The root keeps the state it was first shown with.
   // svelte-ignore state_referenced_locally
-  let shown = $state(readStored(KEY + id) !== "shut");
+  let shown = $state(storedFlag(KEY + id, true));
   // Rows the reviewer opened or shut against what they start as, and lists asked to show all.
   const flipped = new SvelteSet<string>();
   const all = new SvelteSet<string>();
@@ -60,7 +60,7 @@
 
   function toggle() {
     shown = !shown;
-    writeStored(KEY + id, shown ? undefined : "shut");
+    storeFlag(KEY + id, shown, true);
   }
 
   const holds = (e: Entry) => e.children.length > 0 && !e.fixed;

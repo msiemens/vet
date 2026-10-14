@@ -9,7 +9,7 @@ import {
   withReplacedBinding,
   withoutOverride,
 } from "../lib/keymapEdit";
-import { readStored, writeStored } from "../lib/storage";
+import { readJson, writeStored } from "../lib/storage";
 import { commands } from "./commands";
 
 const KEY = "vet.keymap";
@@ -19,7 +19,7 @@ class Keymap {
 
   /** Applies the kept bindings. */
   load() {
-    this.apply(parseOverrides(readStored(KEY)));
+    this.apply(readJson(KEY, parseOverrides) ?? {});
   }
 
   /** Binds `spec` to the command, taking it from the commands that have it. */

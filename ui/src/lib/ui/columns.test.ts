@@ -10,6 +10,7 @@ import {
   withWidth,
   withoutWidth,
 } from "./columns.ts";
+import { parseJson } from "../storage.ts";
 
 const COLUMNS: Column[] = [
   { id: "version", label: "Version", width: 56 },
@@ -66,21 +67,21 @@ void test("a column takes no more than the flexible column can give", () => {
 
 void test("stored widths come back as they were written", () => {
   const widths = withWidth(withWidth({}, "version", 72), "lines", 130);
-  assert.deepEqual(parseWidths(COLUMNS, serializeWidths(widths)), widths);
+  assert.deepEqual(parseWidths(COLUMNS, parseJson(serializeWidths(widths))), widths);
 });
 
 void test("when every column has its default nothing is stored", () => {
   assert.equal(serializeWidths(withoutWidth(withWidth({}, "lines", 130), "lines")), undefined);
-  assert.deepEqual(parseWidths(COLUMNS, undefined), {});
 });
 
 void test("stored widths keep only the resizable columns, at least as wide as their minimum", () => {
-  const text = JSON.stringify({ version: 10, files: 300, ci: 40, lines: "wide", gone: 100 });
-  assert.deepEqual(parseWidths(COLUMNS, text), { version: 40 });
+  const stored = { version: 10, files: 300, ci: 40, lines: "wide", gone: 100 };
+  assert.deepEqual(parseWidths(COLUMNS, stored), { version: 40 });
 });
 
-void test("text that is not stored widths gives the defaults", () => {
+void test("a value that is not stored widths gives the defaults", () => {
   for (const text of ["", "{", "null", "3", "[90]"]) {
-    assert.deepEqual(parseWidths(COLUMNS, text), {}, text);
+    assert.deepEqual(parseWidths(COLUMNS, parseJson(text)), {}, text);
   }
+  assert.deepEqual(parseWidths(COLUMNS, undefined), {});
 });

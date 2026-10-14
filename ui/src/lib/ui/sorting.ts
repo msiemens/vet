@@ -53,14 +53,7 @@ export function serializeSort(sort: Sort | undefined): string | undefined {
 }
 
 /** A stored sort, if it names a sortable column of these. */
-export function parseSort<R>(columns: readonly Column<R>[], text: string | undefined): Sort | undefined {
-  if (text === undefined) return undefined;
-  let value: unknown;
-  try {
-    value = JSON.parse(text);
-  } catch {
-    return undefined;
-  }
+export function parseSort<R>(columns: readonly Column<R>[], value: unknown): Sort | undefined {
   if (typeof value !== "object" || value === null) return undefined;
   const { column, direction } = value as Record<string, unknown>;
   if (direction !== "ascending" && direction !== "descending") return undefined;

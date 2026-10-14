@@ -2,7 +2,7 @@
 // open tabs, their view modes, where each pane was scrolled to and had its caret, and the hunk the
 // Changes tab was at. `ViewMemory` keeps it per repository in the browser storage.
 
-import { readStored, writeStored } from "../../lib/storage.ts";
+import { parseJson, readStored, writeStored } from "../../lib/storage.ts";
 import type { Mode, ViewMode } from "../../lib/viewMode.ts";
 import type { HunkAnchor, PanePosition, ScrollPosition } from "./editor/ChangesetView.ts";
 import type { TabId } from "../../state/commands.ts";
@@ -158,14 +158,7 @@ export class ViewMemory {
   /** The stored views, least recently set first. */
   private stored(): Map<string, SavedView> {
     const views = new Map<string, SavedView>();
-    const text = this.storage.read(this.storageKey);
-    if (text === undefined) return views;
-    let entries: unknown;
-    try {
-      entries = JSON.parse(text);
-    } catch {
-      return views;
-    }
+    const entries = parseJson(this.storage.read(this.storageKey));
     for (const entry of Array.isArray(entries) ? (entries as unknown[]) : []) {
       if (!Array.isArray(entry) || typeof entry[0] !== "string") continue;
       const view = decodeView(entry[1]);

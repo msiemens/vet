@@ -11,7 +11,7 @@
 <script lang="ts">
   import type { Snippet } from "svelte";
   import type { HTMLAttributes } from "svelte/elements";
-  import { readStored, writeStored } from "../storage";
+  import { readJson, writeStored } from "../storage";
   import Icon from "./Icon.svelte";
   import {
     type Column,
@@ -56,12 +56,10 @@
   // The name and the columns do not change for a mounted table.
   // svelte-ignore state_referenced_locally
   const storageKey = `vet.table.${name}`;
-  // svelte-ignore state_referenced_locally
-  let widths = $state(parseWidths(columns, readStored(storageKey)));
+  let widths = $state(readJson(storageKey, (value) => parseWidths(columns, value)) ?? {});
   const template = $derived(gridTemplate(columns, widths));
   const sortKey = `${storageKey}.sort`;
-  // svelte-ignore state_referenced_locally
-  sort = parseSort(columns, readStored(sortKey));
+  sort = readJson(sortKey, (value) => parseSort(columns, value));
 
   function sortBy(column: Column<never>) {
     sort = nextSort(sort, column);

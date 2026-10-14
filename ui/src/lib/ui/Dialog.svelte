@@ -1,7 +1,7 @@
 <script lang="ts">
   import type { Snippet } from "svelte";
   import { onMount } from "svelte";
-  import { readStored, writeStored } from "../storage";
+  import { readJson, writeStored } from "../storage";
   import IconButton from "./IconButton.svelte";
   import ScrollArea from "./ScrollArea.svelte";
 
@@ -47,14 +47,11 @@
   }
 
   function storedSize(name: string | undefined): Size | undefined {
-    const stored = name && readStored(storageKey(name));
-    if (!stored) return undefined;
-    try {
-      const { w, h } = JSON.parse(stored) as Partial<Size>;
+    if (!name) return undefined;
+    return readJson(storageKey(name), (value) => {
+      const { w, h } = (value ?? {}) as Partial<Size>;
       return typeof w === "number" && typeof h === "number" && w >= MIN.w && h >= MIN.h ? { w, h } : undefined;
-    } catch {
-      return undefined;
-    }
+    });
   }
 
   let sheet: HTMLDialogElement;

@@ -9,6 +9,7 @@ import {
   withBinding,
   withReplacedBinding,
 } from "./keymapEdit.ts";
+import { parseJson } from "./storage.ts";
 
 const registry = () => {
   const r = new CommandRegistry<object>({}, "Ctrl");
@@ -96,12 +97,13 @@ void test("a further key of a command clashes like its main key, and taking it o
 
 void test("overrides survive being kept, and damaged ones cost only themselves", () => {
   const overrides: Overrides = { "a.next": "Alt-n", "a.open": null };
-  assert.deepEqual(parseOverrides(serializeOverrides(overrides)), overrides);
+  const kept = (text: string | undefined) => parseOverrides(parseJson(text));
+  assert.deepEqual(kept(serializeOverrides(overrides)), overrides);
   assert.equal(serializeOverrides({}), undefined);
-  assert.deepEqual(parseOverrides(undefined), {});
-  assert.deepEqual(parseOverrides("{not json"), {});
-  assert.deepEqual(parseOverrides("[1]"), {});
-  assert.deepEqual(parseOverrides('{"a.next":"Alt-n","a.open":3,"b.free":""}'), { "a.next": "Alt-n" });
+  assert.deepEqual(kept(undefined), {});
+  assert.deepEqual(kept("{not json"), {});
+  assert.deepEqual(kept("[1]"), {});
+  assert.deepEqual(kept('{"a.next":"Alt-n","a.open":3,"b.free":""}'), { "a.next": "Alt-n" });
 });
 
 void test("kept overrides decide which key runs a command and what its tooltip says", () => {
@@ -111,7 +113,7 @@ void test("kept overrides decide which key runs a command and what its tooltip s
   r.register({ id: "c.go", label: "Go", binding: "Ctrl-g", run: () => ran.push("go") });
   assert.equal(r.tooltip("c.go"), "Go (Ctrl+G)");
 
-  apply(r, parseOverrides(JSON.stringify({ "c.go": "Alt-j", "a.next": null })));
+  apply(r, parseOverrides({ "c.go": "Alt-j", "a.next": null }));
   assert.equal(r.tooltip("c.go"), "Go (Alt+J)");
   assert.equal(r.tooltip("a.next"), "Next");
   assert.equal(r.dispatch(key({ key: "g", code: "KeyG", ctrlKey: true })), false);

@@ -8,7 +8,7 @@ import type { FileOutline } from "../generated/FileOutline";
 import { isAbort } from "../lib/abort";
 import { errorText } from "../lib/errorText";
 import { toggleIn } from "../lib/foldKeys";
-import { readStored, writeStored } from "../lib/storage";
+import { storeFlag, storedFlag } from "../lib/storage";
 import type { SymbolChange } from "../generated/SymbolChange";
 import type { SymbolInfo } from "../generated/SymbolInfo";
 import type { TabId } from "./commands";
@@ -43,15 +43,10 @@ interface Place {
 
 const PREFS = { sort: "vet.structure.sort", changedOnly: "vet.structure.changedOnly" };
 
-function flag(key: string, fallback: boolean): boolean {
-  const stored = readStored(key);
-  return stored === undefined ? fallback : stored === "1";
-}
-
 class StructureState {
   /** The symbols under each holder alphabetically. */
-  sort = $state(flag(PREFS.sort, false));
-  changedOnly = $state(flag(PREFS.changedOnly, false));
+  sort = $state(storedFlag(PREFS.sort, false));
+  changedOnly = $state(storedFlag(PREFS.changedOnly, false));
   target = $state.raw<StructureTarget>();
   load = $state.raw<OutlineLoad>({ state: "loading" });
   /** The keys of the rows of holders that are shut. */
@@ -154,12 +149,12 @@ class StructureState {
 
   setSort(on: boolean) {
     this.sort = on;
-    writeStored(PREFS.sort, on ? "1" : "0");
+    storeFlag(PREFS.sort, on, false);
   }
 
   setChangedOnly(on: boolean) {
     this.changedOnly = on;
-    writeStored(PREFS.changedOnly, on ? "1" : "0");
+    storeFlag(PREFS.changedOnly, on, false);
   }
 }
 

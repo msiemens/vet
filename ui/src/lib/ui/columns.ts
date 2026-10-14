@@ -78,14 +78,7 @@ export function serializeWidths(widths: Widths): string | undefined {
 }
 
 /** Stored widths for these columns: others are dropped, and none is narrower than its minimum. */
-export function parseWidths(columns: readonly Sized[], text: string | undefined): Widths {
-  if (text === undefined) return {};
-  let value: unknown;
-  try {
-    value = JSON.parse(text);
-  } catch {
-    return {};
-  }
+export function parseWidths(columns: readonly Sized[], value: unknown): Widths {
   if (typeof value !== "object" || value === null) return {};
   const stored = value as Record<string, unknown>;
   const widths: Record<string, number> = {};

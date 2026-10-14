@@ -19,6 +19,7 @@
   import { threads } from "../../state/threads.svelte";
   import { versions } from "../../state/versions.svelte";
   import { CommentsPanel } from "../comments";
+  import { copyText } from "../platform";
   import { StructurePopup } from "../structure";
   import FileTree from "./FileTree.svelte";
   import "./editor/section.css";
@@ -229,8 +230,7 @@
     const stopVersions = versions.start(backend);
     const stopHook = exposeRendered(() => controller.rendered());
     const stopCommands = provideActions({
-      copyText: (text) =>
-        void navigator.clipboard.writeText(text).catch(() => (session.notice = "Could not copy to the clipboard")),
+      copyText: (text) => void copyText(text),
       excludePath: (path, dir) => void changeset.excludePath(path, dir),
       reviewOnly: (path) => void changeset.reviewOnly(path),
       setFolderSeen: (path, seen) => {

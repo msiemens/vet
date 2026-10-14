@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import type { Column } from "./columns.ts";
+import { parseJson } from "../storage.ts";
 import { type Sort, nextSort, parseSort, serializeSort, sortRows } from "./sorting.ts";
 
 interface Row {
@@ -66,7 +67,7 @@ void test("without a sort, or by a column that cannot sort, the rows keep their 
 
 void test("a stored sort comes back as it was written, and the default order stores nothing", () => {
   const sort: Sort = { column: "at", direction: "ascending" };
-  assert.deepEqual(parseSort(COLUMNS, serializeSort(sort)), sort);
+  assert.deepEqual(parseSort(COLUMNS, parseJson(serializeSort(sort))), sort);
   assert.equal(serializeSort(undefined), undefined);
   assert.equal(parseSort(COLUMNS, undefined), undefined);
 });
@@ -81,5 +82,5 @@ void test("a stored sort by a column that is gone or cannot sort, or that is not
     "null",
     "[1]",
   ];
-  for (const text of texts) assert.equal(parseSort(COLUMNS, text), undefined, text);
+  for (const text of texts) assert.equal(parseSort(COLUMNS, parseJson(text)), undefined, text);
 });

@@ -7,7 +7,7 @@
   import type { Thread } from "../../generated/Thread";
   import { errorText } from "../../lib/errorText";
   import { toggleIn } from "../../lib/foldKeys";
-  import { readStored, writeStored } from "../../lib/storage";
+  import { storeFlag, storedFlag } from "../../lib/storage";
   import { platformName } from "../../lib/platformName";
   import Avatar from "../../lib/ui/Avatar.svelte";
   import CiStatus from "../../lib/ui/CiStatus.svelte";
@@ -59,20 +59,18 @@
 
   // Folded sections, remembered; every one starts open.
   const shut = new SvelteSet<string>(
-    ["description", "review", "comments", "checks", "reviewers"].filter(
-      (id) => readStored(SECTION_KEY + id) === "shut",
-    ),
+    ["description", "review", "comments", "checks", "reviewers"].filter((id) => !storedFlag(SECTION_KEY + id, true)),
   );
   function fold(id: string) {
     toggleIn(shut, id);
-    writeStored(SECTION_KEY + id, shut.has(id) ? "shut" : undefined);
+    storeFlag(SECTION_KEY + id, !shut.has(id), true);
   }
 
   // Whether resolved threads show open or as one row: one setting for every changeset.
-  let resolvedOpen = $state(readStored(RESOLVED_KEY) === "open");
+  let resolvedOpen = $state(storedFlag(RESOLVED_KEY, false));
   function flipResolved() {
     resolvedOpen = !resolvedOpen;
-    writeStored(RESOLVED_KEY, resolvedOpen ? "open" : undefined);
+    storeFlag(RESOLVED_KEY, resolvedOpen, false);
   }
 
   const pull = $derived(row?.pullRequest);
