@@ -98,8 +98,8 @@
   flex: 1;
 }
 .vet-thread-btn {
-  width: 20px;
-  height: 20px;
+  width: var(--h-ctl-xs);
+  height: var(--h-ctl-xs);
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -107,7 +107,7 @@
   color: var(--text-2);
 }
 .vet-thread .vet-thread-small {
-  height: 20px;
+  height: var(--h-ctl-xs);
   padding: 0 8px;
   font-size: var(--fs-mono-s);
 }
@@ -115,7 +115,7 @@
 /* A message: the author's picture beside its meta line and its text. */
 .vet-msg {
   display: grid;
-  grid-template-columns: 20px minmax(0, 1fr);
+  grid-template-columns: var(--s-avatar-s) minmax(0, 1fr);
   column-gap: 8px;
   align-items: center;
 }
@@ -127,9 +127,9 @@
   align-items: center;
   gap: 8px;
   min-width: 0;
-  height: 20px;
+  height: var(--s-avatar-s);
   color: var(--text-3);
-  font-size: 11.5px;
+  font-size: var(--fs-mono-s);
 }
 .vet-msg-author {
   color: var(--text);
@@ -184,16 +184,16 @@
 .vet-thread-hint {
   flex: 1;
   color: var(--text-3);
-  font-size: 11px;
+  font-size: var(--fs-xs);
 }
 .vet-thread-by {
   color: var(--text-3);
-  font-size: 11.5px;
+  font-size: var(--fs-mono-s);
   white-space: nowrap;
 }
 .vet-avatar {
-  width: 20px;
-  height: 20px;
+  width: var(--s-avatar-s);
+  height: var(--s-avatar-s);
   flex: none;
   border-radius: 50%;
   object-fit: cover;
@@ -203,7 +203,7 @@
   align-items: center;
   justify-content: center;
   color: var(--on-avatar);
-  font-size: 9px;
+  font-size: var(--fs-xxs);
   font-weight: 600;
 }
 
@@ -234,7 +234,7 @@
 .vet-thread-count {
   flex: none;
   color: var(--text-3);
-  font-size: 11.5px;
+  font-size: var(--fs-mono-s);
 }
 .vet-avatar-stack {
   display: flex;
@@ -268,7 +268,7 @@
   align-items: center;
   gap: 5px;
   color: var(--accent);
-  font-size: 11.5px;
+  font-size: var(--fs-mono-s);
   white-space: nowrap;
 }
 .vet-new-dot {
@@ -291,7 +291,7 @@
   justify-self: start;
   padding: 0;
   color: var(--accent);
-  font-size: 11.5px;
+  font-size: var(--fs-mono-s);
 }
 .vet-thread-more {
   display: flex;
@@ -299,7 +299,7 @@
   gap: 6px;
   padding: 2px var(--inset-card) 2px calc(var(--inset-card) + 28px);
   color: var(--text-2);
-  font-size: 11.5px;
+  font-size: var(--fs-mono-s);
 }
 .vet-thread-folded .vet-thread-place {
   flex: none;
@@ -385,7 +385,7 @@
 }
 .vet-conflict-label {
   color: var(--text-3);
-  font-size: 11.5px;
+  font-size: var(--fs-mono-s);
 }
 .vet-conflict-text {
   white-space: pre-wrap;

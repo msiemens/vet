@@ -151,7 +151,7 @@
         <IconButton
           icon="filter"
           label="Only Changeset Hits"
-          size={24}
+          size="m"
           iconSize={14}
           active={onlyChangeset}
           onclick={() => (onlyChangeset = !onlyChangeset)}

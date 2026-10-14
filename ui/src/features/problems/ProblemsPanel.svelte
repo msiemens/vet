@@ -370,7 +370,7 @@
           <IconButton
             icon="filter"
             label="Group and filter"
-            size={22}
+            size="s"
             iconSize={14}
             active={menuChanged(grouping, filters)}
             onclick={toggle}
@@ -622,7 +622,7 @@
   }
   code {
     font-family: var(--font-mono);
-    font-size: 12px;
+    font-size: var(--fs-mono);
   }
   .src,
   .loc {
@@ -643,10 +643,10 @@
     display: flex;
     align-items: center;
     gap: 10px;
-    height: 24px;
+    height: var(--h-footer);
     padding: 0 12px;
     border-top: 1px solid var(--line-soft);
-    font-size: 11.5px;
+    font-size: var(--fs-mono-s);
     color: var(--text-3);
   }
 </style>

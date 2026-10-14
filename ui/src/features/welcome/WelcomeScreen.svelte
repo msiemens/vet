@@ -204,7 +204,7 @@
     line-height: 1.25;
   }
   .app {
-    font-size: 15px;
+    font-size: var(--fs-title);
     font-weight: 600;
   }
   .version {

@@ -16,7 +16,7 @@
     display: inline-flex;
     justify-content: center;
     width: 10px;
-    font-size: 11px;
+    font-size: var(--fs-xs);
   }
   [data-letter="M"] {
     color: var(--old-base);

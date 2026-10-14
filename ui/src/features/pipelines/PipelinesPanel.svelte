@@ -195,7 +195,7 @@
       {/if}
       {#if checks?.url}
         {@const url = checks.url}
-        <IconButton icon="external" label="Open in browser" size={22} iconSize={13} onclick={() => onbrowser(url)} />
+        <IconButton icon="external" label="Open in browser" size="s" iconSize={13} onclick={() => onbrowser(url)} />
       {/if}
     {/snippet}
   </BottomToolHeader>
@@ -230,7 +230,7 @@
           --table-pad="0px"
           --table-pad-end="8px"
           --table-row="var(--h-row)"
-          --table-head="22px"
+          --table-head="var(--h-ctl-s)"
           --table-head-color="var(--text-3)"
           --table-head-size="var(--fs-mono-s)"
           scroll
@@ -278,7 +278,7 @@
                       label={words.rerunGroup}
                       title={jobReason ?? words.rerunGroup}
                       disabled={jobReason !== undefined}
-                      size={20}
+                      size="xs"
                       iconSize={12}
                       onclick={() => rerunJob(item.job)}
                     />
@@ -334,7 +334,7 @@
               --table-pad="14px"
               --table-pad-end="12px"
               --table-row="24px"
-              --table-head="22px"
+              --table-head="var(--h-ctl-s)"
               --table-head-color="var(--text-3)"
               --table-head-size="var(--fs-mono-s)"
             >
@@ -428,7 +428,7 @@
     display: flex;
     align-items: center;
     gap: 8px;
-    height: 34px;
+    height: var(--h-bar);
     padding: 0 12px;
     border-bottom: 1px solid var(--line-soft);
   }

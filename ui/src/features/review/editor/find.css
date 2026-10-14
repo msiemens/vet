@@ -26,7 +26,7 @@
   border-radius: 8px;
   background: var(--find);
   color: var(--text);
-  font: 600 11px/16px var(--font-ui);
+  font: 600 var(--fs-xs) / 16px var(--font-ui);
   text-align: center;
   font-variant-numeric: tabular-nums;
 }

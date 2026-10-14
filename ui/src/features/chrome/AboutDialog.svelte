@@ -17,7 +17,7 @@
     margin: 0;
   }
   .name {
-    font-size: 18px;
+    font-size: var(--fs-about);
     font-weight: 600;
     margin-bottom: 6px;
   }

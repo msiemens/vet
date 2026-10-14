@@ -34,11 +34,11 @@
     gap: 1px;
   }
   .toggle {
-    width: 22px;
-    height: 20px;
+    width: var(--h-ctl-s);
+    height: var(--h-ctl-xs);
     border-radius: 4px;
     color: var(--text-2);
-    font: 600 11px var(--font-mono);
+    font: 600 var(--fs-xs) var(--font-mono);
   }
   .toggle.word {
     text-decoration: underline;

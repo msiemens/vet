@@ -28,7 +28,7 @@ export function reconfirmButton(label: string, onclick: () => void): HTMLButtonE
   return button;
 }
 
-/** A flat button with an icon; `className` also sets its size (`vet-icon-btn` is the 22px one). */
+/** A flat button with an icon; `className` also sets its size (`vet-icon-btn` is the small control's). */
 export function iconButton(
   label: string,
   icon: IconName,

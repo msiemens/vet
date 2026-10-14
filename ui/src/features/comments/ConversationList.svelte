@@ -72,14 +72,14 @@
             <IconButton
               icon="edit"
               label="Edit the comment"
-              size={20}
+              size="xs"
               iconSize={11}
               onclick={() => edit(entry.id, entry.body)}
             />
             <IconButton
               icon="close"
               label="Delete the comment"
-              size={20}
+              size="xs"
               iconSize={11}
               onclick={() => void platform.deleteComment(entry.id)}
             />
@@ -104,7 +104,7 @@
             <IconButton
               icon="edit"
               label="Edit the comment"
-              size={20}
+              size="xs"
               iconSize={11}
               onclick={() => edit(key, message.body)}
             />
@@ -112,7 +112,7 @@
               <IconButton
                 icon="close"
                 label="Discard the draft"
-                size={20}
+                size="xs"
                 iconSize={11}
                 onclick={() => void threads.removeMessage(message.id)}
               />
@@ -143,9 +143,9 @@
     display: flex;
     align-items: center;
     gap: 8px;
-    min-height: 20px;
+    min-height: var(--h-ctl-xs);
     color: var(--text-3);
-    font-size: 11.5px;
+    font-size: var(--fs-mono-s);
   }
   /* The author's name gives way before the chip, the time and the buttons do. */
   .meta > * {

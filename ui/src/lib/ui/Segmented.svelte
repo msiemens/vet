@@ -40,7 +40,7 @@
     gap: 5px;
   }
   .small .ctl {
-    height: 22px;
-    font-size: 12px;
+    height: var(--h-ctl-s);
+    font-size: var(--fs-mono);
   }
 </style>

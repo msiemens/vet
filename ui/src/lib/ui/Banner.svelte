@@ -57,7 +57,7 @@
     {/if}
     {#if ondismiss}
       <div class="dismiss">
-        <IconButton icon="close" label="Dismiss" size={20} iconSize={12} onclick={ondismiss} />
+        <IconButton icon="close" label="Dismiss" size="xs" iconSize={12} onclick={ondismiss} />
       </div>
     {/if}
   </div>
@@ -77,7 +77,7 @@
   .banner.panel {
     padding: 6px 12px;
     border-bottom-color: var(--line-soft);
-    font-size: 12px;
+    font-size: var(--fs-mono);
     color: var(--text-2);
   }
   .line {
@@ -97,7 +97,7 @@
   /* The actions are plain text until pointed at; the hover and pressed boxes are the banner's own
      tone, a little stronger than its background. */
   button.flat {
-    height: 20px;
+    height: var(--h-ctl-xs);
     box-sizing: border-box;
     padding: 0 8px;
     border-radius: var(--radius);

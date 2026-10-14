@@ -40,7 +40,7 @@
           label={commands.label(step.id)}
           title={commands.hint(step.id)}
           disabled={empty || !commands.isEnabled(step.id)}
-          size={22}
+          size="s"
           iconSize={14}
           onclick={() => commands.run(step.id)}
         />

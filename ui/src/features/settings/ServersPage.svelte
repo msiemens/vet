@@ -368,17 +368,17 @@
   }
   .hint {
     color: var(--text-3);
-    font-size: 12px;
+    font-size: var(--fs-mono);
   }
   .problem {
     color: var(--del-text);
-    font-size: 12px;
+    font-size: var(--fs-mono);
     white-space: pre-wrap;
     overflow-wrap: anywhere;
   }
   summary {
     color: var(--text-2);
-    font-size: 12px;
+    font-size: var(--fs-mono);
   }
   .log {
     margin: 4px 0 0;

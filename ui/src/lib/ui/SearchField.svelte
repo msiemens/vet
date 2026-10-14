@@ -75,9 +75,9 @@
     left: 6px;
   }
   .small input {
-    height: 22px;
+    height: var(--h-ctl-s);
     padding: 0 6px 0 24px;
     background: var(--bg-control);
-    font-size: 12px;
+    font-size: var(--fs-mono);
   }
 </style>

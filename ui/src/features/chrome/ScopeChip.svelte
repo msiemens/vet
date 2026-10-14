@@ -54,7 +54,7 @@
   .chip {
     display: inline-flex;
     align-items: center;
-    height: 24px;
+    height: var(--h-ctl-m);
     padding: 0 7px;
     border: 0;
     border-radius: var(--radius);
@@ -70,7 +70,7 @@
     background: var(--press);
   }
   .chip.inside {
-    height: 16px;
+    height: var(--h-ctl-xxs);
     padding: 0 4px;
   }
   .chip.static {

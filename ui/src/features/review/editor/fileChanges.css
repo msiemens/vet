@@ -83,7 +83,7 @@
   color: var(--text-2);
 }
 .vet-peek-head .ctl {
-  height: 20px;
+  height: var(--h-ctl-xs);
   padding: 0 8px;
   font-size: var(--fs-mono-s);
 }

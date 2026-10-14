@@ -189,13 +189,13 @@
       {#if set}
         <span class:hot={stale}>
           {#if set.phase === "running"}
-            <IconButton icon="stop" label="Stop" size={22} iconSize={12} onclick={() => findSets.stop(set)} />
+            <IconButton icon="stop" label="Stop" size="s" iconSize={12} onclick={() => findSets.stop(set)} />
           {:else}
             <IconButton
               icon="refresh"
               label="Rerun"
               title="Rerun  {navigator.platform.includes('Mac') ? '⌘' : 'Ctrl+'}R"
-              size={22}
+              size="s"
               iconSize={14}
               onclick={() => findSets.rerun(set)}
             />
@@ -232,7 +232,7 @@
         <IconButton
           icon="preview"
           label="Preview of the code"
-          size={22}
+          size="s"
           iconSize={14}
           active={findSets.preview}
           onclick={() => (findSets.preview = !findSets.preview)}
@@ -483,12 +483,12 @@
     display: inline-flex;
     align-items: center;
     gap: 5px;
-    height: 22px;
+    height: var(--h-ctl-s);
     padding: 0 8px;
     border: 1px solid var(--line);
-    border-radius: 11px;
+    border-radius: calc(var(--h-ctl-s) / 2);
     color: var(--text-3);
-    font-size: 11.5px;
+    font-size: var(--fs-mono-s);
     white-space: nowrap;
   }
   .main {
@@ -521,7 +521,7 @@
     align-items: center;
     gap: 6px;
     padding: 3px 12px;
-    font-size: 11.5px;
+    font-size: var(--fs-mono-s);
     color: var(--text-2);
     background: color-mix(in srgb, var(--old-base) 12%, var(--bg-editor));
     border-bottom: 1px solid var(--line-soft);
@@ -570,12 +570,12 @@
   .moved {
     flex: none;
     color: var(--old-base);
-    font-size: 11px;
+    font-size: var(--fs-xs);
   }
   .uns {
     flex: none;
     color: var(--accent);
-    font-size: 11.5px;
+    font-size: var(--fs-mono-s);
     font-weight: 500;
   }
   .place {
@@ -630,7 +630,7 @@
     border: 1px solid var(--line);
     border-radius: 8px;
     color: var(--text-3);
-    font-size: 10.5px;
+    font-size: var(--fs-xs);
     line-height: 14px;
   }
   .stat {
@@ -638,10 +638,10 @@
     display: flex;
     align-items: center;
     gap: 8px;
-    height: 24px;
+    height: var(--h-footer);
     padding: 0 12px;
     border-top: 1px solid var(--line-soft);
-    font-size: 11.5px;
+    font-size: var(--fs-mono-s);
     color: var(--text-3);
     white-space: nowrap;
     overflow: hidden;
@@ -652,6 +652,6 @@
     text-overflow: ellipsis;
   }
   .stat .mono {
-    font-size: 11px;
+    font-size: var(--fs-xs);
   }
 </style>

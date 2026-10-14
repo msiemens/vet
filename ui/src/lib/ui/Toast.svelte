@@ -34,7 +34,7 @@
   )}
 >
   <span class="selectable">{message}</span>
-  <IconButton icon="close" label="Dismiss" size={20} iconSize={12} onclick={onclose} />
+  <IconButton icon="close" label="Dismiss" size="xs" iconSize={12} onclick={onclose} />
 </div>
 
 <style>

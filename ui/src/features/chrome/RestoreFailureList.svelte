@@ -22,7 +22,7 @@
   pre {
     margin: 2px 0 6px;
     font-family: var(--font-mono);
-    font-size: 11px;
+    font-size: var(--fs-xs);
     white-space: pre-wrap;
   }
 </style>

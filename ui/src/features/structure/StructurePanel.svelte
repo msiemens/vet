@@ -188,7 +188,7 @@
       label={marked ? "Changed only" : "Changed only (nothing is changed in this file)"}
       active={structure.changedOnly && marked}
       disabled={!marked}
-      size={22}
+      size="s"
       iconSize={14}
       onclick={() => structure.setChangedOnly(!structure.changedOnly)}
     />
@@ -196,7 +196,7 @@
       icon="locate"
       label="Reveal Symbol in Structure"
       disabled={!outline || !!outline.unavailable}
-      size={22}
+      size="s"
       iconSize={13}
       onclick={() => structure.revealCaret()}
     />
@@ -204,7 +204,7 @@
       icon={allShut ? "expandAll" : "collapseAll"}
       label={allShut ? "Expand all" : "Collapse all"}
       disabled={!rows.length || search.active}
-      size={22}
+      size="s"
       iconSize={14}
       onclick={foldAll}
     />
@@ -248,11 +248,11 @@
     display: flex;
     align-items: center;
     gap: 6px;
-    min-height: 22px;
+    min-height: var(--h-row);
     padding: 2px 10px;
     border-bottom: 1px solid var(--line-soft);
     color: var(--text-3);
-    font-size: 11.5px;
+    font-size: var(--fs-mono-s);
   }
   .commit {
     flex: none;

@@ -111,7 +111,7 @@
         label={marked ? "Changed only" : "Changed only (nothing is changed in this file)"}
         active={structure.changedOnly && marked}
         disabled={!marked}
-        size={22}
+        size="s"
         iconSize={14}
         onclick={() => structure.setChangedOnly(!structure.changedOnly)}
       />

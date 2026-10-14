@@ -135,7 +135,7 @@
     background: var(--bg-panel);
   }
   nav button {
-    height: 26px;
+    height: var(--h-ctl);
     padding: 0 10px;
     border-radius: var(--radius);
     font-size: var(--fs-ctl);
@@ -143,7 +143,7 @@
   }
   nav .note {
     padding: 0 10px 4px;
-    font-size: 12px;
+    font-size: var(--fs-mono);
   }
   .project {
     min-width: 0;

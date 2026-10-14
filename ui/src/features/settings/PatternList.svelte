@@ -83,7 +83,7 @@
       />
       {@render counted(i)}
       <span class="end">
-        <IconButton icon="close" label="Remove {pattern}" size={22} iconSize={12} onclick={() => void remove(i)} />
+        <IconButton icon="close" label="Remove {pattern}" size="s" iconSize={12} onclick={() => void remove(i)} />
       </span>
     </div>
   {/each}

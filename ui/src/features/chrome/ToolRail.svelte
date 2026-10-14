@@ -111,7 +111,7 @@
     border-radius: 7px;
     background: var(--primary);
     color: var(--on-primary);
-    font-size: 9.5px;
+    font-size: var(--fs-xxs);
     line-height: 14px;
     text-align: center;
     pointer-events: none;

@@ -149,7 +149,7 @@
   .none,
   .hint {
     color: var(--text-3);
-    font-size: 12px;
+    font-size: var(--fs-mono);
   }
   .actions {
     display: flex;
@@ -159,7 +159,7 @@
     flex-basis: 100%;
     margin: 0;
     color: var(--del-text);
-    font-size: 12px;
+    font-size: var(--fs-mono);
   }
   .empty {
     color: var(--text-3);

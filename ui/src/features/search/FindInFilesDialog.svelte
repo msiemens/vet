@@ -523,7 +523,7 @@
 <style>
   .in {
     color: var(--text-3);
-    font-size: 11px;
+    font-size: var(--fs-xs);
     letter-spacing: 0.05em;
   }
   .scope {
@@ -531,12 +531,12 @@
     align-items: center;
     gap: 8px;
     max-width: 300px;
-    height: 24px;
+    height: var(--h-ctl-m);
     padding: 0 8px 0 9px;
     border: 1px solid var(--line);
     border-radius: var(--radius);
     background: var(--bg-control);
-    font-size: 12px;
+    font-size: var(--fs-mono);
     text-align: left;
   }
   .scope:hover {
@@ -557,7 +557,7 @@
   .mask {
     flex: none;
     width: 190px;
-    height: 24px;
+    height: var(--h-ctl-m);
   }
   .mask.bad {
     color: var(--del-text);
@@ -589,7 +589,7 @@
   }
   .summary {
     color: var(--text-3);
-    font-size: 11.5px;
+    font-size: var(--fs-mono-s);
     min-height: 16px;
   }
   .grow {
@@ -611,11 +611,11 @@
   .dir {
     margin-left: 6px;
     color: var(--text-3);
-    font-size: 11.5px;
+    font-size: var(--fs-mono-s);
   }
   .unchanged {
     color: var(--text-3);
-    font-size: 11px;
+    font-size: var(--fs-xs);
   }
   .line {
     display: flex;
@@ -623,7 +623,7 @@
     gap: 6px;
     height: var(--h-row);
     padding: 0 8px 0 18px;
-    font: 12px var(--font-mono);
+    font: var(--fs-mono) var(--font-mono);
     font-variant-ligatures: none;
   }
   .line.added {
@@ -640,7 +640,7 @@
     flex: none;
     text-align: right;
     color: var(--text-3);
-    font-size: 11px;
+    font-size: var(--fs-xs);
   }
   .sign {
     width: 9px;

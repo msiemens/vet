@@ -160,7 +160,7 @@
       label={commands.label("review.commentOnChangeset")}
       title={commands.hint("review.commentOnChangeset")}
       disabled={!commands.isEnabled("review.commentOnChangeset")}
-      size={22}
+      size="s"
       iconSize={13}
       onclick={() => commands.run("review.commentOnChangeset")}
     />
@@ -367,7 +367,7 @@
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
-    font-size: 11.5px;
+    font-size: var(--fs-mono-s);
     color: var(--text-3);
   }
 </style>

@@ -142,7 +142,7 @@
     gap: 7px;
   }
   .nmt {
-    font-size: 15px;
+    font-size: var(--fs-title);
     font-weight: 600;
     overflow-wrap: anywhere;
   }
@@ -151,7 +151,7 @@
     color: var(--text-2);
   }
   .chip {
-    font-size: 11px;
+    font-size: var(--fs-xs);
     line-height: 16px;
     padding: 0 6px;
     border-radius: 8px;
@@ -168,7 +168,7 @@
   }
   .hq {
     color: var(--text-2);
-    font-size: 12px;
+    font-size: var(--fs-mono);
     overflow-wrap: anywhere;
   }
   .hn {
@@ -184,7 +184,7 @@
     margin: 2px -4px 0;
     padding: 0 4px;
     color: var(--text-3);
-    font-size: 11.5px;
+    font-size: var(--fs-mono-s);
     line-height: 1.4;
     overflow-wrap: anywhere;
     text-align: left;

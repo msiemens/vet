@@ -30,7 +30,7 @@
   </span>
   {#if summary}<span class="summary">{summary}</span>{/if}
   <div class="controls">{@render controls?.()}</div>
-  <IconButton icon="minus" label="Hide {title}" size={22} iconSize={14} onclick={onclose} />
+  <IconButton icon="minus" label="Hide {title}" size="s" iconSize={14} onclick={onclose} />
 </header>
 
 <style>
@@ -38,7 +38,7 @@
     flex: none;
     display: flex;
     align-items: center;
-    height: 34px;
+    height: var(--h-bar);
     padding: 0 8px 0 14px;
     border-bottom: 1px solid var(--line-soft);
     font-weight: 600;

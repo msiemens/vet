@@ -141,7 +141,7 @@
       {/snippet}
       {#snippet aside()}
         {#if find}
-          <IconButton icon="search" label={find.label} size={22} iconSize={12} onclick={find.onclick} />
+          <IconButton icon="search" label={find.label} size="s" iconSize={12} onclick={find.onclick} />
         {/if}
       {/snippet}
     </SectionHead>
@@ -174,7 +174,7 @@
     padding: 0 10px 0 var(--inset-tree-name);
     border-top: 1px solid var(--line-soft);
     color: var(--text-3);
-    font-size: 12px;
+    font-size: var(--fs-mono);
   }
   .note {
     margin: 0;
@@ -198,30 +198,30 @@
   .ctr {
     display: inline-block;
     margin-left: 6px;
-    font-size: 11px;
+    font-size: var(--fs-xs);
     line-height: 14px;
     color: var(--text-3);
   }
   .sub {
     display: block;
-    font-size: 11px;
+    font-size: var(--fs-xs);
     color: var(--text-3);
   }
   .loc {
     display: none;
     flex: none;
-    font-size: 11px;
+    font-size: var(--fs-xs);
     color: var(--text-3);
   }
   .ln {
     flex: none;
-    font-size: 11px;
+    font-size: var(--fs-xs);
     color: var(--text-3);
     font-variant-numeric: tabular-nums;
   }
   .fate {
     flex: none;
-    font-size: 11px;
+    font-size: var(--fs-xs);
   }
   .more {
     display: flex;
@@ -232,7 +232,7 @@
     box-sizing: border-box;
     text-align: left;
     color: var(--accent);
-    font-size: 12px;
+    font-size: var(--fs-mono);
   }
   @container (min-width: 440px) {
     .loc {

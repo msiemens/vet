@@ -102,7 +102,7 @@
   }
   form :global(.hint) {
     color: var(--text-3);
-    font-size: 12px;
+    font-size: var(--fs-mono);
   }
   form :global(p) {
     margin: 0;

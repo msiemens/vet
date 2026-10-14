@@ -79,7 +79,7 @@
     border-top: 1px solid var(--line);
     background: var(--bg-window);
     color: var(--text-2);
-    font-size: 12px;
+    font-size: var(--fs-mono);
     flex: none;
   }
   .state {

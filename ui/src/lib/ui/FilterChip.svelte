@@ -32,9 +32,9 @@
 
 <style>
   .chip {
-    height: 22px;
+    height: var(--h-ctl-s);
     padding: 0 9px;
-    border-radius: 11px;
-    font-size: 11.5px;
+    border-radius: calc(var(--h-ctl-s) / 2);
+    font-size: var(--fs-mono-s);
   }
 </style>

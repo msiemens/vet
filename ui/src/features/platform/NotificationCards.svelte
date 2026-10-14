@@ -25,7 +25,7 @@
     >
       <div class="top">
         <span class="text selectable">{item.notification.text}</span>
-        <IconButton icon="close" label="Dismiss" size={20} iconSize={12} onclick={() => platform.dismiss(item.id)} />
+        <IconButton icon="close" label="Dismiss" size="xs" iconSize={12} onclick={() => platform.dismiss(item.id)} />
       </div>
       <div class="buttons">
         {#if item.notification.copyText}

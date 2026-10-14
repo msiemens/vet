@@ -193,7 +193,7 @@
   }
   .head {
     flex: none;
-    height: var(--table-head, 26px);
+    height: var(--table-head, var(--h-ctl));
     border-bottom: 1px solid var(--line-soft);
     color: var(--table-head-color, var(--text-2));
     font-size: var(--table-head-size, var(--fs-ctl));

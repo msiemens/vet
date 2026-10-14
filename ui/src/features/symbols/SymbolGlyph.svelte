@@ -19,7 +19,7 @@
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    font: 500 9.5px/1 var(--font-mono);
+    font: 500 var(--fs-xxs) / 1 var(--font-mono);
     border: 1px solid currentColor;
     box-sizing: border-box;
   }

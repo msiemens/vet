@@ -137,7 +137,7 @@
     label="Previous match"
     title={commands.tooltip("find.previous", "Previous match")}
     disabled={!summary.total}
-    size={24}
+    size="m"
     iconSize={14}
     onclick={() => onstep(-1)}
   />
@@ -146,7 +146,7 @@
     label="Next match"
     title={commands.tooltip("find.next", "Next match")}
     disabled={!summary.total}
-    size={24}
+    size="m"
     iconSize={14}
     onclick={() => onstep(1)}
   />
@@ -170,7 +170,7 @@
     label="Find in Files"
     title={commands.tooltip("find.inFiles", "Find in Files with this query")}
     disabled={!commands.isEnabled("find.inFiles")}
-    size={24}
+    size="m"
     iconSize={14}
     onclick={() =>
       openFindInFiles({
@@ -180,7 +180,7 @@
         regex: options.regex,
       })}
   />
-  <IconButton icon="close" label="Close" title="Close (Esc)" size={24} iconSize={13} onclick={onclose} />
+  <IconButton icon="close" label="Close" title="Close (Esc)" size="m" iconSize={13} onclick={onclose} />
 </div>
 
 <style>
@@ -188,7 +188,7 @@
     display: flex;
     align-items: center;
     gap: 8px;
-    height: 34px;
+    height: var(--h-bar);
     box-sizing: border-box;
     flex: none;
     min-width: 0;
@@ -231,7 +231,7 @@
     outline: none;
     background: transparent;
     color: var(--text);
-    font: 12px var(--font-mono);
+    font: var(--fs-mono) var(--font-mono);
     font-variant-ligatures: none;
   }
   input::placeholder {
@@ -250,7 +250,7 @@
   }
   .sub {
     color: var(--text-3);
-    font-size: 11.5px;
+    font-size: var(--fs-mono-s);
   }
   .sep {
     width: 1px;

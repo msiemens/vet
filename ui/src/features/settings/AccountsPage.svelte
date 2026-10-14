@@ -192,7 +192,7 @@
   }
   .strip button {
     width: 28px;
-    height: 22px;
+    height: var(--h-ctl-s);
     border: 0;
     border-right: 1px solid var(--line);
     background: transparent;
@@ -215,11 +215,11 @@
   }
   .hint {
     color: var(--text-3);
-    font-size: 12px;
+    font-size: var(--fs-mono);
   }
   .problem {
     color: var(--del-text);
-    font-size: 12px;
+    font-size: var(--fs-mono);
     white-space: pre-wrap;
   }
   .actions {

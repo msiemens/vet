@@ -57,7 +57,7 @@
         <IconButton
           icon="close"
           label="Remove {root}"
-          size={22}
+          size="s"
           iconSize={12}
           onclick={() => void onchange(roots.filter((_, j) => j !== i))}
         />
@@ -111,6 +111,6 @@
     margin: 0;
     padding: 4px 10px;
     border-top: 1px solid var(--line-soft);
-    font-size: 12px;
+    font-size: var(--fs-mono);
   }
 </style>

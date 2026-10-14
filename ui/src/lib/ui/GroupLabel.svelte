@@ -28,7 +28,7 @@
     align-items: center;
     gap: 8px;
     padding: 10px 12px 3px;
-    font-size: 11.5px;
+    font-size: var(--fs-mono-s);
     font-weight: 600;
     color: var(--text-3);
   }

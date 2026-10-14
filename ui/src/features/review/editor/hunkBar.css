@@ -98,8 +98,8 @@
   fill: currentColor;
 }
 .vet-icon-btn {
-  width: 22px;
-  height: 22px;
+  width: var(--h-ctl-s);
+  height: var(--h-ctl-s);
   display: inline-flex;
   align-items: center;
   justify-content: center;

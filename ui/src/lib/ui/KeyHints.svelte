@@ -16,7 +16,7 @@
     padding: 0 12px;
     border-top: 1px solid var(--line-soft);
     background: var(--bg-panel);
-    font-size: 11.5px;
+    font-size: var(--fs-mono-s);
     color: var(--text-3);
     white-space: nowrap;
     overflow: hidden;

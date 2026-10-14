@@ -19,8 +19,8 @@
     display: inline-flex;
     align-items: center;
     gap: 6px;
-    height: 22px;
+    height: var(--h-ctl-s);
     padding: 0 9px;
-    font-size: 11.5px;
+    font-size: var(--fs-mono-s);
   }
 </style>

@@ -57,7 +57,7 @@
     gap: var(--gap-tree);
     height: var(--h-ctl);
     padding: 0 4px 0 var(--pad-tree);
-    font-size: 12px;
+    font-size: var(--fs-mono);
     font-weight: 600;
     color: var(--text-2);
     text-align: left;

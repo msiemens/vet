@@ -155,7 +155,7 @@
     <IconButton
       icon="external"
       label="Open in the browser"
-      size={22}
+      size="s"
       iconSize={13}
       disabled={pull?.url === undefined}
       onclick={openInBrowser}

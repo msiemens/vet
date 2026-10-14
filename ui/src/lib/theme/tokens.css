@@ -127,12 +127,28 @@
   --font-mono: "JetBrains Mono", ui-monospace, Consolas, Menlo, monospace;
   --fs: 13px;
   --fs-ctl: 12.5px;
+  /* Code, and the small text of panels and dialogs that is as large. */
   --fs-mono: 12px;
   --fs-mono-s: 11.5px;
+  --fs-xs: 11px;
+  /* The kind glyph of a symbol, the count on a badge. */
+  --fs-xxs: 9.5px;
+  /* The title of a panel or a symbol, the search field of Search Everywhere, the About dialog, the splash. */
+  --fs-title: 15px;
+  --fs-search: 14px;
+  --fs-about: 18px;
+  --fs-splash: 30px;
 
   --h-header: 40px;
   --h-footer: 24px;
+  /* The bar above a panel's content: a bottom tool's header, the find bar. */
+  --h-bar: 34px;
   --h-ctl: 26px;
+  /* Smaller controls: the compact field, chip and segmented control, and the button inside a row or card. */
+  --h-ctl-m: 24px;
+  --h-ctl-s: 22px;
+  --h-ctl-xs: 20px;
+  --h-ctl-xxs: 16px;
   --h-row: 22px;
   --h-section: 26px;
   --h-hunk: 24px;
@@ -180,6 +196,8 @@
   /* The column of labels in a grid of facts, and in the form of a settings sheet. */
   --w-facts-label: 100px;
   --s-avatar: 28px;
+  /* The author's picture on a comment. */
+  --s-avatar-s: 20px;
   --s-logo: 40px;
   --w-tree: 270px;
   --w-symbols: 330px;

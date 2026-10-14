@@ -18,7 +18,7 @@
     place-items: center;
     border-radius: var(--radius-sheet);
     color: var(--on-avatar);
-    font-size: 12px;
+    font-size: var(--fs-mono);
     font-weight: 600;
   }
 </style>

@@ -89,7 +89,7 @@
   }
   h1 {
     margin: 0;
-    font-size: 30px;
+    font-size: var(--fs-splash);
     font-weight: 600;
     line-height: 1.2;
   }

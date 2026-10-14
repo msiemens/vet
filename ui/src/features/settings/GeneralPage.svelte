@@ -77,6 +77,6 @@
   }
   .problem {
     color: var(--del-text);
-    font-size: 12px;
+    font-size: var(--fs-mono);
   }
 </style>

@@ -179,7 +179,7 @@
   }
   .heading {
     padding: 6px 12px 2px;
-    font-size: 11px;
+    font-size: var(--fs-xs);
     text-transform: uppercase;
     letter-spacing: 0.06em;
     color: var(--text-3);

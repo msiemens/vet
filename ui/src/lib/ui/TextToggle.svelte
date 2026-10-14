@@ -23,12 +23,12 @@
 
 <style>
   .toggle {
-    height: 22px;
+    height: var(--h-ctl-s);
     flex: none;
     padding: 0 6px;
     border-radius: var(--radius);
     color: var(--text-2);
-    font-size: 10.5px;
+    font-size: var(--fs-xs);
     font-weight: 500;
     line-height: 1;
   }

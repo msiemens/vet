@@ -146,7 +146,7 @@
   <header>
     <h2>{title}</h2>
     {#if bar}<div class="bar">{@render bar()}</div>{/if}
-    {#if closeButton}<IconButton icon="close" label="Close" size={22} iconSize={12} onclick={onclose} />{/if}
+    {#if closeButton}<IconButton icon="close" label="Close" size="s" iconSize={12} onclick={onclose} />{/if}
   </header>
   {#if padded}
     <ScrollArea><div class="padded">{@render children()}</div></ScrollArea>

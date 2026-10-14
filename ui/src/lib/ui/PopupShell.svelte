@@ -176,7 +176,7 @@
     outline: 0;
     background: transparent;
     color: var(--text);
-    font: 14px var(--font-ui);
+    font: var(--fs-search) var(--font-ui);
   }
   .query input.invalid {
     color: var(--del-text);

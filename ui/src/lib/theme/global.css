@@ -96,7 +96,7 @@ button {
 }
 /* `.ctl.small`: a push button inside a row or a card. */
 .ctl.small {
-  height: 20px;
+  height: var(--h-ctl-xs);
   padding: 0 8px;
   font-size: var(--fs-mono-s);
 }
@@ -223,7 +223,7 @@ textarea.field {
   gap: 6px;
   height: var(--h-ctl);
   padding: 0 10px;
-  font-size: 12px;
+  font-size: var(--fs-mono);
   font-weight: 600;
   color: var(--text-2);
 }
@@ -293,15 +293,15 @@ textarea.field {
 /* `.badge`: a small status pill; `.badge-moved`, `.badge-ok` and `.badge-new` colour it, `.badge-pending`
    is one whose answer is not in yet. */
 .badge {
-  height: 16px;
+  height: var(--h-ctl-xxs);
   box-sizing: border-box;
   display: inline-flex;
   align-items: center;
   padding: 0 6px;
   border: 1px solid var(--line);
-  border-radius: 8px;
+  border-radius: calc(var(--h-ctl-xxs) / 2);
   color: var(--text-2);
-  font-size: 11px;
+  font-size: var(--fs-xs);
   line-height: 1;
   white-space: nowrap;
 }

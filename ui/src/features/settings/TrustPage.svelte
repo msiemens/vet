@@ -28,6 +28,6 @@
   .line {
     margin: 0 0 0 28px;
     color: var(--text-3);
-    font-size: 12px;
+    font-size: var(--fs-mono);
   }
 </style>

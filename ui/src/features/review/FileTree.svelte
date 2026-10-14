@@ -566,7 +566,7 @@
         icon={allOpen ? "collapseAll" : "expandAll"}
         label={allOpen ? "Collapse all" : "Expand all symbols"}
         disabled={!foldable.length}
-        size={22}
+        size="s"
         iconSize={14}
         onclick={toggleAll}
       />
@@ -577,7 +577,7 @@
         label={commands.label("view.revealFile")}
         title={commands.hint("view.revealFile")}
         disabled={!commands.isEnabled("view.revealFile")}
-        size={22}
+        size="s"
         iconSize={13}
         onclick={() => commands.run("view.revealFile")}
       />
@@ -744,6 +744,6 @@
     max-width: 62%;
     overflow: hidden;
     text-overflow: ellipsis;
-    font-size: 11px;
+    font-size: var(--fs-xs);
   }
 </style>

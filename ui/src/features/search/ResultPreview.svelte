@@ -164,7 +164,7 @@
     margin-bottom: 2px;
     border-bottom: 1px solid var(--line-soft);
     color: var(--text-2);
-    font-size: 12px;
+    font-size: var(--fs-mono);
   }
   .head b {
     color: var(--text);
@@ -172,10 +172,10 @@
   }
   .dim {
     color: var(--text-3);
-    font-size: 11.5px;
+    font-size: var(--fs-mono-s);
   }
   .small {
-    font-size: 11px;
+    font-size: var(--fs-xs);
   }
   .grow {
     flex: 1;
@@ -184,7 +184,7 @@
     display: flex;
     align-items: center;
     height: var(--h-line);
-    font: 12px var(--font-mono);
+    font: var(--fs-mono) var(--font-mono);
     font-variant-ligatures: none;
     white-space: pre;
     background: var(--bg-editor);
@@ -229,6 +229,6 @@
   .note {
     margin: 8px 12px;
     color: var(--text-3);
-    font-size: 12px;
+    font-size: var(--fs-mono);
   }
 </style>

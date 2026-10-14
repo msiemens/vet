@@ -25,7 +25,7 @@
 <span class="tag" class:mono class:removable={onremove !== undefined} {title}>
   {@render children()}
   {#if onremove}
-    <IconButton icon="close" label={removeLabel} title={removeTitle} size={16} iconSize={10} onclick={onremove} />
+    <IconButton icon="close" label={removeLabel} title={removeTitle} size="xxs" iconSize={10} onclick={onremove} />
   {/if}
 </span>
 
@@ -35,7 +35,7 @@
     align-items: center;
     gap: 2px;
     min-width: 0;
-    height: 20px;
+    height: var(--h-ctl-xs);
     padding: 0 7px;
     box-sizing: border-box;
     border: 1px solid color-mix(in srgb, var(--accent) 38%, transparent);
