@@ -213,16 +213,26 @@ impl SqliteStore {
         vet_log::data_dir()
     }
 
-    /// A database written by another version of Vet (it applied migrations
-    /// this one does not have) is deleted and created anew, losing its reviews.
+    /// Brings the database up to date by its migrations. One that a release wrote before there
+    /// were migrations is deleted and created anew, losing its contents; one written by a newer
+    /// Vet is left alone and fails to open.
     pub async fn open(dir: &Path) -> Result<Self, StoreError> {
         std::fs::create_dir_all(dir)?;
         let mut writer = ReviewWriter::connect(dir).await?;
-        if migration::is_foreign(&writer.db).await? {
-            tracing::warn!(dir = %dir.display(), "the database was written by another version of Vet; creating it anew");
-            writer.db.close().await?;
-            remove_database(dir, DATABASE)?;
-            writer = ReviewWriter::connect(dir).await?;
+        match migration::origin(&writer.db).await? {
+            migration::Origin::Known => {}
+            migration::Origin::Unmigrated => {
+                tracing::warn!(dir = %dir.display(), "the database predates migrations; creating it anew");
+                writer.db.close().await?;
+                remove_database(dir, DATABASE)?;
+                writer = ReviewWriter::connect(dir).await?;
+            }
+            migration::Origin::Newer => {
+                return Err(StoreError(format!(
+                    "the database in {} was written by a newer version of Vet",
+                    dir.display()
+                )));
+            }
         }
         migration::Migrator::up(&writer.db, None).await?;
         let reader = StoreReader::connect(dir).await?;

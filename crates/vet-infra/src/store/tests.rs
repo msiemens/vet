@@ -194,6 +194,35 @@ async fn a_database_of_another_version_is_recreated_and_one_of_this_version_is_k
 }
 
 #[tokio::test]
+async fn a_database_of_a_newer_version_is_refused_and_left_as_it_is() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = open(&dir).await;
+    let (changeset, _) = review(&store, SnapshotId(h(1)), SnapshotId(h(2))).await;
+    drop(store);
+    let db = ReviewWriter::connect(dir.path()).await.unwrap().db;
+    db.execute_unprepared("INSERT INTO seaql_migrations VALUES ('m29990101_000001_from_the_future', 1)")
+        .await
+        .unwrap();
+    db.close().await.unwrap();
+
+    let Err(refused) = SqliteStore::open(dir.path()).await else {
+        panic!("a database of a newer version opened");
+    };
+    assert!(refused.0.contains("newer version"), "{}", refused.0);
+
+    let db = ReviewWriter::connect(dir.path()).await.unwrap().db;
+    db.execute_unprepared("DELETE FROM seaql_migrations WHERE version LIKE '%future'")
+        .await
+        .unwrap();
+    db.close().await.unwrap();
+    let store = open(&dir).await;
+    assert_eq!(
+        store.changeset("/repo".into(), Source::WorkingTree).await.unwrap(),
+        Some(changeset)
+    );
+}
+
+#[tokio::test]
 async fn a_changeset_is_found_by_its_repository_and_source() {
     let dir = tempfile::tempdir().unwrap();
     let store = open(&dir).await;
