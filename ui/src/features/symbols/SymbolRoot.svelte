@@ -85,7 +85,7 @@
     <button
       class="flat more"
       type="button"
-      style:padding-left="calc(8px + {depth} * var(--w-indent) + var(--w-chev) + 6px)"
+      style:padding-left="calc(var(--inset-tree-name) + {depth} * var(--w-indent))"
       onclick={() => all.add(cap)}>{entries.length - rows.length} more</button
     >
   {/if}
@@ -171,14 +171,14 @@
     display: flex;
     align-items: center;
     min-height: var(--h-ctl);
-    padding: 0 10px 0 28px;
+    padding: 0 10px 0 var(--inset-tree-name);
     border-top: 1px solid var(--line-soft);
     color: var(--text-3);
     font-size: 12px;
   }
   .note {
     margin: 0;
-    padding: 2px 10px 4px 28px;
+    padding: 2px 10px 4px var(--inset-tree-name);
     line-height: 1.4;
   }
   .note.gap {

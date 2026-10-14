@@ -12,10 +12,10 @@
   import EmptyState from "../../lib/ui/EmptyState.svelte";
   import FilterChip from "../../lib/ui/FilterChip.svelte";
   import SearchField from "../../lib/ui/SearchField.svelte";
-  import GroupHeader from "../../lib/ui/GroupHeader.svelte";
   import IconButton from "../../lib/ui/IconButton.svelte";
   import FileIcon from "../../lib/ui/FileIcon.svelte";
   import Menu from "../../lib/ui/Menu.svelte";
+  import PathText from "../../lib/ui/PathText.svelte";
   import ProgressBar from "../../lib/ui/ProgressBar.svelte";
   import ReviewDot from "../../lib/ui/ReviewDot.svelte";
   import SeverityIcon from "../../lib/ui/SeverityIcon.svelte";
@@ -23,6 +23,7 @@
   import Popover from "../../lib/ui/Popover.svelte";
   import Segmented from "../../lib/ui/Segmented.svelte";
   import Spinner from "../../lib/ui/Spinner.svelte";
+  import TreeRow from "../../lib/ui/TreeRow.svelte";
   import VirtualRows from "../../lib/ui/VirtualRows.svelte";
   import { changeset } from "../../state/changeset.svelte";
   import {
@@ -309,7 +310,6 @@
     ]
       .filter(Boolean)
       .join("\n");
-  const dir = (path: string) => path.slice(0, path.lastIndexOf("/") + 1);
   const base = (path: string) => path.slice(path.lastIndexOf("/") + 1);
 </script>
 
@@ -476,86 +476,96 @@
           {@const item = items[i]}
           {#if item}
             {#if item.kind === "group"}
-              <GroupHeader
+              <TreeRow
+                depth={item.depth}
                 open={item.open}
+                tone={item.tone === "new" ? "strong" : "plain"}
+                heading
+                hot={item.tone === "new"}
                 count={item.count}
-                strong={item.tone === "new"}
+                letters={false}
                 cur={i === cursor}
                 tabindex={-1}
                 onclick={(e) => click(e, i)}
               >
-                {#snippet before()}
+                {#snippet glyph()}
                   {#if item.tone === "error" || item.tone === "warning" || item.tone === "info"}
                     <SeverityIcon severity={item.tone} />
                   {/if}
                 {/snippet}
                 {item.title}
-              </GroupHeader>
+              </TreeRow>
             {:else if item.kind === "file"}
-              <GroupHeader
-                kind="file"
-                indent={22}
+              <TreeRow
+                depth={item.depth}
                 open={item.open}
+                tone="strong"
                 count={item.count}
+                letters={false}
                 cur={i === cursor}
                 tabindex={-1}
                 onclick={(e) => click(e, i)}
               >
-                {#snippet before()}<FileIcon name={base(item.path)} />{/snippet}
-                <span class="path"><span class="dir">{dir(item.path)}</span>{base(item.path)}</span>
-              </GroupHeader>
+                {#snippet glyph()}<FileIcon name={base(item.path)} />{/snippet}
+                <PathText path={item.path} />
+              </TreeRow>
             {:else if item.kind === "problem"}
               {@const p = item.problem}
-              <button
-                class="flat pick line problem"
-                class:cur={i === cursor}
-                class:on={p.id === problems.selected}
-                class:old={p.origin === "existing"}
-                class:inset={item.showFile}
-                type="button"
-                tabindex="-1"
+              <TreeRow
+                class={["problem", p.origin === "existing" && "old"]}
+                depth={item.depth}
+                tone={p.origin === "existing" ? "plain" : "strong"}
+                letters={false}
+                on={p.id === problems.selected}
+                cur={i === cursor}
                 title={tip(p)}
+                tabindex={-1}
                 onclick={(e) => click(e, i)}
               >
-                <SeverityIcon severity={p.level} />
-                <span class="msg"
-                  >{#each parts(p.diagnostic.message) as part, n (n)}{#if part.code}<code>{part.text}</code
-                      >{:else}{part.text}{/if}{/each}</span
-                >
-                <span class="src mono">{[p.diagnostic.source, p.diagnostic.code].filter(Boolean).join(" ")}</span>
-                {#if item.pill && (p.origin === "new" || p.origin === "existing" || p.origin === "pending")}
-                  <span
-                    class="badge"
-                    class:badge-new={p.origin === "new"}
-                    class:badge-pending={p.origin === "pending"}
-                    title={ORIGIN_TITLE[p.origin]}>{p.origin === "pending" ? "comparing" : p.origin}</span
-                  >
-                {/if}
-                <ReviewDot reviewed={p.reviewed} />
-                <span class="loc mono">{place(p, item.showFile)}</span>
-              </button>
+                {#snippet glyph()}<SeverityIcon severity={p.level} />{/snippet}
+                {#each parts(p.diagnostic.message) as part, n (n)}{#if part.code}<code>{part.text}</code
+                    >{:else}{part.text}{/if}{/each}
+                {#snippet trailing()}
+                  <span class="src mono">{[p.diagnostic.source, p.diagnostic.code].filter(Boolean).join(" ")}</span>
+                  {#if item.pill && (p.origin === "new" || p.origin === "existing" || p.origin === "pending")}
+                    <span
+                      class="badge"
+                      class:badge-new={p.origin === "new"}
+                      class:badge-pending={p.origin === "pending"}
+                      title={ORIGIN_TITLE[p.origin]}>{p.origin === "pending" ? "comparing" : p.origin}</span
+                    >
+                  {/if}
+                  <ReviewDot reviewed={p.reviewed} />
+                  <span class="loc mono">{place(p, item.showFile)}</span>
+                {/snippet}
+              </TreeRow>
             {:else if item.kind === "wait"}
-              <div class="line waiting">
-                <Spinner />
-                <span class="path">Waiting for {item.server}: {item.files.map(base).join(", ")}</span>
-              </div>
+              <TreeRow interactive={false} tone="soft" letters={false}>
+                {#snippet glyph()}<Spinner />{/snippet}
+                Waiting for {item.server}: {item.files.map(base).join(", ")}
+              </TreeRow>
             {:else if item.kind === "na"}
-              <GroupHeader
+              <TreeRow
+                depth={item.depth}
                 open={item.open}
+                heading
                 count={item.count}
+                letters={false}
                 cur={i === cursor}
                 tabindex={-1}
-                onclick={(e) => click(e, i)}>Not analysed</GroupHeader
+                onclick={(e) => click(e, i)}>Not analysed</TreeRow
               >
             {:else}
-              <div class="pick line na" class:cur={i === cursor}>
-                <FileIcon name={base(item.path)} />
-                <span class="path"><span class="dir">{dir(item.path)}</span>{base(item.path)}</span>
-                <span class="why">{item.why.label}</span>
-                {#if item.why.kind === "serverMissing"}
-                  <button class="link" type="button" onclick={oninstall}>Install…</button>
-                {/if}
-              </div>
+              <TreeRow depth={item.depth} interactive={false} letters={false} cur={i === cursor}>
+                {#snippet glyph()}<FileIcon name={base(item.path)} />{/snippet}
+                <PathText path={item.path} />
+                {#snippet trailing()}
+                  <span class="why">{item.why.label}</span>
+                  {#if item.why.kind === "serverMissing"}
+                    <button class="link" type="button" onclick={oninstall}>Install…</button>
+                  {/if}
+                {/snippet}
+              </TreeRow>
             {/if}
           {/if}
         {/snippet}
@@ -607,48 +617,10 @@
   .body.stale {
     opacity: 0.55;
   }
-  .line {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    height: var(--h-row);
-    width: 100%;
-    box-sizing: border-box;
-    padding: 0 12px;
-    text-align: left;
-    white-space: nowrap;
-    font-size: var(--fs-ctl);
-    border-radius: 0;
-  }
-  .dir {
-    color: var(--text-3);
-  }
-  .path {
-    flex: 1;
-    min-width: 0;
-    overflow: hidden;
-    text-overflow: ellipsis;
-  }
-  .problem {
-    padding-left: 44px;
-    color: var(--text);
-  }
-  .problem.inset {
-    padding-left: 22px;
-  }
-  .problem.old {
-    color: var(--text-2);
-  }
-  .problem.old :global(.severity-icon) {
+  :global(.problem.old .severity-icon) {
     opacity: 0.8;
   }
-  .msg {
-    flex: 1;
-    min-width: 0;
-    overflow: hidden;
-    text-overflow: ellipsis;
-  }
-  .msg code {
+  code {
     font-family: var(--font-mono);
     font-size: 12px;
   }
@@ -661,13 +633,6 @@
   .loc {
     min-width: 40px;
     text-align: right;
-  }
-  .na {
-    padding-left: 34px;
-    color: var(--text-2);
-  }
-  .waiting {
-    color: var(--text-3);
   }
   .why {
     flex: none;

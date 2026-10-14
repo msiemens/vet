@@ -3,7 +3,7 @@
   import type { SoftWrap } from "../../lib/softWrap";
   import { THEMES, type Theme } from "../../lib/theme/theme";
   import Dialog from "../../lib/ui/Dialog.svelte";
-  import GroupHeader from "../../lib/ui/GroupHeader.svelte";
+  import GroupLabel from "../../lib/ui/GroupLabel.svelte";
   import ScrollArea from "../../lib/ui/ScrollArea.svelte";
   import Segmented from "../../lib/ui/Segmented.svelte";
   import { commands } from "../../state/commands";
@@ -79,12 +79,12 @@
 <Dialog title="Settings" {onclose} width="780px" height="min(520px, 76vh)" resizable="settings" padded={false}>
   <div class="layout">
     <nav aria-label="Settings pages">
-      <GroupHeader kind="label">Application</GroupHeader>
+      <GroupLabel>Application</GroupLabel>
       {#each APPLICATION as p (p.id)}{@render pick(p)}{/each}
-      <GroupHeader kind="label">
+      <GroupLabel>
         Project
         {#snippet trailing()}<span class="project">{project}</span>{/snippet}
-      </GroupHeader>
+      </GroupLabel>
       {#if project === undefined}<p class="note">Open a project first</p>{/if}
       {#each PROJECT as p (p.id)}{@render pick(p, project === undefined)}{/each}
     </nav>

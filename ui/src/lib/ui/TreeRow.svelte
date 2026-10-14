@@ -5,6 +5,7 @@
   // Problems, Find and Comments are all this row. A row of the Structure tool is one line; a row of
   // the Symbol panel may `wrap`, so no name is cut.
   import type { Snippet } from "svelte";
+  import type { ClassValue } from "svelte/elements";
   import type { StatusLetter } from "../changeLetter";
   import ChangeLetter from "./ChangeLetter.svelte";
   import Chevron from "./Chevron.svelte";
@@ -62,7 +63,7 @@
     /** The row ends with the column of change letters. */
     letters?: boolean;
     /** Classes of the row's element, for what the list around it marks. */
-    class?: string;
+    class?: ClassValue;
     title?: string;
     /** The letter of the change. */
     status?: StatusLetter;

@@ -9,7 +9,7 @@
   import { fullName } from "../../lib/symbolLabel";
   import ChangeLetter from "../../lib/ui/ChangeLetter.svelte";
   import EmptyState from "../../lib/ui/EmptyState.svelte";
-  import GroupHeader from "../../lib/ui/GroupHeader.svelte";
+  import GroupLabel from "../../lib/ui/GroupLabel.svelte";
   import Icon from "../../lib/ui/Icon.svelte";
   import IconButton from "../../lib/ui/IconButton.svelte";
   import { ListNav, revealCurrent } from "../../lib/ui/listNav";
@@ -21,6 +21,7 @@
   import { SpeedSearch } from "../../lib/ui/speedSearch.svelte";
   import SpeedSearchField from "../../lib/ui/SpeedSearchField.svelte";
   import StatusDot from "../../lib/ui/StatusDot.svelte";
+  import TreeRow from "../../lib/ui/TreeRow.svelte";
   import { isMac } from "../../state/host";
   import type { PickerView } from "../../state/pickerTypes";
   import { countText, groupRows, matchedRow, opensBelow, symbolLabel, visibleRows } from "./pickerRows";
@@ -227,15 +228,15 @@
       {:else}
         {#each items as item, i (i)}
           {#if item.kind === "section"}
-            <GroupHeader kind="label">{item.label}</GroupHeader>
+            <GroupLabel>{item.label}</GroupLabel>
           {:else if item.kind === "file"}
-            <GroupHeader kind="file" count={item.count}>
-              {#snippet before()}{#if item.external}<Icon name="module" size={12} />{/if}{/snippet}
+            <TreeRow interactive={false} tone="strong" count={item.count} letters={false}>
+              {#snippet glyph()}{#if item.external}<Icon name="module" size={12} />{/if}{/snippet}
               <span class="path">
                 <PathText path={item.path} />
                 {#if item.status}<ChangeLetter letter={item.status} />{/if}
               </span>
-            </GroupHeader>
+            </TreeRow>
           {:else}
             <button
               class="pick hit"

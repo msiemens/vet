@@ -15,7 +15,6 @@
   import EmptyState from "../../lib/ui/EmptyState.svelte";
   import FileIcon from "../../lib/ui/FileIcon.svelte";
   import FilterChip from "../../lib/ui/FilterChip.svelte";
-  import GroupHeader from "../../lib/ui/GroupHeader.svelte";
   import Icon from "../../lib/ui/Icon.svelte";
   import KeyHint from "../../lib/ui/KeyHint.svelte";
   import { ListNav } from "../../lib/ui/listNav";
@@ -27,6 +26,7 @@
   import PopupShell from "../../lib/ui/PopupShell.svelte";
   import SearchOptionToggles from "../../lib/ui/SearchOptionToggles.svelte";
   import Segmented from "../../lib/ui/Segmented.svelte";
+  import TreeRow from "../../lib/ui/TreeRow.svelte";
   import VirtualRows from "../../lib/ui/VirtualRows.svelte";
   import type { Backend, SearchQuery, SearchResults } from "../../state/backend";
   import { commands } from "../../state/commands";
@@ -453,15 +453,16 @@
             {@const r = rows[i]}
             {#if r.kind === "file"}
               {@const dir = dirname(r.file.path)}
-              <GroupHeader
-                kind="file"
+              <TreeRow
                 open={!r.collapsed}
+                tone="strong"
                 count={r.file.hits}
-                tip={r.file.path}
+                letters={false}
+                title={r.file.path}
                 tabindex={-1}
                 onclick={() => toggleFile(r.file.path)}
               >
-                {#snippet before()}<FileIcon name={basename(r.file.path)} />{/snippet}
+                {#snippet glyph()}<FileIcon name={basename(r.file.path)} />{/snippet}
                 <span class="name">{basename(r.file.path)}</span>
                 {#if dir}<span class="dir">{dir}/</span>{/if}
                 {#snippet trailing()}
@@ -477,7 +478,7 @@
                     <span class="unchanged">unchanged</span>
                   {/if}
                 {/snippet}
-              </GroupHeader>
+              </TreeRow>
             {:else}
               <!-- The row is chosen by the keys of the dialog; a click only chooses it too. -->
               <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->

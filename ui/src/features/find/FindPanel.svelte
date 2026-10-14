@@ -14,11 +14,11 @@
   import SearchField from "../../lib/ui/SearchField.svelte";
   import Banner from "../../lib/ui/Banner.svelte";
   import FilterChip from "../../lib/ui/FilterChip.svelte";
-  import GroupHeader from "../../lib/ui/GroupHeader.svelte";
   import ReviewDot from "../../lib/ui/ReviewDot.svelte";
   import IconButton from "../../lib/ui/IconButton.svelte";
   import { ListNav } from "../../lib/ui/listNav";
   import Spinner from "../../lib/ui/Spinner.svelte";
+  import TreeRow from "../../lib/ui/TreeRow.svelte";
   import VirtualRows from "../../lib/ui/VirtualRows.svelte";
   import type { Backend } from "../../state/backend";
   import { type FindSet, findSets } from "../../state/findSets.svelte";
@@ -314,17 +314,18 @@
               {@const item = items.at(i)}
               {#if item?.kind === "file"}
                 {@const f = item.file}
-                <GroupHeader
-                  kind="file"
+                <TreeRow
                   open={item.open}
+                  tone="strong"
                   count={item.count}
+                  letters={false}
                   cur={i === cursor}
                   on={i === cursor}
-                  tip={f.path}
+                  title={f.path}
                   tabindex={-1}
                   onclick={(e) => nav.click(e, i)}
                 >
-                  {#snippet before()}
+                  {#snippet glyph()}
                     {#if f.external}<span class="lib"><Icon name="module" size={12} /></span>{:else}<FileIcon
                         name={basename(f.path)}
                       />{/if}
@@ -343,7 +344,7 @@
                       >{/if}
                     {#if item.notSeen}<span class="uns">{item.notSeen} not seen</span>{/if}
                   {/snippet}
-                </GroupHeader>
+                </TreeRow>
               {:else if item?.kind === "place"}
                 {@const p = item.place}
                 {@const move = set.moves.get(p.id)}
@@ -578,7 +579,7 @@
     font-weight: 500;
   }
   .place {
-    padding-left: 30px;
+    padding-left: var(--inset-tree-name);
   }
   .place.old .ln,
   .place.old .code {

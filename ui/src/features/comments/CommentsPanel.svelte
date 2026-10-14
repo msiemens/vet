@@ -3,10 +3,10 @@
   import { canSubmit, isSubmitKey } from "../../lib/composer";
   import { movedLabel, movedTitle } from "../../lib/movedTitle";
   import EmptyState from "../../lib/ui/EmptyState.svelte";
-  import GroupHeader from "../../lib/ui/GroupHeader.svelte";
   import Icon from "../../lib/ui/Icon.svelte";
   import IconButton from "../../lib/ui/IconButton.svelte";
   import ScrollArea from "../../lib/ui/ScrollArea.svelte";
+  import TreeRow from "../../lib/ui/TreeRow.svelte";
   import { changeset } from "../../state/changeset.svelte";
   import { commands } from "../../state/commands";
   import { contextMenus } from "../../state/contextMenu.svelte";
@@ -135,9 +135,9 @@
 {#snippet group(title: string, list: Thread[], id: GroupId)}
   {@const cut = shown(list, id === "resolved" && showAllResolved, RESOLVED_SHOWN)}
   <section aria-label={title} data-group={id}>
-    <GroupHeader open={!folded.includes(id)} count={list.length} onclick={() => fold(id)}>
+    <TreeRow open={!folded.includes(id)} heading count={list.length} letters={false} onclick={() => fold(id)}>
       <span class:conflict={id === "conflicts"}>{title}</span>
-    </GroupHeader>
+    </TreeRow>
     {#if !folded.includes(id)}
       <ul>
         {#each id === "resolved" ? cut.rows : list as thread (thread.id)}{@render row(thread)}{/each}
@@ -284,7 +284,7 @@
     width: 100%;
     display: flex;
     align-items: flex-start;
-    padding: 3px 10px 3px 26px;
+    padding: 3px 10px 3px var(--inset-tree-name);
     text-align: left;
     font-size: var(--fs-ctl);
   }
@@ -360,7 +360,7 @@
     display: flex;
     align-items: center;
     gap: 6px;
-    padding: 0 10px 3px 26px;
+    padding: 0 10px 3px var(--inset-tree-name);
   }
   .reason {
     min-width: 0;

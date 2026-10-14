@@ -12,7 +12,7 @@
   import Avatar from "../../lib/ui/Avatar.svelte";
   import CiStatus from "../../lib/ui/CiStatus.svelte";
   import EmptyState from "../../lib/ui/EmptyState.svelte";
-  import GroupHeader from "../../lib/ui/GroupHeader.svelte";
+  import GroupLabel from "../../lib/ui/GroupLabel.svelte";
   import Icon from "../../lib/ui/Icon.svelte";
   import IconButton from "../../lib/ui/IconButton.svelte";
   import ScrollArea from "../../lib/ui/ScrollArea.svelte";
@@ -253,13 +253,13 @@
 
         {#snippet commentsBody()}
           {#if openThreads.length}
-            <GroupHeader kind="label" count={openThreads.length}>Open</GroupHeader>
+            <GroupLabel count={openThreads.length}>Open</GroupLabel>
             <div class="cards"><ThreadCards list={openThreads} {card} /></div>
           {:else}
             <EmptyState align="start" text={groups.resolved.length ? "No open threads." : "No comments yet."} />
           {/if}
           {#if groups.resolved.length}
-            <GroupHeader kind="label" count={groups.resolved.length}>Resolved</GroupHeader>
+            <GroupLabel count={groups.resolved.length}>Resolved</GroupLabel>
             <div class="cards">
               <ThreadCards list={groups.resolved} {card} isOpen={() => resolvedOpen} ontoggle={flipResolved} />
             </div>
@@ -374,7 +374,7 @@
     flex-direction: column;
     align-items: stretch;
     gap: 6px;
-    padding: 2px 12px 10px 26px;
+    padding: 2px 12px 10px var(--inset-tree-name);
     font-size: var(--fs-ctl);
     line-height: 1.5;
   }
