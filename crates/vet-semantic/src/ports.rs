@@ -4,6 +4,7 @@
 use std::fmt;
 use std::path::PathBuf;
 use std::pin::Pin;
+use std::sync::Arc;
 
 use vet_core::content::{BlobId, Hash, LineRange, RepoPath, SnapshotId};
 
@@ -417,13 +418,20 @@ pub struct Readiness {
 
 /// The required operations (§7.1). Whether the server's answers come from the
 /// live worktree or an immutable snapshot is the pool's concern, not this trait's.
+/// The queries that see single files take an `overlay`: on a live tree, the texts of
+/// the revision on view, which the server is fed instead of the disk's; `None` on
+/// an immutable tree, whose disk is the revision and so needs no overlay.
 ///
 /// Methods take `&self`: the pool lets several callers use one server at once.
 pub trait LanguageServer: Send + Sync {
     fn readiness(&self) -> Readiness;
     /// The operations the server advertised. The pool does not ask for one it lacks.
     fn features(&self) -> Features;
-    fn document_symbols(&self, file: &RepoPath) -> impl Future<Output = Result<Vec<SymbolInfo>, QueryError>> + Send;
+    fn document_symbols(
+        &self,
+        file: &RepoPath,
+        overlay: Option<OverlayText>,
+    ) -> impl Future<Output = Result<Vec<SymbolInfo>, QueryError>> + Send;
     /// The symbols `text` declares if it were the content of `file`, which need
     /// not exist in the tree. They depend on the text alone, so any server of
     /// the file's language can answer. Nothing of the text stays in the server.
@@ -432,19 +440,47 @@ pub trait LanguageServer: Send + Sync {
         file: &RepoPath,
         text: &str,
     ) -> impl Future<Output = Result<Vec<SymbolInfo>, QueryError>> + Send;
-    fn definition(&self, at: &At) -> impl Future<Output = Result<Vec<Location>, QueryError>> + Send;
+    fn definition(
+        &self,
+        at: &At,
+        overlay: Option<OverlayText>,
+    ) -> impl Future<Output = Result<Vec<Location>, QueryError>> + Send;
     /// Without the declaration itself.
-    fn references(&self, at: &At) -> impl Future<Output = Result<Vec<Location>, QueryError>> + Send;
+    fn references(
+        &self,
+        at: &At,
+        overlay: Option<OverlayText>,
+    ) -> impl Future<Output = Result<Vec<Location>, QueryError>> + Send;
     /// The implementations of the interface, trait or abstract member at `at`. A server that
     /// does not offer the operation fails the query.
-    fn implementations(&self, at: &At) -> impl Future<Output = Result<Vec<Location>, QueryError>> + Send;
-    fn hover(&self, at: &At) -> impl Future<Output = Result<Option<String>, QueryError>> + Send;
+    fn implementations(
+        &self,
+        at: &At,
+        overlay: Option<OverlayText>,
+    ) -> impl Future<Output = Result<Vec<Location>, QueryError>> + Send;
+    fn hover(
+        &self,
+        at: &At,
+        overlay: Option<OverlayText>,
+    ) -> impl Future<Output = Result<Option<String>, QueryError>> + Send;
     /// Callers of the symbol at `at` that are inside the root.
-    fn incoming_calls(&self, at: &At) -> impl Future<Output = Result<Vec<SymbolInfo>, QueryError>> + Send;
-    fn outgoing_calls(&self, at: &At) -> impl Future<Output = Result<Vec<SymbolInfo>, QueryError>> + Send;
+    fn incoming_calls(
+        &self,
+        at: &At,
+        overlay: Option<OverlayText>,
+    ) -> impl Future<Output = Result<Vec<SymbolInfo>, QueryError>> + Send;
+    fn outgoing_calls(
+        &self,
+        at: &At,
+        overlay: Option<OverlayText>,
+    ) -> impl Future<Output = Result<Vec<SymbolInfo>, QueryError>> + Send;
     /// Matches inside the root.
     fn workspace_symbols(&self, query: &str) -> impl Future<Output = Result<Vec<SymbolInfo>, QueryError>> + Send;
-    fn diagnostics(&self, file: &RepoPath) -> impl Future<Output = Result<Vec<Diagnostic>, QueryError>> + Send;
+    fn diagnostics(
+        &self,
+        file: &RepoPath,
+        overlay: Option<OverlayText>,
+    ) -> impl Future<Output = Result<Vec<Diagnostic>, QueryError>> + Send;
     /// Completes with what is known of why when the server's process is gone or its channel
     /// closed, whoever ended it; never for a server that cannot tell. Owns what it waits on,
     /// so it does not keep the server alive.
@@ -494,6 +530,20 @@ pub enum Tree {
     /// A materialized snapshot: files never change.
     Immutable,
 }
+
+/// Where a live tree's server takes a file's text from, for the queries of one
+/// revision: the revision's snapshot, whose positions the questions are asked at
+/// and whose text the answers are to keep (D97). A shared handle is carried per
+/// query, and answers of a live tree are never kept under a tree, so the texts
+/// need no cache key.
+pub trait Overlay: Send + Sync + 'static {
+    /// The text of `file` that the server is to see; `None` leaves it what the
+    /// disk holds, as when the revision holds no text of the file.
+    fn text(&self, file: &RepoPath) -> Pin<Box<dyn Future<Output = Option<String>> + Send + '_>>;
+}
+
+/// The shared handle the queries of one revision carry through to their server.
+pub type OverlayText = Arc<dyn Overlay>;
 
 /// How a restore step ended short of plain success.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]

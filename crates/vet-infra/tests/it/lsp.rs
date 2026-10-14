@@ -104,7 +104,7 @@ async fn rust_analyzer_answers_the_primitive_queries() {
         .server;
     let lib = path("src/lib.rs");
 
-    let symbols = server.document_symbols(&lib).await.unwrap();
+    let symbols = server.document_symbols(&lib, None).await.unwrap();
     let names: Vec<String> = symbols.iter().map(|s| s.sym.name.join("::")).collect();
     assert!(names.contains(&"Counter".to_string()), "{names:?}");
     assert!(names.contains(&"impl Counter::bump".to_string()), "{names:?}");
@@ -114,10 +114,10 @@ async fn rust_analyzer_answers_the_primitive_queries() {
         file: lib.clone(),
         pos: find(LIB, "helper()", 1, 1),
     };
-    let hover = server.hover(&call).await.unwrap().expect("hover on a function");
+    let hover = server.hover(&call, None).await.unwrap().expect("hover on a function");
     assert!(hover.contains("fn helper"), "{hover}");
 
-    let defs = server.definition(&call).await.unwrap();
+    let defs = server.definition(&call, None).await.unwrap();
     assert_eq!(defs.len(), 1);
     assert_eq!(defs[0].file, lib);
     assert!(!defs[0].external);
@@ -127,7 +127,7 @@ async fn rust_analyzer_answers_the_primitive_queries() {
         file: lib.clone(),
         pos: find(LIB, "helper", 0, 1),
     };
-    let refs = server.references(&helper).await.unwrap();
+    let refs = server.references(&helper, None).await.unwrap();
     assert_eq!(refs.len(), 1, "{refs:?}");
     assert_eq!(refs[0].span.start.line, call.pos.line);
 
@@ -135,15 +135,15 @@ async fn rust_analyzer_answers_the_primitive_queries() {
         file: lib.clone(),
         pos: find(LIB, "fn area", 0, 3),
     };
-    let implementations = server.implementations(&trait_method).await.unwrap();
+    let implementations = server.implementations(&trait_method, None).await.unwrap();
     assert_eq!(implementations.len(), 1, "{implementations:?}");
     assert_eq!(implementations[0].file, lib);
     assert_eq!(implementations[0].span.start.line, find(LIB, "fn area", 1, 0).line);
 
-    let callers = server.incoming_calls(&helper).await.unwrap();
+    let callers = server.incoming_calls(&helper, None).await.unwrap();
     let callers: Vec<String> = callers.iter().map(|s| s.sym.name.join("::")).collect();
     assert_eq!(callers, ["entry"]);
-    let callees = server.outgoing_calls(&helper).await.unwrap();
+    let callees = server.outgoing_calls(&helper, None).await.unwrap();
     let callees: Vec<String> = callees.iter().map(|s| s.sym.name.join("::")).collect();
     assert!(callees.contains(&"impl Counter::bump".to_string()), "{callees:?}");
 
@@ -154,20 +154,20 @@ async fn rust_analyzer_answers_the_primitive_queries() {
             .any(|s| s.sym.name.last().map(String::as_str) == Some("entry"))
     );
 
-    assert!(server.diagnostics(&lib).await.unwrap().is_empty());
+    assert!(server.diagnostics(&lib, None).await.unwrap().is_empty());
 
     // An edit on disk is seen by the next query (the live worktree case).
     let edited = format!("{LIB}\npub fn added() -> u32 {{\n    let unused: u32 = \"x\";\n    1\n}}\n");
     std::fs::write(dir.path().join("src/lib.rs"), &edited).unwrap();
     let names: Vec<String> = server
-        .document_symbols(&lib)
+        .document_symbols(&lib, None)
         .await
         .unwrap()
         .iter()
         .map(|s| s.sym.name.join("::"))
         .collect();
     assert!(names.contains(&"added".to_string()), "{names:?}");
-    let diagnostics = server.diagnostics(&lib).await.unwrap();
+    let diagnostics = server.diagnostics(&lib, None).await.unwrap();
     assert!(
         diagnostics.iter().any(|d| d.message.contains("expected u32")),
         "{diagnostics:?}"
@@ -177,7 +177,7 @@ async fn rust_analyzer_answers_the_primitive_queries() {
     let base = "pub fn gone() -> u32 {\n    1\n}\n\npub fn entry() -> u32 {\n    gone()\n}\n";
     let names = symbol_names(server.text_symbols(&lib, base).await.unwrap());
     assert_eq!(names, ["entry", "gone"]);
-    let names = symbol_names(server.document_symbols(&lib).await.unwrap());
+    let names = symbol_names(server.document_symbols(&lib, None).await.unwrap());
     assert!(names.contains(&"added".to_string()) && !names.contains(&"gone".to_string()));
     assert_eq!(std::fs::read_to_string(dir.path().join("src/lib.rs")).unwrap(), edited);
     assert!(!dir.path().join("src").read_dir().unwrap().any(|e| {
@@ -212,7 +212,7 @@ async fn typescript_language_server_answers_the_primitive_queries() {
         .server;
     let file = path("a.ts");
     let mut names: Vec<String> = server
-        .document_symbols(&file)
+        .document_symbols(&file, None)
         .await
         .unwrap()
         .iter()
@@ -223,20 +223,20 @@ async fn typescript_language_server_answers_the_primitive_queries() {
 
     // Snapshot files are immutable, so an open document is not re-read.
     std::fs::write(dir.path().join("a.ts"), format!("{src}export function late() {{}}\n")).unwrap();
-    assert_eq!(server.document_symbols(&file).await.unwrap().len(), 2);
+    assert_eq!(server.document_symbols(&file, None).await.unwrap().len(), 2);
     let call = At {
         file: file.clone(),
         pos: find(src, "helper()", 0, 1),
     };
-    assert!(server.hover(&call).await.unwrap().is_some());
-    assert_eq!(server.definition(&call).await.unwrap().len(), 1);
+    assert!(server.hover(&call, None).await.unwrap().is_some());
+    assert_eq!(server.definition(&call, None).await.unwrap().len(), 1);
     let decl = At {
         file: file.clone(),
         pos: find(src, "helper", 0, 1),
     };
-    assert_eq!(server.references(&decl).await.unwrap().len(), 1);
-    assert_eq!(server.incoming_calls(&decl).await.unwrap().len(), 1);
-    assert!(server.diagnostics(&file).await.unwrap().is_empty());
+    assert_eq!(server.references(&decl, None).await.unwrap().len(), 1);
+    assert_eq!(server.incoming_calls(&decl, None).await.unwrap().len(), 1);
+    assert!(server.diagnostics(&file, None).await.unwrap().is_empty());
 
     // Other text under the file's name, as for a base side. A script declaring
     // a global the real file also declares must not disturb the real file.
@@ -244,10 +244,10 @@ async fn typescript_language_server_answers_the_primitive_queries() {
     let found = symbol_names(server.text_symbols(&file, base).await.unwrap());
     assert_eq!(found, ["helper", "removed"]);
     assert_eq!(
-        symbol_names(server.document_symbols(&file).await.unwrap()),
+        symbol_names(server.document_symbols(&file, None).await.unwrap()),
         ["entry", "helper"]
     );
-    assert!(server.diagnostics(&file).await.unwrap().is_empty());
+    assert!(server.diagnostics(&file, None).await.unwrap().is_empty());
     server.shutdown().await;
 }
 
@@ -298,7 +298,7 @@ export class Widget {
         .server;
     let file = path("a.ts");
     assert_eq!(
-        symbol_names(server.document_symbols(&file).await.unwrap()),
+        symbol_names(server.document_symbols(&file, None).await.unwrap()),
         [
             "Widget",
             "Widget::field",
@@ -314,7 +314,7 @@ export class Widget {
         pos: find(src, "helper", 0, 1),
     };
     assert_eq!(
-        symbol_names(server.incoming_calls(&helper).await.unwrap()),
+        symbol_names(server.incoming_calls(&helper, None).await.unwrap()),
         ["Widget::method", "arrow"]
     );
     server.shutdown().await;
@@ -372,7 +372,7 @@ pub static VALUE: std::sync::LazyLock<u32> = std::sync::LazyLock::new(|| helper(
         .server;
     let lib = path("src/lib.rs");
     assert_eq!(
-        symbol_names(server.document_symbols(&lib).await.unwrap()),
+        symbol_names(server.document_symbols(&lib, None).await.unwrap()),
         [
             "S",
             "S::n",
@@ -388,7 +388,7 @@ pub static VALUE: std::sync::LazyLock<u32> = std::sync::LazyLock::new(|| helper(
         pos: find(src, "helper", 0, 1),
     };
     assert_eq!(
-        symbol_names(server.incoming_calls(&helper).await.unwrap()),
+        symbol_names(server.incoming_calls(&helper, None).await.unwrap()),
         ["impl S::go", "impl S::go::inner"]
     );
     server.shutdown().await;
@@ -437,7 +437,7 @@ handler = lambda: helper()
         .server;
     let file = path("m.py");
     assert_eq!(
-        symbol_names(server.document_symbols(&file).await.unwrap()),
+        symbol_names(server.document_symbols(&file, None).await.unwrap()),
         [
             "K",
             "K::attr",
@@ -453,7 +453,7 @@ handler = lambda: helper()
         pos: find(src, "helper", 0, 1),
     };
     assert_eq!(
-        symbol_names(server.incoming_calls(&helper).await.unwrap()),
+        symbol_names(server.incoming_calls(&helper, None).await.unwrap()),
         ["K::method", "K::method::inner"]
     );
     server.shutdown().await;
@@ -529,7 +529,7 @@ public class W
     let file = path("W.cs");
     // The namespace is the one module, whatever its depth.
     assert_eq!(
-        module_counts(server.document_symbols(&file).await.unwrap()),
+        module_counts(server.document_symbols(&file, None).await.unwrap()),
         counts(&[
             ("App", 1),
             ("App::W", 1),
@@ -544,7 +544,7 @@ public class W
         pos: find(src, "Helper", 0, 1),
     };
     assert_eq!(
-        symbol_names(server.incoming_calls(&helper).await.unwrap()),
+        symbol_names(server.incoming_calls(&helper, None).await.unwrap()),
         [
             "App::W::Method(int[], int) : int",
             "App::W::Method(int[], int) : int::Local(int) : int",
@@ -589,12 +589,12 @@ async fn roslyn_answers_a_hover_on_a_newly_opened_file() {
             pos: Pos { line: 3, col: 15 },
         };
         // The first answer pays for the server's own warm-up.
-        assert!(server.hover(&hover(0)).await.unwrap().is_some());
+        assert!(server.hover(&hover(0), None).await.unwrap().is_some());
         for i in 1..5 {
-            let text = server.hover(&hover(i)).await.unwrap().expect("a hover on `Run`");
+            let text = server.hover(&hover(i), None).await.unwrap().expect("a hover on `Run`");
             assert!(text.contains("Run"), "{text}");
         }
-        let (a, b) = vet_semantic::join::join(server.hover(&hover(5)), server.references(&hover(0))).await;
+        let (a, b) = vet_semantic::join::join(server.hover(&hover(5), None), server.references(&hover(0), None)).await;
         a.unwrap();
         b.unwrap();
         server.shutdown().await;
@@ -624,7 +624,7 @@ async fn typescript_pushed_diagnostics_are_found_for_a_path_the_server_spells_di
         .server;
     // A spelling the client does not match would leave the answer to the server's timeout,
     // and an empty one.
-    let diagnostics = server.diagnostics(&path("[id]+x/é@a.ts")).await.unwrap();
+    let diagnostics = server.diagnostics(&path("[id]+x/é@a.ts"), None).await.unwrap();
     assert!(
         diagnostics.iter().any(|d| d.message.contains("not assignable")),
         "{diagnostics:?}"
@@ -670,7 +670,7 @@ async fn typescript_namespaces_are_counted_as_modules() {
         .expect("typescript-language-server starts and has every required capability")
         .server;
     assert_eq!(
-        module_counts(server.document_symbols(&path("a.ts")).await.unwrap()),
+        module_counts(server.document_symbols(&path("a.ts"), None).await.unwrap()),
         counts(&[
             ("Acme.Billing", 1),
             ("Acme.Billing::Invoice", 1),
@@ -714,7 +714,7 @@ async fn rust_analyzer_modules_are_counted_as_modules() {
         .expect("rust-analyzer starts and has every required capability")
         .server;
     assert_eq!(
-        module_counts(server.document_symbols(&path("src/lib.rs")).await.unwrap()),
+        module_counts(server.document_symbols(&path("src/lib.rs"), None).await.unwrap()),
         counts(&[
             ("billing", 1),
             ("billing::core", 2),
@@ -799,25 +799,25 @@ async fn yaml_checks_against_the_bundled_schemas_and_refuses_the_address_a_file_
     }
 
     let workflow = path(".github/workflows/ci.yml");
-    let found = server.diagnostics(&workflow).await.unwrap();
+    let found = server.diagnostics(&workflow, None).await.unwrap();
     assert!(
         messages(&found).contains("bogus"),
         "the bundled schema is applied: {found:?}"
     );
-    let names = symbol_names(server.document_symbols(&workflow).await.unwrap());
+    let names = symbol_names(server.document_symbols(&workflow, None).await.unwrap());
     assert!(names.contains(&"jobs".to_owned()), "{names:?}");
     let hover = At {
         file: workflow,
         pos: find(WORKFLOW, "runs-on", 0, 1),
     };
     let text = server
-        .hover(&hover)
+        .hover(&hover, None)
         .await
         .unwrap()
         .expect("the schema describes runs-on");
     assert!(text.to_lowercase().contains("runner"), "{text}");
 
-    let own = server.diagnostics(&path("other.yaml")).await.unwrap();
+    let own = server.diagnostics(&path("other.yaml"), None).await.unwrap();
     assert!(
         messages(&own).contains("not one of the schemas bundled with Vet"),
         "the request for the address reached Vet and was refused: {own:?}"
@@ -825,7 +825,7 @@ async fn yaml_checks_against_the_bundled_schemas_and_refuses_the_address_a_file_
 
     // The schema of a Kubernetes kind is picked from the bundled one.
     let manifest = path("deploy/k8s/app.yaml");
-    let found = server.diagnostics(&manifest).await.unwrap();
+    let found = server.diagnostics(&manifest, None).await.unwrap();
     assert!(
         messages(&found).contains("Missing property \"selector\""),
         "the manifest is checked: {found:?}"
@@ -845,7 +845,7 @@ async fn yaml_loads_the_address_a_file_names_itself_once_the_project_is_trusted(
         "# yaml-language-server: $schema=https://schemas.invalid/own.json\nname: x\n",
     );
     let server = start_server(dir.path(), &config::yaml(), AnalysisPolicy::EXECUTING).await;
-    let own = server.diagnostics(&path("other.yaml")).await.unwrap();
+    let own = server.diagnostics(&path("other.yaml"), None).await.unwrap();
     let text = messages(&own);
     assert!(
         text.contains("schemas.invalid"),
@@ -881,20 +881,20 @@ async fn json_checks_against_the_bundled_schemas_and_refuses_the_address_a_file_
         assert!(!offered.offers(lacking), "{lacking:?}");
     }
 
-    let package = server.diagnostics(&path("package.json")).await.unwrap();
+    let package = server.diagnostics(&path("package.json"), None).await.unwrap();
     assert!(
         messages(&package).contains("string"),
         "the bundled schema is applied: {package:?}"
     );
-    let broken = server.diagnostics(&path("broken.json")).await.unwrap();
+    let broken = server.diagnostics(&path("broken.json"), None).await.unwrap();
     assert!(!broken.is_empty(), "a syntax error is reported");
-    let own = server.diagnostics(&path("own.json")).await.unwrap();
+    let own = server.diagnostics(&path("own.json"), None).await.unwrap();
     assert!(
         messages(&own).contains("not one of the schemas bundled with Vet"),
         "the request for the address reached Vet and was refused: {own:?}"
     );
     assert_eq!(
-        symbol_names(server.document_symbols(&path("package.json")).await.unwrap()),
+        symbol_names(server.document_symbols(&path("package.json"), None).await.unwrap()),
         ["name", "version"]
     );
     server.shutdown().await;
@@ -910,7 +910,7 @@ async fn json_loads_the_address_a_file_names_itself_once_the_project_is_trusted(
         "{\"$schema\": \"https://schemas.invalid/own.json\", \"a\": 1}\n",
     );
     let server = start_server(dir.path(), &config::json(), AnalysisPolicy::EXECUTING).await;
-    let own = server.diagnostics(&path("own.json")).await.unwrap();
+    let own = server.diagnostics(&path("own.json"), None).await.unwrap();
     let text = messages(&own);
     assert!(
         text.contains("schemas.invalid"),
@@ -942,7 +942,7 @@ async fn bash_language_server_answers_what_it_offers() {
     assert!(!offered.offers(Feature::CallHierarchy) && !offered.offers(Feature::Implementations));
 
     let file = path("run.sh");
-    let names = symbol_names(server.document_symbols(&file).await.unwrap());
+    let names = symbol_names(server.document_symbols(&file, None).await.unwrap());
     assert!(
         names.contains(&"greet".to_owned()) && names.contains(&"name".to_owned()),
         "{names:?}"
@@ -951,8 +951,8 @@ async fn bash_language_server_answers_what_it_offers() {
         file: file.clone(),
         pos: find(SCRIPT, "greet $name", 0, 1),
     };
-    assert_eq!(server.definition(&call).await.unwrap().len(), 1);
-    assert_eq!(server.references(&call).await.unwrap().len(), 1);
+    assert_eq!(server.definition(&call, None).await.unwrap().len(), 1);
+    assert_eq!(server.references(&call, None).await.unwrap().len(), 1);
     server.shutdown().await;
 }
 
@@ -963,7 +963,7 @@ async fn bash_language_server_reports_shellcheck_findings() {
     let dir = TempDir::new().unwrap();
     write(dir.path(), "run.sh", SCRIPT);
     let server = start_server(dir.path(), &config::bash(), AnalysisPolicy::LIMITED).await;
-    let found = server.diagnostics(&path("run.sh")).await.unwrap();
+    let found = server.diagnostics(&path("run.sh"), None).await.unwrap();
     let shellcheck: Vec<_> = found
         .iter()
         .filter(|d| d.source.as_deref() == Some("shellcheck"))
@@ -994,17 +994,17 @@ async fn dockerfile_language_server_answers_what_it_offers() {
     assert!(!offered.offers(Feature::CallHierarchy) && !offered.offers(Feature::WorkspaceSymbols));
 
     let file = path("Dockerfile");
-    let found = server.diagnostics(&file).await.unwrap();
+    let found = server.diagnostics(&file, None).await.unwrap();
     assert!(
         messages(&found).contains("COPY"),
         "the instruction without arguments is reported: {found:?}"
     );
-    assert!(!server.document_symbols(&file).await.unwrap().is_empty());
+    assert!(!server.document_symbols(&file, None).await.unwrap().is_empty());
     let hover = At {
         file,
         pos: find(DOCKERFILE, "FROM", 0, 1),
     };
-    assert!(server.hover(&hover).await.unwrap().is_some());
+    assert!(server.hover(&hover, None).await.unwrap().is_some());
     server.shutdown().await;
 }
 
@@ -1039,16 +1039,16 @@ async fn svelte_language_server_answers_through_typescript() {
         .expect("svelteserver starts")
         .server;
     let file = path("App.svelte");
-    let found = server.diagnostics(&file).await.unwrap();
+    let found = server.diagnostics(&file, None).await.unwrap();
     assert!(messages(&found).contains("not assignable"), "{found:?}");
     let call = At {
         file: file.clone(),
         pos: find(COMPONENT, "bump", 1, 1),
     };
-    let hover = server.hover(&call).await.unwrap().expect("a hover on bump");
+    let hover = server.hover(&call, None).await.unwrap().expect("a hover on bump");
     assert!(hover.contains("bump"), "{hover}");
-    assert_eq!(server.definition(&call).await.unwrap().len(), 1);
-    let names = symbol_names(server.document_symbols(&file).await.unwrap());
+    assert_eq!(server.definition(&call, None).await.unwrap().len(), 1);
+    let names = symbol_names(server.document_symbols(&file, None).await.unwrap());
     assert!(names.iter().any(|n| n.contains("bump")), "{names:?}");
     server.shutdown().await;
 }
@@ -1101,7 +1101,7 @@ async fn angular_language_server_checks_a_template() {
         .await
         .expect("ngserver starts")
         .server;
-    let found = server.diagnostics(&path("app.html")).await.unwrap();
+    let found = server.diagnostics(&path("app.html"), None).await.unwrap();
     assert!(messages(&found).contains("missing"), "{found:?}");
     server.shutdown().await;
 }

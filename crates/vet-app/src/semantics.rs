@@ -5,11 +5,12 @@
 //! answers come from the live tree, which is the revision's target until the next
 //! snapshot settles, or, when the target is a commit's tree, from a snapshot.
 
+use std::collections::HashMap;
 use std::pin::Pin;
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
-use vet_core::content::{FileDiff, RepoPath};
+use vet_core::content::{EntryKind, FileDiff, RepoPath, Snapshot};
 use vet_core::review::Side;
 use vet_semantic::derived::{
     Bounds, Calls, Change, Compared, Derived, EntryPoints, FileChanges, Judgement, Located, OutlineSymbol, Reach,
@@ -19,8 +20,8 @@ use vet_semantic::derived::{
 use vet_semantic::join::bounded;
 use vet_semantic::pool::{Phase, Pool, PoolKey, Servers, Supervision, Target};
 use vet_semantic::ports::{
-    At, Backend, BackendId, Diagnostic, Features, Location, Materializer, Provenance, RestoreFailure, ServerLauncher,
-    Severity, Sym, SymbolInfo, prefer_openable,
+    At, Backend, BackendId, Diagnostic, Features, Location, Materializer, Overlay, OverlayText, Provenance,
+    RestoreFailure, ServerLauncher, Severity, Sym, SymbolInfo, prefer_openable,
 };
 use vet_semantic::query::{Asked, Finds, Pair, Primitives, Semantic, SemanticError, Served};
 use vet_semantic::reuse::SemanticCache;
@@ -325,6 +326,49 @@ impl<G: BlobReader + Send + Sync, S: Store + Send + Sync> Texts for Content<G, S
     }
 }
 
+/// The texts of one revision's target snapshot, which the live tree's servers are
+/// fed instead of what the disk holds (D97): questions are asked at positions of
+/// the revision, so its text is what the answers are to keep. Each file is read
+/// at most once; a file the revision holds no text of keeps the disk's.
+struct RevisionTexts<G, S> {
+    snapshot: Arc<Snapshot>,
+    acquisition: Arc<Acquisition<G, S>>,
+    /// What has been read: the text, or `None` where there is none to have.
+    texts: Mutex<HashMap<RepoPath, Option<String>>>,
+}
+
+impl<G: BlobReader + Send + Sync + 'static, S: Store + Send + Sync + 'static> Overlay for RevisionTexts<G, S> {
+    fn text(&self, file: &RepoPath) -> Pin<Box<dyn Future<Output = Option<String>> + Send + '_>> {
+        let file = file.clone();
+        Box::pin(async move {
+            if let Some(read) = self.texts.lock().expect("not poisoned").get(&file) {
+                return read.clone();
+            }
+            let read = self.read(&file).await;
+            self.texts.lock().expect("not poisoned").insert(file, read.clone());
+            read
+        })
+    }
+}
+
+impl<G: BlobReader + Send + Sync + 'static, S: Store + Send + Sync + 'static> RevisionTexts<G, S> {
+    /// The snapshot's text of `file`, from the copy of its blob the session kept;
+    /// none for a file that is not a file of the snapshot or whose text the
+    /// snapshot retained no copy of.
+    async fn read(&self, file: &RepoPath) -> Option<String> {
+        let blob = self
+            .snapshot
+            .entries
+            .get(file)
+            .filter(|e| e.kind == EntryKind::File)?
+            .blob;
+        match self.acquisition.blob(file, blob, true).await.ok()? {
+            BlobRead::Found(bytes) => Some(String::from_utf8_lossy(&bytes).into_owned()),
+            BlobRead::TooLarge | BlobRead::Missing => None,
+        }
+    }
+}
+
 /// The base and the target side as the pool serves them: each may execute
 /// project code as far as `trust` holds for the commit it is built on (the base
 /// shares the trust of a head the pull request is trusted at). The target
@@ -526,8 +570,24 @@ where
     async fn pair(&self, view: &RevisionView<G, S>, revision: u32) -> Fallible<Pair<M, L>> {
         let sides = view.semantic_sides(revision).await?;
         let (base, target) = served(&view.trust(&sides.source).await?, &sides);
+        let overlay = if sides.live_target {
+            Some(self.overlay(view, revision).await?)
+        } else {
+            None
+        };
         self.view(revision, base, target);
-        Ok(self.semantic.pair(base, target))
+        Ok(self.semantic.pair(base, target, overlay))
+    }
+
+    /// The texts of the revision's target snapshot, as the queries of it carry to the
+    /// live tree's servers (D97), read through the handles this lane owns.
+    async fn overlay(&self, view: &RevisionView<G, S>, revision: u32) -> Fallible<OverlayText> {
+        let snapshot = view.target_snapshot(revision).await?;
+        Ok(Arc::new(RevisionTexts {
+            snapshot,
+            acquisition: self.texts.clone().unwrap_or_else(|| view.acquisition()),
+            texts: Mutex::default(),
+        }))
     }
 
     /// The servers of `base` and `target` are those whose state is reported, unless a newer
@@ -1371,7 +1431,11 @@ mod tests {
         fn features(&self) -> Features {
             Features::ALL
         }
-        async fn document_symbols(&self, file: &RepoPath) -> Result<Vec<SymbolInfo>, QueryError> {
+        async fn document_symbols(
+            &self,
+            file: &RepoPath,
+            _: Option<OverlayText>,
+        ) -> Result<Vec<SymbolInfo>, QueryError> {
             if self.1 == Tree::Live {
                 self.0.live_symbol_requests.fetch_add(1, Ordering::SeqCst);
             }
@@ -1386,16 +1450,16 @@ mod tests {
             symbol.detail = Some(text.trim().to_owned());
             Ok(vec![symbol])
         }
-        async fn definition(&self, _: &At) -> Result<Vec<Location>, QueryError> {
+        async fn definition(&self, _: &At, _: Option<OverlayText>) -> Result<Vec<Location>, QueryError> {
             Ok(vec![])
         }
-        async fn references(&self, _: &At) -> Result<Vec<Location>, QueryError> {
+        async fn references(&self, _: &At, _: Option<OverlayText>) -> Result<Vec<Location>, QueryError> {
             Ok(vec![])
         }
-        async fn implementations(&self, _: &At) -> Result<Vec<Location>, QueryError> {
+        async fn implementations(&self, _: &At, _: Option<OverlayText>) -> Result<Vec<Location>, QueryError> {
             Ok(vec![])
         }
-        async fn hover(&self, _: &At) -> Result<Option<String>, QueryError> {
+        async fn hover(&self, _: &At, _: Option<OverlayText>) -> Result<Option<String>, QueryError> {
             if self.0.hang_hover.load(Ordering::SeqCst) {
                 self.0.hovers_asked.fetch_add(1, Ordering::SeqCst);
                 let _asked = HoverAsked(self.0.clone());
@@ -1403,10 +1467,10 @@ mod tests {
             }
             Ok(None)
         }
-        async fn incoming_calls(&self, _: &At) -> Result<Vec<SymbolInfo>, QueryError> {
+        async fn incoming_calls(&self, _: &At, _: Option<OverlayText>) -> Result<Vec<SymbolInfo>, QueryError> {
             Ok(vec![])
         }
-        async fn outgoing_calls(&self, _: &At) -> Result<Vec<SymbolInfo>, QueryError> {
+        async fn outgoing_calls(&self, _: &At, _: Option<OverlayText>) -> Result<Vec<SymbolInfo>, QueryError> {
             Ok(vec![])
         }
         async fn workspace_symbols(&self, query: &str) -> Result<Vec<SymbolInfo>, QueryError> {
@@ -1424,7 +1488,7 @@ mod tests {
             found.sym.name = vec![query.to_owned()];
             Ok(vec![found])
         }
-        async fn diagnostics(&self, _: &RepoPath) -> Result<Vec<Diagnostic>, QueryError> {
+        async fn diagnostics(&self, _: &RepoPath, _: Option<OverlayText>) -> Result<Vec<Diagnostic>, QueryError> {
             Ok(vec![])
         }
         async fn shutdown(&self) {

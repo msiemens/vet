@@ -8,7 +8,7 @@ use std::collections::BTreeMap;
 use std::ops::Deref;
 use std::sync::Arc;
 
-use vet_core::content::{EntryKind, FileDiff, RepoPath};
+use vet_core::content::{EntryKind, FileDiff, RepoPath, Snapshot};
 use vet_core::review::Side;
 
 use super::derived::{Derived, Diffed};
@@ -85,6 +85,14 @@ impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> R
     /// language-server pool and reading their files.
     pub fn acquisition(&self) -> Arc<Acquisition<G, S>> {
         Arc::clone(&self.acquisition)
+    }
+
+    /// The target snapshot of `revision`, whose texts a live tree's servers are fed
+    /// instead of the worktree's (D97). Fails if `revision` is no longer current.
+    pub async fn target_snapshot(&self, revision: u32) -> Result<Arc<Snapshot>> {
+        let st = self.published.read();
+        check_revision(&st, revision)?;
+        Ok(Arc::clone(&st.target))
     }
 
     /// The snapshots of `revision`: what the semantic layer asks about. Fails

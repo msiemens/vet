@@ -117,13 +117,13 @@ async fn typescript_installs_and_uses_the_project_typescript() {
         file: path("a.ts"),
         pos: Pos { line: 3, col: 25 },
     };
-    assert!(server.hover(&at).await.unwrap().is_some());
-    assert_eq!(server.definition(&at).await.unwrap().len(), 1);
+    assert!(server.hover(&at, None).await.unwrap().is_some());
+    assert_eq!(server.definition(&at, None).await.unwrap().len(), 1);
     let interface_method = At {
         file: path("a.ts"),
         pos: Pos { line: 5, col: 3 },
     };
-    let implementations = server.implementations(&interface_method).await.unwrap();
+    let implementations = server.implementations(&interface_method, None).await.unwrap();
     assert_eq!(implementations.len(), 1, "{implementations:?}");
     assert_eq!(implementations[0].span.start.line, 8);
     server.shutdown().await;
@@ -213,7 +213,7 @@ async fn the_projects_angular_language_service_runs_only_where_analysis_may_exec
             .start(project.path(), Tree::Immutable, &config::angular(), policy, &Unwatched)
             .await;
         if let Ok(started) = started {
-            let _ = started.server.document_symbols(&path("a.html")).await;
+            let _ = started.server.document_symbols(&path("a.html"), None).await;
             started.server.shutdown().await;
         }
         assert_eq!(marker.exists(), runs, "the project's language service under {policy:?}");
@@ -254,7 +254,7 @@ async fn csharp_installs_and_starts() {
         .server;
     let file = path("Program.cs");
     let names: Vec<String> = server
-        .document_symbols(&file)
+        .document_symbols(&file, None)
         .await
         .unwrap()
         .iter()
@@ -265,23 +265,23 @@ async fn csharp_installs_and_starts() {
         file: file.clone(),
         pos: Pos { line: 9, col: 40 },
     };
-    assert!(server.hover(&call).await.unwrap().is_some());
-    assert_eq!(server.definition(&call).await.unwrap().len(), 1);
+    assert!(server.hover(&call, None).await.unwrap().is_some());
+    assert_eq!(server.definition(&call, None).await.unwrap().len(), 1);
     let decl = At {
         file: file.clone(),
         pos: Pos { line: 4, col: 23 },
     };
-    assert_eq!(server.references(&decl).await.unwrap().len(), 1);
+    assert_eq!(server.references(&decl, None).await.unwrap().len(), 1);
     // Lines: IShape.Area is on 14, Square.Area on 19.
     let interface_method = At {
         file: file.clone(),
         pos: Pos { line: 14, col: 9 },
     };
-    let implementations = server.implementations(&interface_method).await.unwrap();
+    let implementations = server.implementations(&interface_method, None).await.unwrap();
     assert_eq!(implementations.len(), 1, "{implementations:?}");
     assert_eq!(implementations[0].span.start.line, 19);
     let callers: Vec<String> = server
-        .incoming_calls(&decl)
+        .incoming_calls(&decl, None)
         .await
         .unwrap()
         .iter()
@@ -289,7 +289,7 @@ async fn csharp_installs_and_starts() {
         .collect();
     assert!(callers.iter().any(|c| c.contains("Main")), "{callers:?}");
     assert!(!server.workspace_symbols("Helper").await.unwrap().is_empty());
-    assert!(server.diagnostics(&file).await.unwrap().is_empty());
+    assert!(server.diagnostics(&file, None).await.unwrap().is_empty());
 
     // Other text under the file's name, as for a base side.
     let base = "namespace App;\n\npublic static class Gone\n{\n    public static int Two() => 2;\n}\n";
@@ -301,7 +301,7 @@ async fn csharp_installs_and_starts() {
         .map(|s| s.sym.name.join("::"))
         .collect();
     assert!(names.iter().any(|n| n.contains("Gone")), "{names:?}");
-    assert!(server.diagnostics(&file).await.unwrap().is_empty());
+    assert!(server.diagnostics(&file, None).await.unwrap().is_empty());
     server.shutdown().await;
 }
 
@@ -338,9 +338,13 @@ async fn csharp_resolves_packages_in_a_copy_that_took_the_working_trees_restore_
         file: path("Program.cs"),
         pos: Pos { line: 4, col: 50 },
     };
-    let hover = server.hover(&call).await.unwrap().expect("a package member resolves");
+    let hover = server
+        .hover(&call, None)
+        .await
+        .unwrap()
+        .expect("a package member resolves");
     assert!(hover.contains("SerializeObject"), "{hover}");
-    assert_eq!(server.definition(&call).await.unwrap().len(), 1);
+    assert_eq!(server.definition(&call, None).await.unwrap().len(), 1);
     server.shutdown().await;
 }
 
@@ -377,14 +381,14 @@ async fn python_installs_and_starts() {
         file: path("a.py"),
         pos: Pos { line: 3, col: 5 },
     };
-    assert!(server.hover(&at).await.unwrap().is_some());
-    assert_eq!(server.definition(&at).await.unwrap().len(), 1);
+    assert!(server.hover(&at, None).await.unwrap().is_some());
+    assert_eq!(server.definition(&at, None).await.unwrap().len(), 1);
     let base_method = At {
         file: path("a.py"),
         pos: Pos { line: 6, col: 9 },
     };
     // Pyright has no implementation request: the query fails and says so.
-    let error = server.implementations(&base_method).await.unwrap_err();
+    let error = server.implementations(&base_method, None).await.unwrap_err();
     assert!(error.to_string().contains("implementation"), "{error:?}");
 
     // Other text under the file's name, as for a base side.

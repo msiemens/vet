@@ -37,8 +37,8 @@ use crate::gate::Gate;
 use crate::policy::AnalysisPolicy;
 use crate::ports::{
     Answered, At, Backend, BackendId, Detach, Diagnostic, Features, LanguageServer, LaunchError, Location,
-    Materializer, NotMaterializable, Provenance, QueryError, Readiness, RestoreFailure, ServerIdentity, ServerLauncher,
-    StartProgress, Started, SymbolInfo, Tree,
+    Materializer, NotMaterializable, OverlayText, Provenance, QueryError, Readiness, RestoreFailure, ServerIdentity,
+    ServerLauncher, StartProgress, Started, SymbolInfo, Tree,
 };
 use crate::reuse::{Answers, Basis, Computed, Given, KEPT, Key, ProjectQuery, Restore, Reused, SemanticCache};
 
@@ -338,13 +338,16 @@ impl<S: LanguageServer + 'static, G: Send + Sync + 'static> Entry<S, G> {
     }
 
     /// Without a text the symbols are those of the file as the tree has it: only a tree that never changes has them under a key.
-    pub async fn document_symbols(self: &Arc<Self>, file: &RepoPath) -> Result<Answered<Vec<SymbolInfo>>, QueryError> {
+    pub async fn document_symbols(
+        self: &Arc<Self>,
+        file: &RepoPath,
+        overlay: Option<OverlayText>,
+    ) -> Result<Answered<Vec<SymbolInfo>>, QueryError> {
         let key = self.project(ProjectQuery::DocumentSymbols(file.clone()));
         let file = file.clone();
-        self.reuse(
-            key,
-            move |this| async move { this.server.document_symbols(&file).await },
-        )
+        self.reuse(key, move |this| async move {
+            this.server.document_symbols(&file, overlay).await
+        })
         .await
     }
 
@@ -366,46 +369,82 @@ impl<S: LanguageServer + 'static, G: Send + Sync + 'static> Entry<S, G> {
         Ok(answered)
     }
 
-    pub async fn definition(self: &Arc<Self>, at: &At) -> Result<Answered<Vec<Location>>, QueryError> {
+    pub async fn definition(
+        self: &Arc<Self>,
+        at: &At,
+        overlay: Option<OverlayText>,
+    ) -> Result<Answered<Vec<Location>>, QueryError> {
         let key = self.project(ProjectQuery::Definition(at.clone()));
         let at = at.clone();
-        self.reuse(key, move |this| async move { this.server.definition(&at).await })
-            .await
+        self.reuse(
+            key,
+            move |this| async move { this.server.definition(&at, overlay).await },
+        )
+        .await
     }
 
-    pub async fn references(self: &Arc<Self>, at: &At) -> Result<Answered<Vec<Location>>, QueryError> {
+    pub async fn references(
+        self: &Arc<Self>,
+        at: &At,
+        overlay: Option<OverlayText>,
+    ) -> Result<Answered<Vec<Location>>, QueryError> {
         let key = self.project(ProjectQuery::References(at.clone()));
         let at = at.clone();
-        self.reuse(key, move |this| async move { this.server.references(&at).await })
-            .await
+        self.reuse(
+            key,
+            move |this| async move { this.server.references(&at, overlay).await },
+        )
+        .await
     }
 
-    pub async fn implementations(self: &Arc<Self>, at: &At) -> Result<Answered<Vec<Location>>, QueryError> {
+    pub async fn implementations(
+        self: &Arc<Self>,
+        at: &At,
+        overlay: Option<OverlayText>,
+    ) -> Result<Answered<Vec<Location>>, QueryError> {
         let key = self.project(ProjectQuery::Implementations(at.clone()));
         let at = at.clone();
-        self.reuse(key, move |this| async move { this.server.implementations(&at).await })
-            .await
+        self.reuse(key, move |this| async move {
+            this.server.implementations(&at, overlay).await
+        })
+        .await
     }
 
-    pub async fn hover(self: &Arc<Self>, at: &At) -> Result<Answered<Option<String>>, QueryError> {
+    pub async fn hover(
+        self: &Arc<Self>,
+        at: &At,
+        overlay: Option<OverlayText>,
+    ) -> Result<Answered<Option<String>>, QueryError> {
         let key = self.project(ProjectQuery::Hover(at.clone()));
         let at = at.clone();
-        self.reuse(key, move |this| async move { this.server.hover(&at).await })
+        self.reuse(key, move |this| async move { this.server.hover(&at, overlay).await })
             .await
     }
 
-    pub async fn incoming_calls(self: &Arc<Self>, at: &At) -> Result<Answered<Vec<SymbolInfo>>, QueryError> {
+    pub async fn incoming_calls(
+        self: &Arc<Self>,
+        at: &At,
+        overlay: Option<OverlayText>,
+    ) -> Result<Answered<Vec<SymbolInfo>>, QueryError> {
         let key = self.project(ProjectQuery::Incoming(at.clone()));
         let at = at.clone();
-        self.reuse(key, move |this| async move { this.server.incoming_calls(&at).await })
-            .await
+        self.reuse(key, move |this| async move {
+            this.server.incoming_calls(&at, overlay).await
+        })
+        .await
     }
 
-    pub async fn outgoing_calls(self: &Arc<Self>, at: &At) -> Result<Answered<Vec<SymbolInfo>>, QueryError> {
+    pub async fn outgoing_calls(
+        self: &Arc<Self>,
+        at: &At,
+        overlay: Option<OverlayText>,
+    ) -> Result<Answered<Vec<SymbolInfo>>, QueryError> {
         let key = self.project(ProjectQuery::Outgoing(at.clone()));
         let at = at.clone();
-        self.reuse(key, move |this| async move { this.server.outgoing_calls(&at).await })
-            .await
+        self.reuse(key, move |this| async move {
+            this.server.outgoing_calls(&at, overlay).await
+        })
+        .await
     }
 
     pub async fn workspace_symbols(self: &Arc<Self>, query: &str) -> Result<Answered<Vec<SymbolInfo>>, QueryError> {
@@ -418,11 +457,18 @@ impl<S: LanguageServer + 'static, G: Send + Sync + 'static> Entry<S, G> {
         .await
     }
 
-    pub async fn diagnostics(self: &Arc<Self>, file: &RepoPath) -> Result<Answered<Vec<Diagnostic>>, QueryError> {
+    pub async fn diagnostics(
+        self: &Arc<Self>,
+        file: &RepoPath,
+        overlay: Option<OverlayText>,
+    ) -> Result<Answered<Vec<Diagnostic>>, QueryError> {
         let key = self.project(ProjectQuery::Diagnostics(file.clone()));
         let file = file.clone();
-        self.reuse(key, move |this| async move { this.server.diagnostics(&file).await })
-            .await
+        self.reuse(
+            key,
+            move |this| async move { this.server.diagnostics(&file, overlay).await },
+        )
+        .await
     }
 
     async fn shutdown(&self) {
@@ -1677,7 +1723,11 @@ mod tests {
             let lacking = self.0.lacking.lock().unwrap();
             lacking.iter().fold(Features::ALL, |all, f| all.with(*f, false))
         }
-        async fn document_symbols(&self, file: &RepoPath) -> Result<Vec<SymbolInfo>, QueryError> {
+        async fn document_symbols(
+            &self,
+            file: &RepoPath,
+            _: Option<OverlayText>,
+        ) -> Result<Vec<SymbolInfo>, QueryError> {
             let version = self.asked("document_symbols").await?;
             Ok(vec![symbol(file, "on disk".into(), Pos { line: 0, col: 0 }, version)])
         }
@@ -1685,7 +1735,7 @@ mod tests {
             let version = self.asked("text_symbols").await?;
             Ok(vec![symbol(file, text.to_owned(), Pos { line: 0, col: 0 }, version)])
         }
-        async fn definition(&self, at: &At) -> Result<Vec<Location>, QueryError> {
+        async fn definition(&self, at: &At, _: Option<OverlayText>) -> Result<Vec<Location>, QueryError> {
             let version = self.asked("definition").await?;
             Ok(vec![Location {
                 file: at.file.clone(),
@@ -1693,7 +1743,7 @@ mod tests {
                 external: false,
             }])
         }
-        async fn references(&self, at: &At) -> Result<Vec<Location>, QueryError> {
+        async fn references(&self, at: &At, _: Option<OverlayText>) -> Result<Vec<Location>, QueryError> {
             let version = self.asked("references").await?;
             Ok(vec![Location {
                 file: at.file.clone(),
@@ -1701,7 +1751,7 @@ mod tests {
                 external: false,
             }])
         }
-        async fn implementations(&self, at: &At) -> Result<Vec<Location>, QueryError> {
+        async fn implementations(&self, at: &At, _: Option<OverlayText>) -> Result<Vec<Location>, QueryError> {
             let version = self.asked("implementations").await?;
             Ok(vec![Location {
                 file: at.file.clone(),
@@ -1709,16 +1759,16 @@ mod tests {
                 external: false,
             }])
         }
-        async fn hover(&self, at: &At) -> Result<Option<String>, QueryError> {
+        async fn hover(&self, at: &At, _: Option<OverlayText>) -> Result<Option<String>, QueryError> {
             let version = self.asked("hover").await?;
             self.0.hover_calls.fetch_add(1, Ordering::SeqCst);
             Ok(Some(format!("{version} {}:{}", at.pos.line, at.pos.col)))
         }
-        async fn incoming_calls(&self, at: &At) -> Result<Vec<SymbolInfo>, QueryError> {
+        async fn incoming_calls(&self, at: &At, _: Option<OverlayText>) -> Result<Vec<SymbolInfo>, QueryError> {
             let version = self.asked("incoming_calls").await?;
             Ok(vec![symbol(&at.file, "caller".into(), at.pos, version)])
         }
-        async fn outgoing_calls(&self, at: &At) -> Result<Vec<SymbolInfo>, QueryError> {
+        async fn outgoing_calls(&self, at: &At, _: Option<OverlayText>) -> Result<Vec<SymbolInfo>, QueryError> {
             let version = self.asked("outgoing_calls").await?;
             Ok(vec![symbol(&at.file, "callee".into(), at.pos, version)])
         }
@@ -1731,7 +1781,7 @@ mod tests {
                 version,
             )])
         }
-        async fn diagnostics(&self, file: &RepoPath) -> Result<Vec<Diagnostic>, QueryError> {
+        async fn diagnostics(&self, file: &RepoPath, _: Option<OverlayText>) -> Result<Vec<Diagnostic>, QueryError> {
             let version = self.asked("diagnostics").await?;
             Ok(vec![Diagnostic {
                 span: span(Pos { line: 0, col: 0 }, version),
@@ -1838,16 +1888,16 @@ mod tests {
                 out.push((format!("{:?}", answered.value), answered.provenance.from_cache));
             }};
         }
-        record!(lease.document_symbols(&ask.file));
+        record!(lease.document_symbols(&ask.file, None));
         record!(lease.text_symbols(&ask.file, ask.text));
-        record!(lease.definition(&ask.at));
-        record!(lease.references(&ask.at));
-        record!(lease.implementations(&ask.at));
-        record!(lease.hover(&ask.at));
-        record!(lease.incoming_calls(&ask.at));
-        record!(lease.outgoing_calls(&ask.at));
+        record!(lease.definition(&ask.at, None));
+        record!(lease.references(&ask.at, None));
+        record!(lease.implementations(&ask.at, None));
+        record!(lease.hover(&ask.at, None));
+        record!(lease.incoming_calls(&ask.at, None));
+        record!(lease.outgoing_calls(&ask.at, None));
         record!(lease.workspace_symbols(ask.query));
-        record!(lease.diagnostics(&ask.file));
+        record!(lease.diagnostics(&ask.file, None));
         out
     }
 
@@ -2336,7 +2386,7 @@ mod tests {
         let complete = || {
             block_on(async {
                 let lease = pool.lease(&key, &backend(false)).await.unwrap();
-                let answered = lease.hover(&at()).await.unwrap();
+                let answered = lease.hover(&at(), None).await.unwrap();
                 lease.release().await;
                 answered.complete
             })
@@ -2358,10 +2408,10 @@ mod tests {
         counters.failing.store(true, Ordering::SeqCst);
         block_on(async {
             let lease = pool.lease(&key, &backend(false)).await.unwrap();
-            assert!(lease.hover(&at()).await.is_err());
+            assert!(lease.hover(&at(), None).await.is_err());
             counters.failing.store(false, Ordering::SeqCst);
-            assert!(!lease.hover(&at()).await.unwrap().provenance.from_cache);
-            assert!(lease.hover(&at()).await.unwrap().provenance.from_cache);
+            assert!(!lease.hover(&at(), None).await.unwrap().provenance.from_cache);
+            assert!(lease.hover(&at(), None).await.unwrap().provenance.from_cache);
             lease.release().await;
         });
     }
@@ -2371,8 +2421,8 @@ mod tests {
         let (pool, counters) = pool(2);
         block_on(async {
             let lease = pool.lease(&snapshot_key(1), &backend(true)).await.unwrap();
-            let fresh = lease.hover(&at()).await.unwrap().provenance;
-            let reused = lease.hover(&at()).await.unwrap().provenance;
+            let fresh = lease.hover(&at(), None).await.unwrap().provenance;
+            let reused = lease.hover(&at(), None).await.unwrap().provenance;
             assert_eq!(fresh.server, *lease.identity());
             assert_eq!(fresh.server.label, "fake 1");
             assert!(!fresh.from_cache && reused.from_cache);
@@ -2385,7 +2435,7 @@ mod tests {
             counters.version.store(2, Ordering::SeqCst);
             pool.restart(&BackendId("rust".into())).await;
             let lease = pool.lease(&snapshot_key(1), &backend(true)).await.unwrap();
-            let again = lease.hover(&at()).await.unwrap().provenance;
+            let again = lease.hover(&at(), None).await.unwrap().provenance;
             assert_eq!(again.server.label, "fake 2");
             assert!(!again.from_cache);
             lease.release().await;
@@ -2405,7 +2455,7 @@ mod tests {
                         file: RepoPath(b"a.rs".to_vec()),
                         pos: Pos { line, col: 0 },
                     };
-                    lease.hover(&at).await.unwrap()
+                    lease.hover(&at, None).await.unwrap()
                 }
             })
             .await;
@@ -2432,8 +2482,8 @@ mod tests {
             assert!(Arc::ptr_eq(a.entry.as_ref().unwrap(), b.entry.as_ref().unwrap()));
             assert_eq!(a.leases.load(Ordering::SeqCst), 2);
             // Both see the same kept answers.
-            let first = a.hover(&at()).await.unwrap().value;
-            assert_eq!(b.hover(&at()).await.unwrap().value, first);
+            let first = a.hover(&at(), None).await.unwrap().value;
+            assert_eq!(b.hover(&at(), None).await.unwrap().value, first);
             assert_eq!(counters.hover_calls.load(Ordering::SeqCst), 1);
             a.release().await;
             b.release().await;
@@ -2987,7 +3037,7 @@ mod tests {
             target: Target::Live,
             policy: AnalysisPolicy::EXECUTING,
         };
-        let pair = semantic.pair(served, served);
+        let pair = semantic.pair(served, served, None);
         block_on(async {
             for error in [
                 pair.incoming_calls(Side::Target, &at()).await.unwrap_err(),
@@ -3046,7 +3096,7 @@ mod tests {
         block_on(async {
             let key = snapshot_key(1);
             let lease = pool.lease(&key, &backend(true)).await.unwrap();
-            let (asked, ()) = join(lease.hover(&at()), async {
+            let (asked, ()) = join(lease.hover(&at(), None), async {
                 yield_once().await;
                 pool.restart_now(&BackendId("rust".into())).await;
             })
@@ -3062,7 +3112,7 @@ mod tests {
             counters.hang.store(false, Ordering::SeqCst);
             let fresh = pool.lease(&key, &backend(true)).await.unwrap();
             assert_eq!(counters.started.load(Ordering::SeqCst), 2);
-            assert!(fresh.hover(&at()).await.is_ok());
+            assert!(fresh.hover(&at(), None).await.is_ok());
             fresh.release().await;
         });
     }
@@ -3155,31 +3205,31 @@ mod tests {
             }),
             Question::Project(query) => match query {
                 ProjectQuery::DocumentSymbols(file) => Box::pin(async move {
-                    lease.document_symbols(file).await.unwrap();
+                    lease.document_symbols(file, None).await.unwrap();
                 }),
                 ProjectQuery::Definition(at) => Box::pin(async move {
-                    lease.definition(at).await.unwrap();
+                    lease.definition(at, None).await.unwrap();
                 }),
                 ProjectQuery::References(at) => Box::pin(async move {
-                    lease.references(at).await.unwrap();
+                    lease.references(at, None).await.unwrap();
                 }),
                 ProjectQuery::Implementations(at) => Box::pin(async move {
-                    lease.implementations(at).await.unwrap();
+                    lease.implementations(at, None).await.unwrap();
                 }),
                 ProjectQuery::Hover(at) => Box::pin(async move {
-                    lease.hover(at).await.unwrap();
+                    lease.hover(at, None).await.unwrap();
                 }),
                 ProjectQuery::Incoming(at) => Box::pin(async move {
-                    lease.incoming_calls(at).await.unwrap();
+                    lease.incoming_calls(at, None).await.unwrap();
                 }),
                 ProjectQuery::Outgoing(at) => Box::pin(async move {
-                    lease.outgoing_calls(at).await.unwrap();
+                    lease.outgoing_calls(at, None).await.unwrap();
                 }),
                 ProjectQuery::Workspace(query) => Box::pin(async move {
                     lease.workspace_symbols(query).await.unwrap();
                 }),
                 ProjectQuery::Diagnostics(file) => Box::pin(async move {
-                    lease.diagnostics(file).await.unwrap();
+                    lease.diagnostics(file, None).await.unwrap();
                 }),
             },
         }

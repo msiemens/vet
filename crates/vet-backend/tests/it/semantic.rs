@@ -8,7 +8,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use crate::common::{Client, config, find, git, repo_with, write};
-use vet_backend::{Orchestrator, open_store};
+use vet_backend::{Config, Orchestrator, open_store};
 use vet_protocol::{
     CallFate, ChangesetKey, Event, LocationChange, ProjectId, Reach, Request, Response, ServerMessage, ServerState,
     Serving, Side, SymbolChange, SymbolId, SymbolKind, SymbolName, UnavailableKind, View,
@@ -956,4 +956,79 @@ async fn servers_are_listed_and_custom_paths_persist_and_notify() {
         .find(|s| s.language == "python")
         .unwrap();
     assert_eq!(python.custom_path, None);
+}
+
+/// Answers keep the positions of the revision on view (D97): its text is what the
+/// worktree's server is fed, so a file whose lines have shifted on disk since the
+/// snapshot settled is still asked about where the revision has it. The settles
+/// that would follow the shift are held off for as long as the test runs, so no
+/// newer revision can intervene; the position the worktree has the file at answers
+/// differently, which is how the query tells the revision's text from the disk's.
+#[tokio::test]
+#[ignore = "needs rust-analyzer"]
+async fn rust_analyzer_is_asked_about_the_revision_even_after_the_worktree_lines_shifted() {
+    const SNAPSHOT: &str = "\
+pub fn gone() -> u32 {
+    1
+}
+
+pub fn keep() -> u32 {
+    2
+}
+
+pub fn main() -> u32 {
+    keep()
+}
+";
+    const SHIFTED: &str = "// moved\n// further\n// again\n";
+    let repo = tempfile::tempdir().unwrap();
+    git(repo.path(), &["init", "-q", "-b", "main"]);
+    write(repo.path(), ".gitignore", "target/\n");
+    write(
+        repo.path(),
+        "Cargo.toml",
+        "[package]\nname = \"tiny\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+    );
+    write(repo.path(), "src/lib.rs", SNAPSHOT);
+    let lock = Command::new("cargo")
+        .args(["generate-lockfile", "--offline"])
+        .current_dir(repo.path())
+        .output()
+        .unwrap();
+    assert!(lock.status.success(), "{}", String::from_utf8_lossy(&lock.stderr));
+    git(repo.path(), &["add", "-A"]);
+    git(repo.path(), &["commit", "-q", "-m", "base"]);
+
+    let data = tempfile::tempdir().unwrap();
+    let handler = Arc::new(Orchestrator::new(
+        open_store(data.path()).await.unwrap(),
+        Config {
+            debounce: Duration::from_secs(60),
+            ..config()
+        },
+    ));
+    let client = Client::new(&handler);
+    let project = client.open(repo.path()).await;
+    let path = "src/lib.rs";
+    let revision = client.revision(project).await;
+
+    // The lines of the file shift on disk, and nothing settles a newer revision first.
+    write(repo.path(), path, &(SHIFTED.to_owned() + SNAPSHOT));
+    assert_eq!(client.revision(project).await, revision, "the revision did not move");
+
+    // Hover is answered from the revision's text, not the disk's.
+    let (at, col) = find(SNAPSHOT, "keep()", 1, 1);
+    let (text, unavailable) = client.hover(project, revision, Side::Target, path, (at, col)).await;
+    assert_eq!(unavailable, None);
+    let text = text.expect("the hover of the call on the revision's text");
+    assert!(text.contains("fn keep()"), "{text}");
+
+    // Its definition is where the revision has it, not where the disk has moved it to.
+    let defs = client
+        .definition(project, revision, Side::Target, path, (at, col))
+        .await;
+    assert_eq!(defs.locations.len(), 1, "{defs:?}");
+    assert_eq!(defs.locations[0].path, path);
+    assert_eq!(defs.locations[0].span.start.line, 4);
+    assert!(!defs.locations[0].external);
 }

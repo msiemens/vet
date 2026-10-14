@@ -12,8 +12,8 @@ use crate::join::bounded;
 use crate::policy::AnalysisPolicy;
 use crate::pool::{Lease, Observer, Pool, PoolError, PoolKey, Supervision, Target};
 use crate::ports::{
-    Answered, At, Backend, BackendId, Diagnostic, Feature, Location, Materializer, QueryError, ServerLauncher,
-    SymbolInfo, backend_for,
+    Answered, At, Backend, BackendId, Diagnostic, Feature, Location, Materializer, OverlayText, QueryError,
+    ServerLauncher, SymbolInfo, backend_for,
 };
 use crate::reuse::{ProjectQuery, Reused, SemanticCache};
 
@@ -140,11 +140,14 @@ impl<M: Materializer, L: ServerLauncher> Semantic<M, L> {
     }
 
     /// The two sides, owning what they query with, so that work for them can outlive its caller.
-    pub fn pair(self: &Arc<Self>, base: Served, target: Served) -> Pair<M, L> {
+    /// `overlay` is the texts of the revision the target is on view at, given to its live
+    /// server in place of the disk's; a snapshot side needs none, its disk is the revision.
+    pub fn pair(self: &Arc<Self>, base: Served, target: Served, overlay: Option<OverlayText>) -> Pair<M, L> {
         Pair {
             semantic: self.clone(),
             base,
             target,
+            overlay,
         }
     }
 
@@ -247,6 +250,8 @@ pub struct Pair<M: Materializer, L: ServerLauncher> {
     semantic: Arc<Semantic<M, L>>,
     pub base: Served,
     pub target: Served,
+    /// The texts of the revision the target is on view at, for its live server.
+    overlay: Option<OverlayText>,
 }
 
 impl<M: Materializer, L: ServerLauncher> Pair<M, L> {
@@ -254,6 +259,14 @@ impl<M: Materializer, L: ServerLauncher> Pair<M, L> {
         match side {
             Side::Base => &self.base,
             Side::Target => &self.target,
+        }
+    }
+
+    /// The overlay for `side`: only the target's live tree takes it.
+    fn overlay(&self, side: Side) -> Option<OverlayText> {
+        match side {
+            Side::Target if self.target.target == Target::Live => self.overlay.clone(),
+            _ => None,
         }
     }
 
@@ -274,7 +287,8 @@ fn offered<M: Materializer, L: ServerLauncher>(lease: &Lease<M, L>, feature: Fea
 }
 
 /// The answer kept for `$query` if there is one, else the server's, if it offers `$feature`
-/// (`None`: the operation is one every server has).
+/// (`None`: the operation is one every server has). The live tree's server is fed the
+/// texts of the revision on view (see [`Pair::overlay`]).
 macro_rules! ask {
     ($self:ident, $side:expr, $file:expr, $query:expr, $feature:expr, $method:ident($($arg:expr),*)) => {{
         if let Some(kept) = $self.semantic.recall($self.served($side), $file, $query).await {
@@ -283,7 +297,7 @@ macro_rules! ask {
         let lease = $self.semantic.lease_for($self.served($side), $file).await?;
         let feature: Option<Feature> = $feature;
         let answer = match feature.map_or(Ok(()), |f| offered(&lease, f)) {
-            Ok(()) => lease.$method($($arg),*).await.map_err(SemanticError::Query),
+            Ok(()) => lease.$method($($arg),*, $self.overlay($side)).await.map_err(SemanticError::Query),
             Err(e) => Err(e),
         };
         lease.release().await;

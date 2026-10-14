@@ -242,7 +242,7 @@ async fn a_copy_with_the_same_lockfile_links_the_working_trees_node_modules_and_
         pos: Pos { line: 1, col: 22 },
     };
     let hover = server
-        .hover(&at)
+        .hover(&at, None)
         .await
         .unwrap()
         .expect("pc.red resolves through node_modules");
