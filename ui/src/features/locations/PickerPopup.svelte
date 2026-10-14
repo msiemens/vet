@@ -230,7 +230,7 @@
           {#if item.kind === "section"}
             <GroupLabel>{item.label}</GroupLabel>
           {:else if item.kind === "file"}
-            <TreeRow interactive={false} tone="strong" count={item.count} letters={false}>
+            <TreeRow interactive={false} chevron={false} tone="strong" count={item.count} letters={false}>
               {#snippet glyph()}{#if item.external}<Icon name="module" size={12} />{/if}{/snippet}
               <span class="path">
                 <PathText path={item.path} />

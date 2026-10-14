@@ -8,6 +8,7 @@
   import { onChevron } from "../../lib/ui/chevron";
   import FileIcon from "../../lib/ui/FileIcon.svelte";
   import IconButton from "../../lib/ui/IconButton.svelte";
+  import MoreRow from "../../lib/ui/MoreRow.svelte";
   import SectionHead from "../../lib/ui/SectionHead.svelte";
   import SeverityIcon from "../../lib/ui/SeverityIcon.svelte";
   import TreeRow from "../../lib/ui/TreeRow.svelte";
@@ -82,12 +83,7 @@
     {@render row(e, depth)}
   {/each}
   {#if cap !== undefined && rows.length < entries.length}
-    <button
-      class="flat more"
-      type="button"
-      style:padding-left="calc(var(--inset-tree-name) + {depth} * var(--w-indent))"
-      onclick={() => all.add(cap)}>{entries.length - rows.length} more</button
-    >
+    <MoreRow count={entries.length - rows.length} {depth} onclick={() => all.add(cap)} />
   {/if}
 {/snippet}
 
@@ -222,17 +218,6 @@
   .fate {
     flex: none;
     font-size: var(--fs-xs);
-  }
-  .more {
-    display: flex;
-    align-items: center;
-    width: 100%;
-    min-height: var(--h-row);
-    padding-right: 10px;
-    box-sizing: border-box;
-    text-align: left;
-    color: var(--accent);
-    font-size: var(--fs-mono);
   }
   @container (min-width: 440px) {
     .loc {

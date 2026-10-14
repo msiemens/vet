@@ -5,6 +5,7 @@
   import EmptyState from "../../lib/ui/EmptyState.svelte";
   import Icon from "../../lib/ui/Icon.svelte";
   import IconButton from "../../lib/ui/IconButton.svelte";
+  import MoreRow from "../../lib/ui/MoreRow.svelte";
   import ScrollArea from "../../lib/ui/ScrollArea.svelte";
   import TreeRow from "../../lib/ui/TreeRow.svelte";
   import { changeset } from "../../state/changeset.svelte";
@@ -143,9 +144,7 @@
         {#each id === "resolved" ? cut.rows : list as thread (thread.id)}{@render row(thread)}{/each}
       </ul>
       {#if id === "resolved" && cut.more > 0}
-        <button class="flat more" type="button" onclick={() => (showAllResolved = true)}>
-          <Icon name="closed" size={10} />{cut.more} more
-        </button>
+        <MoreRow count={cut.more} onclick={() => (showAllResolved = true)} />
       {/if}
     {/if}
   </section>
@@ -346,15 +345,6 @@
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
-  }
-  .more {
-    display: flex;
-    align-items: center;
-    gap: 6px;
-    width: 100%;
-    padding: 4px 10px;
-    color: var(--text-2);
-    font-size: var(--fs-ctl);
   }
   .actions {
     display: flex;

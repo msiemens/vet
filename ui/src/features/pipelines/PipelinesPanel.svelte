@@ -247,6 +247,7 @@
                 <TreeRow
                   open={!pipelines.folded.has(group.run.id)}
                   tone="strong"
+                  letters={false}
                   cur={cursor === index}
                   title={group.run.name}
                   onclick={(e) => nav.click(e, index)}
@@ -264,6 +265,7 @@
                 <TreeRow
                   depth={1}
                   open={undefined}
+                  letters={false}
                   cur={cursor === index}
                   title={item.job.name}
                   onclick={(e) => nav.click(e, index)}
@@ -288,7 +290,7 @@
               </div>
             {:else}
               <div class="row" role="treeitem" aria-selected="false">
-                <TreeRow tone="plain" cur={cursor === index} title={item.job.name}>
+                <TreeRow tone="plain" interactive={false} letters={false} cur={cursor === index} title={item.job.name}>
                   {#snippet glyph()}<CiStatus state={item.job.state} phase={item.job.phase} size={12} />{/snippet}
                   {item.job.name}<span class="mono meta">status from a service</span>
                 </TreeRow>

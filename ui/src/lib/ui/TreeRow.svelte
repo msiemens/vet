@@ -24,6 +24,7 @@
     cur = false,
     interactive = true,
     letters = true,
+    chevron = true,
     class: extra,
     title,
     status,
@@ -62,6 +63,8 @@
     interactive?: boolean;
     /** The row ends with the column of change letters. */
     letters?: boolean;
+    /** The row begins with the chevron column; a row among rows that never fold has none. */
+    chevron?: boolean;
     /** Classes of the row's element, for what the list around it marks. */
     class?: ClassValue;
     title?: string;
@@ -82,7 +85,7 @@
 </script>
 
 {#snippet content()}
-  <Chevron {open} />
+  {#if chevron}<Chevron {open} />{/if}
   {@render glyph?.()}
   <span class="name" class:mono>{@render children()}</span>
   {@render trailing?.()}
