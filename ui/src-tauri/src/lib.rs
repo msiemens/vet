@@ -7,6 +7,7 @@ mod backend;
 mod browser;
 mod credentials;
 mod dialog;
+mod files;
 mod geometry;
 mod input;
 mod menu;

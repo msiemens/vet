@@ -3,14 +3,14 @@
 //! the app config directory. A saved geometry on a display that is gone gives way to the
 //! default, centred on the display the window is on.
 
-use std::io::Write;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::sync::{Mutex, MutexGuard, PoisonError};
 
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Manager, Monitor, PhysicalPosition, PhysicalSize, Window, WindowEvent};
 
 use crate::backend;
+use crate::files::write_atomic;
 
 /// The welcome screen's size in logical pixels.
 const WELCOME_SIZE: (f64, f64) = (960.0, 620.0);
@@ -213,23 +213,10 @@ impl Windows {
             Ok(text) => text,
             Err(e) => return tracing::warn!(error = %e, "cannot encode the window geometry"),
         };
-        if let Err(e) = write(file, &text) {
+        if let Err(e) = write_atomic(file, &text) {
             tracing::warn!(file = %file.display(), error = %e, "cannot save the window geometry");
         }
     }
-}
-
-/// Replaces `file` whole: a reader sees the old text or the new, never a torn write.
-fn write(file: &Path, text: &str) -> std::io::Result<()> {
-    let dir = file
-        .parent()
-        .filter(|dir| !dir.as_os_str().is_empty())
-        .unwrap_or(Path::new("."));
-    std::fs::create_dir_all(dir)?;
-    let mut temp = tempfile::NamedTempFile::new_in(dir)?;
-    temp.write_all(text.as_bytes())?;
-    temp.persist(file).map_err(|e| e.error)?;
-    Ok(())
 }
 
 fn snapshot(window: &tauri::WebviewWindow) -> Option<Snapshot> {

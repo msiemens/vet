@@ -8,10 +8,13 @@
 //! the page finds them all when it connects.
 
 use std::path::{Path, PathBuf};
+use std::sync::{Mutex, PoisonError};
 
 use keyring::Entry;
 use serde::Serialize;
 use tauri::{AppHandle, Manager};
+
+use crate::files::write_atomic;
 
 const FILE: &str = "credential-hosts.json";
 
@@ -50,10 +53,15 @@ fn read_hosts(file: &Path) -> Vec<String> {
 
 fn write_hosts(file: &Path, hosts: &[String]) -> Result<(), String> {
     let text = serde_json::to_string_pretty(hosts).map_err(|e| e.to_string())?;
-    if let Some(dir) = file.parent() {
-        std::fs::create_dir_all(dir).map_err(|e| format!("cannot create {}: {e}", dir.display()))?;
-    }
-    std::fs::write(file, text).map_err(|e| format!("cannot write {}: {e}", file.display()))
+    write_atomic(file, &text).map_err(|e| format!("cannot write {}: {e}", file.display()))
+}
+
+/// Serializes the read-change-write of the list, which commands on different threads run.
+static INDEX: Mutex<()> = Mutex::new(());
+
+fn update_hosts(file: &Path, change: impl FnOnce(Vec<String>) -> Vec<String>) -> Result<(), String> {
+    let _held = INDEX.lock().unwrap_or_else(PoisonError::into_inner);
+    write_hosts(file, &change(read_hosts(file)))
 }
 
 /// `hosts` with `host` in it, once.
@@ -110,7 +118,7 @@ pub async fn store_credential(app: AppHandle, host: String, token: String) -> Re
         entry(&host)?
             .set_password(&token)
             .map_err(|e| format!("cannot store the token of {host} in the keychain: {e}"))?;
-        write_hosts(&file, &with_host(read_hosts(&file), &host))
+        update_hosts(&file, |hosts| with_host(hosts, &host))
     })
     .await
     .map_err(|e| e.to_string())?
@@ -124,7 +132,7 @@ pub async fn remove_credential(app: AppHandle, host: String) -> Result<(), Strin
             Ok(()) | Err(keyring::Error::NoEntry) => {}
             Err(e) => return Err(format!("cannot remove the token of {host} from the keychain: {e}")),
         }
-        write_hosts(&file, &without_host(read_hosts(&file), &host))
+        update_hosts(&file, |hosts| without_host(hosts, &host))
     })
     .await
     .map_err(|e| e.to_string())?
@@ -153,5 +161,18 @@ mod tests {
 
         std::fs::write(&file, "[\"github.com\"").unwrap();
         assert!(read_hosts(&file).is_empty());
+    }
+
+    #[test]
+    fn hosts_stored_at_the_same_time_are_all_listed() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join(FILE);
+        std::thread::scope(|scope| {
+            for n in 0..16 {
+                let file = &file;
+                scope.spawn(move || update_hosts(file, |hosts| with_host(hosts, &format!("host{n}"))).unwrap());
+            }
+        });
+        assert_eq!(read_hosts(&file).len(), 16);
     }
 }
