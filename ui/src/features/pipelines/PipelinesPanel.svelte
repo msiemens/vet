@@ -393,7 +393,7 @@
   }
   .sep {
     width: 1px;
-    height: 16px;
+    height: var(--h-ctl-xxs);
     background: var(--line);
   }
   .grow {

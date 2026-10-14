@@ -85,8 +85,8 @@
     color: var(--text-3);
   }
   .pin {
-    width: 18px;
-    height: 18px;
+    width: var(--s-icon-l);
+    height: var(--s-icon-l);
     flex: none;
     display: inline-flex;
     align-items: center;

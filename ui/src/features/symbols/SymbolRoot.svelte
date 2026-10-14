@@ -182,8 +182,8 @@
   }
   .file {
     flex: none;
-    width: 14px;
-    height: 16px;
+    width: var(--s-glyph);
+    height: var(--s-icon);
     display: inline-flex;
     align-items: center;
     justify-content: center;

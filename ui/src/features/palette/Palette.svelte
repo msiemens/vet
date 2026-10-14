@@ -600,7 +600,7 @@
   }
   .gl {
     flex: none;
-    width: 16px;
+    width: var(--s-icon);
     display: inline-flex;
     justify-content: center;
     color: var(--text-3);

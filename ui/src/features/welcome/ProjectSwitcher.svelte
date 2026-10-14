@@ -80,7 +80,7 @@
   }
   .check {
     flex: none;
-    width: 14px;
+    width: var(--s-glyph);
     display: inline-flex;
     color: var(--accent);
   }

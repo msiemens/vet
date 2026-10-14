@@ -149,6 +149,12 @@
   --h-ctl-s: 22px;
   --h-ctl-xs: 20px;
   --h-ctl-xxs: 16px;
+  /* The small button in a hunk bar or a file's header. */
+  --h-chip: 18px;
+  /* The boxes of icons: a row's glyph column, a line's icon, a tab's close or pin button. */
+  --s-glyph: 14px;
+  --s-icon: 16px;
+  --s-icon-l: 18px;
   --h-row: 22px;
   --h-section: 26px;
   --h-hunk: 24px;

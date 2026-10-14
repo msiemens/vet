@@ -13,8 +13,8 @@
 <style>
   .kind {
     flex: none;
-    width: 14px;
-    height: 14px;
+    width: var(--s-glyph);
+    height: var(--s-glyph);
     border-radius: 3px;
     display: inline-flex;
     align-items: center;

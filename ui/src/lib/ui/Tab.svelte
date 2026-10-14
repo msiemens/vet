@@ -88,8 +88,8 @@
     padding-right: 12px;
   }
   .close {
-    width: 18px;
-    height: 18px;
+    width: var(--s-icon-l);
+    height: var(--s-icon-l);
     margin-right: 6px;
     display: inline-flex;
     align-items: center;

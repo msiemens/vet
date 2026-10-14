@@ -82,7 +82,7 @@
   background: var(--old-base-stripes);
 }
 .file > header .vet-reconfirm {
-  height: 18px;
+  height: var(--h-chip);
 }
 /* Spaced and inset like the hunk bar's buttons (`.vet-hunk`), so the two columns line up. */
 .file > header .tools {

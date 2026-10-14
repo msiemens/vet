@@ -19,8 +19,8 @@
 /* In a file's header: how many matches the file has. */
 .file > header .found {
   flex: none;
-  min-width: 18px;
-  height: 16px;
+  min-width: var(--s-icon-l);
+  height: var(--h-ctl-xxs);
   box-sizing: border-box;
   padding: 0 5px;
   border-radius: 8px;

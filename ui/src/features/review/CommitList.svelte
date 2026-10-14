@@ -113,8 +113,8 @@
     display: inline-flex;
     justify-content: center;
     align-items: center;
-    width: 14px;
-    height: 16px;
+    width: var(--s-glyph);
+    height: var(--s-icon);
     color: var(--text-3);
   }
   .dot {

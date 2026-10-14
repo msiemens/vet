@@ -58,7 +58,7 @@
   display: inline-flex;
   align-items: center;
   gap: 4px;
-  height: 18px;
+  height: var(--h-chip);
   padding: 0 6px;
   border-radius: var(--radius);
   color: var(--old-base);
@@ -68,7 +68,7 @@
   cursor: default;
 }
 .vet-reconfirm {
-  height: 18px;
+  height: var(--h-chip);
   padding: 0 8px;
   font-size: var(--fs-mono-s);
 }

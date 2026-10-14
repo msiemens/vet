@@ -143,12 +143,12 @@
     height: auto;
     min-height: var(--h-row);
     padding-block: 2px;
-    line-height: 16px;
+    line-height: var(--s-icon);
     white-space: normal;
   }
   .wrap :global(.chev),
   .wrap :global(.change-letter) {
-    height: 16px;
+    height: var(--s-icon);
     align-items: center;
   }
   .wrap :global(.kind) {
