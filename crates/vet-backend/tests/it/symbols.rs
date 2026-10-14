@@ -14,6 +14,8 @@ use vet_backend::Injected;
 use vet_backend::{Orchestrator, open_store};
 use vet_protocol::{ChangesetKey, Event, FileSymbols, ProjectId, Request, ServerMessage, SymbolChange};
 
+#[cfg(debug_assertions)]
+use crate::common::background_ended;
 use crate::common::{Client, config, git, write};
 
 const BASE_LIB: &str = "\
@@ -100,6 +102,25 @@ async fn next_symbols(
             return Some(symbols);
         }
     }
+}
+
+/// Drains the inbox; whether no `FileSymbols` of `project` for `path` was waiting. The task that
+/// would push one has ended, so what is waiting is all there is.
+fn no_more_symbols(inbox: &mut UnboundedReceiver<ServerMessage>, project: ProjectId, path: &str) -> bool {
+    let mut quiet = true;
+    while let Ok(message) = inbox.try_recv() {
+        if let ServerMessage::Event {
+            event: Event::FileSymbols {
+                project: at, symbols, ..
+            },
+        } = message
+            && at == project
+            && symbols.path == path
+        {
+            quiet = false;
+        }
+    }
+    quiet
 }
 
 /// The next `FileSymbols` event of `project` for `path`, waiting up to `within`.
@@ -217,6 +238,7 @@ async fn the_open_file_is_analysed_first() {
     assert_eq!(second.path, "src/lib.rs");
 }
 
+#[cfg(debug_assertions)]
 #[tokio::test]
 #[ignore = "needs rust-analyzer"]
 async fn nothing_more_is_analysed_once_the_review_screen_goes_away() {
@@ -232,10 +254,10 @@ async fn nothing_more_is_analysed_once_the_review_screen_goes_away() {
         .call(Request::SetReviewShown { project, shown: false })
         .await
         .unwrap();
+    // The task ends with the review screen: the file it had not reached is not analysed.
+    background_ended(&client, project, "symbols").await;
     assert!(
-        next_symbols(&mut client.inbox, project, Duration::from_secs(10))
-            .await
-            .is_none(),
+        no_more_symbols(&mut client.inbox, project, "src/lib.rs"),
         "the other file is not analysed once the screen is away"
     );
 }
@@ -279,10 +301,10 @@ async fn a_lasting_unavailability_is_pushed_at_once() {
         .await
         .expect("an answer");
     assert!(first.gap.is_some(), "the lasting reason is pushed: {first:?}");
+    // The task ends once it has analysed the changeset: a lasting reason is not asked again.
+    background_ended(&client, project, "symbols").await;
     assert!(
-        next_symbols_for(&mut client.inbox, project, "src/lib.rs", Duration::from_secs(10))
-            .await
-            .is_none(),
+        no_more_symbols(&mut client.inbox, project, "src/lib.rs"),
         "a lasting reason is not asked again"
     );
 }

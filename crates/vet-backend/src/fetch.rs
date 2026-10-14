@@ -64,13 +64,14 @@ async fn follow_pull_request(open: &Arc<Open>, booted: &Booted) {
 /// Fetches now and then every `interval`, for as long as the session is open.
 pub(crate) fn fetch_periodically(open: &Arc<Open>, interval: Duration) {
     let session = Arc::downgrade(open);
-    let task = tokio::spawn(vet_app::fetch::every(interval, move || {
+    let fetching = vet_app::fetch::every(interval, move || {
         let session = session.clone();
         async move {
             if let Some(open) = session.upgrade() {
                 fetch_and_report(&open).await;
             }
         }
-    }));
+    });
+    let task = tokio::spawn(crate::open::tracked(open, "fetch", fetching));
     open.keep_fetching(task.abort_handle());
 }

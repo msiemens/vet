@@ -284,6 +284,41 @@ pub fn config() -> Config {
     }
 }
 
+/// Waits until the project's background task of `kind` has started and is no longer running: the
+/// marker that the work it would have caused is over, where a sleep would only hope that it is.
+/// The bound is generous because a language server may take a while to answer under load. Only a
+/// debug build can see the tasks; in one it is the barrier the tests use instead of time.
+#[cfg(debug_assertions)]
+pub async fn background_ended(client: &Client, project: ProjectId, kind: &'static str) {
+    for _ in 0..6000 {
+        let (started, live) = client.handler.background_counts(project, kind);
+        if started > 0 && live == 0 {
+            return;
+        }
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+    panic!("the {kind} task did not end");
+}
+
+/// How often the project's background task of `kind` has been started. A debug build only.
+#[cfg(debug_assertions)]
+pub fn background_started(client: &Client, project: ProjectId, kind: &'static str) -> usize {
+    client.handler.background_counts(project, kind).0
+}
+
+/// Waits until exactly `live` of the project's background tasks of `kind` are running: the marker
+/// that a run a newer one replaced has ended. A debug build only.
+#[cfg(debug_assertions)]
+pub async fn background_live(client: &Client, project: ProjectId, kind: &'static str, live: usize) {
+    for _ in 0..6000 {
+        if client.handler.background_counts(project, kind).1 == live {
+            return;
+        }
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+    panic!("the {kind} tasks never came to {live} running");
+}
+
 /// A handler on a fresh data directory, which the caller keeps alive.
 pub async fn handler() -> (Arc<Orchestrator>, tempfile::TempDir) {
     let data = tempfile::tempdir().unwrap();

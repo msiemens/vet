@@ -12,6 +12,8 @@ use tokio::sync::mpsc::UnboundedReceiver;
 use vet_backend::{Orchestrator, open_store};
 use vet_protocol::{ChangesetKey, Diagnostic, DiagnosticOrigin, Event, ProjectId, Request, ServerMessage, Severity};
 
+#[cfg(debug_assertions)]
+use crate::common::background_ended;
 use crate::common::{Client, config, git, write};
 
 const BASE: &str = "\
@@ -125,6 +127,30 @@ fn has_new(diagnostics: &[Diagnostic], compared: bool) -> bool {
     compared && diagnostics.iter().any(|d| d.origin == DiagnosticOrigin::New)
 }
 
+/// Drains the inbox; whether no compared `FileDiagnostics` of `project` for `src/lib.rs` was
+/// waiting. The task that would push one has ended, so what is waiting is all there is.
+fn no_comparison(inbox: &mut UnboundedReceiver<ServerMessage>, project: ProjectId) -> bool {
+    let mut quiet = true;
+    while let Ok(message) = inbox.try_recv() {
+        if let ServerMessage::Event {
+            event:
+                Event::FileDiagnostics {
+                    project: at,
+                    path,
+                    compared,
+                    ..
+                },
+        } = message
+            && at == project
+            && path == "src/lib.rs"
+            && compared
+        {
+            quiet = false;
+        }
+    }
+    quiet
+}
+
 #[tokio::test]
 #[ignore = "needs rust-analyzer"]
 async fn the_compared_problems_are_pushed_with_the_origins_the_comparison_found() {
@@ -162,6 +188,7 @@ async fn the_first_answer_comes_with_the_origins_pending() {
     );
 }
 
+#[cfg(debug_assertions)]
 #[tokio::test]
 #[ignore = "needs rust-analyzer"]
 async fn nothing_more_is_analysed_once_the_review_screen_goes_away() {
@@ -177,10 +204,10 @@ async fn nothing_more_is_analysed_once_the_review_screen_goes_away() {
         .call(Request::SetReviewShown { project, shown: false })
         .await
         .unwrap();
+    // The task ends with the review screen: no comparison is started.
+    background_ended(&client, project, "problems").await;
     assert!(
-        next_diagnostics(&mut client.inbox, project, Duration::from_secs(10), |_, _| true)
-            .await
-            .is_none(),
+        no_comparison(&mut client.inbox, project),
         "no comparison is started once the screen is away"
     );
 }

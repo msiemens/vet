@@ -20,6 +20,8 @@ use vet_backend::{Config, Orchestrator, open_store};
 use vet_infra::platform::fake::{Canned, Fake, Seen};
 use vet_protocol::{ChangesetKey, ProjectId, PullRequestInfo, Request, Response, Secret};
 
+#[cfg(debug_assertions)]
+use crate::common::background_ended;
 use crate::common::{Client, git, init, write};
 
 const NOW: &str = "2024-05-01T12:00:00Z";
@@ -43,6 +45,9 @@ pub(crate) struct Mock {
     pub(crate) base: String,
     /// How many discussions were answered.
     pub(crate) discussions: usize,
+    /// How many discussion requests arrived, answered or not; counted before the delay, so a test
+    /// can close the project while one is in flight.
+    pub(crate) started: usize,
     /// After this many discussions every further one is refused as a rate limit.
     pub(crate) limit_after: Option<usize>,
     /// The status a refusal uses; 0 means a rate limit (429). A plain failure (500) is not gated
@@ -245,6 +250,7 @@ fn github(mock: Arc<Mutex<Mock>>) -> Fake {
                     mock.missing,
                 )
             };
+            mock.lock().unwrap().started += 1;
             if !delay.is_zero() {
                 std::thread::sleep(delay);
             }
@@ -430,6 +436,12 @@ fn answered(mock: &Mutex<Mock>) -> usize {
     mock.lock().unwrap().discussions
 }
 
+/// How many discussion requests the fake received, those in flight included.
+fn started(mock: &Mutex<Mock>) -> usize {
+    mock.lock().unwrap().started
+}
+
+#[cfg(debug_assertions)]
 #[tokio::test]
 async fn the_details_of_a_listed_pull_request_are_fetched_ahead_and_a_changed_one_again_but_not_an_unchanged_one() {
     let (mock, fake, repo, _scratch) = fixture();
@@ -441,9 +453,10 @@ async fn the_details_of_a_listed_pull_request_are_fetched_ahead_and_a_changed_on
     assert_eq!(stored_description(repo.path(), 8).await.as_deref(), Some("second"));
     assert_eq!(answered(&mock), 2, "both are new");
 
-    // Nothing about #7 or #8 changed: neither is asked for again.
+    // Nothing about #7 or #8 changed: neither is asked for again. The prefetch this listing
+    // started has ended, and made no call.
     list(&client, project).await;
-    tokio::time::sleep(Duration::from_millis(50)).await;
+    background_ended(&client, project, "prefetch").await;
     assert_eq!(answered(&mock), 2, "an unchanged pull request costs no call");
 
     // #7 changed: it alone is fetched again.
@@ -487,6 +500,7 @@ async fn a_pull_request_that_is_gone_does_not_stop_the_others() {
     );
 }
 
+#[cfg(debug_assertions)]
 #[tokio::test]
 async fn prefetching_stops_when_the_project_closes() {
     let (mock, fake, repo, _scratch) = fixture();
@@ -506,9 +520,22 @@ async fn prefetching_stops_when_the_project_closes() {
     let project = client.open(repo.path()).await;
 
     list(&client, project).await;
-    tokio::time::sleep(Duration::from_millis(50)).await;
+    // Close while the first call is in flight: wait until the platform has the request.
+    for _ in 0..200 {
+        if started(&mock) >= 1 {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
     client.call(Request::CloseProject { project }).await.unwrap();
-    tokio::time::sleep(Duration::from_millis(700)).await;
+    // The task ends with the project: the call in flight when it closed is the last.
+    background_ended(&client, project, "prefetch").await;
+    for _ in 0..200 {
+        if answered(&mock) >= 1 {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
 
     assert_eq!(
         answered(&mock),
@@ -518,6 +545,7 @@ async fn prefetching_stops_when_the_project_closes() {
     assert!(stored_now(repo.path(), 9).await.is_none());
 }
 
+#[cfg(debug_assertions)]
 #[tokio::test]
 async fn prefetching_stops_while_an_account_is_rate_limited() {
     let (mock, fake, repo, _scratch) = fixture();
@@ -536,8 +564,8 @@ async fn prefetching_stops_while_an_account_is_rate_limited() {
     let project = client.open(repo.path()).await;
 
     list(&client, project).await;
-    // Longer than the limit the refusal announces, so a prefetch that did not stop would resume.
-    tokio::time::sleep(Duration::from_millis(1500)).await;
+    // The refusal stops the run, so the task ends; one that did not stop would still be running.
+    background_ended(&client, project, "prefetch").await;
 
     assert_eq!(answered(&mock), 1, "the first refusal stops the rest");
     assert!(stored_now(repo.path(), 7).await.is_none());
@@ -545,6 +573,7 @@ async fn prefetching_stops_while_an_account_is_rate_limited() {
     assert!(stored_now(repo.path(), 9).await.is_none());
 }
 
+#[cfg(debug_assertions)]
 #[tokio::test]
 async fn prefetching_stops_when_the_account_fails() {
     let (mock, fake, repo, _scratch) = fixture();
@@ -566,7 +595,8 @@ async fn prefetching_stops_when_the_account_fails() {
     let project = client.open(repo.path()).await;
 
     list(&client, project).await;
-    tokio::time::sleep(Duration::from_millis(200)).await;
+    // The failure stops the run, so the task ends; one that did not stop would still be running.
+    background_ended(&client, project, "prefetch").await;
 
     assert_eq!(answered(&mock), 1, "the first failure stops the rest");
     assert!(stored_now(repo.path(), 7).await.is_none());

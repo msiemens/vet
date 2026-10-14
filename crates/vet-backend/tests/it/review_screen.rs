@@ -8,6 +8,8 @@ use std::time::Duration;
 
 use vet_protocol::{ChangesetKey, ProjectId, Request};
 
+#[cfg(debug_assertions)]
+use crate::common::background_started;
 use crate::common::{Client, git, handler, repo_with, write};
 
 const SERVER: &str = "#!/bin/sh\n\
@@ -108,12 +110,14 @@ impl Rig {
         panic!("no server was launched beyond the {before} that were");
     }
 
-    /// Gives a start that was wrongly begun time to launch.
-    async fn quiet(&self) {
-        tokio::time::sleep(Duration::from_secs(3)).await;
+    /// How many times the backend asked for the changeset on view's servers to start: the decision
+    /// itself, where `launched` waits for the process.
+    fn servers_started(&self) -> usize {
+        background_started(&self.client, self.project, "servers")
     }
 }
 
+#[cfg(debug_assertions)]
 #[tokio::test]
 async fn a_changeset_put_on_view_from_the_queue_starts_no_server_and_the_review_screen_starts_it() {
     let rig = Rig::start().await;
@@ -122,13 +126,15 @@ async fn a_changeset_put_on_view_from_the_queue_starts_no_server_and_the_review_
 
     rig.open("a").await;
     rig.open("b").await;
-    rig.quiet().await;
-    assert_eq!(rig.launched(), 0, "the queue started a server");
+    // Opening from the queue asks for no server: the review screen is what does.
+    assert_eq!(rig.servers_started(), 0, "the queue started a server");
 
     rig.show_review(true).await;
+    assert!(rig.servers_started() > 0, "the review screen starts them");
     rig.launched_beyond(0).await;
 }
 
+#[cfg(debug_assertions)]
 #[tokio::test]
 async fn servers_follow_the_changeset_on_view_while_the_review_screen_is_shown_and_not_after_it_is_left() {
     let rig = Rig::start().await;
@@ -138,20 +144,21 @@ async fn servers_follow_the_changeset_on_view_while_the_review_screen_is_shown_a
 
     rig.show_review(true).await;
     rig.open("a").await;
+    assert!(rig.servers_started() > 0, "the changeset on view starts servers");
     rig.launched_beyond(0).await;
-    rig.quiet().await;
 
-    let before = rig.launched();
+    let before = rig.servers_started();
     rig.open("b").await;
-    rig.launched_beyond(before).await;
-    rig.quiet().await;
+    assert!(
+        rig.servers_started() > before,
+        "a changeset opened while the review screen is shown starts servers"
+    );
 
     rig.show_review(false).await;
-    let before = rig.launched();
+    let before = rig.servers_started();
     rig.open("c").await;
-    rig.quiet().await;
     assert_eq!(
-        rig.launched(),
+        rig.servers_started(),
         before,
         "a server started for a changeset opened from the queue"
     );

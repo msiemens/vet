@@ -11,6 +11,9 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, OnceLock, PoisonError, Weak};
 use std::time::{Duration, SystemTime};
 
+#[cfg(debug_assertions)]
+use std::collections::HashMap;
+
 use tokio::sync::OnceCell;
 use tokio::task::AbortHandle;
 use vet_app::changeset::{RemoteKey, Source};
@@ -113,6 +116,78 @@ impl TaskSlot {
     }
 }
 
+#[cfg(debug_assertions)]
+type Counts = HashMap<(ProjectId, &'static str), (usize, usize)>;
+
+/// How often each background task of each project was started, and how many of them are running
+/// now. For tests: the end of a task is the marker that the work it would have caused is over, and
+/// waiting for that marker is a barrier where waiting for time to pass would not be. A debug build
+/// only.
+#[cfg(debug_assertions)]
+#[derive(Default)]
+pub(crate) struct Background(Mutex<Counts>);
+
+#[cfg(debug_assertions)]
+impl Background {
+    /// Counts a task of `kind` that is starting; dropping the guard says it ended, whether it
+    /// returned or was aborted.
+    pub(crate) fn start(self: &Arc<Self>, project: ProjectId, kind: &'static str) -> LiveTask {
+        {
+            let mut all = lock(&self.0);
+            let counts = all.entry((project, kind)).or_default();
+            counts.0 += 1;
+            counts.1 += 1;
+        }
+        LiveTask {
+            background: self.clone(),
+            project,
+            kind,
+        }
+    }
+
+    /// How often the task was started and how many are running now.
+    pub(crate) fn counts(&self, project: ProjectId, kind: &'static str) -> (usize, usize) {
+        lock(&self.0).get(&(project, kind)).copied().unwrap_or_default()
+    }
+}
+
+/// The end of one counted background task.
+#[cfg(debug_assertions)]
+pub(crate) struct LiveTask {
+    background: Arc<Background>,
+    project: ProjectId,
+    kind: &'static str,
+}
+
+#[cfg(debug_assertions)]
+impl Drop for LiveTask {
+    fn drop(&mut self) {
+        if let Some(counts) = lock(&self.background.0).get_mut(&(self.project, self.kind)) {
+            counts.1 = counts.1.saturating_sub(1);
+        }
+    }
+}
+
+/// `fut` as a background task of `kind` that the tests can see end. A debug build only; elsewhere
+/// the future is handed back as it is.
+#[cfg(debug_assertions)]
+pub(crate) fn tracked<F: std::future::Future>(
+    open: &Arc<Open>,
+    kind: &'static str,
+    fut: F,
+) -> impl std::future::Future<Output = F::Output> + use<F> {
+    let live = open.background.start(open.id, kind);
+    async move {
+        let _live = live;
+        fut.await
+    }
+}
+
+#[cfg(not(debug_assertions))]
+pub(crate) fn tracked<F: std::future::Future>(_: &Arc<Open>, _: &'static str, fut: F) -> F {
+    fut
+}
+
 /// What one open project runs on.
 pub(crate) struct Wired {
     /// The background work of the project, announced to its subscribers.
@@ -159,6 +234,10 @@ pub(crate) struct Wired {
     /// A debug build only.
     #[cfg(debug_assertions)]
     pub(crate) analysis_failures: Arc<crate::analysis::Failures>,
+    /// For tests: how often each background task of this project was started and how many run now.
+    /// A debug build only.
+    #[cfg(debug_assertions)]
+    pub(crate) background: Arc<Background>,
 }
 
 impl Wired {
@@ -573,6 +652,8 @@ impl Orchestrator {
             answers: self.answers.clone(),
             #[cfg(debug_assertions)]
             analysis_failures: self.analysis_failures.clone(),
+            #[cfg(debug_assertions)]
+            background: self.background.clone(),
         })
     }
 }

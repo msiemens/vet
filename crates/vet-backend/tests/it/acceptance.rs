@@ -1192,7 +1192,8 @@ async fn criterion4_a_killed_and_restarted_watcher_catches_up_in_one_rescan() {
     live.kill_watcher().await;
     write(live.path(), "a.txt", &text(40, &[5]));
     write(live.path(), "while-dead.txt", "x\n");
-    tokio::time::sleep(Duration::from_millis(400)).await;
+    // `kill_watcher` joined the follower, so the watcher is over and cannot have settled the
+    // writes: no wait is needed to be sure of it.
     assert_eq!(live.session.revision().await, 0);
 
     // A new watcher starts; a restart reconciles before it trusts any event.

@@ -12,6 +12,10 @@ use vet_protocol::{
     ChangesetKey, CiState, CommitChecks, Event, PipelineAction, ProjectId, Request, Response, ServerMessage,
 };
 
+#[cfg(debug_assertions)]
+use crate::common::background_ended;
+#[cfg(debug_assertions)]
+use crate::common::background_live;
 use crate::common::{Client, handler, repo_with};
 use crate::prefetch::{Mock, backend, backend_with, config, fixture};
 
@@ -155,6 +159,7 @@ async fn the_checks_of_the_changeset_on_view_are_pushed_without_being_asked_for(
     assert_eq!(checks_calls(&mock), 1);
 }
 
+#[cfg(debug_assertions)]
 #[tokio::test]
 async fn the_checks_are_read_again_while_a_run_still_runs_and_stop_once_it_is_done() {
     let (mock, fake, repo, _scratch) = fixture();
@@ -177,7 +182,9 @@ async fn the_checks_are_read_again_while_a_run_still_runs_and_stop_once_it_is_do
     assert_eq!(second[0].state, Some(CiState::Success));
     assert_eq!(checks_calls(&mock), 2, "asked again while a run went on");
 
-    tokio::time::sleep(Duration::from_millis(200)).await;
+    // Nothing is running any more, so the task ends; its end is the marker that it asked for
+    // nothing more.
+    background_ended(&client, project, "checks").await;
     assert_eq!(checks_calls(&mock), 2, "nothing more once it is done");
 }
 
@@ -204,6 +211,7 @@ async fn the_checks_are_kept_fresh_while_the_queue_shows_the_changeset() {
     assert_eq!(checks_calls(&mock), 1);
 }
 
+#[cfg(debug_assertions)]
 #[tokio::test]
 async fn showing_the_review_screen_again_replaces_the_run_that_was_going() {
     let (mock, fake, repo, _scratch) = fixture();
@@ -223,7 +231,6 @@ async fn showing_the_review_screen_again_replaces_the_run_that_was_going() {
         .expect("a round");
     assert_eq!(checks_calls(&mock), 1);
 
-    tokio::time::sleep(Duration::from_millis(100)).await;
     client
         .call(Request::SetReviewShown { project, shown: true })
         .await
@@ -235,9 +242,13 @@ async fn showing_the_review_screen_again_replaces_the_run_that_was_going() {
     assert_eq!(again[0].state, Some(CiState::Pending));
     assert_eq!(checks_calls(&mock), 2, "the new run's first round");
 
-    // Another 400 ms: the new run reads once more (300 ms apart). The run it replaced is gone;
-    // were it still going, its own next round would have come first and made this four.
-    tokio::time::sleep(Duration::from_millis(400)).await;
+    // The run it replaced is gone: only one is left. The new run's own next round (300 ms apart)
+    // then reaches the platform exactly once.
+    background_live(&client, project, "checks", 1).await;
+    let (next, ..) = next_checks(&mut client.inbox, project, Duration::from_secs(5))
+        .await
+        .expect("the new run reads again");
+    assert_eq!(next[0].state, Some(CiState::Pending));
     assert_eq!(checks_calls(&mock), 3, "one run, not two");
 }
 
@@ -333,6 +344,7 @@ async fn the_checks_are_read_again_shortly_after_an_action_that_the_platform_sho
     assert!(checks_calls(&mock) >= 3, "the settle read reached the new run");
 }
 
+#[cfg(debug_assertions)]
 #[tokio::test]
 async fn closing_the_project_stops_the_checks() {
     let (mock, fake, repo, _scratch) = fixture();
@@ -348,8 +360,7 @@ async fn closing_the_project_stops_the_checks() {
         .expect("a round");
 
     client.call(Request::CloseProject { project }).await.unwrap();
-    tokio::time::sleep(Duration::from_millis(50)).await;
-    let stopped = checks_calls(&mock);
-    tokio::time::sleep(Duration::from_millis(200)).await;
-    assert_eq!(checks_calls(&mock), stopped, "nothing runs after the project closes");
+    // The task ends with the project; its end is the marker that it reads no more.
+    background_ended(&client, project, "checks").await;
+    assert_eq!(checks_calls(&mock), 1, "nothing runs after the project closes");
 }

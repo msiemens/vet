@@ -150,6 +150,10 @@ pub struct Orchestrator {
     /// so the retry can be exercised. A debug build only, and empty except in the tests' own builds.
     #[cfg(debug_assertions)]
     analysis_failures: Arc<analysis::Failures>,
+    /// For tests: how often each project's background tasks were started and how many run now, so a
+    /// test can wait for a task's end instead of for time to pass. A debug build only.
+    #[cfg(debug_assertions)]
+    background: Arc<open::Background>,
 }
 
 #[cfg(debug_assertions)]
@@ -209,6 +213,8 @@ impl Orchestrator {
             projects: Projects::default(),
             #[cfg(debug_assertions)]
             analysis_failures: Arc::default(),
+            #[cfg(debug_assertions)]
+            background: Arc::default(),
         }
     }
 
@@ -240,6 +246,14 @@ impl Orchestrator {
             .unwrap_or_else(|e| e.into_inner())
             .insert(path.to_owned(), failures.into());
         self
+    }
+
+    /// For tests: how often the project's background task of `kind` was started and how many are
+    /// running now, so a test can wait for a task's end instead of for time to pass. A debug build
+    /// only.
+    #[cfg(debug_assertions)]
+    pub fn background_counts(&self, project: ProjectId, kind: &'static str) -> (usize, usize) {
+        self.background.counts(project, kind)
     }
 
     /// The open project `id`. The request being answered is about it from here on, and its
@@ -719,11 +733,15 @@ fn start_servers_in_background(open: Arc<Open>) {
     }
     symbols::refresh_symbols_in_background(open.clone());
     problems::refresh_problems_in_background(open.clone());
-    tokio::spawn(async move {
-        if let Ok(booted) = open.booted().await {
+    let starting = open.clone();
+    let task = async move {
+        if let Ok(booted) = starting.booted().await {
             booted.start_servers().await;
         }
-    });
+    };
+    #[cfg(debug_assertions)]
+    let task = crate::open::tracked(&open, "servers", task);
+    tokio::spawn(task);
 }
 
 /// Scans a project that has not scanned yet, so opening does not wait for the scan.

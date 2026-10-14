@@ -6,6 +6,8 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 
+#[cfg(debug_assertions)]
+use crate::common::background_ended;
 use crate::common::{Client, config, git, init, write};
 use tempfile::TempDir;
 use vet_backend::{Config, Orchestrator, open_store};
@@ -377,6 +379,7 @@ async fn the_periodic_fetch_fires_on_its_interval() {
     assert!(finished >= 2, "fetched at open and again: {seen:#?}");
 }
 
+#[cfg(debug_assertions)]
 #[tokio::test]
 async fn a_closed_project_stops_fetching() {
     let remote = Remote::new();
@@ -386,10 +389,10 @@ async fn a_closed_project_stops_fetching() {
     let mut seen = Vec::new();
     until(&mut client, &mut seen, fetched).await;
     client.call(Request::CloseProject { project }).await.unwrap();
+    // The periodic task ends with the project: it cannot fetch again.
+    background_ended(&client, project, "fetch").await;
 
     remote.push_commit("one");
-    tokio::time::sleep(Duration::from_millis(600)).await;
-
     assert_ne!(
         remote.rev("refs/remotes/origin/main"),
         git(&remote.work, &["rev-parse", "HEAD"])

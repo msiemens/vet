@@ -82,6 +82,7 @@ impl Orchestrator {
         }
         fetch_heads_in_background(open.open.clone(), list.clone());
         let prefetching = prefetch_details(
+            &open.open,
             self.platforms.clone(),
             self.accounts.clone(),
             self.store.clone(),
@@ -217,6 +218,7 @@ const PREFETCH_LIMIT: usize = 20;
 /// delays the list the viewer asked for; the task is handed to the project, which replaces it with
 /// the next list's and stops it when the project closes.
 fn prefetch_details(
+    open: &Arc<Open>,
     platforms: Arc<Platforms>,
     accounts: Arc<PlatformAccounts>,
     store: SqliteStore,
@@ -224,7 +226,7 @@ fn prefetch_details(
     list: PullRequestList,
     pace: Duration,
 ) -> tokio::task::AbortHandle {
-    tokio::spawn(async move {
+    let prefetching = async move {
         let mut stopped: std::collections::HashSet<String> = std::collections::HashSet::new();
         let mut fetched = 0usize;
         for listed in &list.rows {
@@ -289,8 +291,8 @@ fn prefetch_details(
             }
             tokio::time::sleep(pace).await;
         }
-    })
-    .abort_handle()
+    };
+    tokio::spawn(crate::open::tracked(open, "prefetch", prefetching)).abort_handle()
 }
 
 /// Brings in the pull requests of `list` that are not in the repository, so the queue can count
