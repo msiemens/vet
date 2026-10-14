@@ -53,6 +53,29 @@ pub trait Materializer: Send + Sync + 'static {
 #[derive(Clone, PartialEq, Eq, Hash, Debug)]
 pub struct BackendId(pub String);
 
+/// How much it costs to have a server warm again once it was stopped: what the pool weighs
+/// against how long ago a server was used when it must stop one to make room.
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
+pub enum Warmup {
+    /// Starts and indexes in a moment.
+    Quick,
+    /// Seconds to a minute.
+    Slow,
+    /// Minutes on a large project.
+    VerySlow,
+}
+
+impl Warmup {
+    /// How many stops of cheaper servers a server of this cost outlives when nothing uses it.
+    pub fn weight(self) -> u64 {
+        match self {
+            Self::Quick => 1,
+            Self::Slow => 4,
+            Self::VerySlow => 16,
+        }
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct ServerConfig {
     pub backend: BackendId,
@@ -73,6 +96,7 @@ pub struct ServerConfig {
     /// finishes resolve nothing outside the file. Servers that load their
     /// projects before they are ready (all others) answer at once.
     pub loads_project_on_open: bool,
+    pub warmup: Warmup,
 }
 
 /// Quirk arms are added reluctantly, per observed incompatibility. No registry,
@@ -607,6 +631,7 @@ mod tests {
             root_markers: vec![],
             executes_project_code_during_analysis: true,
             loads_project_on_open: false,
+            warmup: Warmup::VerySlow,
         })
     }
 
@@ -621,6 +646,7 @@ mod tests {
             root_markers: vec![],
             executes_project_code_during_analysis: false,
             loads_project_on_open: false,
+            warmup: Warmup::Slow,
         })
     }
 
@@ -637,6 +663,7 @@ mod tests {
             root_markers: vec![],
             executes_project_code_during_analysis: false,
             loads_project_on_open: false,
+            warmup: Warmup::Quick,
         })
     }
 

@@ -196,6 +196,8 @@ mod tests {
     use std::collections::HashMap;
     use std::sync::Mutex as StdMutex;
 
+    use vet_semantic::ports::Warmup;
+
     use super::*;
     use crate::ports::{FoundServer, ServerOrigin};
 
@@ -315,6 +317,7 @@ mod tests {
             root_markers: vec![],
             executes_project_code_during_analysis: false,
             loads_project_on_open: false,
+            warmup: Warmup::Quick,
         }
     }
 

@@ -237,8 +237,9 @@ fn served(trust: &Trust, sides: &SemanticSides) -> (Served, Served) {
 
 /// Starts what the changed `files` need on `sides`, and the target side's
 /// servers for the languages of `others`, only those of `only` if it is given.
-/// Changed languages come first, because only that many fit in the pool. The
-/// error is the first of the starts that failed.
+/// Changed languages come first, because only that many fit in the pool, and
+/// are the ones the pool keeps (unless `only` is given, which leaves what it keeps as it was).
+/// The error is the first of the starts that failed.
 async fn start_servers_for<M: Materializer, L: ServerLauncher>(
     pair: &Pair<M, L>,
     files: &[FileDiff],
@@ -258,11 +259,13 @@ async fn start_servers_for<M: Materializer, L: ServerLauncher>(
             }
         }
     }
+    let changed = candidates.len();
     candidates.extend(others.iter().map(|path| (Side::Target, &pair.target, path)));
 
     let mut wanted: Vec<(Side, &Served, &RepoPath)> = Vec::new();
     let mut languages: Vec<(Side, &BackendId)> = Vec::new();
-    for (side, served, path) in candidates {
+    let mut changed_wanted = 0;
+    for (at, (side, served, path)) in candidates.into_iter().enumerate() {
         let Some(language) = semantic
             .language_of(path)
             .filter(|l| only.is_none_or(|only| only == *l))
@@ -272,10 +275,18 @@ async fn start_servers_for<M: Materializer, L: ServerLauncher>(
         if !languages.contains(&(side, language)) {
             languages.push((side, language));
             wanted.push((side, served, path));
+            changed_wanted += usize::from(at < changed);
         }
     }
     // Servers beyond what the pool keeps warm would only evict each other.
     wanted.truncate(POOL_CAPACITY);
+    if only.is_none() {
+        let pinned: Vec<_> = wanted[..changed_wanted.min(wanted.len())]
+            .iter()
+            .map(|(_, served, file)| (*served, *file))
+            .collect();
+        semantic.keep_warm(&pinned);
+    }
     // The base side's servers restore and index a snapshot, which slows the
     // target side's startup down, and the target side is what the first
     // views need. So they start once the target side's are running, and
@@ -980,7 +991,7 @@ mod tests {
     use vet_semantic::policy::AnalysisPolicy;
     use vet_semantic::ports::{
         Diagnostic, LanguageServer, LaunchError, Materialized, NotMaterializable, Pos, QueryError, Readiness,
-        ServerConfig, ServerIdentity, Span, Started, SymbolKind, Tree,
+        ServerConfig, ServerIdentity, Span, Started, SymbolKind, Tree, Warmup,
     };
 
     use vet_semantic::derived::ChangedSymbol;
@@ -1097,6 +1108,8 @@ mod tests {
         workspace_together: std::sync::atomic::AtomicBool,
         /// Starts of a server that may execute project code during analysis.
         executing_started: AtomicUsize,
+        /// The languages of the servers that were stopped, in order.
+        stopped: Mutex<Vec<String>>,
     }
 
     /// Counts a hover as given up on when its request is dropped.
@@ -1110,7 +1123,8 @@ mod tests {
 
     struct FakeLauncher(Arc<Counters>);
 
-    struct FakeServer(Arc<Counters>, Tree);
+    /// A server of the language named last.
+    struct FakeServer(Arc<Counters>, Tree, String);
 
     impl ServerLauncher for FakeLauncher {
         type Server = FakeServer;
@@ -1145,7 +1159,7 @@ mod tests {
                 c.live_started.fetch_add(1, Ordering::SeqCst);
             }
             Ok(Started {
-                server: FakeServer(c.clone(), tree),
+                server: FakeServer(c.clone(), tree, language.clone()),
                 identity: self.identify(root, backend, policy).await?,
                 restore: match tree {
                     Tree::Immutable => self.recorded_restore(root, backend, policy).await,
@@ -1254,7 +1268,9 @@ mod tests {
         async fn diagnostics(&self, _: &RepoPath) -> Result<Vec<Diagnostic>, QueryError> {
             Ok(vec![])
         }
-        async fn shutdown(&self) {}
+        async fn shutdown(&self) {
+            self.0.stopped.lock().unwrap().push(self.2.clone());
+        }
     }
 
     /// Serves every snapshot from one fixed directory.
@@ -1288,6 +1304,7 @@ mod tests {
             root_markers: vec![],
             executes_project_code_during_analysis: id == "go",
             loads_project_on_open: false,
+            warmup: Warmup::Quick,
         })
     }
 
@@ -1379,6 +1396,38 @@ mod tests {
         semantics.start_servers(&fx.view, 0).await.unwrap();
         semantics.start_servers(&fx.view, 0).await.unwrap();
         assert_eq!(counters.started.load(Ordering::SeqCst), 4);
+    }
+
+    #[tokio::test]
+    async fn a_search_across_the_languages_stops_servers_of_unchanged_languages_and_not_those_the_change_needs() {
+        let languages: Vec<String> = (0..7).map(|n| format!("l{n}")).collect();
+        let file = |n: usize, text: &'static str| -> (String, &'static str) { (format!("f.l{n}"), text) };
+        let base: Vec<_> = (0..7).map(|n| file(n, "one\n")).collect();
+        let target: Vec<_> = (0..7).map(|n| file(n, if n < 5 { "two\n" } else { "one\n" })).collect();
+        let (base, target): (Vec<_>, Vec<_>) = (
+            base.iter().map(|(p, t)| (p.as_str(), *t)).collect(),
+            target.iter().map(|(p, t)| (p.as_str(), *t)).collect(),
+        );
+        let fx = Fixture::open(&base, &target).await;
+        let counters = Arc::new(Counters::default());
+        let semantics = Semantics::new(
+            FakeMaterializer(counters.clone()),
+            FakeLauncher(counters.clone()),
+            "/live".into(),
+            languages.iter().map(|l| backend(l, l)).collect(),
+            Links {
+                revisions: fx.session.revisions(),
+                limits: RestoreLimits::default(),
+            },
+        );
+        // Five changed languages on two sides want ten servers, and the pool holds eight.
+        semantics.start_servers(&fx.view, 0).await.unwrap();
+        assert!(counters.stopped.lock().unwrap().is_empty());
+
+        semantics.workspace_symbols(&fx.view, 0, "x").await.unwrap();
+        let mut stopped = counters.stopped.lock().unwrap().clone();
+        stopped.sort();
+        assert_eq!(stopped, ["l4", "l5", "l6"]);
     }
 
     #[tokio::test]

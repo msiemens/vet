@@ -211,6 +211,15 @@ impl<M: Materializer, L: ServerLauncher> Semantic<M, L> {
         self.lease(served, backend).await
     }
 
+    /// The servers that serve the files `wanted`, each on its `Served`, are not stopped to make
+    /// room for others, in place of those kept before: they are what the changeset on view needs.
+    pub fn keep_warm(&self, wanted: &[(&Served, &RepoPath)]) {
+        self.pool.pin(wanted.iter().filter_map(|(served, file)| {
+            let backend = self.backend_for(file)?;
+            Some(self.pool_key(served, backend))
+        }));
+    }
+
     /// Starts the server that serves `file` on `served`, or waits for its start
     /// to finish, so a later query finds it running. The server is not kept
     /// beyond what the pool keeps warm.

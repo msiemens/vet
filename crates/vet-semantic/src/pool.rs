@@ -1,13 +1,17 @@
-//! Server pool (§7.2). Servers are keyed by `(target, backend, policy)`, kept
-//! warm while in use, and evicted LRU. The policy is part of the key so that a
-//! server started without permission to execute project code stops serving once
-//! the PR is trusted (and the reverse can never happen).
+//! Server pool (§7.2). Servers are keyed by `(target, backend, policy)` and kept
+//! warm while in use. The policy is part of the key so that a server started without
+//! permission to execute project code stops serving once the PR is trusted (and the
+//! reverse can never happen).
 //!
 //! One server per key, however many callers: concurrent leases share it, and
 //! callers arriving while it starts join that start instead of launching
 //! another. A start is a flight of the engine: it goes on while any of its callers
 //! waits, whichever of them began it, and all of them get the server it started.
-//! Only servers with no lease are evicted. No lock is held across an await.
+//! Only servers with no lease are evicted, and not those that are pinned. Of the
+//! others the weakest goes first: a server is credited when used with the pool's clock
+//! plus what it costs to warm it up again (`Warmup`), and the clock advances to the credit
+//! of each server stopped, so a costly one outlives several cheap ones but not forever.
+//! No lock is held across an await.
 //!
 //! Answers outlive their server: they are kept by the pool under keys that name
 //! the server's identity (I2, `reuse`), so a server that starts later with an
@@ -16,7 +20,7 @@
 //! worked out without a server (`recall`) is looked up in both before any server is
 //! leased, so a tree whose answers are kept is neither materialized nor started on.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::fmt;
 use std::hash::{Hash, Hasher};
 use std::marker::PhantomData;
@@ -189,7 +193,11 @@ pub struct Entry<S, G> {
     /// What the tree is, for the answers that depend on all of it; none for the live tree.
     basis: Option<Basis>,
     leases: AtomicUsize,
+    /// When it was last used, in the pool's ticks.
     used: AtomicU64,
+    /// What keeps it from being stopped to make room: the pool's clock when it was last used,
+    /// plus what it costs to warm it up again. The lowest is stopped first.
+    credit: AtomicU64,
     /// Restarted while leased: stopped when the last lease ends.
     retired: AtomicBool,
     /// The server was told to stop; stopping it again does nothing.
@@ -206,6 +214,10 @@ impl<S: LanguageServer + 'static, G: Send + Sync + 'static> Entry<S, G> {
 
     pub fn features(&self) -> Features {
         self.server.features()
+    }
+
+    fn warmup_weight(&self) -> u64 {
+        self.backend.config().warmup.weight()
     }
 
     /// The key of a question about the whole tree; none on the live tree, which
@@ -343,6 +355,11 @@ impl<S: LanguageServer + 'static, G: Send + Sync + 'static> Entry<S, G> {
 
 struct State<S, G> {
     tick: u64,
+    /// The credit of the server stopped last to make room: servers used from now on are credited
+    /// from here, so one that is costly to warm up outlives many cheap ones but not forever.
+    clock: u64,
+    /// Servers that are not stopped to make room.
+    pinned: HashSet<PoolKey>,
     /// Bumped by `restart`; an entry from an older generation is not pooled.
     generations: HashMap<BackendId, u64>,
     slots: HashMap<PoolKey, Arc<Entry<S, G>>>,
@@ -575,6 +592,8 @@ impl<M: Materializer, L: ServerLauncher> Pool<M, L> {
                 instances: AtomicU64::new(0),
                 state: Mutex::new(State {
                     tick: 0,
+                    clock: 0,
+                    pinned: HashSet::new(),
                     generations: HashMap::new(),
                     slots: HashMap::new(),
                     health: HashMap::new(),
@@ -618,6 +637,12 @@ impl<M: Materializer, L: ServerLauncher> Pool<M, L> {
     /// Drops the answers kept in memory; the stored ones are the store's.
     pub fn forget_answers(&self) {
         self.inner.answers.forget();
+    }
+
+    /// The servers for `keys` are not stopped to make room, in place of those pinned before: they
+    /// are what the changeset on view needs. With more pinned than the pool holds, it holds more.
+    pub fn pin(&self, keys: impl IntoIterator<Item = PoolKey>) {
+        self.inner.lock().pinned = keys.into_iter().collect();
     }
 }
 
@@ -714,10 +739,11 @@ impl<M: Materializer, L: ServerLauncher> Inner<M, L> {
     fn join(self: &Arc<Self>, key: &PoolKey) -> Option<Lease<M, L>> {
         let mut state = self.lock();
         state.tick += 1;
-        let tick = state.tick;
+        let (tick, clock) = (state.tick, state.clock);
         let entry = state.slots.get(key)?;
         entry.leases.fetch_add(1, Ordering::SeqCst);
         entry.used.store(tick, Ordering::SeqCst);
+        entry.credit.store(clock + entry.warmup_weight(), Ordering::SeqCst);
         Some(Lease {
             pool: self.clone(),
             entry: Some(entry.clone()),
@@ -755,6 +781,7 @@ impl<M: Materializer, L: ServerLauncher> Inner<M, L> {
             if !stale {
                 state.features.insert(key.backend.clone(), server.features());
             }
+            let credit = state.clock + backend.config().warmup.weight();
             let entry = Arc::new(Entry {
                 server,
                 key: key.clone(),
@@ -764,6 +791,7 @@ impl<M: Materializer, L: ServerLauncher> Inner<M, L> {
                 basis,
                 leases: AtomicUsize::new(1),
                 used: AtomicU64::new(state.tick),
+                credit: AtomicU64::new(credit),
                 retired: AtomicBool::new(stale),
                 stopped: AtomicBool::new(false),
                 requests: Gate::new(REQUESTS_PER_SERVER),
@@ -1081,15 +1109,17 @@ impl<M: Materializer, L: ServerLauncher> Inner<M, L> {
             stop.push(entry);
         }
         while evict && state.slots.len() > self.capacity {
-            let oldest = state
+            let weakest = state
                 .slots
                 .iter()
-                .filter(|(_, e)| e.leases.load(Ordering::SeqCst) == 0)
-                .map(|(k, e)| (k, e.used.load(Ordering::SeqCst)))
-                .min_by_key(|(_, used)| *used)
+                .filter(|(k, e)| e.leases.load(Ordering::SeqCst) == 0 && !state.pinned.contains(*k))
+                .min_by_key(|(_, e)| (e.credit.load(Ordering::SeqCst), e.used.load(Ordering::SeqCst)))
                 .map(|(k, _)| k.clone());
-            match oldest.and_then(|k| state.slots.remove(&k)) {
-                Some(e) => stop.push(e),
+            match weakest.and_then(|k| state.slots.remove(&k)) {
+                Some(e) => {
+                    state.clock = state.clock.max(e.credit.load(Ordering::SeqCst));
+                    stop.push(e);
+                }
                 None => break,
             }
         }
@@ -1117,14 +1147,18 @@ mod tests {
     use super::*;
     use crate::join::{bounded, join};
     use crate::policy::AnalysisPolicy;
-    use crate::ports::{Feature, Materialized, Pos, Readiness, ServerConfig, Severity, Span, Sym, SymbolKind};
+    use crate::ports::{Feature, Materialized, Pos, Readiness, ServerConfig, Severity, Span, Sym, SymbolKind, Warmup};
     use crate::reuse::Value;
     use crate::testutil::{block_on, yield_once};
 
     fn backend(executes: bool) -> Backend {
+        configured("rust", executes, Warmup::Quick)
+    }
+
+    fn configured(id: &str, executes: bool, warmup: Warmup) -> Backend {
         Backend::GenericLsp(ServerConfig {
-            backend: BackendId("rust".into()),
-            binary: "rust-analyzer".into(),
+            backend: BackendId(id.into()),
+            binary: format!("{id}-server"),
             args: vec![],
             filetypes: vec!["rs".into()],
             file_names: vec![],
@@ -1132,6 +1166,7 @@ mod tests {
             root_markers: vec!["Cargo.toml".into()],
             executes_project_code_during_analysis: executes,
             loads_project_on_open: false,
+            warmup,
         })
     }
 
@@ -2320,6 +2355,82 @@ mod tests {
             assert_eq!(keys, want);
             assert_eq!(counters.shut_down.load(Ordering::SeqCst), 1);
             assert_eq!(counters.guards_dropped.load(Ordering::SeqCst), 1);
+        });
+    }
+
+    fn key_of(language: &str) -> PoolKey {
+        PoolKey {
+            backend: BackendId(language.into()),
+            ..live_key()
+        }
+    }
+
+    /// Uses the server of `language`, which costs `warmup` to start again, and lets it go.
+    async fn used(pool: &TestPool, language: &str, warmup: Warmup) {
+        let backend = configured(language, false, warmup);
+        pool.lease(&key_of(language), &backend).await.unwrap().release().await;
+    }
+
+    fn languages(pool: &TestPool) -> Vec<String> {
+        let mut kept: Vec<_> = pool.keys().into_iter().map(|k| k.backend.0).collect();
+        kept.sort();
+        kept
+    }
+
+    #[test]
+    fn a_server_that_is_costly_to_warm_up_outlives_cheaper_ones_used_after_it() {
+        let (pool, _) = pool(2);
+        block_on(async {
+            used(&pool, "rust", Warmup::VerySlow).await;
+            used(&pool, "yaml", Warmup::Quick).await;
+            used(&pool, "json", Warmup::Quick).await;
+            assert_eq!(languages(&pool), ["json", "rust"]);
+        });
+    }
+
+    #[test]
+    fn a_costly_server_nobody_uses_is_stopped_once_enough_cheaper_ones_came_and_went() {
+        let (pool, _) = pool(1);
+        block_on(async {
+            used(&pool, "rust", Warmup::VerySlow).await;
+            for n in 0..10 {
+                used(&pool, &format!("cheap{n}"), Warmup::Quick).await;
+            }
+            assert!(languages(&pool).contains(&"rust".to_owned()));
+            for n in 10..20 {
+                used(&pool, &format!("cheap{n}"), Warmup::Quick).await;
+            }
+            assert!(!languages(&pool).contains(&"rust".to_owned()));
+        });
+    }
+
+    #[test]
+    fn among_servers_that_cost_the_same_the_one_used_longest_ago_is_stopped() {
+        let (pool, _) = pool(2);
+        block_on(async {
+            for language in ["a", "b", "a", "c"] {
+                used(&pool, language, Warmup::Slow).await;
+            }
+            assert_eq!(languages(&pool), ["a", "c"]);
+        });
+    }
+
+    #[test]
+    fn a_pinned_server_is_not_stopped_to_make_room_and_the_pool_holds_more_when_all_are_pinned() {
+        let (pool, _) = pool(1);
+        pool.pin([key_of("yaml")]);
+        block_on(async {
+            used(&pool, "yaml", Warmup::Quick).await;
+            used(&pool, "json", Warmup::Quick).await;
+            assert_eq!(languages(&pool), ["yaml"]);
+
+            pool.pin([key_of("yaml"), key_of("json")]);
+            used(&pool, "json", Warmup::Quick).await;
+            assert_eq!(languages(&pool), ["json", "yaml"]);
+
+            pool.pin([]);
+            used(&pool, "bash", Warmup::Quick).await;
+            assert_eq!(languages(&pool).len(), 1);
         });
     }
 

@@ -5,7 +5,7 @@
 //! operations its server offers.
 
 use vet_core::content::RepoPath;
-use vet_semantic::ports::{Backend, BackendId, ServerConfig};
+use vet_semantic::ports::{Backend, BackendId, ServerConfig, Warmup};
 
 /// Pinned versions of the servers Vet installs. Bump with a check of which
 /// operations the server offers (§7.1).
@@ -152,6 +152,8 @@ pub struct Language {
     /// Opening a file starts loading the project it belongs to (tsserver), so
     /// answers across files wait for the server to go quiet after an open.
     pub loads_project_on_open: bool,
+    /// What a stopped server costs to have warm again, which the pool weighs when it must stop one.
+    pub warmup: Warmup,
     pub user_config: UserConfig,
 }
 
@@ -175,6 +177,7 @@ pub const RUST: Language = Language {
     project_toolchain: true,
     loads_on_request: false,
     loads_project_on_open: false,
+    warmup: Warmup::VerySlow,
     // Cargo's configuration chain: `.cargo/config.toml` in every directory above the
     // project and in `$CARGO_HOME` (source replacement, build flags, target); the
     // toolchain rustup picks (override files, the default in rustup's settings); and
@@ -280,6 +283,7 @@ pub const TYPESCRIPT: Language = Language {
     project_toolchain: false,
     loads_on_request: false,
     loads_project_on_open: true,
+    warmup: Warmup::Slow,
     // tsserver takes the nearest `tsconfig.json` or `jsconfig.json` above a file, even
     // above the root. It reads no settings of the user's; Node reads the variables.
     user_config: UserConfig {
@@ -311,6 +315,7 @@ pub const PYTHON: Language = Language {
     project_toolchain: false,
     loads_on_request: false,
     loads_project_on_open: false,
+    warmup: Warmup::Slow,
     // Pyright reads the configuration in the project root and none of the user's; the
     // interpreter it asks for the search paths comes from the environment (a restore's
     // virtual environment arrives with the restored tree, not here).
@@ -346,6 +351,7 @@ pub const CSHARP: Language = Language {
     project_toolchain: false,
     loads_on_request: true,
     loads_project_on_open: false,
+    warmup: Warmup::VerySlow,
     // The SDK `global.json` picks, MSBuild's inherited props and analyzer settings in the
     // directories above the project, and NuGet's configuration chain (above the project
     // and the user-level file) that decides where packages come from.
@@ -419,6 +425,7 @@ pub const SVELTE: Language = Language {
     project_toolchain: false,
     loads_on_request: false,
     loads_project_on_open: true,
+    warmup: Warmup::Slow,
     // The nearest `tsconfig.json` or `jsconfig.json` above a file, as for tsserver, and the
     // `svelte.config.js` of the project (in the snapshot). It reads no settings of the user's.
     user_config: UserConfig {
@@ -459,6 +466,7 @@ pub const ANGULAR: Language = Language {
     project_toolchain: false,
     loads_on_request: false,
     loads_project_on_open: true,
+    warmup: Warmup::Slow,
     user_config: UserConfig {
         above_root: &["tsconfig.json"],
         user_files: &[],
@@ -490,6 +498,7 @@ pub const YAML: Language = Language {
     project_toolchain: false,
     loads_on_request: false,
     loads_project_on_open: false,
+    warmup: Warmup::Quick,
     // It reads the settings Vet gives it and no file of the user's.
     user_config: UserConfig {
         above_root: &[],
@@ -521,6 +530,7 @@ pub const JSON: Language = Language {
     project_toolchain: false,
     loads_on_request: false,
     loads_project_on_open: false,
+    warmup: Warmup::Quick,
     user_config: UserConfig {
         above_root: &[],
         user_files: &[],
@@ -552,6 +562,7 @@ pub const BASH: Language = Language {
     project_toolchain: false,
     loads_on_request: false,
     loads_project_on_open: false,
+    warmup: Warmup::Quick,
     // ShellCheck's configuration chain and the variables the server and ShellCheck read. Which
     // ShellCheck runs, and whether one does, changes the diagnostics, so its version is observed.
     user_config: UserConfig {
@@ -606,6 +617,7 @@ pub const DOCKERFILE: Language = Language {
     project_toolchain: false,
     loads_on_request: false,
     loads_project_on_open: false,
+    warmup: Warmup::Quick,
     // It reads nothing outside the repository.
     user_config: UserConfig {
         above_root: &[],
@@ -673,6 +685,7 @@ impl Language {
             root_markers: strings(self.root_markers),
             executes_project_code_during_analysis: self.executes_during_analysis,
             loads_project_on_open: self.loads_project_on_open,
+            warmup: self.warmup,
         };
         if self.loads_on_request {
             Backend::Roslyn(config)
