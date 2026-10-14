@@ -226,9 +226,6 @@
   });
 
   onMount(() => {
-    const stopThreads = threads.start(backend);
-    const stopPlatform = platform.start(backend);
-    const stopVersions = versions.start(backend);
     const stopHook = exposeRendered(() => controller.rendered());
     const stopCommands = provideActions({
       copyText: (text) => void copyText(text),
@@ -252,9 +249,6 @@
       (e: unknown) => void session.abandon(e),
     );
     return () => {
-      stopThreads();
-      stopPlatform();
-      stopVersions();
       stopCommands();
       stopHook();
       controller.destroy();

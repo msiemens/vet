@@ -23,6 +23,7 @@ import { kindOf } from "../lib/requestError";
 import type { Backend } from "./backend";
 import { changeset } from "./changeset.svelte";
 import { CursorFollow } from "./cursorFollow";
+import { type IsLatest, Latest } from "./resource";
 import { reviewShown } from "./reviewShown.svelte";
 import { session } from "./session.svelte";
 import { keyOf } from "./symbolKey";
@@ -88,7 +89,7 @@ class SymbolsState {
   private loading?: AbortController;
   // The requests about the selected symbol; aborted when the selection moves.
   private asking?: AbortController;
-  private detailRun = 0;
+  private details = new Latest();
   private revealed = 0;
   private cursor = new CursorFollow<CursorPlace, Awaited<ReturnType<Backend["symbolAt"]>>>({
     ms: CURSOR_MS,
@@ -296,21 +297,19 @@ class SymbolsState {
     );
   }
 
-  /** Cancels the requests about the selected symbol, in the backend too; returns the number of the next selection. */
-  private leaveSelection(): number {
+  /** Cancels the requests about the selected symbol, in the backend too; tells whether the next selection is still the latest. */
+  private leaveSelection(): IsLatest {
     this.asking?.abort();
     this.asking = undefined;
-    return ++this.detailRun;
+    return this.details.begin();
   }
 
   /** Runs `query`, hands the settled state to `set` unless another selection came first; returns the pending state. */
-  private start<T>(run: number, query: () => Promise<T>, set: (load: Load<T>) => void): Load<T> {
+  private start<T>(isLatest: IsLatest, query: () => Promise<T>, set: (load: Load<T>) => void): Load<T> {
     query().then(
-      (value) => run === this.detailRun && set({ state: "done", value }),
+      (value) => isLatest() && set({ state: "done", value }),
       (error: unknown) =>
-        run === this.detailRun &&
-        !isAbort(error) &&
-        set({ state: "failed", message: errorText(error), kind: kindOf(error) }),
+        isLatest() && !isAbort(error) && set({ state: "failed", message: errorText(error), kind: kindOf(error) }),
     );
     return { state: "loading" };
   }

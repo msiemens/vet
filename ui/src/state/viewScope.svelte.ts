@@ -9,8 +9,8 @@ import type { CommitUnit } from "../generated/CommitUnit";
 import type { NonTextKind } from "../generated/NonTextKind";
 import { STALE_NOTICE } from "../lib/notice";
 import type { Backend } from "./backend";
-import { LatestLoad } from "./latestLoad";
 import { notices } from "./notices.svelte";
+import { Resource } from "./resource";
 import { newReviewCells } from "./reviewCells.svelte";
 import { type Answer, reviewMarks } from "./reviewMarks";
 import { type FileLayout, type FileState, type Parts, type ViewLayout, partsOf } from "./reviewModel";
@@ -64,10 +64,7 @@ class Scope implements ViewSource {
   /** A failure of reading was reported and nothing has been read since. */
   private reported = false;
   private pending: Promise<void> = Promise.resolve();
-  private loads = new LatestLoad<Loaded | "gone">({
-    busy: () => undefined,
-    apply: (loaded) => this.apply(loaded),
-  });
+  private loads = new Resource<Loaded | "gone">({ apply: (loaded) => this.apply(loaded) });
   private marks = reviewMarks({
     backend: () => this.backend,
     admit: (shown) => this.admit(shown),

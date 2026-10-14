@@ -2,12 +2,13 @@
 
 import type { RecentProject } from "../generated/RecentProject";
 import type { Backend } from "./backend";
+import { Latest } from "./resource";
 
 class RecentRepositories {
   /** Backend-side paths with when they were opened, most recent first. */
   list = $state<RecentProject[]>([]);
   /** Only the latest answer counts. */
-  private seq = 0;
+  private reads = new Latest();
 
   /** Loads the list and keeps it current: this window and others change it. */
   async start(backend: Backend) {
@@ -39,9 +40,9 @@ class RecentRepositories {
   }
 
   private async take(answer: Promise<RecentProject[]>) {
-    const seq = ++this.seq;
+    const isLatest = this.reads.begin();
     const list = await answer;
-    if (seq === this.seq) this.list = list;
+    if (isLatest()) this.list = list;
   }
 }
 

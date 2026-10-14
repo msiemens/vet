@@ -11,6 +11,7 @@ import type { FileDiagnostics } from "./diagnosticsBook";
 import { type Counts, type FileHunks, type Problem, countsOf, problemsOf } from "./problemRows";
 import { type Origins, type Summary, originsOf, summarize } from "./problemsSummary";
 import { queue } from "./queue.svelte";
+import { Latest } from "./resource";
 import { reviewShown } from "./reviewShown.svelte";
 import { semantic } from "./semantic.svelte";
 import { serverList } from "./serverList.svelte";
@@ -38,7 +39,7 @@ class ProblemsState {
   /** The files with a tab open, which are asked about first and also where the change leaves them alone. */
   private extra = $state.raw<readonly string[]>([]);
   private gate = new Gate(FILES_AT_ONCE);
-  private run = 0;
+  private runs = new Latest();
 
   /** The changeset's files that have text to analyse, whatever view the review shows. */
   readonly changed = $derived.by(() => {
@@ -95,10 +96,10 @@ class ProblemsState {
   }
 
   private load(revision: number, paths: readonly string[]) {
-    const run = ++this.run;
+    const isLatest = this.runs.begin();
     for (const path of paths) {
       void this.gate.run(async () => {
-        if (run === this.run) await semantic.diagnostics(revision, path);
+        if (isLatest()) await semantic.diagnostics(revision, path);
       });
     }
   }

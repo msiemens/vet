@@ -1,7 +1,7 @@
 <script lang="ts">
   import { errorText } from "../../lib/errorText";
   import { hasNativeDialogs, pickFile } from "../../state/host";
-  import { servers } from "../../state/servers.svelte";
+  import { serverList } from "../../state/serverList.svelte";
   import Sheet from "./Sheet.svelte";
 
   let {
@@ -36,7 +36,7 @@
 
   async function submit() {
     busy = true;
-    error = await servers.setPath(language, path.trim());
+    error = await serverList.setPath(language, path.trim());
     busy = false;
     if (error === undefined) onclose();
   }

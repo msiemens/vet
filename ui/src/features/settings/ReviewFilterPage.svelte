@@ -5,6 +5,7 @@
   import Checkbox from "../../lib/ui/Checkbox.svelte";
   import SettingsSection from "../../lib/ui/SettingsSection.svelte";
   import { changeset } from "../../state/changeset.svelte";
+  import { Latest } from "../../state/resource";
   import PatternList from "./PatternList.svelte";
   import RootList from "./RootList.svelte";
   import { type PatternDraft, draftPatterns } from "./filterDraft";
@@ -26,7 +27,7 @@
   let include = $state<PatternDraft>({ edits: {}, adding: "" });
   let exclude = $state<PatternDraft>({ edits: {}, adding: "" });
   let matches = $state.raw<{ roots: Map<string, number>; include: PatternMatch[]; exclude: PatternMatch[] }>();
-  let asked = 0;
+  const asked = new Latest();
 
   // The backend counts what the filter as drafted matches; an answer to an older draft is dropped.
   $effect(() => {
@@ -37,9 +38,9 @@
       include: draftPatterns(filter.include, include),
       exclude: draftPatterns(filter.exclude, exclude),
     };
-    const n = ++asked;
+    const isLatest = asked.begin();
     void changeset.patternMatches(draft).then((answer) => {
-      if (n === asked && answer) {
+      if (isLatest() && answer) {
         const roots = new Map(draft.roots.map((root, i) => [root, answer.roots[i]]));
         matches = { ...answer, roots };
       }

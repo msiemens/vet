@@ -6,6 +6,7 @@
 import type { Diagnostic } from "../generated/Diagnostic";
 import type { Unavailable } from "../generated/Unavailable";
 import { Gate } from "./gate.ts";
+import { Latest } from "./resource.ts";
 
 /** Files compared with the base at once. */
 const COMPARED_AT_ONCE = 2;
@@ -49,7 +50,7 @@ export interface BookHost {
 
 export class DiagnosticsBook {
   private revision = -1;
-  private epoch = 0;
+  private epoch = new Latest();
   private abort = new AbortController();
   private pending = new Map<string, Promise<void>>();
   private comparing = new Gate(COMPARED_AT_ONCE);
@@ -87,7 +88,7 @@ export class DiagnosticsBook {
 
   /** What the servers answered may differ now: everything underway is aborted and nothing is kept. */
   invalidate() {
-    this.epoch++;
+    this.epoch.cancel();
     this.abort.abort();
     this.abort = new AbortController();
     this.pending.clear();
@@ -116,15 +117,15 @@ export class DiagnosticsBook {
   }
 
   private async fetch(revision: number, path: string): Promise<void> {
-    const { epoch } = this;
+    const epoch = this.epoch.mark();
     const { signal } = this.abort;
     try {
       const r = await this.host.ask(revision, path, false, signal);
-      if (epoch !== this.epoch) return;
+      if (this.epoch.movedSince(epoch)) return;
       this.take(path, r, false);
       if (!r.unavailable) void this.compare(revision, path, epoch, signal);
     } catch {
-      if (epoch === this.epoch) this.pending.delete(path); // stale: the next revision asks again
+      if (!this.epoch.movedSince(epoch)) this.pending.delete(path); // stale: the next revision asks again
     }
   }
 
@@ -136,7 +137,7 @@ export class DiagnosticsBook {
         const r = await this.comparing.run(() =>
           signal.aborted ? Promise.resolve(undefined) : this.host.ask(revision, path, true, signal),
         );
-        if (!r || epoch !== this.epoch) return;
+        if (!r || this.epoch.movedSince(epoch)) return;
         // An answer taken while the server went to work may lack what it had not analysed yet.
         if (this.host.busy(path)) {
           if (tries + 1 < COMPARISON_TRIES) continue;
@@ -158,7 +159,7 @@ export class DiagnosticsBook {
         language: null,
       };
     }
-    if (epoch !== this.epoch) return;
+    if (this.epoch.movedSince(epoch)) return;
     if (failure) this.unknown(path, failure);
     this.announce(path);
   }

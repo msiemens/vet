@@ -3,7 +3,7 @@
 
 import type { LanguageSymbols } from "../../generated/LanguageSymbols";
 import { isAbort } from "../../lib/abort.ts";
-import { LatestLoad } from "../../state/latestLoad.ts";
+import { Resource } from "../../state/resource.ts";
 
 /** What the servers found for a query on a revision of the changeset. */
 export interface Found {
@@ -22,7 +22,7 @@ export interface SearchEffects {
 }
 
 export class SymbolSearch {
-  private readonly loads: LatestLoad<Found>;
+  private readonly loads: Resource<Found>;
   private readonly ask: (query: string, revision: number, signal: AbortSignal) => Promise<LanguageSymbols[]>;
   private readonly effects: SearchEffects;
   private abort?: AbortController;
@@ -33,7 +33,7 @@ export class SymbolSearch {
   ) {
     this.ask = ask;
     this.effects = effects;
-    this.loads = new LatestLoad<Found>({ busy: (on) => effects.busy?.(on), apply: (found) => effects.apply(found) });
+    this.loads = new Resource<Found>({ busy: (on) => effects.busy?.(on), apply: (found) => effects.apply(found) });
   }
 
   /** Asks the servers; the search under way is cancelled, down to the language server. */

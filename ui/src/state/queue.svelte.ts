@@ -13,6 +13,7 @@ import type { PullRequestSource } from "../generated/PullRequestSource";
 import { Debounced } from "../lib/debounced";
 import { changeset } from "./changeset.svelte";
 import { keyId } from "./changesetKey";
+import { Latest } from "./resource";
 import type { Frame, Parts, ReviewedFile, ViewLayout } from "./reviewModel";
 import { session } from "./session.svelte";
 
@@ -41,7 +42,7 @@ class QueueStore {
    */
   lines = new SvelteMap<string, LineDelta | null>();
   /** Only the latest load of each kind counts. */
-  private seq = { local: 0, pullRequests: 0, lines: 0, whole: 0 };
+  private reads = { local: new Latest(), pullRequests: new Latest(), lines: new Latest(), whole: new Latest() };
   /**
    * The platform is being asked for the pull requests. A request for another listing while it is on its
    * way marks it `again`, and one more follows when it is done: a burst of events costs at most two.
@@ -84,9 +85,9 @@ class QueueStore {
       if (session.repo !== undefined) void this.loadAll();
     });
     session.onClose(() => {
-      this.seq.local++;
-      this.seq.pullRequests++;
-      this.seq.lines++;
+      this.reads.local.cancel();
+      this.reads.pullRequests.cancel();
+      this.reads.lines.cancel();
       this.local = [];
       this.pullRequests = [];
       this.sources = [];
@@ -95,7 +96,7 @@ class QueueStore {
       this.listingPullRequests = false;
       this.listing = undefined;
       this.lines.clear();
-      this.seq.whole++;
+      this.reads.whole.cancel();
       this.whole = undefined;
       this.following.cancel();
     });
@@ -122,14 +123,14 @@ class QueueStore {
 
   /** Reads the changeset's own layout and file states, which only a range or a commit on screen needs. Only the latest reading counts. */
   private async loadWhole() {
-    const seq = ++this.seq.whole;
+    const isLatest = this.reads.whole.begin();
     const shown = changeset.layout;
     if (!shown || shown.shown.view.type === "changeset") {
       this.whole = undefined;
       return;
     }
     const whole = await changeset.wholeParts();
-    if (seq === this.seq.whole) this.whole = whole;
+    if (isLatest()) this.whole = whole;
   }
 
   /**
@@ -171,10 +172,10 @@ class QueueStore {
 
   /** Lists the local changesets. Rows already counted are counted again only with `recount`: a thread changing moves no branch. */
   async load(recount = true) {
-    const seq = ++this.seq.local;
+    const isLatest = this.reads.local.begin();
     this.listingLocal = true;
     const listed = await changeset.listChangesets();
-    if (seq !== this.seq.local) return;
+    if (!isLatest()) return;
     this.listingLocal = false;
     if (!listed) return;
     this.local = listed.rows;
@@ -203,10 +204,10 @@ class QueueStore {
   private async listPullRequests(listing: { again: boolean }) {
     do {
       listing.again = false;
-      const seq = ++this.seq.pullRequests;
+      const isLatest = this.reads.pullRequests.begin();
       this.listingPullRequests = true;
       const listed = await changeset.listPullRequests();
-      if (seq !== this.seq.pullRequests) return;
+      if (!isLatest()) return;
       this.listingPullRequests = false;
       if (listed) {
         this.pullRequests = listed.rows;
@@ -225,11 +226,11 @@ class QueueStore {
   async refresh() {
     if (this.refreshing) return;
     this.refreshing = true;
-    const before = this.seq.local;
+    const before = this.reads.local.mark();
     try {
       await changeset.fetch();
       // A fetch that brought something announced `changesetsChanged`, which listed the local ones already.
-      await Promise.all([this.seq.local === before ? this.load() : undefined, this.loadPullRequests()]);
+      await Promise.all([this.reads.local.movedSince(before) ? undefined : this.load(), this.loadPullRequests()]);
     } finally {
       this.refreshing = false;
     }
@@ -241,17 +242,17 @@ class QueueStore {
    * starts over; the numbers shown stay until the new ones arrive.
    */
   private async countLines(recount: boolean) {
-    const seq = ++this.seq.lines;
+    const isLatest = this.reads.lines.begin();
     const wanted = [
       ...this.local.filter((row) => row.key.type !== "workingTree").map((row) => row.key),
       ...this.pullRequests.filter((row) => row.lines === undefined).map((row) => row.key),
     ].filter((key) => recount || !this.lines.has(keyId(key)));
     let next = 0;
     const count = async () => {
-      while (seq === this.seq.lines && next < wanted.length) {
+      while (isLatest() && next < wanted.length) {
         const key = wanted[next++];
         const lines = await changeset.changesetLines(key);
-        if (seq !== this.seq.lines) return;
+        if (!isLatest()) return;
         this.lines.set(keyId(key), lines ?? null);
       }
     };

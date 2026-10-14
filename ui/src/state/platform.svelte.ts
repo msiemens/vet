@@ -11,10 +11,10 @@ import type { ReviewSubmitted } from "../generated/ReviewSubmitted";
 import { HoldTimer } from "../lib/ui/holdTimer";
 import { AccountResync } from "./accountResync";
 import type { Backend } from "./backend";
-import { changeset } from "./changeset.svelte";
+import { followProject, whileOpen } from "./followProject";
 import { notices } from "./notices.svelte";
 import { queue } from "./queue.svelte";
-import { session } from "./session.svelte";
+import { Resource } from "./resource";
 import { threads } from "./threads.svelte";
 
 /** How long a card of a notification that needs no answer stays in the corner. */
@@ -56,42 +56,41 @@ class PlatformStore {
   /** The changeset the last `changesetOpened` put on view. */
   private opened?: ChangesetKey;
   private backend?: Backend;
-  private seq = 0;
+  private reads = new Resource<PullRequestInfo>({
+    apply: (info) => ([this.info, this.status, this.traits] = [info, info.platform, info.traits]),
+    failed: () => (this.info = undefined),
+  });
   private lastId = 0;
   private cardTimers = new Map<number, HoldTimer>();
 
-  start(backend: Backend): () => void {
+  constructor() {
+    whileOpen((backend) => this.start(backend));
+  }
+
+  private start(backend: Backend): () => void {
     this.backend = backend;
-    void this.reload();
-    const off = backend.onEvent((event) => {
-      if (event.project !== backend.project) return;
-      if (event.type === "platformStatus") {
-        this.status = event.status;
-        void this.reload();
-      } else if (event.type === "notification") {
-        this.notify(event.notification);
-      } else if (event.type === "threadsChanged") {
-        void this.reload();
-      }
-    });
-    const offResync = session.onResync(() => void this.reload());
-    const offOpening = changeset.onOpening((opening) => {
-      this.seq++;
-      if (opening.type === "opened") {
+    const stop = followProject(backend, {
+      reloadOn: ["platformStatus", "threadsChanged"],
+      reload: () => void this.reload(),
+      cancel: () => this.reads.cancel(),
+      clear: () => (this.info = undefined),
+      event: (event) => {
+        if (event.type === "platformStatus") this.status = event.status;
+        else if (event.type === "notification") this.notify(event.notification);
+      },
+      opening: (opening) => {
+        if (opening.type !== "opened") return;
         this.opened = opening.changeset;
         Object.assign(this.changesetComment, { composing: false, body: "" });
-      }
-      if (opening.type !== "unannounced") this.info = undefined;
-      if (opening.type !== "requested") void this.reload();
+      },
     });
     // A credential given or removed, here or in another window, changes what the platform answers.
     const resync = new AccountResync({ sync: () => this.sync(), reload: () => this.reload() });
     const offAccounts = backend.onAccountsChanged(() => void resync.changed());
     return () => {
-      off();
-      offResync();
-      offOpening();
+      stop();
       offAccounts();
+      this.reads.cancel();
       this.backend = undefined;
       this.opened = undefined;
       this.info = undefined;
@@ -105,18 +104,13 @@ class PlatformStore {
   async reload() {
     const backend = this.backend;
     if (!backend) return;
-    const seq = ++this.seq;
     const onView = this.opened ?? queue.onView;
     if (onView !== undefined && onView.type !== "pullRequest") {
+      this.reads.cancel();
       this.info = undefined;
       return;
     }
-    try {
-      const info = await backend.pullRequestInfo();
-      if (seq === this.seq) [this.info, this.status, this.traits] = [info, info.platform, info.traits];
-    } catch {
-      if (seq === this.seq) this.info = undefined;
-    }
+    await this.reads.load(() => backend.pullRequestInfo());
   }
 
   /** Syncs now; a failure is told to the viewer. */

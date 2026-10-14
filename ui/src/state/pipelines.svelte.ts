@@ -9,6 +9,7 @@ import { errorText } from "../lib/errorText";
 import { toggleIn } from "../lib/foldKeys";
 import { checks } from "./checks.svelte";
 import { notices } from "./notices.svelte";
+import { Latest } from "./resource";
 import { session } from "./session.svelte";
 
 /** What `act` says to the viewer when the platform took a cancel. */
@@ -27,7 +28,7 @@ class PipelineStore {
   busy = $state(false);
   /** The accounts whose token the platform said may not change runs, until the credentials change. */
   private denied = new SvelteSet<string>();
-  private seq = 0;
+  private reads = new Latest();
   private shownFor?: { job: string; stamp: number | undefined };
 
   constructor() {
@@ -61,7 +62,7 @@ class PipelineStore {
   async showSteps(job: string | undefined, over: boolean, stamp: number | undefined) {
     const backend = session.backend;
     if (job === undefined || !backend) {
-      this.seq++;
+      this.reads.cancel();
       this.steps = undefined;
       this.stepsError = undefined;
       this.shownFor = undefined;
@@ -69,16 +70,16 @@ class PipelineStore {
     }
     const known = this.shownFor;
     if (known?.job === job && (over || known.stamp === stamp) && this.stepsError === undefined) return;
-    const seq = ++this.seq;
+    const isLatest = this.reads.begin();
     this.shownFor = { job, stamp };
     if (this.steps?.job !== job) this.steps = undefined;
     try {
       const steps = await backend.pipelineSteps(job);
-      if (seq !== this.seq) return;
+      if (!isLatest()) return;
       this.steps = { job, steps };
       this.stepsError = undefined;
     } catch (error) {
-      if (seq !== this.seq) return;
+      if (!isLatest()) return;
       this.steps = undefined;
       this.stepsError = errorText(error);
     }

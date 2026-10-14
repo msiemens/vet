@@ -4,6 +4,7 @@
 import { Preference, flagPreference } from "../../lib/preferences.svelte";
 import { type CommandContext, commands } from "../../state/commands";
 import { notices } from "../../state/notices.svelte";
+import { Latest } from "../../state/resource";
 import { session } from "../../state/session.svelte";
 import { type PaletteTab, remember } from "./paletteRows";
 import { type Found, SymbolSearch } from "./symbolSearch";
@@ -38,7 +39,7 @@ class PaletteState {
   /** The file list is being asked for. */
   listing = $state(false);
   /** Only the latest request for the file list counts. */
-  private asked = 0;
+  private asked = new Latest();
   /** What the language servers found for a query on a revision; none until they answer. */
   served = $state.raw<Found>();
   private readonly search = new SymbolSearch(
@@ -57,7 +58,7 @@ class PaletteState {
 
   constructor() {
     session.onClose(() => {
-      this.asked++;
+      this.asked.cancel();
       this.files = undefined;
       this.listing = false;
       this.forgetSymbols();
@@ -88,15 +89,15 @@ class PaletteState {
   async listFiles() {
     const backend = session.backend;
     if (!backend) return;
-    const ask = ++this.asked;
+    const isLatest = this.asked.begin();
     this.listing = true;
     try {
       const listing = await backend.listFiles();
-      if (ask === this.asked) this.files = listing;
+      if (isLatest()) this.files = listing;
     } catch (error) {
-      if (ask === this.asked) notices.failed("Could not list the files", error);
+      if (isLatest()) notices.failed("Could not list the files", error);
     } finally {
-      if (ask === this.asked) this.listing = false;
+      if (isLatest()) this.listing = false;
     }
   }
 

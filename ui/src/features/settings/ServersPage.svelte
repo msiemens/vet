@@ -16,7 +16,6 @@
   import { backendSettings } from "../../state/backendSettings.svelte";
   import { commands } from "../../state/commands";
   import { serverList } from "../../state/serverList.svelte";
-  import { servers } from "../../state/servers.svelte";
   import ServerPathSheet from "./ServerPathSheet.svelte";
   import SettingsTable from "./SettingsTable.svelte";
   import { serverRow, serverTone, type ServerRow } from "./serverRows";
@@ -39,8 +38,8 @@
   let sort = $state<Sort>();
   const rows = $derived(
     sortRows(
-      servers.servers
-        .map((info) => serverRow(info, servers.installs[info.language]))
+      serverList.servers
+        .map((info) => serverRow(info, serverList.installs[info.language]))
         .flatMap((row) => {
           const m = match(search.query, row.title);
           return m ? [{ ...row, ranges: m.ranges }] : [];
@@ -51,15 +50,15 @@
   );
   let selectedLanguage = $state<string>();
   const selected = $derived(rows.find((r) => r.language === selectedLanguage) ?? rows.at(0));
-  const log = $derived(selected ? (servers.logs[selected.language] ?? []) : []);
+  const log = $derived(selected ? (serverList.logs[selected.language] ?? []) : []);
 
   onMount(() => {
     void backendSettings.load();
-    return servers.start();
+    serverList.reload();
   });
 
   async function automatic(language: string) {
-    const message = await servers.setPath(language, null);
+    const message = await serverList.setPath(language, null);
     actionError = message === undefined ? undefined : { language, message };
   }
 
@@ -76,7 +75,7 @@
   /** What the Source select offers besides the source in use; picking one acts and the select shows the source in use again. */
   function chooseSource(row: ServerRow, choice: string) {
     actionError = undefined;
-    if (choice === "install") void servers.install(row.language);
+    if (choice === "install") void serverList.install(row.language);
     else if (choice === "custom") editing = row;
     else if (choice === "automatic") void automatic(row.language);
   }
@@ -98,11 +97,11 @@
 </script>
 
 <div class="page">
-  {#if !servers.available}
+  {#if !serverList.available}
     <p class="empty">Open a repository to see and change them.</p>
-  {:else if servers.loadError}
-    <p class="settings-problem">{servers.loadError}</p>
-  {:else if servers.loading && !servers.servers.length}
+  {:else if serverList.loadError}
+    <p class="settings-problem">{serverList.loadError}</p>
+  {:else if serverList.loading && !serverList.servers.length}
     <p class="empty">Looking for language servers…</p>
   {:else}
     {#if search.active}<SpeedSearchField query={search.query} found={rows.length > 0} />{/if}
@@ -171,7 +170,7 @@
               class="ctl"
               type="button"
               disabled={!selected.canInstall}
-              onclick={() => void servers.install(selected.language)}
+              onclick={() => void serverList.install(selected.language)}
               >{selected.status === "failed" ? "Retry" : "Install…"}</button
             >
           {/if}
@@ -220,7 +219,7 @@
                   class="ctl"
                   type="button"
                   disabled={!selected.canInstall}
-                  onclick={() => void servers.install(selected.language)}>Install fallback</button
+                  onclick={() => void serverList.install(selected.language)}>Install fallback</button
                 >
               {/if}
             {/if}
@@ -244,12 +243,12 @@
           <dd class="settings-hint">Cannot install: {selected.installBlocker}</dd>
         {/if}
 
-        {#if log.length || servers.installs[selected.language]?.running}
+        {#if log.length || serverList.installs[selected.language]?.running}
           <dt></dt>
           <dd>
             <details
-              open={servers.logOpen[selected.language]}
-              ontoggle={(e) => servers.setLogOpen(selected.language, e.currentTarget.open)}
+              open={serverList.logOpen[selected.language]}
+              ontoggle={(e) => serverList.setLogOpen(selected.language, e.currentTarget.open)}
             >
               <summary>Install output</summary>
               <div class="log">

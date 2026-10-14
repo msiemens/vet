@@ -7,8 +7,9 @@ import type { ThreadStatus } from "../generated/ThreadStatus";
 import type { ThreadTarget } from "../generated/ThreadTarget";
 import type { Backend } from "./backend";
 import { changeset } from "./changeset.svelte";
+import { followProject, whileOpen } from "./followProject";
 import { notices } from "./notices.svelte";
-import { session } from "./session.svelte";
+import { Resource } from "./resource";
 import type { Shown } from "./shown";
 import { rangeKey } from "./timelineRange";
 import { CHANGESET } from "./view";
@@ -21,30 +22,30 @@ class ThreadStore {
   /** The range the threads were read in (see `rangeKey`): an interdiff shows the new side's threads only. */
   key = "";
   private backend?: Backend;
-  /** Only the latest reload counts. */
-  private seq = 0;
+  private reads = new Resource<{ revision: number; threads: Thread[]; key: string }>({
+    apply: ({ revision, threads, key }) => this.set(threads, revision, key),
+    failed: (error) => notices.failed("Could not load comments", error),
+  });
   private listeners = new Set<() => void>();
 
+  constructor() {
+    whileOpen((backend) => this.start(backend));
+  }
+
   /** Loads the threads and keeps them current; the returned function stops that. */
-  start(backend: Backend): () => void {
+  private start(backend: Backend): () => void {
     this.backend = backend;
-    void this.reload();
-    const off = backend.onEvent((event) => {
-      if (event.project !== backend.project) return;
+    const stop = followProject(backend, {
       // A settled snapshot invalidates the resolution; another connection changed a thread.
-      if (event.type === "threadsChanged" || event.type === "snapshotSettled") void this.reload();
-    });
-    const offResync = session.onResync(() => void this.reload());
-    // The threads are the previous changeset's from the request on, until the new ones are read.
-    const offOpening = changeset.onOpening((opening) => {
-      this.seq++;
-      if (opening.type !== "unannounced") this.set([], undefined, "");
-      if (opening.type !== "requested") void this.reload();
+      reloadOn: ["threadsChanged", "snapshotSettled"],
+      reload: () => void this.reload(),
+      cancel: () => this.reads.cancel(),
+      // The threads are the previous changeset's from the request on, until the new ones are read.
+      clear: () => this.set([], undefined, ""),
     });
     return () => {
-      off();
-      offResync();
-      offOpening();
+      stop();
+      this.reads.cancel();
       this.backend = undefined;
       this.set([], undefined);
     };
@@ -53,16 +54,13 @@ class ThreadStore {
   async reload() {
     const backend = this.backend;
     if (!backend) return;
-    const seq = ++this.seq;
     // A commit has no threads of its own: the comments are the changeset's, as the Comments tool window shows them.
     const { range } = changeset;
     const view = range ? changeset.view : CHANGESET;
-    try {
+    await this.reads.load(async () => {
       const { revision, threads } = await backend.threads(view);
-      if (seq === this.seq) this.set(threads, revision, rangeKey(range));
-    } catch (error) {
-      if (seq === this.seq) notices.failed("Could not load comments", error);
-    }
+      return { revision, threads, key: rangeKey(range) };
+    });
   }
 
   /** Opens a thread; resolves whether it went through. `admit` is the view `shown` is of, which says whether it still is the one asked about; by default the view on screen. */

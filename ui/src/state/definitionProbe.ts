@@ -1,4 +1,5 @@
 import { InFlight } from "./inFlight.ts";
+import { Latest } from "./resource.ts";
 
 /**
  * Whether a position has a definition, asked of the server once per position: an answer is kept
@@ -7,8 +8,8 @@ import { InFlight } from "./inFlight.ts";
 export class DefinitionProbe {
   private known = new Map<string, boolean>();
   private asking = new InFlight<boolean>();
-  /** Bumped by `clear`, so the answer to an earlier question is not kept. */
-  private epoch = 0;
+  /** Moved by `clear`, so the answer to an earlier question is not kept. */
+  private epoch = new Latest();
 
   private readonly ask: (key: string, signal: AbortSignal) => Promise<boolean>;
 
@@ -20,12 +21,12 @@ export class DefinitionProbe {
   async has(key: string, signal?: AbortSignal): Promise<boolean> {
     const known = this.known.get(key);
     if (known !== undefined) return known;
-    const epoch = this.epoch;
+    const asked = this.epoch.mark();
     return this.asking.share(
       key,
       async (shared) => {
         const answer = await this.ask(key, shared);
-        if (epoch === this.epoch) this.known.set(key, answer);
+        if (!this.epoch.movedSince(asked)) this.known.set(key, answer);
         return answer;
       },
       signal,
@@ -33,7 +34,7 @@ export class DefinitionProbe {
   }
 
   clear() {
-    this.epoch++;
+    this.epoch.cancel();
     this.known.clear();
     this.asking.clear();
   }

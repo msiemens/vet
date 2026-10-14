@@ -17,11 +17,11 @@ import type { Lens } from "../generated/Lens";
 import { errorText } from "../lib/errorText";
 import { STALE_NOTICE } from "../lib/notice";
 import { pathsBelow } from "../lib/paths";
-import { LatestLoad } from "./latestLoad";
 import { commitToShow, neighbour } from "./commitLens";
 import { keyId } from "./changesetKey";
 import { notices } from "./notices.svelte";
 import { PendingOpen } from "./pendingOpen";
+import { Latest, Resource } from "./resource";
 import {
   type ChangesetFacts,
   type FileLayout,
@@ -87,10 +87,10 @@ class ChangesetStore implements ViewSource {
   private lastCommit = 0;
   /** The commits with their own progress, oldest first; loaded only while the changeset is reviewed by commit. */
   commits = $state.raw<CommitUnit[]>([]);
-  private commitsSeq = 0;
+  private commitReads = new Latest();
   /** A manifest is being fetched. */
   private fetching = $state(false);
-  private manifestLoads = new LatestLoad<{ manifest: Manifest; commit: number | undefined }>({
+  private manifestLoads = new Resource<{ manifest: Manifest; commit: number | undefined }>({
     busy: (on) => (this.fetching = on),
     apply: ({ manifest, commit }) => {
       const parts = partsOf(manifest, commit);
@@ -210,7 +210,7 @@ class ChangesetStore implements ViewSource {
     this.commitIndex = this.shownCommit = undefined;
     this.lastCommit = 0;
     this.commits = [];
-    this.commitsSeq++;
+    this.commitReads.cancel();
     this.restoreFailures = [];
     this.cells.reset();
   }
@@ -292,12 +292,12 @@ class ChangesetStore implements ViewSource {
 
   /** Reads the commits again, with their progress. Only the latest reading counts. */
   async loadCommits() {
-    const seq = ++this.commitsSeq;
+    const isLatest = this.commitReads.begin();
     try {
       const { commits } = await session.connected().commits();
-      if (seq === this.commitsSeq) this.commits = commits;
+      if (isLatest()) this.commits = commits;
     } catch (error) {
-      if (seq === this.commitsSeq) notices.failed("Could not load the commits", error);
+      if (isLatest()) notices.failed("Could not load the commits", error);
     }
   }
 

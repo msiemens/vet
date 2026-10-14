@@ -8,6 +8,7 @@ import { Debounced } from "../lib/debounced";
 import { errorText } from "../lib/errorText";
 import { refreshDelay } from "./checkRefresh";
 import { notices } from "./notices.svelte";
+import { Latest } from "./resource";
 import { session } from "./session.svelte";
 
 /** How long after a run was changed it is asked about once more: the platform has not shown it at once. */
@@ -22,7 +23,7 @@ class CheckStore {
   loadedAt = $state<number>();
   private wanted: readonly string[] = [];
   /** Only the latest load counts. */
-  private seq = 0;
+  private reads = new Latest();
   private timer = new Debounced();
   private again = new Debounced();
   /** The reason last shown, so the same one does not come again with every load. */
@@ -64,7 +65,7 @@ class CheckStore {
 
   private async load(again: readonly string[] = []) {
     this.timer.cancel();
-    const seq = ++this.seq;
+    const isLatest = this.reads.begin();
     const open = this.wanted.filter((id) => {
       const state = this.items.get(id)?.state;
       return state === undefined || state === "pending" || again.includes(id);
@@ -72,7 +73,7 @@ class CheckStore {
     if (!open.length || !session.backend) return;
     try {
       const { checks, error, limitedUntil } = await session.backend.checks(open);
-      if (seq !== this.seq) return;
+      if (!isLatest()) return;
       for (const commit of checks) this.items.set(commit.commit, commit);
       this.limitedUntil = limitedUntil;
       if (checks.length) this.loadedAt = Math.floor(Date.now() / 1000);
@@ -82,7 +83,7 @@ class CheckStore {
       }
       this.lastError = error;
     } catch (error) {
-      if (seq !== this.seq) return;
+      if (!isLatest()) return;
       const text = errorText(error);
       if (text !== this.lastError) notices.failed("Could not load the checks", error);
       this.lastError = text;

@@ -4,6 +4,7 @@
   import FileIcon from "../../lib/ui/FileIcon.svelte";
   import Popover from "../../lib/ui/Popover.svelte";
   import { changeset } from "../../state/changeset.svelte";
+  import { Latest } from "../../state/resource";
   import FilterList from "./FilterList.svelte";
   import FolderPicker from "./FolderPicker.svelte";
   import { rootPath, rootText } from "./filterDraft";
@@ -23,7 +24,7 @@
   let text = $state("");
   let problem = $state<string>();
   let picking = $state(false);
-  let asked = 0;
+  const asked = new Latest();
 
   const path = $derived(rootPath(text));
   const rows = $derived(
@@ -40,9 +41,9 @@
 
   /** Checks the typed path as it is typed; an answer to an older text is dropped. */
   async function typed() {
-    const n = ++asked;
+    const isLatest = asked.begin();
     const found = path ? await problemOf(path) : undefined;
-    if (n === asked) problem = found;
+    if (isLatest()) problem = found;
   }
 
   async function add(path: string) {

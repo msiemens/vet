@@ -1,27 +1,77 @@
-// The open repository's language servers, for the footer to name the one of the focused file and
-// for commands to know what it offers. Settings loads its own copy, with the installs it drives.
+// The open repository's language servers as the backend resolves them, for the footer to name the
+// one of the focused file, for commands to know what it offers and for the Servers page to list,
+// with the installs the viewer started and their output. It follows the project from the day a
+// repository is open, not from the day a page is shown: an install goes on, and its output is
+// kept, whichever page is shown.
 
 import type { ServerInfo } from "../generated/ServerInfo";
 import { errorText } from "../lib/errorText";
+import { type InstallProgress, appendLog } from "./installLog";
+import { Resource } from "./resource";
 import { session } from "./session.svelte";
 
 class ServerList {
   servers = $state.raw<ServerInfo[]>([]);
+  loading = $state(false);
+  loadError = $state<string>();
+  installs = $state.raw<Partial<Record<string, InstallProgress>>>({});
+  /** The output of each language's install. */
+  logs = $state.raw<Record<string, string[]>>({});
+  /** Whether each language's install output is shown. */
+  logOpen = $state.raw<Record<string, boolean>>({});
+  private reads = new Resource<ServerInfo[]>({
+    busy: (on) => (this.loading = on),
+    apply: (servers) => this.set(servers),
+    failed: (error) => (this.loadError = errorText(error)),
+  });
 
   constructor() {
     session.onConnect((backend) =>
       backend.onEvent((event) => {
         if (event.project !== backend.project) return;
+        if (event.type === "serverInstallOutput") {
+          this.logs = { ...this.logs, [event.language]: appendLog(this.logs[event.language] ?? [], event.line) };
+          return;
+        }
         // A server that has started has told what it offers; indexing is the last step of a start.
         const started = event.type === "task" && event.kind === "serverIndex" && event.state.type === "finished";
-        if (event.type === "serversChanged" || started) void this.load();
+        if (event.type === "serversChanged" || started) this.reload();
       }),
     );
-    session.onOpen(() => void this.load());
+    session.onOpen(() => this.reload());
     session.onResync(() => {
-      if (session.repo !== undefined) void this.load();
+      if (session.repo !== undefined) this.reload();
     });
-    session.onClose(() => (this.servers = []));
+    session.onClose(() => {
+      this.reads.cancel();
+      this.servers = [];
+      this.loadError = undefined;
+      this.installs = {};
+      this.logs = {};
+      this.logOpen = {};
+    });
+  }
+
+  /** There is an open repository whose project can be asked. */
+  get available(): boolean {
+    return session.repo !== undefined && session.backend?.project !== undefined;
+  }
+
+  /** Reads the servers again; the latest read counts. */
+  reload() {
+    const backend = session.backend;
+    if (backend) void this.reads.load(() => backend.listServers());
+  }
+
+  /** Takes the list an install, a new path or a restart answered with, which is as current as a read. */
+  private replace(servers: ServerInfo[]) {
+    this.reads.cancel();
+    this.set(servers);
+  }
+
+  private set(servers: ServerInfo[]) {
+    this.servers = servers;
+    this.loadError = undefined;
   }
 
   /** Restarts the servers of `language` in the open project; resolves with why they did not start, if so. */
@@ -29,21 +79,43 @@ class ServerList {
     const backend = session.backend;
     if (!backend) return "No project is open";
     try {
-      this.servers = await backend.restartServer(language);
+      this.replace(await backend.restartServer(language));
       return undefined;
     } catch (error) {
       return errorText(error);
     }
   }
 
-  private async load() {
+  async install(language: string) {
     const backend = session.backend;
     if (!backend) return;
+    this.installs = { ...this.installs, [language]: { running: true } };
+    this.logs = { ...this.logs, [language]: [] };
+    this.logOpen = { ...this.logOpen, [language]: true };
     try {
-      this.servers = await backend.listServers();
-    } catch (error) {
-      console.error(error);
+      this.replace(await backend.installServer(language));
+      this.installs = { ...this.installs, [language]: { running: false } };
+    } catch (e) {
+      this.installs = { ...this.installs, [language]: { running: false, error: errorText(e) } };
     }
+  }
+
+  /** Sets the executable of a language's server (none: back to the resolved one); resolves with the backend's message if it refused the path. */
+  async setPath(language: string, path: string | null): Promise<string | undefined> {
+    const backend = session.backend;
+    if (!backend) return undefined;
+    try {
+      this.replace(await backend.setServerPath(language, path));
+      // The result of an earlier install no longer describes what resolves now.
+      this.installs = { ...this.installs, [language]: { running: false } };
+      return undefined;
+    } catch (e) {
+      return errorText(e);
+    }
+  }
+
+  setLogOpen(language: string, open: boolean) {
+    this.logOpen = { ...this.logOpen, [language]: open };
   }
 }
 
