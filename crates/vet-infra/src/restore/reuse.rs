@@ -196,20 +196,7 @@ fn link_dir(target: &Path, link: &Path) -> io::Result<()> {
 /// A junction, which needs no privilege, unlike a symbolic link.
 #[cfg(windows)]
 fn link_dir(target: &Path, link: &Path) -> io::Result<()> {
-    #[allow(
-        clippy::disallowed_methods,
-        reason = "a junction is made by the shell and nothing else"
-    )]
-    let out = std::process::Command::new("cmd")
-        .args(["/C", "mklink", "/J"])
-        .arg(link)
-        .arg(target)
-        .output()?;
-    if out.status.success() {
-        Ok(())
-    } else {
-        Err(io::Error::other(String::from_utf8_lossy(&out.stdout).into_owned()))
-    }
+    junction::create(target, link)
 }
 
 fn is_project(path: &Path) -> bool {

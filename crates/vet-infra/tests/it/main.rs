@@ -14,3 +14,4 @@ mod remerge;
 mod restore;
 mod semantic_cache;
 mod servers;
+mod windows_shim;

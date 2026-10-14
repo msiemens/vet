@@ -55,6 +55,8 @@ notify.workspace = true
 rustix = { workspace = true, features = ["process", "fs"] }
 
 [target.'cfg(windows)'.dependencies]
+# Directory links that need no privilege, made by the file system API: no shell sees a path.
+junction.workspace = true
 windows-sys = { workspace = true, features = ["Win32_Foundation", "Win32_Security", "Win32_Storage_FileSystem", "Win32_System_IO", "Win32_System_JobObjects", "Win32_System_Threading"] }
 
 [lints]

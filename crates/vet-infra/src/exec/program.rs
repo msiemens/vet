@@ -1,6 +1,5 @@
-//! Finding and invoking programs: `PATH` search, `PATHEXT` on Windows and the
-//! `cmd /c` wrapper for `.cmd` and `.bat` shims. Every spawn of an external
-//! tool goes through [`invocation`], so none of this is repeated elsewhere.
+//! Finding programs: `PATH` search and `PATHEXT` on Windows. Every spawn of an
+//! external tool goes through [`invocation`], so none of this is repeated elsewhere.
 
 use std::path::{Path, PathBuf};
 
@@ -57,24 +56,6 @@ impl Host {
     pub fn find_in(&self, dir: &Path, name: &str, is_file: impl Fn(&Path) -> bool) -> Option<PathBuf> {
         self.candidates(name).iter().map(|c| dir.join(c)).find(|p| is_file(p))
     }
-
-    /// The program and arguments that run `program`: a Windows `.cmd` or `.bat`
-    /// shim cannot be started directly and goes through `cmd /c`.
-    pub fn wrap(&self, program: &Path, args: &[String]) -> (String, Vec<String>) {
-        let shim = self.windows
-            && program
-                .extension()
-                .and_then(|e| e.to_str())
-                .is_some_and(|e| e.eq_ignore_ascii_case("cmd") || e.eq_ignore_ascii_case("bat"));
-        let program = program.to_string_lossy().into_owned();
-        if shim {
-            let mut wrapped = vec!["/c".to_owned(), program];
-            wrapped.extend_from_slice(args);
-            ("cmd".to_owned(), wrapped)
-        } else {
-            (program, args.to_vec())
-        }
-    }
 }
 
 pub fn parse_pathext(value: Option<&str>) -> Vec<String> {
@@ -90,13 +71,13 @@ pub fn is_file(path: &Path) -> bool {
     path.is_file()
 }
 
-/// The program and arguments to spawn for `program`, found on this host's
-/// `PATH` if it is a bare name. A name that is not found is left as it is, so
-/// the spawn reports it.
-pub fn invocation(program: &str, args: &[String]) -> (String, Vec<String>) {
-    let host = Host::current();
-    let found = host.find(program, is_file).unwrap_or_else(|| PathBuf::from(program));
-    host.wrap(&found, args)
+/// The program to spawn for `program`, found on this host's `PATH` if it is a bare name. A name
+/// that is not found is left as it is, so the spawn reports it. A Windows `.cmd` or `.bat` shim is
+/// spawned as it is: the standard library starts `cmd` for it and quotes the arguments safely.
+pub fn invocation(program: &str) -> PathBuf {
+    Host::current()
+        .find(program, is_file)
+        .unwrap_or_else(|| PathBuf::from(program))
 }
 
 #[cfg(test)]
@@ -185,28 +166,5 @@ mod tests {
             windows().find_in(dir, "tsserver", present(&files)),
             Some(dir.join("tsserver.CMD"))
         );
-    }
-
-    #[test]
-    fn windows_shims_run_through_cmd() {
-        let host = windows();
-        let args = vec!["--stdio".to_owned()];
-        let (program, wrapped) = host.wrap(Path::new("C:\\npm\\typescript-language-server.cmd"), &args);
-        assert_eq!(program, "cmd");
-        assert_eq!(wrapped, ["/c", "C:\\npm\\typescript-language-server.cmd", "--stdio"]);
-        let (program, wrapped) = host.wrap(Path::new("C:\\x\\Old.BAT"), &[]);
-        assert_eq!((program.as_str(), wrapped.len()), ("cmd", 2));
-    }
-
-    #[test]
-    fn executables_and_unix_scripts_are_not_wrapped() {
-        let args = vec!["a".to_owned()];
-        let (program, wrapped) = windows().wrap(Path::new("C:\\bin\\rust-analyzer.exe"), &args);
-        assert_eq!(
-            (program.as_str(), wrapped),
-            ("C:\\bin\\rust-analyzer.exe", args.clone())
-        );
-        let (program, wrapped) = unix().wrap(Path::new("/x/tool.cmd"), &args);
-        assert_eq!((program.as_str(), wrapped), ("/x/tool.cmd", args));
     }
 }

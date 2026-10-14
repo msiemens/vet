@@ -36,8 +36,7 @@ pub fn dotnet_env() -> Vec<(String, String)> {
 /// The process dies with its handle.
 #[allow(clippy::disallowed_methods, reason = "the one place that spawns processes")]
 pub fn command(program: &str, args: &[String], cwd: Option<&Path>, env: &[(String, String)]) -> TokioCommand {
-    let (invoked, args) = invocation(program, args);
-    let mut command = TokioCommand::new(invoked);
+    let mut command = TokioCommand::new(invocation(program));
     command
         .args(args)
         .envs(env.iter().map(|(k, v)| (k, v)))

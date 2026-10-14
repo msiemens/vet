@@ -96,6 +96,7 @@ time = { version = "0.3", default-features = false }
 notify = "8.2.0"
 rustix = "1.1"
 windows-sys = "0.61"
+junction = "2.1.0"
 
 # `deny`, not `forbid`: a forbidden lint cannot be re-allowed, and the Windows watcher
 # and job-object modules in vet-infra need a narrow `#![allow(unsafe_code)]`. They are the only ones.
