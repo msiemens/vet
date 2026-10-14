@@ -13,10 +13,10 @@ use tokio::sync::mpsc::UnboundedReceiver;
 use vet_app::ports::Store;
 use vet_backend::{Config, Orchestrator, open_store};
 use vet_protocol::{
-    AnchorState, BlobContent, ChangesetKey, Completion, DirEntry, DirEntryKind, Divergence, Event, ExcludedBy,
-    FileStatus, HunkState, LineDelta, LineLocation, Manifest, NoTextReason, NonTextKind, ProjectId, Request, Response,
-    ReviewFilter, ReviewInfo, ReviewUpdate, RowReview, ServerMessage, Side, TextContent, Thread, ThreadStatus,
-    ThreadTarget,
+    AnchorState, BlobContent, ChangesetKey, Completion, DirEntry, DirEntryKind, Divergence, ErrorKind, Event,
+    ExcludedBy, Failure, FileStatus, HunkState, LineDelta, LineLocation, Manifest, NoTextReason, NonTextKind,
+    ProjectId, Request, Response, ReviewFilter, ReviewInfo, ReviewUpdate, RowReview, ServerMessage, Side, TextContent,
+    Thread, ThreadStatus, ThreadTarget,
 };
 use vet_transport::{Events, Handler};
 
@@ -91,7 +91,7 @@ impl Client {
         }
     }
 
-    async fn call(&self, request: Request) -> Result<Response, String> {
+    async fn call(&self, request: Request) -> Result<Response, Failure> {
         self.handler.handle(request, self.events.clone()).await
     }
 
@@ -512,7 +512,8 @@ async fn mark_edit_settle_remap_and_revert() {
         path: "a.txt".into(),
         hunk: 1,
     };
-    assert!(client.call(stale).await.unwrap_err().contains("stale"));
+    let refused = client.call(stale).await.unwrap_err();
+    assert_eq!(refused.kind, ErrorKind::Outdated, "{refused}");
 
     // Editing the marked line uncovers it; restoring it, byte for byte, covers it again.
     write(
@@ -806,11 +807,9 @@ async fn binary_items_serve_the_bytes_of_either_side() {
         }
     );
 
-    assert!(
-        blob(1, "logo.PNG", Side::Base)
-            .await
-            .unwrap_err()
-            .starts_with("stale revision")
+    assert_eq!(
+        blob(1, "logo.PNG", Side::Base).await.unwrap_err().kind,
+        ErrorKind::Outdated
     );
     assert!(blob(0, "a.txt", Side::Base).await.is_err());
 }
@@ -833,7 +832,7 @@ async fn ignored_paths_do_not_settle_snapshots() {
 }
 
 impl Client {
-    async fn list(&self, project: ProjectId, path: &str) -> Result<(u32, Vec<DirEntry>), String> {
+    async fn list(&self, project: ProjectId, path: &str) -> Result<(u32, Vec<DirEntry>), Failure> {
         match self
             .call(Request::ListDirectory {
                 project,
@@ -846,14 +845,14 @@ impl Client {
         }
     }
 
-    async fn files(&self, project: ProjectId) -> Result<(u32, Vec<String>), String> {
+    async fn files(&self, project: ProjectId) -> Result<(u32, Vec<String>), Failure> {
         match self.call(Request::ListFiles { project }).await? {
             Response::Files { revision, paths } => Ok((revision, paths)),
             other => panic!("{other:?}"),
         }
     }
 
-    async fn file_text(&self, project: ProjectId, path: &str) -> Result<TextContent, String> {
+    async fn file_text(&self, project: ProjectId, path: &str) -> Result<TextContent, Failure> {
         match self
             .call(Request::FileText {
                 project,
@@ -1165,14 +1164,26 @@ async fn paths_outside_a_repository_and_bare_repositories_are_rejected() {
 
     let dir = tempfile::tempdir().unwrap();
     let error = open(dir.path()).await.unwrap_err();
-    assert_eq!(error, format!("Not a git repository: {}", dir.path().display()));
+    assert_eq!(
+        (error.kind, error.message),
+        (
+            ErrorKind::Invalid,
+            format!("Not a git repository: {}", dir.path().display())
+        )
+    );
     let missing = dir.path().join("missing");
-    assert!(open(&missing).await.unwrap_err().starts_with("Not a git repository"));
+    assert!(
+        open(&missing)
+            .await
+            .unwrap_err()
+            .message
+            .starts_with("Not a git repository")
+    );
 
     let bare = tempfile::tempdir().unwrap();
     git(bare.path(), &["init", "-q", "--bare"]);
     assert_eq!(
-        open(bare.path()).await.unwrap_err(),
+        open(bare.path()).await.unwrap_err().message,
         "Bare repositories are not supported"
     );
 }
@@ -1260,7 +1271,11 @@ async fn versions_are_listed_once_a_review_started_and_an_interdiff_needs_two_of
         project,
         view: vet_protocol::View::Interdiff { from: 1, to: 3 },
     };
-    assert_eq!(one.call(interdiff).await.unwrap_err(), "no such version 3");
+    let missing = one.call(interdiff).await.unwrap_err();
+    assert_eq!(
+        (missing.kind, missing.message.as_str()),
+        (ErrorKind::NotFound, "no such version 3")
+    );
 }
 
 #[tokio::test]
@@ -1269,7 +1284,7 @@ async fn lines_of_an_earlier_version_are_mapped_to_where_they_are_now() {
     let fx = fixture(&[("a.txt", &text(30, &[]))], &[("a.txt", &first)]).await;
     let mut one = Client::new(&fx.handler);
     let project = open(&one, fx.repo.path()).await;
-    async fn map(client: &Client, project: ProjectId, from: u32, lines: &[u32]) -> Result<Response, String> {
+    async fn map(client: &Client, project: ProjectId, from: u32, lines: &[u32]) -> Result<Response, Failure> {
         let request = Request::MapLines {
             project,
             from,
@@ -1713,7 +1728,7 @@ async fn every_local_branch_is_listed_however_old_and_whatever_its_name() {
 }
 
 impl Client {
-    async fn set_filter(&self, project: ProjectId, filter: &ReviewFilter) -> Result<Response, String> {
+    async fn set_filter(&self, project: ProjectId, filter: &ReviewFilter) -> Result<Response, Failure> {
         let filter = filter.clone();
         self.call(Request::SetProjectFilter { project, filter }).await
     }
@@ -1762,7 +1777,8 @@ async fn the_filter_moves_completion_and_the_excluded_counts() {
         ..Default::default()
     };
     let err = client.set_filter(project, &bad).await.unwrap_err();
-    assert!(err.starts_with("invalid pattern \"src/[\""), "{err}");
+    assert!(err.message.starts_with("invalid pattern \"src/[\""), "{err}");
+    assert_eq!(err.kind, ErrorKind::Invalid);
     assert_eq!(client.manifest(project).await.revision, 1);
     assert!(client.no_event());
 }

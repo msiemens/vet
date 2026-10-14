@@ -136,11 +136,11 @@ impl Rig {
         rig
     }
 
-    async fn call(&self, request: Request) -> Result<vet_protocol::Response, String> {
+    async fn call(&self, request: Request) -> Result<vet_protocol::Response, vet_protocol::Failure> {
         self.client.call(request).await
     }
 
-    async fn restart(&self) -> Result<vet_protocol::Response, String> {
+    async fn restart(&self) -> Result<vet_protocol::Response, vet_protocol::Failure> {
         self.call(Request::RestartServer {
             project: self.project,
             language: "rust".into(),
@@ -234,7 +234,8 @@ async fn a_server_that_failed_to_start_is_started_again_by_a_restart() {
 
     // Still broken: the restart says why instead of answering.
     let error = rig.restart().await.unwrap_err();
-    assert!(error.contains("the fake server is broken"), "{error}");
+    assert!(error.message.contains("the fake server is broken"), "{error}");
+    assert_eq!(error.kind, vet_protocol::ErrorKind::Unavailable);
 
     std::fs::remove_file(&rig.broken).unwrap();
     rig.restart().await.unwrap();

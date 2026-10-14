@@ -264,7 +264,9 @@ async fn row_of<P: Platform>(platform: &P, remote: &RemoteKey, number: u64) -> O
 pub enum FetchError {
     /// The platform could not say what the pull request is.
     Platform(PlatformError),
-    /// Git could not fetch it, or no remote is its repository. Fit to show.
+    /// None of the repository's remotes is the pull request's repository. Fit to show.
+    NoRemote(String),
+    /// Git could not fetch it. Fit to show.
     Git(String),
 }
 
@@ -272,7 +274,7 @@ impl std::fmt::Display for FetchError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::Platform(e) => e.fmt(f),
-            Self::Git(message) => f.write_str(message),
+            Self::NoRemote(message) | Self::Git(message) => f.write_str(message),
         }
     }
 }
@@ -296,7 +298,7 @@ pub async fn fetch_pull_request<P: Platform, G: Fetcher>(
         .iter()
         .find(|h| h.key == *remote)
         .and_then(|h| remotes.iter().find(|r| r.name == h.remote))
-        .ok_or_else(|| FetchError::Git(format!("none of the remotes of this repository is {remote}")))?;
+        .ok_or_else(|| FetchError::NoRemote(format!("none of the remotes of this repository is {remote}")))?;
     let updates = PullRequestRefs::of(remote, number).updates(remote.kind(), number, (&detail.pull_request).into());
     fetch
         .refs(credentials, git_remote, updates, format!("Fetching #{number}"))
@@ -900,7 +902,7 @@ mod tests {
 
         assert_eq!(
             error,
-            FetchError::Git("none of the remotes of this repository is github.com/acme/app".to_owned())
+            FetchError::NoRemote("none of the remotes of this repository is github.com/acme/app".to_owned())
         );
         assert!(fetched.lock().unwrap().is_empty());
     }

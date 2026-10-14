@@ -58,7 +58,7 @@ pub struct Account {
 }
 
 /// Why a credential was not accepted. Every message is fit to show.
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub enum AccountError {
     InvalidHost(String),
     EmptyToken,

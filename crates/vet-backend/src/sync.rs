@@ -12,30 +12,29 @@ use vet_mapping as mapping;
 use vet_protocol::{EditChoice, Event, Notification, NotificationKind, PlatformConnection, ProjectId, Response};
 
 use crate::announce::{thread_changed, threads_changed};
+use crate::error::{Error, Result};
 use crate::open::Booted;
-use crate::{Open, Orchestrator, message};
+use crate::{Open, Orchestrator};
 
 impl Orchestrator {
-    pub(crate) async fn edit_message(&self, project: ProjectId, id: u32, body: String) -> Result<Response, String> {
+    pub(crate) async fn edit_message(&self, project: ProjectId, id: u32, body: String) -> Result<Response> {
         let open = self.ready(project).await?;
         let thread = (open.session)
             .edit_message(&open.hosting().await, MessageId(id.into()), body, unix_now())
-            .await
-            .map_err(message)?;
+            .await?;
         Ok(thread_changed(&open, &thread).await)
     }
 
-    pub(crate) async fn remove_message(&self, project: ProjectId, id: u32) -> Result<Response, String> {
+    pub(crate) async fn remove_message(&self, project: ProjectId, id: u32) -> Result<Response> {
         let open = self.ready(project).await?;
         (open.session)
             .remove_message(&open.hosting().await, MessageId(id.into()))
-            .await
-            .map_err(message)?;
+            .await?;
         threads_changed(&open).await;
         Ok(Response::Done)
     }
 
-    pub(crate) async fn keep_edit(&self, project: ProjectId, id: u32, keep: EditChoice) -> Result<Response, String> {
+    pub(crate) async fn keep_edit(&self, project: ProjectId, id: u32, keep: EditChoice) -> Result<Response> {
         let open = self.ready(project).await?;
         let keep = match keep {
             EditChoice::Vet => Keep::Vet,
@@ -43,8 +42,7 @@ impl Orchestrator {
         };
         let thread = (open.session)
             .keep_edit(&open.hosting().await, MessageId(id.into()), keep)
-            .await
-            .map_err(message)?;
+            .await?;
         Ok(thread_changed(&open, &thread).await)
     }
 
@@ -53,34 +51,28 @@ impl Orchestrator {
         project: ProjectId,
         comment: &str,
         body: String,
-    ) -> Result<Response, String> {
+    ) -> Result<Response> {
         let open = self.ready(project).await?;
         (open.session)
             .edit_conversation_comment(&open.hosting().await, comment, body)
-            .await
-            .map_err(message)?;
+            .await?;
         threads_changed(&open).await;
         Ok(Response::Done)
     }
 
-    pub(crate) async fn delete_conversation_comment(
-        &self,
-        project: ProjectId,
-        comment: &str,
-    ) -> Result<Response, String> {
+    pub(crate) async fn delete_conversation_comment(&self, project: ProjectId, comment: &str) -> Result<Response> {
         let open = self.ready(project).await?;
         (open.session)
             .remove_conversation_comment(&open.hosting().await, comment)
-            .await
-            .map_err(message)?;
+            .await?;
         threads_changed(&open).await;
         Ok(Response::Done)
     }
 
-    pub(crate) async fn sync_threads(&self, project: ProjectId) -> Result<Response, String> {
+    pub(crate) async fn sync_threads(&self, project: ProjectId) -> Result<Response> {
         let open = self.ready(project).await?;
         if !matches!(open.session.source().await, Source::PullRequest { .. }) {
-            return Err("the changeset on view is not a pull request".into());
+            return Err(Error::not_a_pull_request());
         }
         sync_pull_request(&open.open, &open).await;
         Ok(Response::Done)
@@ -91,21 +83,17 @@ impl Orchestrator {
         project: ProjectId,
         verdict: String,
         body: Option<String>,
-    ) -> Result<Response, String> {
+    ) -> Result<Response> {
         let open = self.ready(project).await?;
         let report = (open.session)
             .submit_review(&open.hosting().await, &verdict, body)
-            .await
-            .map_err(message)?;
+            .await?;
         self.after_posting(&open, project, &report).await
     }
 
-    pub(crate) async fn post_drafts(&self, project: ProjectId) -> Result<Response, String> {
+    pub(crate) async fn post_drafts(&self, project: ProjectId) -> Result<Response> {
         let open = self.ready(project).await?;
-        let report = (open.session)
-            .post_drafts(&open.hosting().await)
-            .await
-            .map_err(message)?;
+        let report = (open.session).post_drafts(&open.hosting().await).await?;
         self.after_posting(&open, project, &report).await
     }
 
@@ -117,7 +105,7 @@ impl Orchestrator {
         open: &crate::open::Ready,
         project: ProjectId,
         report: &vet_app::session::SubmitReport,
-    ) -> Result<Response, String> {
+    ) -> Result<Response> {
         if let Some(notification) = mapping::submit_notification(report) {
             open.subscribers
                 .broadcast(Event::Notification { project, notification });
@@ -134,30 +122,28 @@ impl Orchestrator {
         Ok(mapping::review_submitted(report))
     }
 
-    pub(crate) async fn stage_vote(&self, project: ProjectId, verdict: String) -> Result<Response, String> {
+    pub(crate) async fn stage_vote(&self, project: ProjectId, verdict: String) -> Result<Response> {
         let open = self.ready(project).await?;
-        (open.session)
-            .stage_vote(&open.hosting().await, &verdict)
-            .await
-            .map_err(message)?;
+        (open.session).stage_vote(&open.hosting().await, &verdict).await?;
         threads_changed(&open).await;
         Ok(Response::Done)
     }
 
-    pub(crate) async fn discard_vote(&self, project: ProjectId) -> Result<Response, String> {
+    pub(crate) async fn discard_vote(&self, project: ProjectId) -> Result<Response> {
         let open = self.ready(project).await?;
-        open.session.discard_vote().await.map_err(message)?;
+        open.session.discard_vote().await?;
         threads_changed(&open).await;
         Ok(Response::Done)
     }
 
-    pub(crate) async fn pull_request_info(&self, project: ProjectId) -> Result<Response, String> {
+    pub(crate) async fn pull_request_info(&self, project: ProjectId) -> Result<Response> {
         let open = self.ready(project).await?;
         let Source::PullRequest { remote, .. } = open.session.source().await else {
-            return Err("the changeset on view is not a pull request".into());
+            return Err(Error::not_a_pull_request());
         };
-        let view = (open.session.discussion().await).ok_or("the pull request was not synced yet")?;
-        let pending_vote = open.session.pending_vote().await.map_err(message)?;
+        let view = (open.session.discussion().await)
+            .ok_or_else(|| Error::Unavailable("the pull request was not synced yet".into()))?;
+        let pending_vote = open.session.pending_vote().await?;
         let account = remote.account();
         let connection = open.open.connection(&account).unwrap_or(PlatformConnection::Ok);
         let status = mapping::platform_status(&account, remote.kind(), connection);

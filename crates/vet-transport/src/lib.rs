@@ -21,7 +21,9 @@ use tokio::sync::mpsc;
 use tokio::task::AbortHandle;
 use tokio_tungstenite::tungstenite::Message;
 use tracing::Instrument;
-use vet_protocol::{ClientMessage, Event, PROTOCOL_VERSION, Ready, Request, Response, ServerMessage};
+use vet_protocol::{
+    ClientMessage, ErrorKind, Event, Failure, PROTOCOL_VERSION, Ready, Request, Response, ServerMessage,
+};
 
 const HELLO_TIMEOUT: Duration = Duration::from_secs(5);
 
@@ -55,7 +57,7 @@ impl Events {
 
 /// What sits behind the transport: the backend's request handling.
 pub trait Handler: Send + Sync + 'static {
-    fn handle(&self, request: Request, events: Events) -> impl Future<Output = Result<Response, String>> + Send;
+    fn handle(&self, request: Request, events: Events) -> impl Future<Output = Result<Response, Failure>> + Send;
 }
 
 pub struct Server {
@@ -167,9 +169,13 @@ async fn connection<H: Handler>(
                                 tracing::debug!(target: "timing", took_ms = started.elapsed().as_millis() as u64, "answered");
                                 ServerMessage::Response { id, response }
                             }
-                            Err(message) => {
-                                tracing::debug!(target: "timing", took_ms = started.elapsed().as_millis() as u64, error = %message, "failed");
-                                ServerMessage::Error { id: Some(id), message }
+                            Err(Failure { kind, message }) => {
+                                tracing::debug!(target: "timing", took_ms = started.elapsed().as_millis() as u64, ?kind, error = %message, "failed");
+                                ServerMessage::Error {
+                                    id: Some(id),
+                                    kind,
+                                    message,
+                                }
                             }
                         };
                         let _ = replies.send(reply);
@@ -195,6 +201,7 @@ async fn connection<H: Handler>(
             Ok(ClientMessage::Hello { .. }) => {
                 let _ = replies.send(ServerMessage::Error {
                     id: None,
+                    kind: ErrorKind::Invalid,
                     message: "already authenticated".into(),
                 });
             }
@@ -202,6 +209,7 @@ async fn connection<H: Handler>(
                 tracing::warn!(%error, "malformed message");
                 let _ = replies.send(ServerMessage::Error {
                     id: None,
+                    kind: ErrorKind::Invalid,
                     message: format!("malformed message: {error}"),
                 });
             }
@@ -277,6 +285,7 @@ impl Drop for Finish {
             tracing::error!(id = self.id, "a request panicked");
             let _ = self.replies.send(ServerMessage::Error {
                 id: Some(self.id),
+                kind: ErrorKind::Internal,
                 message: "the request failed unexpectedly".into(),
             });
         }

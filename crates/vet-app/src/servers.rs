@@ -37,7 +37,7 @@ impl ServerStatus {
     }
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub enum ServersError {
     UnknownLanguage(String),
     Store(StoreError),

@@ -5,11 +5,12 @@ use vet_infra::clock::unix_now;
 use vet_mapping as mapping;
 use vet_protocol::{ProjectId, Response};
 
+use crate::Orchestrator;
 use crate::announce::{announce_start, thread_changed, threads_changed};
-use crate::{Orchestrator, message};
+use crate::error::Result;
 
 impl Orchestrator {
-    pub(crate) async fn threads(&self, project: ProjectId, view: vet_protocol::View) -> Result<Response, String> {
+    pub(crate) async fn threads(&self, project: ProjectId, view: vet_protocol::View) -> Result<Response> {
         let threads = self
             .asking(project, async |session| session.threads(mapping::core_view(view)).await)
             .await?;
@@ -23,7 +24,7 @@ impl Orchestrator {
         revision: u32,
         path: &str,
         at: vet_protocol::CommentAt,
-    ) -> Result<Response, String> {
+    ) -> Result<Response> {
         let spot = self
             .asking(project, async |session| {
                 session
@@ -41,7 +42,7 @@ impl Orchestrator {
         revision: u32,
         target: vet_protocol::ThreadTarget,
         body: String,
-    ) -> Result<Response, String> {
+    ) -> Result<Response> {
         let open = self.ready(project).await?;
         let thread = open
             .session
@@ -52,19 +53,14 @@ impl Orchestrator {
                 body,
                 unix_now(),
             )
-            .await
-            .map_err(message)?;
+            .await?;
         announce_start(&open, thread.started);
         Ok(thread_changed(&open, &thread).await)
     }
 
-    pub(crate) async fn reply(&self, project: ProjectId, thread: u32, body: String) -> Result<Response, String> {
+    pub(crate) async fn reply(&self, project: ProjectId, thread: u32, body: String) -> Result<Response> {
         let open = self.ready(project).await?;
-        let thread = open
-            .session
-            .reply(ThreadId(thread.into()), body, unix_now())
-            .await
-            .map_err(message)?;
+        let thread = open.session.reply(ThreadId(thread.into()), body, unix_now()).await?;
         Ok(thread_changed(&open, &thread).await)
     }
 
@@ -73,38 +69,27 @@ impl Orchestrator {
         project: ProjectId,
         thread: u32,
         status: vet_protocol::ThreadStatus,
-    ) -> Result<Response, String> {
+    ) -> Result<Response> {
         let open = self.ready(project).await?;
         let thread = open
             .session
             .set_thread_status(ThreadId(thread.into()), mapping::core_thread_status(status))
-            .await
-            .map_err(message)?;
+            .await?;
         Ok(thread_changed(&open, &thread).await)
     }
 
-    pub(crate) async fn delete_thread(&self, project: ProjectId, thread: u32) -> Result<Response, String> {
+    pub(crate) async fn delete_thread(&self, project: ProjectId, thread: u32) -> Result<Response> {
         let open = self.ready(project).await?;
         open.session
             .delete_thread(&open.hosting().await, ThreadId(thread.into()))
-            .await
-            .map_err(message)?;
+            .await?;
         threads_changed(&open).await;
         Ok(Response::Done)
     }
 
-    pub(crate) async fn confirm_anchor(
-        &self,
-        project: ProjectId,
-        revision: u32,
-        thread: u32,
-    ) -> Result<Response, String> {
+    pub(crate) async fn confirm_anchor(&self, project: ProjectId, revision: u32, thread: u32) -> Result<Response> {
         let open = self.ready(project).await?;
-        let thread = open
-            .session
-            .confirm_anchor(revision, ThreadId(thread.into()))
-            .await
-            .map_err(message)?;
+        let thread = open.session.confirm_anchor(revision, ThreadId(thread.into())).await?;
         Ok(thread_changed(&open, &thread).await)
     }
 
@@ -114,13 +99,12 @@ impl Orchestrator {
         revision: u32,
         thread: u32,
         candidate: u32,
-    ) -> Result<Response, String> {
+    ) -> Result<Response> {
         let open = self.ready(project).await?;
         let thread = open
             .session
             .attach_anchor(revision, ThreadId(thread.into()), candidate as usize)
-            .await
-            .map_err(message)?;
+            .await?;
         Ok(thread_changed(&open, &thread).await)
     }
 }

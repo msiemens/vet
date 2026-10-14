@@ -1,15 +1,15 @@
 use futures_util::{SinkExt, StreamExt};
 use tokio_tungstenite::tungstenite::Message;
 use vet_log::capture::Capture;
-use vet_protocol::{ClientMessage, LogLevel, PROTOCOL_VERSION, Request, Response, ServerMessage};
+use vet_protocol::{ClientMessage, ErrorKind, Failure, LogLevel, PROTOCOL_VERSION, Request, Response, ServerMessage};
 use vet_transport::{Events, Handler, Server};
 
 struct Chatty;
 
 impl Handler for Chatty {
-    async fn handle(&self, request: Request, _: Events) -> Result<Response, String> {
+    async fn handle(&self, request: Request, _: Events) -> Result<Response, Failure> {
         let Request::Ping { payload } = request else {
-            return Err("unsupported".into());
+            return Err(Failure::new(ErrorKind::Invalid, "unsupported"));
         };
         tracing::info!("handling the ping");
         Ok(Response::Pong { payload })

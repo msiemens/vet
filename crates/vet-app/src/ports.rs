@@ -261,11 +261,12 @@ pub trait History {
         base: &CommitId,
         tip: &CommitId,
     ) -> impl Future<Output = Result<Vec<CommitId>, GitError>> + Send;
-    /// The commit `spec` (a full or abbreviated id, or a revision) names.
+    /// The commit `spec` (a full or abbreviated id, or a revision) names; `None` if it names none.
     /// The error is fit to show to a user.
-    fn resolve_commit(&self, spec: &str) -> impl Future<Output = Result<CommitId, GitError>> + Send;
-    /// The tip of the local branch `name`, else of the remote-tracking branch of that name.
-    fn branch_tip(&self, name: &str) -> impl Future<Output = Result<CommitId, GitError>> + Send;
+    fn resolve_commit(&self, spec: &str) -> impl Future<Output = Result<Option<CommitId>, GitError>> + Send;
+    /// The tip of the local branch `name`, else of the remote-tracking branch of that name; `None`
+    /// if there is neither.
+    fn branch_tip(&self, name: &str) -> impl Future<Output = Result<Option<CommitId>, GitError>> + Send;
     /// The local branches by name, then the remote-tracking ones that no local branch
     /// follows at the same commit, by name.
     fn branches(&self) -> impl Future<Output = Result<Vec<BranchInfo>, GitError>> + Send;

@@ -96,7 +96,7 @@ async fn a_repository_without_a_commit_has_a_tree_to_scan_and_no_history() {
     assert!(repo.head().await.is_err());
     assert!(repo.branches().await.unwrap().is_empty());
     assert_eq!(repo.default_reference().await.unwrap(), None);
-    assert_eq!(repo.resolve_commit("HEAD").await.unwrap_err().0, "unknown commit HEAD");
+    assert_eq!(repo.resolve_commit("HEAD").await.unwrap(), None);
 }
 
 #[tokio::test]
@@ -134,13 +134,13 @@ async fn a_branch_is_found_local_or_remote_tracking_and_otherwise_named_in_the_e
     git(p, &["update-ref", "refs/remotes/origin/only-remote", &m2.0]);
     let repo = GixRepo::new(p);
 
-    assert_eq!(repo.branch_tip("feature").await.unwrap(), m1);
-    assert_eq!(repo.branch_tip("origin/feature").await.unwrap(), m2);
-    assert_eq!(repo.branch_tip("origin/only-remote").await.unwrap(), m2);
-    assert_eq!(repo.branch_tip("nope").await.unwrap_err().0, "unknown branch nope");
+    assert_eq!(repo.branch_tip("feature").await.unwrap(), Some(m1));
+    assert_eq!(repo.branch_tip("origin/feature").await.unwrap(), Some(m2.clone()));
+    assert_eq!(repo.branch_tip("origin/only-remote").await.unwrap(), Some(m2));
+    assert_eq!(repo.branch_tip("nope").await.unwrap(), None);
     assert_eq!(
-        repo.branch_tip("HEAD~1").await.unwrap_err().0,
-        "unknown branch HEAD~1",
+        repo.branch_tip("HEAD~1").await.unwrap(),
+        None,
         "only branches, not revisions"
     );
 }

@@ -87,7 +87,7 @@ impl<G: GitRepo + Sync, S: LiveStore + Sync> LiveSession<G, S> {
         let on_view = self.published.read().source.clone();
         let git = &self.acquisition.git;
         let default = match git.default_reference().await? {
-            Some(reference) => git.resolve_commit(&reference).await.ok(),
+            Some(reference) => git.resolve_commit(&reference).await?,
             None => None,
         };
         let default_branch = git.default_branch().await?;

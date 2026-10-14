@@ -182,6 +182,7 @@ impl Rig {
             ServerMessage::Error {
                 id: Some(answered),
                 message,
+                ..
             } if answered == id => panic!("{message}"),
             _ => None,
         })

@@ -6,7 +6,6 @@
 //! first; the others wait for it. Meanwhile the scan reports as a task.
 
 use std::collections::HashMap;
-use std::fmt::Display;
 use std::ops::Deref;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -42,11 +41,12 @@ use vet_semantic::pool::Supervision;
 use vet_semantic::ports::Backend;
 
 use crate::caches::PersistentAnswers;
+use crate::error::{Error, Result};
 use crate::events::{Connection, edits_pending, settled};
 use crate::hosting::Hosting;
 use crate::screens::ReviewScreens;
 use crate::{
-    AzureDevOps, GitHub, LanguageServers, Live, Open, Orchestrator, PlatformAccounts, Semantic, message,
+    AzureDevOps, GitHub, LanguageServers, Live, Open, Orchestrator, PlatformAccounts, Semantic,
     start_servers_in_background,
 };
 
@@ -120,7 +120,7 @@ pub(crate) struct Wired {
     /// The connections that show the review screen, which the language servers run for.
     pub screens: ReviewScreens,
     plan: Plan,
-    booted: OnceCell<Result<Arc<Booted>, String>>,
+    booted: OnceCell<Result<Arc<Booted>>>,
     settling: TaskSlot,
     /// Whether edits of the working tree wait to settle, as the subscribers were last told.
     edits_waiting: Arc<AtomicBool>,
@@ -137,7 +137,7 @@ impl Wired {
     /// The session and its semantic layer, once the first scan is done. The
     /// first caller scans; the others wait for it. A scan that failed fails
     /// every caller with the same message.
-    pub(crate) async fn booted(&self) -> Result<&Arc<Booted>, String> {
+    pub(crate) async fn booted(&self) -> Result<&Arc<Booted>> {
         self.booted
             .get_or_init(|| self.boot())
             .await
@@ -192,7 +192,7 @@ impl Wired {
         self.copying.stop();
     }
 
-    async fn boot(&self) -> Result<Arc<Booted>, String> {
+    async fn boot(&self) -> Result<Arc<Booted>> {
         let Plan {
             id,
             repo,
@@ -209,21 +209,20 @@ impl Wired {
         } = &self.plan;
         let id = *id;
         // Watching starts before the initial scan, so no edit falls between them.
-        let watcher = FsWatcher::open(repo, *poll).map_err(message)?;
+        let watcher = FsWatcher::open(repo, *poll).map_err(|e| Error::Internal(e.to_string()))?;
         let git = GixRepo::new(repo).budgeted(budgets.review_io.clone());
         // The copy ahead of a review is work nobody waits for: it draws on a budget of its own,
         // never on the review's.
         let session = Arc::new(
             Live::open_reporting(git.clone(), store.clone(), root.clone(), unix_now, self.tasks.clone())
-                .await
-                .map_err(message)?
+                .await?
                 .copying_through(
                     git.budgeted(budgets.background_io.clone()),
                     store.budgeted(budgets.background_io.clone()),
                 ),
         );
         if self.closed.load(Ordering::SeqCst) {
-            return Err("the session was closed".into());
+            return Err(Error::Unavailable("the session was closed".into()));
         }
 
         // The content of the tree on view is copied ahead of a review once the tree has been
@@ -378,7 +377,7 @@ impl Ready {
 
 impl Orchestrator {
     /// The project `id` once its first scan is done, waiting for it if need be.
-    pub(crate) async fn ready(&self, id: ProjectId) -> Result<Ready, String> {
+    pub(crate) async fn ready(&self, id: ProjectId) -> Result<Ready> {
         let open = self.find(id).await?;
         let booted = open.booted().await?.clone();
         Ok(Ready {
@@ -391,17 +390,17 @@ impl Orchestrator {
 
     /// What `ask` makes of the live session of the project `id`, once its first scan is done; a
     /// failure of either is the message of the response.
-    pub(crate) async fn asking<T, E: Display>(
+    pub(crate) async fn asking<T, E: Into<Error>>(
         &self,
         id: ProjectId,
-        ask: impl AsyncFnOnce(&Live) -> Result<T, E>,
-    ) -> Result<T, String> {
+        ask: impl AsyncFnOnce(&Live) -> std::result::Result<T, E>,
+    ) -> Result<T> {
         let ready = self.ready(id).await?;
-        ask(&ready.session).await.map_err(message)
+        ask(&ready.session).await.map_err(Into::into)
     }
 
     /// The background work of the project running now. Needs no scan.
-    pub(crate) async fn tasks(&self, id: ProjectId) -> Result<Response, String> {
+    pub(crate) async fn tasks(&self, id: ProjectId) -> Result<Response> {
         let open = self.find(id).await?;
         let tasks = open.tasks.running();
         Ok(Response::Tasks {
@@ -410,11 +409,11 @@ impl Orchestrator {
     }
 
     /// Unsubscribes the connection; the last one to leave closes the project.
-    pub(crate) async fn close(&self, id: ProjectId, from: &Connection) -> Result<(), String> {
+    pub(crate) async fn close(&self, id: ProjectId, from: &Connection) -> Result<()> {
         if let Ok(open) = self.projects.find(id).await {
             open.screens.set(from, false);
         }
-        self.projects.close(id, from).await.map_err(message)
+        Ok(self.projects.close(id, from).await?)
     }
 
     pub(crate) async fn wire(
@@ -424,7 +423,7 @@ impl Orchestrator {
         repo: PathBuf,
         root: String,
         entry: Arc<OnceLock<Weak<Open>>>,
-    ) -> Result<Wired, String> {
+    ) -> Result<Wired> {
         let announced = subscribers.clone();
         let tasks = Tasks::new(
             TASK_UPDATES,

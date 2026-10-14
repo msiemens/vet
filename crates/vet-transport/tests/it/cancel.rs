@@ -4,7 +4,7 @@ use std::time::Duration;
 
 use futures_util::{SinkExt, StreamExt};
 use tokio_tungstenite::tungstenite::Message;
-use vet_protocol::{ClientMessage, PROTOCOL_VERSION, Request, Response, ServerMessage};
+use vet_protocol::{ClientMessage, ErrorKind, Failure, PROTOCOL_VERSION, Request, Response, ServerMessage};
 use vet_transport::{Events, Handler, Server};
 
 /// Answers `Ping` at once, except a payload of `"hang"`, which never ends and
@@ -30,9 +30,9 @@ impl Drop for Running {
 }
 
 impl Handler for Hanging {
-    async fn handle(&self, request: Request, _: Events) -> Result<Response, String> {
+    async fn handle(&self, request: Request, _: Events) -> Result<Response, Failure> {
         let Request::Ping { payload } = request else {
-            return Err("unsupported".into());
+            return Err(Failure::new(ErrorKind::Invalid, "unsupported"));
         };
         if payload == "panic" {
             panic!("a handler that fails");
@@ -149,7 +149,14 @@ async fn a_handler_that_panics_is_answered_with_an_error_and_forgotten() {
     let answer = tokio::time::timeout(Duration::from_secs(10), receive(&mut socket))
         .await
         .expect("the panicking request was never answered");
-    assert!(matches!(answer, ServerMessage::Error { id: Some(1), .. }));
+    assert!(matches!(
+        answer,
+        ServerMessage::Error {
+            id: Some(1),
+            kind: ErrorKind::Internal,
+            ..
+        }
+    ));
 
     // Nothing of request 1 is left to cancel, and the connection still serves.
     send(&mut socket, &ClientMessage::Cancel { id: 1 }).await;

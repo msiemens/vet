@@ -44,7 +44,7 @@ async fn opening_answers_before_the_first_scan_and_the_first_request_that_needs_
         })
         .await
         .unwrap_err();
-    assert!(first.contains("does not have any commits"), "{first}");
+    assert!(first.message.contains("does not have any commits"), "{first}");
     assert_eq!(first, again);
 }
 

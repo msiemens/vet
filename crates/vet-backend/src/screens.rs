@@ -7,6 +7,7 @@ use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use vet_app::registry::Subscriber;
 use vet_protocol::{ProjectId, Response};
 
+use crate::error::Result;
 use crate::events::Connection;
 use crate::{Open, Orchestrator, start_servers_in_background};
 
@@ -44,7 +45,7 @@ impl Orchestrator {
         project: ProjectId,
         shown: bool,
         from: &Connection,
-    ) -> Result<Response, String> {
+    ) -> Result<Response> {
         let open: Arc<Open> = self.find(project).await?;
         open.screens.set(from, shown);
         if shown {

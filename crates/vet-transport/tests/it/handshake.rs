@@ -1,12 +1,12 @@
 use futures_util::{SinkExt, StreamExt};
 use tokio_tungstenite::tungstenite::Message;
-use vet_protocol::{ClientMessage, Event, PROTOCOL_VERSION, Request, Response, ServerMessage};
+use vet_protocol::{ClientMessage, ErrorKind, Event, Failure, PROTOCOL_VERSION, Request, Response, ServerMessage};
 use vet_transport::{Events, Handler, Server};
 
 struct Echo;
 
 impl Handler for Echo {
-    async fn handle(&self, request: Request, events: Events) -> Result<Response, String> {
+    async fn handle(&self, request: Request, events: Events) -> Result<Response, Failure> {
         match request {
             Request::Ping { payload } => Ok(Response::Pong { payload }),
             Request::OpenProject { .. } => {
@@ -19,7 +19,7 @@ impl Handler for Echo {
                     root: "/r".into(),
                 })
             }
-            _ => Err("unsupported".into()),
+            _ => Err(Failure::new(ErrorKind::Outdated, "unsupported")),
         }
     }
 }
@@ -86,6 +86,31 @@ async fn valid_token_allows_requests() {
         Some(ServerMessage::Response {
             id: 7,
             response: Response::Pong { payload: "hi".into() }
+        })
+    );
+}
+
+#[tokio::test]
+async fn a_failed_request_reaches_the_client_with_its_kind() {
+    let (port, token) = start().await;
+    let mut socket = connect(port).await;
+    send(&mut socket, &hello(&token)).await;
+    receive(&mut socket).await;
+
+    send(
+        &mut socket,
+        &ClientMessage::Request {
+            id: 4,
+            request: Request::Accounts,
+        },
+    )
+    .await;
+    assert_eq!(
+        receive(&mut socket).await,
+        Some(ServerMessage::Error {
+            id: Some(4),
+            kind: ErrorKind::Outdated,
+            message: "unsupported".into()
         })
     );
 }

@@ -133,14 +133,8 @@ async fn unresolvable_bases_have_user_facing_errors() {
         repo.merge_base("nope", &fx.f2).await.unwrap_err().0,
         "unknown branch or revision nope"
     );
-    assert_eq!(
-        repo.resolve_commit("0123abc").await.unwrap_err().0,
-        "unknown commit 0123abc"
-    );
-    assert_eq!(
-        repo.resolve_commit("HEAD^{tree}").await.unwrap_err().0,
-        "unknown commit HEAD^{tree}"
-    );
+    assert_eq!(repo.resolve_commit("0123abc").await.unwrap(), None);
+    assert_eq!(repo.resolve_commit("HEAD^{tree}").await.unwrap(), None);
 
     git(p, &["checkout", "-q", "--orphan", "unrelated"]);
     let z = commit(p, "z.txt", "z");
@@ -154,10 +148,10 @@ async fn unresolvable_bases_have_user_facing_errors() {
 async fn commits_resolve_by_full_id_abbreviation_and_revision() {
     let fx = fixture();
     let repo = GixRepo::new(fx.dir.path());
-    assert_eq!(repo.resolve_commit(&fx.m2.0).await.unwrap(), fx.m2);
-    assert_eq!(repo.resolve_commit(&fx.m2.0[..8]).await.unwrap(), fx.m2);
-    assert_eq!(repo.resolve_commit("main").await.unwrap(), fx.m2);
-    assert_eq!(repo.resolve_commit("HEAD").await.unwrap(), fx.f2);
+    assert_eq!(repo.resolve_commit(&fx.m2.0).await.unwrap(), Some(fx.m2.clone()));
+    assert_eq!(repo.resolve_commit(&fx.m2.0[..8]).await.unwrap(), Some(fx.m2.clone()));
+    assert_eq!(repo.resolve_commit("main").await.unwrap(), Some(fx.m2.clone()));
+    assert_eq!(repo.resolve_commit("HEAD").await.unwrap(), Some(fx.f2.clone()));
 }
 
 #[tokio::test]

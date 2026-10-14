@@ -115,6 +115,8 @@ pub(crate) struct FakeGit {
     refs_stuck: Arc<AtomicBool>,
     /// When set, `read_blob` fails; the capped read, which looks at the cap first, does not.
     reads_fail: Arc<AtomicBool>,
+    /// When set, looking up a branch's tip fails as git itself failing would, not as a missing branch.
+    tips_fail: Arc<AtomicBool>,
     /// What revisions (`merge-base <ref>` for merge bases) resolve to, with the commit's tree.
     commits: Arc<Mutex<HashMap<String, (CommitId, Snapshot)>>>,
     /// Largest blob `read_blob_capped` returns.
@@ -373,15 +375,13 @@ impl History for FakeGit {
         range.reverse();
         Ok(range)
     }
-    async fn resolve_commit(&self, spec: &str) -> std::result::Result<CommitId, GitError> {
-        self.commits
-            .lock()
-            .unwrap()
-            .get(spec)
-            .map(|(c, _)| c.clone())
-            .ok_or_else(|| GitError(format!("unknown commit {spec}")))
+    async fn resolve_commit(&self, spec: &str) -> std::result::Result<Option<CommitId>, GitError> {
+        Ok(self.commits.lock().unwrap().get(spec).map(|(c, _)| c.clone()))
     }
-    async fn branch_tip(&self, name: &str) -> std::result::Result<CommitId, GitError> {
+    async fn branch_tip(&self, name: &str) -> std::result::Result<Option<CommitId>, GitError> {
+        if self.tips_fail.load(Ordering::Relaxed) {
+            return Err(GitError("the repository cannot be opened".into()));
+        }
         self.resolve_commit(&format!("refs/heads/{name}")).await
     }
     async fn branches(&self) -> std::result::Result<Vec<BranchInfo>, GitError> {
@@ -3705,6 +3705,17 @@ async fn the_default_branch_is_listed_while_it_has_commits_its_upstream_lacks() 
         Some(Some(0)),
         "kept while on view"
     );
+}
+
+#[tokio::test]
+async fn a_branch_that_does_not_exist_is_not_found_and_one_git_cannot_read_is_a_git_failure() {
+    let fx = Fixture::open(&[("a.txt", "one\n")], &[("a.txt", "one\n")]).await;
+    let open = |name: &str| fx.session.open_changeset(Source::Branch { name: name.into() });
+
+    assert!(matches!(open("nope").await, Err(SessionError::NotFound(_))));
+
+    fx.git.tips_fail.store(true, Ordering::Relaxed);
+    assert!(matches!(open("nope").await, Err(SessionError::Git(_))));
 }
 
 #[tokio::test]

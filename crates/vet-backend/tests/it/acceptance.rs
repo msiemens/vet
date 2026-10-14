@@ -30,9 +30,9 @@ use vet_infra::materialize::Materialize;
 use vet_infra::materialize::kept::{KeptTrees, Limits, Referenced};
 use vet_infra::store::SqliteStore;
 use vet_protocol::{
-    AnchorState, AnchorStrategy, ChangesetKey, EntryKind, Event, FileChange, HunkState, LineLocation, Manifest,
-    NonTextKind, ProjectId, Request, Response, ReviewFilter, ServerMessage, Side, StaleReason, Thread, ThreadKind,
-    ThreadTarget,
+    AnchorState, AnchorStrategy, ChangesetKey, EntryKind, Event, Failure, FileChange, HunkState, LineLocation,
+    Manifest, NonTextKind, ProjectId, Request, Response, ReviewFilter, ServerMessage, Side, StaleReason, Thread,
+    ThreadKind, ThreadTarget,
 };
 use vet_semantic::policy::AnalysisPolicy;
 use vet_semantic::ports::Materializer;
@@ -99,7 +99,7 @@ impl Client {
         }
     }
 
-    async fn call(&self, request: Request) -> Result<Response, String> {
+    async fn call(&self, request: Request) -> Result<Response, Failure> {
         self.handler.handle(request, self.events.clone()).await
     }
 

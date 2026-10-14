@@ -11,8 +11,8 @@ use std::time::Duration;
 use tokio::sync::mpsc::UnboundedReceiver;
 use vet_backend::{Config, Orchestrator, open_store};
 use vet_protocol::{
-    Diagnostic, LocationRows, Locations, ProjectId, Request, Response, ServerInfo, ServerMessage, ServerState, Side,
-    Unavailable,
+    Diagnostic, Failure, LocationRows, Locations, ProjectId, Request, Response, ServerInfo, ServerMessage, ServerState,
+    Side, Unavailable,
 };
 use vet_transport::{Events, Handler};
 
@@ -99,7 +99,7 @@ impl Client {
         }
     }
 
-    pub async fn call(&self, request: Request) -> Result<Response, String> {
+    pub async fn call(&self, request: Request) -> Result<Response, Failure> {
         self.handler.handle(request, self.events.clone()).await
     }
 

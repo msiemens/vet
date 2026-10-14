@@ -9,6 +9,7 @@ use vet_protocol::{Event, ProjectId, Response};
 
 use crate::accounts::Held;
 use crate::changesets::bring_in;
+use crate::error::Result;
 use crate::events::settled;
 use crate::open::Booted;
 use crate::sync::sync_pull_request;
@@ -16,7 +17,7 @@ use crate::{Open, Orchestrator, start_servers_in_background};
 
 impl Orchestrator {
     /// Fetches now. A fetch that fails fails its task and not this request.
-    pub(crate) async fn fetch(&self, id: ProjectId) -> Result<Response, String> {
+    pub(crate) async fn fetch(&self, id: ProjectId) -> Result<Response> {
         let open = self.find(id).await?;
         fetch_and_report(&open).await;
         Ok(Response::Done)

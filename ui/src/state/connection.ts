@@ -14,7 +14,7 @@ import { LogBudget, reportFailedRequest } from "./errorLog.ts";
 import { Pending } from "./pending.ts";
 
 // Must match PROTOCOL_VERSION in crates/vet-protocol.
-const PROTOCOL_VERSION = 2;
+const PROTOCOL_VERSION = 3;
 
 /** `WebSocket.OPEN`. */
 const OPEN = 1;

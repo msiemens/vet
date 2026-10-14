@@ -5,15 +5,16 @@ use vet_protocol::{Event, ProjectId, Response};
 use vet_semantic::policy::AnalysisPolicy;
 use vet_semantic::ports::BackendId;
 
-use crate::{Open, Orchestrator, message};
+use crate::error::Result;
+use crate::{Open, Orchestrator};
 
 impl Orchestrator {
-    pub(crate) async fn list_servers(&self, project: ProjectId) -> Result<Response, String> {
+    pub(crate) async fn list_servers(&self, project: ProjectId) -> Result<Response> {
         let open = self.find(project).await?;
         self.servers_of(&open).await
     }
 
-    pub(crate) async fn install_server(&self, project: ProjectId, language: String) -> Result<Response, String> {
+    pub(crate) async fn install_server(&self, project: ProjectId, language: String) -> Result<Response> {
         let open = self.find(project).await?;
         let progress = |line: &str| {
             open.subscribers.broadcast(Event::ServerInstallOutput {
@@ -22,7 +23,7 @@ impl Orchestrator {
                 line: line.to_owned(),
             });
         };
-        self.servers.install(&language, &progress).await.map_err(message)?;
+        self.servers.install(&language, &progress).await?;
         self.servers_replaced(&language).await;
         self.servers_of(&open).await
     }
@@ -32,17 +33,17 @@ impl Orchestrator {
         project: ProjectId,
         language: String,
         path: Option<String>,
-    ) -> Result<Response, String> {
+    ) -> Result<Response> {
         let open = self.find(project).await?;
-        self.servers.set_custom_path(&language, path).await.map_err(message)?;
+        self.servers.set_custom_path(&language, path).await?;
         self.servers_replaced(&language).await;
         self.servers_of(&open).await
     }
 
     /// Replaces the project's servers of `language`. Other projects' servers, which are their
     /// own, keep running. Every connection of the project is told.
-    pub(crate) async fn restart_server(&self, project: ProjectId, language: String) -> Result<Response, String> {
-        let language = self.servers.known(&language).map_err(message)?;
+    pub(crate) async fn restart_server(&self, project: ProjectId, language: String) -> Result<Response> {
+        let language = self.servers.known(&language)?;
         let ready = self.ready(project).await?;
         let started = ready.restart_server(language).await;
         ready.subscribers.broadcast(Event::ServersChanged { project });
@@ -50,7 +51,7 @@ impl Orchestrator {
         self.servers_of(&ready.open).await
     }
 
-    async fn servers_of(&self, open: &Open) -> Result<Response, String> {
+    async fn servers_of(&self, open: &Open) -> Result<Response> {
         // The servers are shown as they would run for the changeset on view; before its
         // first scan nothing is known of it, and nothing executes.
         let policy = match open.booted_now() {
@@ -61,7 +62,7 @@ impl Orchestrator {
                 .map_or(AnalysisPolicy::LIMITED, |(trust, head)| trust.policy(&head)),
             None => AnalysisPolicy::LIMITED,
         };
-        let all = self.servers.status(&open.repo, policy).await.map_err(message)?;
+        let all = self.servers.status(&open.repo, policy).await?;
         // What a server offers is known from the project's own server; where none ran, from another's.
         let booted = self.projects.all().await;
         let features = |language: &BackendId| {

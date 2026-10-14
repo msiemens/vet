@@ -83,7 +83,7 @@ class FakeBackend implements Dialer {
 
   received(socket: FakeSocket, message: ClientMessage) {
     if (message.type !== "hello") return;
-    if (message.token === this.address_.token) socket.push({ type: "helloAck", protocolVersion: 2 });
+    if (message.token === this.address_.token) socket.push({ type: "helloAck", protocolVersion: 3 });
     else socket.close();
   }
 
@@ -134,7 +134,7 @@ void test("a dropped socket is replaced by one to the same address, which authen
 
   assert.equal(backend.sockets.length, 2);
   assert.equal(backend.last.url, "ws://127.0.0.1:4000");
-  assert.deepEqual(backend.last.sent[0], { type: "hello", token: "secret", protocolVersion: 2 });
+  assert.deepEqual(backend.last.sent[0], { type: "hello", token: "secret", protocolVersion: 3 });
   assert.deepEqual(seen.states, ["reconnecting", "connected"]);
   assert.equal(seen.reconnects(), 1);
   const event: ServerEvent = { type: "serversChanged", project: 1 };

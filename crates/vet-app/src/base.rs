@@ -51,7 +51,8 @@ pub async fn resolve<G: History>(
             Ok((BaseChoice::MergeBase { reference }, commit))
         }
         BaseChoice::Commit { id } => {
-            let commit = git.resolve_commit(&id.0).await.map_err(|e| e.0)?;
+            let commit = (git.resolve_commit(&id.0).await.map_err(|e| e.0)?)
+                .ok_or_else(|| format!("unknown commit {}", id.0))?;
             Ok((BaseChoice::Commit { id: commit.clone() }, commit))
         }
     }

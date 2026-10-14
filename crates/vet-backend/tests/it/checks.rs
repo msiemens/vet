@@ -33,7 +33,8 @@ async fn a_changeset_that_is_not_a_pull_request_has_no_checks_and_no_logs() {
         })
         .await
         .unwrap_err();
-    assert!(refused.contains("not a pull request"), "{refused}");
+    assert!(refused.message.contains("not a pull request"), "{refused}");
+    assert_eq!(refused.kind, vet_protocol::ErrorKind::Invalid);
 
     let steps = client
         .call(Request::PipelineSteps {
@@ -42,7 +43,7 @@ async fn a_changeset_that_is_not_a_pull_request_has_no_checks_and_no_logs() {
         })
         .await
         .unwrap_err();
-    assert!(steps.contains("not a pull request"), "{steps}");
+    assert!(steps.message.contains("not a pull request"), "{steps}");
     let changed = client
         .call(Request::ChangePipeline {
             project,
@@ -50,5 +51,5 @@ async fn a_changeset_that_is_not_a_pull_request_has_no_checks_and_no_logs() {
         })
         .await
         .unwrap_err();
-    assert!(changed.contains("not a pull request"), "{changed}");
+    assert!(changed.message.contains("not a pull request"), "{changed}");
 }

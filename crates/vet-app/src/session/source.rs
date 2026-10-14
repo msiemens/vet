@@ -38,12 +38,12 @@ pub(super) async fn tip_of<G: GitRepo>(git: &G, source: &Source) -> Result<Commi
         Source::WorkingTree => Err(SessionError::Invalid("the working tree is not a commit".into())),
         Source::Branch { name } => git
             .branch_tip(name)
-            .await
-            .map_err(|_| SessionError::NotFound(format!("branch {name}"))),
+            .await?
+            .ok_or_else(|| SessionError::NotFound(format!("branch {name}"))),
         Source::PullRequest { remote, number } => git
             .resolve_commit(&PullRequestRefs::of(remote, *number).head)
-            .await
-            .map_err(|_| SessionError::NotFound(format!("pull request #{number}, which has not been fetched"))),
+            .await?
+            .ok_or_else(|| SessionError::NotFound(format!("pull request #{number}, which has not been fetched"))),
     }
 }
 

@@ -11,6 +11,7 @@ mod caches;
 mod changesets;
 #[cfg(test)]
 mod contract;
+mod error;
 mod events;
 mod fetch;
 mod highlight;
@@ -53,11 +54,12 @@ use vet_infra::platform::github::GitHubClient;
 use vet_infra::restore::ToolRestorer;
 use vet_infra::servers::ToolResolver;
 use vet_infra::store::SqliteStore;
-use vet_protocol::{BackendSettings, Event, Preference, ProjectId, Request, Response};
+use vet_protocol::{BackendSettings, Event, Failure, Preference, ProjectId, Request, Response};
 use vet_semantic::ports::Backend;
 use vet_transport::{Events, Handler};
 
 use caches::PersistentAnswers;
+use error::{Error, Result};
 use events::Connection;
 use open::Wired;
 use references::StoreReferences;
@@ -135,12 +137,8 @@ pub struct Orchestrator {
     process_subscribers: Subscribers<Connection>,
 }
 
-fn message(error: impl std::fmt::Display) -> String {
-    error.to_string()
-}
-
-fn recent_projects(list: Result<Vec<RecentProject>, StoreError>) -> Result<Response, String> {
-    let projects = list.map_err(|e| e.0)?;
+fn recent_projects(list: std::result::Result<Vec<RecentProject>, StoreError>) -> Result<Response> {
+    let projects = list?;
     Ok(Response::RecentProjects {
         projects: projects
             .into_iter()
@@ -198,9 +196,9 @@ impl Orchestrator {
 
     /// The open project `id`. The request being answered is about it from here on, and its
     /// log lines say so.
-    async fn find(&self, id: ProjectId) -> Result<Arc<Open>, String> {
+    async fn find(&self, id: ProjectId) -> Result<Arc<Open>> {
         tracing::Span::current().record("project", id);
-        self.projects.find(id).await.map_err(message)
+        Ok(self.projects.find(id).await?)
     }
 
     /// At startup: removes what a launch that died left, then the kept trees
@@ -231,7 +229,7 @@ impl Orchestrator {
     }
 
     /// The recent list after a change, which every connection subscribed to the process hears of.
-    fn recent_changed(&self, list: Result<Vec<RecentProject>, StoreError>) -> Result<Response, String> {
+    fn recent_changed(&self, list: std::result::Result<Vec<RecentProject>, StoreError>) -> Result<Response> {
         let answer = recent_projects(list)?;
         self.process_subscribers.broadcast(Event::RecentProjectsChanged);
         Ok(answer)
@@ -244,9 +242,9 @@ impl Orchestrator {
     }
 
     /// The settings, and this connection subscribed to the events of the backend.
-    async fn settings(&self, from: &Connection) -> Result<Response, String> {
+    async fn settings(&self, from: &Connection) -> Result<Response> {
         self.process_subscribers.subscribe(from.clone());
-        let settings = self.store.backend_settings().await.map_err(|e| e.0)?;
+        let settings = self.store.backend_settings().await?;
         Ok(Response::Settings {
             settings: BackendSettings {
                 semantic_cache_mb: settings.semantic_cache_mb,
@@ -257,12 +255,12 @@ impl Orchestrator {
 
     /// Keeps the settings, then applies them. How long finished reviews are kept applies
     /// at the next start, which is when the store is collected.
-    async fn set_settings(&self, new: BackendSettings) -> Result<Response, String> {
+    async fn set_settings(&self, new: BackendSettings) -> Result<Response> {
         if new.semantic_cache_mb == 0 {
-            return Err("the semantic cache needs at least 1 MB".into());
+            return Err(Error::Invalid("the semantic cache needs at least 1 MB".into()));
         }
         if new.finished_review_days == 0 {
-            return Err("finished reviews are kept for at least a day".into());
+            return Err(Error::Invalid("finished reviews are kept for at least a day".into()));
         }
         let settings = Settings {
             semantic_cache_mb: new.semantic_cache_mb,
@@ -270,11 +268,11 @@ impl Orchestrator {
         };
         {
             let _changing = self.settings_changing.lock().await;
-            let old = self.store.backend_settings().await.map_err(|e| e.0)?;
+            let old = self.store.backend_settings().await?;
             self.store
                 .set_backend_settings(settings)
                 .await
-                .map_err(|e| format!("the settings cannot be kept: {}", e.0))?;
+                .map_err(|e| Error::Internal(format!("the settings cannot be kept: {}", e.0)))?;
             if old.semantic_cache_mb != settings.semantic_cache_mb {
                 self.answers.set_budget(settings.semantic_cache_bytes()).await;
             }
@@ -285,9 +283,9 @@ impl Orchestrator {
 
     /// What the window remembers in `scope`, and this connection subscribed to the events of
     /// the backend.
-    async fn preferences(&self, scope: Option<String>, from: &Connection) -> Result<Response, String> {
+    async fn preferences(&self, scope: Option<String>, from: &Connection) -> Result<Response> {
         self.process_subscribers.subscribe(from.clone());
-        let values = self.store.preferences(scope).await.map_err(|e| e.0)?;
+        let values = self.store.preferences(scope).await?;
         Ok(Response::Preferences {
             values: values
                 .into_iter()
@@ -297,16 +295,10 @@ impl Orchestrator {
     }
 
     /// Keeps a value of the window, or forgets it, and tells every connection.
-    async fn set_preference(
-        &self,
-        scope: Option<String>,
-        key: String,
-        value: Option<String>,
-    ) -> Result<Response, String> {
+    async fn set_preference(&self, scope: Option<String>, key: String, value: Option<String>) -> Result<Response> {
         self.store
             .set_preference(scope.clone(), key.clone(), value.clone())
-            .await
-            .map_err(|e| e.0)?;
+            .await?;
         self.process_subscribers
             .broadcast(Event::PreferenceChanged { scope, key, value });
         Ok(Response::Done)
@@ -314,15 +306,15 @@ impl Orchestrator {
 }
 
 impl Handler for Orchestrator {
-    async fn handle(&self, request: Request, events: Events) -> Result<Response, String> {
-        self.answer(request, &Connection(events)).await
+    async fn handle(&self, request: Request, events: Events) -> std::result::Result<Response, Failure> {
+        Ok(self.answer(request, &Connection(events)).await?)
     }
 }
 
 /// What a request is answered with, on the heap.
-type Reply<'a> = Pin<Box<dyn Future<Output = Result<Response, String>> + Send + 'a>>;
+type Reply<'a> = Pin<Box<dyn Future<Output = Result<Response>> + Send + 'a>>;
 
-fn reply<'a>(work: impl Future<Output = Result<Response, String>> + Send + 'a) -> Reply<'a> {
+fn reply<'a>(work: impl Future<Output = Result<Response>> + Send + 'a) -> Reply<'a> {
     Box::pin(work)
 }
 
@@ -686,7 +678,7 @@ fn scan_in_background(open: Arc<Open>) {
 
 /// Opens the store and collects what its retention, as the settings in the store have it, no
 /// longer keeps. A failed collection only leaves the garbage for the next start.
-pub async fn open_store(dir: &Path) -> Result<SqliteStore, String> {
+pub async fn open_store(dir: &Path) -> std::result::Result<SqliteStore, String> {
     let store = SqliteStore::open(dir).await.map_err(|e| e.0)?;
     let retention = Retention {
         closed_changesets: store

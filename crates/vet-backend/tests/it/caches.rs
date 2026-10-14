@@ -22,7 +22,7 @@ fn key(text: &str) -> Key {
     }
 }
 
-fn usage(response: Result<Response, String>) -> u64 {
+fn usage(response: Result<Response, vet_protocol::Failure>) -> u64 {
     match response {
         Ok(Response::SemanticCacheUsage { bytes }) => bytes,
         other => panic!("{other:?}"),

@@ -104,7 +104,7 @@ impl<S, T> Deref for Entry<S, T> {
     }
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct NoSuchProject;
 
 impl fmt::Display for NoSuchProject {

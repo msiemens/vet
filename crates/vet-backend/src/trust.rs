@@ -2,20 +2,21 @@
 
 use vet_protocol::{Event, ProjectId, Response};
 
+use crate::error::Result;
 use crate::open::Ready;
-use crate::{Orchestrator, message, start_servers_in_background};
+use crate::{Orchestrator, start_servers_in_background};
 
 impl Orchestrator {
-    pub(crate) async fn set_project_trusted(&self, project: ProjectId, trusted: bool) -> Result<Response, String> {
+    pub(crate) async fn set_project_trusted(&self, project: ProjectId, trusted: bool) -> Result<Response> {
         let open = self.ready(project).await?;
-        open.session.set_project_trusted(trusted).await.map_err(message)?;
+        open.session.set_project_trusted(trusted).await?;
         trust_changed(open).await;
         Ok(Response::Done)
     }
 
-    pub(crate) async fn trust_pull_request(&self, project: ProjectId) -> Result<Response, String> {
+    pub(crate) async fn trust_pull_request(&self, project: ProjectId) -> Result<Response> {
         let open = self.ready(project).await?;
-        open.session.trust_pull_request().await.map_err(message)?;
+        open.session.trust_pull_request().await?;
         trust_changed(open).await;
         Ok(Response::Done)
     }

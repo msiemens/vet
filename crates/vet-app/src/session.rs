@@ -694,8 +694,9 @@ impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> L
         let reference_tip = git
             .resolve_commit(reference)
             .await
-            .map_err(|e| tracing::warn!(error = %e.0, reference, "the branch holding the changeset is not found"))
-            .ok();
+            .map_err(|e| tracing::warn!(error = %e.0, reference, "the branch holding the changeset cannot be read"))
+            .ok()
+            .flatten();
         let same_tip = reference_tip.as_ref() == Some(&st.head);
         let merged = match &reference_tip {
             Some(tip) if !same_tip => self.merged_into_branch(&st.head, tip).await,

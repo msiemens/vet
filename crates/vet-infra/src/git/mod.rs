@@ -364,14 +364,15 @@ impl History for GixRepo {
             .await
     }
 
-    async fn resolve_commit(&self, spec: &str) -> Result<CommitId, GitError> {
+    async fn resolve_commit(&self, spec: &str) -> Result<Option<CommitId>, GitError> {
         let spec = spec.to_owned();
-        self.blocking(move |i| base::resolve_commit(&i.open()?, &spec)).await
+        self.blocking(move |i| Ok(base::resolve_commit(&i.open()?, &spec)))
+            .await
     }
 
-    async fn branch_tip(&self, name: &str) -> Result<CommitId, GitError> {
+    async fn branch_tip(&self, name: &str) -> Result<Option<CommitId>, GitError> {
         let name = name.to_owned();
-        self.blocking(move |i| base::branch_tip(&i.open()?, &name)).await
+        self.blocking(move |i| Ok(base::branch_tip(&i.open()?, &name))).await
     }
 
     async fn branches(&self) -> Result<Vec<BranchInfo>, GitError> {

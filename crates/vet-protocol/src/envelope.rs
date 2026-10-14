@@ -3,9 +3,9 @@
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
-use crate::{Event, Request, Response};
+use crate::{ErrorKind, Event, Request, Response};
 
-pub const PROTOCOL_VERSION: u32 = 2;
+pub const PROTOCOL_VERSION: u32 = 3;
 
 /// The one line the backend prints to stdout once it is listening. The shell
 /// reads it to learn the port and the per-launch random token.
@@ -70,6 +70,7 @@ pub enum ServerMessage {
     /// `id` is `None` when the failure is not attributable to a request.
     Error {
         id: Option<u32>,
+        kind: ErrorKind,
         message: String,
     },
     /// The request `id` was cancelled and will get no `Response` or `Error`.

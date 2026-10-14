@@ -41,7 +41,7 @@ impl Ask {
     }
 }
 
-async fn search(client: &Client, project: ProjectId, ask: Ask) -> Result<Found, String> {
+async fn search(client: &Client, project: ProjectId, ask: Ask) -> Result<Found, vet_protocol::Failure> {
     let response = client
         .call(Request::Search {
             project,
@@ -161,10 +161,21 @@ async fn a_regex_is_rust_syntax_and_an_invalid_one_or_a_bad_mask_fails_with_a_me
         ..Ask::new(CHANGES, "")
     };
     let error = search(&client, project, ask).await.err().unwrap();
-    assert!(error.contains("unclosed group") && !error.contains('\n'), "{error}");
+    assert!(
+        error.message.contains("unclosed group") && !error.message.contains('\n'),
+        "{error}"
+    );
+    assert_eq!(error.kind, vet_protocol::ErrorKind::Invalid);
     let ask = Ask {
         mask: "src/[a",
         ..Ask::new(CHANGES, "delay")
     };
-    assert!(search(&client, project, ask).await.err().unwrap().contains("src/[a"));
+    assert!(
+        search(&client, project, ask)
+            .await
+            .err()
+            .unwrap()
+            .message
+            .contains("src/[a")
+    );
 }

@@ -7,6 +7,7 @@ use vet_infra::clock::TokioClock;
 use vet_infra::git::find_root;
 use vet_protocol::{Event, ProjectId};
 
+use crate::error::{Error, Result};
 use crate::events::Connection;
 use crate::fetch::fetch_periodically;
 use crate::{Open, Orchestrator, scan_in_background};
@@ -14,8 +15,8 @@ use crate::{Open, Orchestrator, scan_in_background};
 impl Orchestrator {
     /// The project id and the root of the repository containing `repo`. The first
     /// scan has not necessarily happened yet; requests that need it wait for it.
-    pub(crate) async fn open(&self, repo: &str, events: Connection) -> Result<(ProjectId, String), String> {
-        let repo = find_root(Path::new(repo))?;
+    pub(crate) async fn open(&self, repo: &str, events: Connection) -> Result<(ProjectId, String)> {
+        let repo = find_root(Path::new(repo)).map_err(Error::Invalid)?;
         let root = repo.to_string_lossy().into_owned();
         let entry: Arc<OnceLock<Weak<Open>>> = Arc::default();
         let joining = events.clone();

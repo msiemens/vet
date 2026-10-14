@@ -12,18 +12,15 @@ fn commit_of<'r>(repo: &'r gix::Repository, spec: &str) -> Option<gix::Commit<'r
     id.object().ok()?.peel_to_commit().ok()
 }
 
-pub(super) fn resolve_commit(repo: &gix::Repository, spec: &str) -> Result<CommitId, GitError> {
-    commit_of(repo, spec)
-        .map(|c| CommitId(c.id.to_string()))
-        .ok_or_else(|| GitError(format!("unknown commit {spec}")))
+pub(super) fn resolve_commit(repo: &gix::Repository, spec: &str) -> Option<CommitId> {
+    commit_of(repo, spec).map(|c| CommitId(c.id.to_string()))
 }
 
 /// The tip of the local branch `name`, else of the remote-tracking branch of that name
 /// (`origin/feature`).
-pub(super) fn branch_tip(repo: &gix::Repository, name: &str) -> Result<CommitId, GitError> {
+pub(super) fn branch_tip(repo: &gix::Repository, name: &str) -> Option<CommitId> {
     resolve_commit(repo, &format!("refs/heads/{name}"))
-        .or_else(|_| resolve_commit(repo, &format!("refs/remotes/{name}")))
-        .map_err(|_| GitError(format!("unknown branch {name}")))
+        .or_else(|| resolve_commit(repo, &format!("refs/remotes/{name}")))
 }
 
 pub(super) fn merge_base(repo: &gix::Repository, reference: &str, tip: &CommitId) -> Result<CommitId, GitError> {

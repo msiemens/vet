@@ -565,7 +565,9 @@ async fn rust_semantics_through_the_protocol() {
             symbol: id("nothing"),
         })
         .await;
-    assert!(unknown.unwrap_err().contains("no such symbol"));
+    let unknown = unknown.unwrap_err();
+    assert!(unknown.message.contains("no such symbol"));
+    assert_eq!(unknown.kind, vet_protocol::ErrorKind::NotFound);
     let removed = client
         .call(Request::Calls {
             project,
@@ -573,7 +575,7 @@ async fn rust_semantics_through_the_protocol() {
             symbol: id("gone"),
         })
         .await;
-    assert!(removed.unwrap_err().contains("removed"));
+    assert!(removed.unwrap_err().message.contains("removed"));
     for request in [
         Request::Hover {
             project,
@@ -602,7 +604,7 @@ async fn rust_semantics_through_the_protocol() {
         },
     ] {
         let error = client.call(request).await.unwrap_err();
-        assert!(error.contains("stale revision"), "{error}");
+        assert_eq!(error.kind, vet_protocol::ErrorKind::Outdated, "{error}");
     }
     client.call(Request::CloseProject { project }).await.unwrap();
 }
@@ -883,7 +885,9 @@ async fn servers_are_listed_and_custom_paths_persist_and_notify() {
             path: None,
         })
         .await;
-    assert!(unknown.unwrap_err().contains("unknown language"));
+    let unknown = unknown.unwrap_err();
+    assert!(unknown.message.contains("unknown language"));
+    assert_eq!(unknown.kind, vet_protocol::ErrorKind::NotFound);
 
     // A new backend on the same data directory still has the path.
     drop((first, second));

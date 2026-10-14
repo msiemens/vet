@@ -17,9 +17,10 @@ use vet_semantic::query::SemanticError;
 use vet_mapping::semantic as map;
 use vet_mapping::{core_side, core_view};
 
+use super::error::{Error, Result};
+use super::highlight;
 use super::highlight::Highlighter;
 use super::open::Booted;
-use super::{highlight, message};
 
 /// The largest file outside the repository whose lines are shown.
 const MAX_OUTSIDE_FILE: u64 = 8 * 1024 * 1024;
@@ -80,28 +81,19 @@ impl Booted {
     }
 
     /// Replaces the servers of `language` and waits until the ones the revision needs run.
-    pub(crate) async fn restart_server(&self, language: &BackendId) -> Result<(), String> {
+    pub(crate) async fn restart_server(&self, language: &BackendId) -> Result<()> {
         let revision = self.session.revision().await;
         (self.semantics)
             .restart_now(&self.view, revision, language)
-            .await
-            .map_err(message)?
-            .map_err(|e| e.to_string())
+            .await?
+            .map_err(|e| Error::Unavailable(e.to_string()))
     }
 
-    pub(crate) async fn hover(
-        &self,
-        revision: u32,
-        side: Side,
-        path: &str,
-        line: u32,
-        col: u32,
-    ) -> Result<Response, String> {
+    pub(crate) async fn hover(&self, revision: u32, side: Side, path: &str, line: u32, col: u32) -> Result<Response> {
         let at = map::at(path, line, col);
         let answer = (self.semantics)
             .hover(&self.view, revision, core_side(side), &at)
-            .await
-            .map_err(message)?;
+            .await?;
         let (text, unavailable) = map::answer(answer.result, self.language_of(&at.file));
         Ok(highlight::hover(path, revision, side, text, unavailable))
     }
@@ -128,20 +120,16 @@ impl Booted {
         path: &str,
         line: u32,
         col: u32,
-    ) -> Result<Response, String> {
+    ) -> Result<Response> {
         let at = map::at(path, line, col);
         let answer = (self.semantics)
             .definition(&self.view, revision, core_side(side), &at)
-            .await
-            .map_err(message)?;
+            .await?;
         Ok(Response::Definition(self.locations(answer, side, &at)))
     }
 
-    pub(crate) async fn workspace_symbols(&self, revision: u32, query: &str) -> Result<Response, String> {
-        let found = (self.semantics)
-            .workspace_symbols(&self.view, revision, query)
-            .await
-            .map_err(message)?;
+    pub(crate) async fn workspace_symbols(&self, revision: u32, query: &str) -> Result<Response> {
+        let found = (self.semantics).workspace_symbols(&self.view, revision, query).await?;
         Ok(Response::WorkspaceSymbols(map::workspace_symbols(&found)))
     }
 
@@ -152,12 +140,11 @@ impl Booted {
         side: Side,
         (path, line, col): (&str, u32, u32),
         limit: Option<u32>,
-    ) -> Result<Response, String> {
+    ) -> Result<Response> {
         let at = map::at(path, line, col);
         let answer = (self.semantics)
             .references(&self.view, revision, core_side(side), &at)
-            .await
-            .map_err(message)?;
+            .await?;
         let limit = limit.map_or(map::MAX_ROWS, |l| l as usize);
         Ok(Response::References(
             self.rows(highlighter, answer, side, &at, limit).await?,
@@ -172,12 +159,11 @@ impl Booted {
         path: &str,
         line: u32,
         col: u32,
-    ) -> Result<Response, String> {
+    ) -> Result<Response> {
         let at = map::at(path, line, col);
         let answer = (self.semantics)
             .implementations(&self.view, revision, core_side(side), &at)
-            .await
-            .map_err(message)?;
+            .await?;
         Ok(Response::Implementations(
             self.rows(highlighter, answer, side, &at, map::MAX_ROWS).await?,
         ))
@@ -192,11 +178,11 @@ impl Booted {
         side: Side,
         at: &At,
         limit: usize,
-    ) -> Result<vet_protocol::LocationRows, String> {
+    ) -> Result<vet_protocol::LocationRows> {
         let revision = answer.revision;
         let answerer = self.language_of(&at.file);
         let (found, unavailable) = map::answer(answer.result, answerer.clone());
-        let files = self.view.changed_files(revision).await.map_err(message)?;
+        let files = self.view.changed_files(revision).await?;
         let mut texts: HashMap<RepoPath, Option<FileLines>> = HashMap::new();
         let mut rows = Vec::with_capacity(found.len());
         for r in &found {
@@ -205,10 +191,7 @@ impl Booted {
                 let text = if r.location.external {
                     read_outside(answerer.as_deref(), file).await
                 } else {
-                    self.view
-                        .side_text(revision, core_side(side), file)
-                        .await
-                        .map_err(message)?
+                    self.view.side_text(revision, core_side(side), file).await?
                 };
                 let lines = match text {
                     Some(text) => {
@@ -249,14 +232,11 @@ impl Booted {
         })
     }
 
-    pub(crate) async fn diagnostics(&self, revision: u32, path: &str, against_base: bool) -> Result<Response, String> {
+    pub(crate) async fn diagnostics(&self, revision: u32, path: &str, against_base: bool) -> Result<Response> {
         let file = RepoPath::from(path);
         let language = self.language_of(&file);
         if !against_base {
-            let answer = (self.semantics)
-                .diagnostics(&self.view, revision, &file)
-                .await
-                .map_err(message)?;
+            let answer = (self.semantics).diagnostics(&self.view, revision, &file).await?;
             let (found, unavailable) = map::answer(answer.result, language);
             return Ok(Response::Diagnostics {
                 revision,
@@ -267,10 +247,7 @@ impl Booted {
                 origin_unavailable: None,
             });
         }
-        let answer = (self.semantics)
-            .judged_diagnostics(&self.view, revision, &file)
-            .await
-            .map_err(message)?;
+        let answer = (self.semantics).judged_diagnostics(&self.view, revision, &file).await?;
         let (diagnostics, count, unavailable, origin_unavailable) = match answer.result {
             Ok(judgement) => {
                 let found: Vec<_> = judgement.diagnostics.iter().map(|j| j.diagnostic.clone()).collect();
@@ -293,12 +270,9 @@ impl Booted {
         })
     }
 
-    pub(crate) async fn file_symbols(&self, revision: u32, path: &str) -> Result<Response, String> {
+    pub(crate) async fn file_symbols(&self, revision: u32, path: &str) -> Result<Response> {
         let file = RepoPath::from(path);
-        let found = (self.semantics)
-            .file_symbols(&self.view, revision, &file)
-            .await
-            .map_err(message)?;
+        let found = (self.semantics).file_symbols(&self.view, revision, &file).await?;
         Ok(Response::FileSymbols(map::file_symbols(
             revision,
             path,
@@ -307,18 +281,10 @@ impl Booted {
         )))
     }
 
-    pub(crate) async fn file_outline(
-        &self,
-        view: vet_protocol::View,
-        revision: u32,
-        path: &str,
-    ) -> Result<Response, String> {
+    pub(crate) async fn file_outline(&self, view: vet_protocol::View, revision: u32, path: &str) -> Result<Response> {
         let file = RepoPath::from(path);
         let answer = match core_view(view) {
-            View::Changeset => (self.semantics)
-                .file_outline(&self.view, revision, &file)
-                .await
-                .map_err(message)?,
+            View::Changeset => (self.semantics).file_outline(&self.view, revision, &file).await?,
             // The semantic layer holds the changeset's snapshots, not a commit's: such a view has
             // the outline of its text, with no marks.
             other => {
@@ -329,15 +295,16 @@ impl Booted {
                         provenance: None,
                     }
                 } else {
-                    let text = self.session.target_text(other, path).await.map_err(message)?;
+                    let text = self.session.target_text(other, path).await?;
                     if text.revision != revision {
-                        return Err(message(SessionError::Stale { current: text.revision }));
+                        return Err(SessionError::Stale { current: text.revision }.into());
                     }
                     match text.content {
-                        Ok(text) => (self.semantics)
-                            .text_outline(&self.view, revision, &file, &text)
-                            .await
-                            .map_err(message)?,
+                        Ok(text) => {
+                            (self.semantics)
+                                .text_outline(&self.view, revision, &file, &text)
+                                .await?
+                        }
                         // No text to read symbols from: the file is not there at this commit.
                         Err(_) => Answer {
                             revision,
@@ -364,12 +331,11 @@ impl Booted {
         path: &str,
         line: u32,
         col: u32,
-    ) -> Result<Response, String> {
+    ) -> Result<Response> {
         let at = map::at(path, line, col);
         let answer = (self.semantics)
             .symbol_at(&self.view, revision, core_side(side), &at)
-            .await
-            .map_err(message)?;
+            .await?;
         let (found, unavailable) = map::answer(answer.result, self.language_of(&at.file));
         Ok(Response::SymbolAt(map::symbol_at(
             revision,
@@ -378,52 +344,39 @@ impl Booted {
         )))
     }
 
-    pub(crate) async fn calls(&self, revision: u32, symbol: &vet_protocol::SymbolId) -> Result<Response, String> {
+    pub(crate) async fn calls(&self, revision: u32, symbol: &vet_protocol::SymbolId) -> Result<Response> {
         let (info, calls) = (self.semantics)
             .calls(&self.view, revision, &map::core_sym(symbol))
-            .await
-            .map_err(message)?;
+            .await?;
         Ok(Response::Calls(map::calls(revision, &info, &calls)))
     }
 
-    pub(crate) async fn usages(&self, revision: u32, symbol: &vet_protocol::SymbolId) -> Result<Response, String> {
+    pub(crate) async fn usages(&self, revision: u32, symbol: &vet_protocol::SymbolId) -> Result<Response> {
         let (info, usages) = (self.semantics)
             .usages(&self.view, revision, &map::core_sym(symbol))
-            .await
-            .map_err(message)?;
+            .await?;
         Ok(Response::Usages(map::usages(revision, &info, &usages)))
     }
 
-    pub(crate) async fn signature(&self, revision: u32, symbol: &vet_protocol::SymbolId) -> Result<Response, String> {
+    pub(crate) async fn signature(&self, revision: u32, symbol: &vet_protocol::SymbolId) -> Result<Response> {
         let answer = (self.semantics)
             .signature(&self.view, revision, &map::core_sym(symbol))
-            .await
-            .map_err(message)?;
+            .await?;
         let (found, unavailable) = map::answer(answer.result, self.language_of(&RepoPath::from(symbol.path.as_str())));
         Ok(highlight::signature(&symbol.path, revision, found, unavailable))
     }
 
-    pub(crate) async fn removal_impact(
-        &self,
-        revision: u32,
-        symbol: &vet_protocol::SymbolId,
-    ) -> Result<Response, String> {
+    pub(crate) async fn removal_impact(&self, revision: u32, symbol: &vet_protocol::SymbolId) -> Result<Response> {
         let impact = (self.semantics)
             .removal_impact(&self.view, revision, &map::core_sym(symbol))
-            .await
-            .map_err(message)?;
+            .await?;
         Ok(Response::RemovalImpact(map::removal_impact(revision, &impact)))
     }
 
-    pub(crate) async fn reachability(
-        &self,
-        revision: u32,
-        symbol: &vet_protocol::SymbolId,
-    ) -> Result<Response, String> {
+    pub(crate) async fn reachability(&self, revision: u32, symbol: &vet_protocol::SymbolId) -> Result<Response> {
         let (info, reach) = (self.semantics)
             .reachability(&self.view, revision, &map::core_sym(symbol))
-            .await
-            .map_err(message)?;
+            .await?;
         Ok(Response::Reachability(map::reachability(revision, &info, &reach)))
     }
 }
