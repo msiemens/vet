@@ -4,8 +4,8 @@ use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
 use crate::{
-    ChangesetKey, CommitChecks, FileSymbols, Lens, Notification, PlatformStatus, ProjectId, RestoreFailure, ReviewInfo,
-    ReviewUpdate, ServerRuntimes, Task,
+    ChangesetKey, CommitChecks, Diagnostic, FileSymbols, Lens, Notification, PlatformStatus, ProjectId, RestoreFailure,
+    ReviewInfo, ReviewUpdate, ServerRuntimes, Task, Unavailable,
 };
 
 /// Events are invalidations or small state updates; the client re-requests
@@ -92,6 +92,27 @@ pub enum Event {
         symbols: FileSymbols,
         done: u32,
         total: u32,
+    },
+    /// The diagnostics of one file of the changeset on view, as the backend analysed them. The
+    /// backend compares the changeset's files with the base itself, while the review screen shows
+    /// it, the files with an open tab first, and pushes each answer as it comes (SPEC §7.3, A13):
+    /// one with `compared` false first, whose `diagnostics` have their origin pending, then one
+    /// with `compared` true, whose origins are new, existing or unknown. `unavailable` says the
+    /// file could not be analysed; the client does not ask per file.
+    FileDiagnostics {
+        project: ProjectId,
+        revision: u32,
+        path: String,
+        diagnostics: Vec<Diagnostic>,
+        /// How many of `diagnostics` to tell the viewer about: hints are not counted.
+        count: u32,
+        unavailable: Option<Unavailable>,
+        /// Why the origins are unknown, when the base side could not be compared.
+        origin_unavailable: Option<Unavailable>,
+        /// Set (to `Incomplete`) when the server was at work on its own while it answered.
+        incomplete: Option<Unavailable>,
+        /// The base side has been compared: the origins are as known as they will be.
+        compared: bool,
     },
     /// The checks (CI runs and statuses) of the commits the review view shows, as the backend last
     /// read them. The backend refreshes them itself while the review screen shows the changeset, so

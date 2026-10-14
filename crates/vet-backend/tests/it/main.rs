@@ -10,6 +10,7 @@ mod fetch;
 mod load;
 mod preferences;
 mod prefetch;
+mod problems;
 mod progress;
 mod python;
 mod recent;

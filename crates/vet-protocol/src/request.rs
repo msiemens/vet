@@ -494,6 +494,12 @@ pub enum Request {
         project: ProjectId,
         paths: Vec<String>,
     },
+    /// Asks the backend to analyse the changeset on view's files again, after the viewer pressed
+    /// Retry where a comparison failed: the answers are pushed as `FileDiagnostics` again. Answers
+    /// with `Response::Done`.
+    RefreshProblems {
+        project: ProjectId,
+    },
     /// Fetches the repository's remotes now, as a `Fetch` task, and answers with
     /// `Response::Done` when it ended. A remote that fails (offline, refused) fails the
     /// task with its name, not this request, and the others are still fetched. If any

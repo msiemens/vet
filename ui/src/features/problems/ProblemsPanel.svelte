@@ -2,7 +2,7 @@
   // The Problems tool, a bottom panel: the diagnostics of the whole changeset in one list, the ones
   // the change introduced first, each with the review state of the hunk it sits in. A click shows a
   // problem without taking the focus, Enter and a double click jump to its source.
-  import { tick, untrack } from "svelte";
+  import { tick } from "svelte";
   import type { Unavailable } from "../../generated/Unavailable";
   import { arrowKey, toggled } from "../../lib/foldKeys";
   import { plural } from "../../lib/format";
@@ -111,11 +111,6 @@
   const scopePaths = $derived(
     scope === "changed" ? problems.changed : scope === "open" ? [...openFiles] : currentFile ? [currentFile] : [],
   );
-  // The files with a tab open are asked about first, even where the change leaves them alone.
-  $effect(() => {
-    const open = [...openFiles];
-    untrack(() => problems.want(open));
-  });
 
   const all = $derived(problems.problemsOf(scopePaths));
   const origins = $derived(problems.originsOf(scopePaths.filter((p) => problems.served(p))));

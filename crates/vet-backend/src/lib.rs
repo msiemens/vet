@@ -6,6 +6,7 @@
 #![cfg_attr(test, allow(clippy::disallowed_methods))]
 
 mod accounts;
+mod analysis;
 mod announce;
 mod caches;
 mod changesets;
@@ -18,6 +19,7 @@ mod fetch;
 mod highlight;
 mod hosting;
 mod open;
+mod problems;
 mod projects;
 mod references;
 mod review;
@@ -678,6 +680,7 @@ impl Orchestrator {
             Request::RestartServer { project, language } => reply(self.restart_server(project, language)),
             Request::SetReviewShown { project, shown } => reply(self.set_review_shown(project, shown, from)),
             Request::SetOpenFiles { project, paths } => reply(self.set_open_files(project, paths)),
+            Request::RefreshProblems { project } => reply(self.refresh_problems(project)),
         }
     }
 }
@@ -694,6 +697,7 @@ fn start_servers_in_background(open: Arc<Open>) {
         return;
     }
     symbols::refresh_symbols_in_background(open.clone());
+    problems::refresh_problems_in_background(open.clone());
     tokio::spawn(async move {
         if let Ok(booted) = open.booted().await {
             booted.start_servers().await;

@@ -133,6 +133,9 @@ pub(crate) struct Wired {
     /// The changed symbols of the changeset on view, analysed in the background while the review
     /// screen shows it; a newer run replaces the older, and the project closing stops it.
     symbols: TaskSlot,
+    /// The diagnostics of the changeset on view, analysed in the background while the review screen
+    /// shows it; a newer run replaces the older, and the project closing stops it.
+    problems: TaskSlot,
     /// The changed files the viewer has open, which the background analysis reads first.
     open_files: Arc<Mutex<Vec<String>>>,
     closed: AtomicBool,
@@ -204,6 +207,17 @@ impl Wired {
     /// Stops analysing the changeset's changed symbols: the review screen is no longer shown.
     pub(crate) fn stop_symbols(&self) {
         self.symbols.stop();
+    }
+
+    /// Hands over the task that analyses the changeset's problems; a newer run replaces it, and it
+    /// ends with the session.
+    pub(crate) fn keep_problems(&self, task: AbortHandle) {
+        self.problems.keep(task);
+    }
+
+    /// Stops analysing the changeset's problems: the review screen is no longer shown.
+    pub(crate) fn stop_problems(&self) {
+        self.problems.stop();
     }
 
     /// The changed files the viewer has open, which the background analysis reads first.
@@ -389,6 +403,7 @@ impl Resident for Wired {
         self.prefetching.stop();
         self.checking.stop();
         self.symbols.stop();
+        self.problems.stop();
         if let Some(Ok(booted)) = self.booted.get() {
             booted.semantics.shutdown().await;
         }
@@ -518,6 +533,7 @@ impl Orchestrator {
             checks_pace: self.config.checks_pace,
             checks_settle: self.config.checks_settle,
             symbols: TaskSlot::default(),
+            problems: TaskSlot::default(),
             open_files: Arc::default(),
             closed: AtomicBool::new(false),
             trees: self.trees.clone(),

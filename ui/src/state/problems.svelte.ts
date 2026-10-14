@@ -1,24 +1,17 @@
-// The Problems tool's state: the diagnostics of the whole changeset, asked file by file in the
-// background once a review is on screen, with the origins the base comparison gives them. The
-// semantic store holds the answers; this decides which files to ask about, joins them with the
-// hunks' review state and says how complete the picture is (SPEC §7.3, I6).
+// The Problems tool's state: the diagnostics of the whole changeset, which the backend analyses
+// file by file in the background once the review screen shows it, comparing each with the base and
+// pushing each answer (SPEC §7.3, A13). The semantic store holds the answers; this joins them with
+// the hunks' review state and says how complete the picture is (SPEC §7.3, I6).
 
-import { untrack } from "svelte";
 import type { Unavailable } from "../generated/Unavailable";
-import { changeset } from "./changeset.svelte";
-import { Gate } from "./gate";
-import type { FileDiagnostics } from "./diagnosticsBook";
+import type { FileDiagnostics } from "./semantic.svelte";
 import { type Counts, type FileHunks, type Problem, countsOf, problemsOf } from "./problemRows";
 import { type Origins, type Summary, originsOf, summarize } from "./problemsSummary";
+import { notices } from "./notices.svelte";
 import { queue } from "./queue.svelte";
-import { Latest } from "./resource";
-import { reviewShown } from "./reviewShown.svelte";
-import { semantic } from "./semantic.svelte";
 import { servedBy } from "./servedBy.svelte";
+import { semantic } from "./semantic.svelte";
 import { session } from "./session.svelte";
-
-/** Files asked about at once. */
-const FILES_AT_ONCE = 4;
 
 /** A file the panel lists as not analysed, and why. */
 export interface NotAnalysed {
@@ -27,11 +20,6 @@ export interface NotAnalysed {
 }
 
 class ProblemsState {
-  /** The files with a tab open, which are asked about first and also where the change leaves them alone. */
-  private extra = $state.raw<readonly string[]>([]);
-  private gate = new Gate(FILES_AT_ONCE);
-  private runs = new Latest();
-
   /** The changeset's files that have text to analyse, whatever view the review shows. */
   readonly changed = $derived.by(() => {
     const files = queue.onViewFrame?.layout.files ?? [];
@@ -39,7 +27,7 @@ class ProblemsState {
   });
   /** How many files the changeset changes, with or without text. */
   readonly changedCount = $derived(queue.onViewFrame?.layout.files.length ?? 0);
-  /** The changed files a language serves, which are asked about. */
+  /** The changed files a language serves, which are analysed. */
   readonly analysable = $derived(this.changed.filter((p) => this.served(p)));
   readonly problems: Problem[] = $derived(this.problemsOf(this.analysable));
   readonly origins: Origins = $derived(this.originsOf(this.analysable));
@@ -58,41 +46,9 @@ class ProblemsState {
     }),
   );
 
-  constructor() {
-    $effect.root(() => {
-      $effect(() => {
-        const { backend } = session;
-        const revision = changeset.layout?.shown.revision;
-        // The files being looked at are asked first.
-        const paths = reviewShown.on
-          ? [...new Set([...this.extra.filter((p) => this.served(p)), ...this.analysable])]
-          : [];
-        // eslint-disable-next-line @typescript-eslint/no-unused-expressions -- answers dropped are asked for again
-        semantic.generation;
-        untrack(() => {
-          if (backend && revision !== undefined) this.load(revision, paths);
-        });
-      });
-    });
-  }
-
-  /** The files with a tab open: asked about first, for as long as they are the ones open. */
-  want(paths: readonly string[]) {
-    if (paths.length !== this.extra.length || paths.some((p, i) => p !== this.extra[i])) this.extra = paths;
-  }
-
   /** Whether a language server serves the file; true while that is not known. */
   served(path: string): boolean {
     return servedBy.of(path)?.type !== "unsupported";
-  }
-
-  private load(revision: number, paths: readonly string[]) {
-    const isLatest = this.runs.begin();
-    for (const path of paths) {
-      void this.gate.run(async () => {
-        if (isLatest()) await semantic.diagnostics(revision, path);
-      });
-    }
   }
 
   /** What the file's answer is: the current one, or the last revision's while the current has not come. */
@@ -162,9 +118,11 @@ class ProblemsState {
   /** Whether the panel lists only what the change introduced. */
   origin = $state<"new" | "all">("all");
 
-  /** Asks the base side again, after a comparison failed. */
+  /** Asks the backend to analyse the base side again, after a comparison failed. */
   retry() {
-    semantic.invalidate();
+    void session.backend?.refreshProblems().catch((error: unknown) => {
+      notices.failed("Could not analyse the problems again", error);
+    });
   }
 }
 

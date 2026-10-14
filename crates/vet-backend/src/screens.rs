@@ -51,9 +51,10 @@ impl Orchestrator {
         if shown {
             start_servers_in_background(open);
         } else {
-            // The changed symbols are analysed for the review screen only. The checks stay: the
-            // queue shows the selected pull request's checks too.
+            // The changed symbols and problems are analysed for the review screen only. The checks
+            // stay: the queue shows the selected pull request's checks too.
             open.stop_symbols();
+            open.stop_problems();
         }
         Ok(Response::Done)
     }
@@ -62,6 +63,16 @@ impl Orchestrator {
     pub(crate) async fn set_open_files(&self, project: ProjectId, paths: Vec<String>) -> Result<Response> {
         let open: Arc<Open> = self.find(project).await?;
         open.set_open_files(paths);
+        Ok(Response::Done)
+    }
+
+    /// Analyses the changeset on view's problems again, for the Retry action where a comparison
+    /// failed. Only while the review screen shows the changeset, which is what the panel is on.
+    pub(crate) async fn refresh_problems(&self, project: ProjectId) -> Result<Response> {
+        let open: Arc<Open> = self.find(project).await?;
+        if open.screens.shown() {
+            crate::problems::refresh_problems_in_background(open);
+        }
         Ok(Response::Done)
     }
 }

@@ -726,6 +726,11 @@ export class Backend {
     expect(await this.conn.request({ type: "setOpenFiles", project: this.pid, paths }), "done");
   }
 
+  /** Asks the backend to analyse the changeset on view's problems again (the Retry action). */
+  async refreshProblems(): Promise<void> {
+    expect(await this.conn.request({ type: "refreshProblems", project: this.pid }), "done");
+  }
+
   /**
    * What the changeset did to the symbols of the changed file `path`, as of `revision` (the
    * manifest's; a stale one is rejected).

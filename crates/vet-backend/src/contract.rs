@@ -28,6 +28,7 @@ pub enum Kind {
     ThreadsChanged,
     ChecksChanged,
     FileSymbols,
+    FileDiagnostics,
     ServerInstallOutput,
     ServersChanged,
     ServerRuntimes,
@@ -56,6 +57,7 @@ impl Kind {
             Event::ThreadsChanged { .. } => Self::ThreadsChanged,
             Event::ChecksChanged { .. } => Self::ChecksChanged,
             Event::FileSymbols { .. } => Self::FileSymbols,
+            Event::FileDiagnostics { .. } => Self::FileDiagnostics,
             Event::ServerInstallOutput { .. } => Self::ServerInstallOutput,
             Event::ServersChanged { .. } => Self::ServersChanged,
             Event::ServerRuntimes { .. } => Self::ServerRuntimes,
@@ -224,6 +226,9 @@ pub fn effect(request: &Request) -> Effect {
         Request::SetOpenFiles { .. } => {
             Effect::Unannounced("orders the background analysis of symbols and problems; nothing a client shows changes")
         }
+        Request::RefreshProblems { .. } => Effect::Unannounced(
+            "restarts the background analysis; the answers it pushes are its own, not this request's",
+        ),
     }
 }
 
@@ -535,6 +540,7 @@ mod tests {
                 project,
                 paths: Vec::new(),
             },
+            Request::RefreshProblems { project },
             Request::Fetch { project },
             Request::SetProjectFilter {
                 project,
