@@ -92,7 +92,7 @@
         <label class="choice" class:off={!cli}>
           <input type="radio" name="method" disabled={!cli} checked={useCli} onchange={() => (chosen = "cli")} />
           <span>{cliName(kind)}</span>
-          <span class="hint">{cli ? (cli.user ?? "") : cliAccount ? "unusable" : "not signed in"}</span>
+          <span class="settings-hint">{cli ? (cli.user ?? "") : cliAccount ? "unusable" : "not signed in"}</span>
         </label>
         <label class="choice">
           <input type="radio" name="method" checked={!useCli} onchange={() => (chosen = "token")} />
@@ -112,9 +112,9 @@
     </div>
   </fieldset>
   {#if !useCli && !hasKeychain}
-    <p class="hint">This window has no keychain, so it is kept until the backend stops.</p>
+    <p class="settings-hint">This window has no keychain, so it is kept until the backend stops.</p>
   {/if}
-  {#if error}<p class="problem" role="alert">{error}</p>{/if}
+  {#if error}<p class="settings-problem" role="alert">{error}</p>{/if}
   {#snippet actions()}
     <button class="ctl" type="button" disabled={busy} onclick={onclose}>Cancel</button>
     <button class="ctl primary" type="submit" disabled={busy || !host.trim() || (!useCli && !token.trim())}

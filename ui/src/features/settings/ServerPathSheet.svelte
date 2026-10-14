@@ -63,7 +63,7 @@
         >{/if}
     </span>
   </label>
-  {#if error}<p class="problem" role="alert">{error}</p>{/if}
+  {#if error}<p class="settings-problem" role="alert">{error}</p>{/if}
   {#snippet actions()}
     <button class="ctl" type="button" disabled={busy} onclick={onclose}>Cancel</button>
     <button class="ctl primary" type="submit" disabled={busy || !path.trim()}>Set</button>

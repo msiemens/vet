@@ -101,7 +101,7 @@
   {#if !servers.available}
     <p class="empty">Open a repository to see and change them.</p>
   {:else if servers.loadError}
-    <p class="problem">{servers.loadError}</p>
+    <p class="settings-problem">{servers.loadError}</p>
   {:else if servers.loading && !servers.servers.length}
     <p class="empty">Looking for language servers…</p>
   {:else}
@@ -179,7 +179,7 @@
 
         {#if actionError?.language === selected.language}
           <dt></dt>
-          <dd class="problem">{actionError.message}</dd>
+          <dd class="settings-problem">{actionError.message}</dd>
         {/if}
 
         <dt>Path</dt>
@@ -195,7 +195,7 @@
 
         {#if selected.features === null}
           <dt>Features</dt>
-          <dd class="hint">Known once the server has started</dd>
+          <dd class="settings-hint">Known once the server has started</dd>
         {:else if selected.features}
           <dt class="top">Features</dt>
           <dd class="checks">
@@ -227,21 +227,21 @@
           </dd>
           {#if selected.tsserver.type === "missing"}
             <dt></dt>
-            <dd class="hint">{selected.tsserver.reason}</dd>
+            <dd class="settings-hint">{selected.tsserver.reason}</dd>
           {/if}
         {/if}
 
         {#if busy}
           <dt></dt>
-          <dd class="hint">Installing…</dd>
+          <dd class="settings-hint">Installing…</dd>
         {/if}
         {#if selected.problem}
           <dt></dt>
-          <dd class="problem">{selected.problem}</dd>
+          <dd class="settings-problem">{selected.problem}</dd>
         {/if}
         {#if selected.installBlocker && selected.pinnedVersion}
           <dt></dt>
-          <dd class="hint">Cannot install: {selected.installBlocker}</dd>
+          <dd class="settings-hint">Cannot install: {selected.installBlocker}</dd>
         {/if}
 
         {#if log.length || servers.installs[selected.language]?.running}
@@ -284,11 +284,11 @@
       </dd>
       {#if backendSettings.loadError}
         <dt></dt>
-        <dd class="problem">{backendSettings.loadError}</dd>
+        <dd class="settings-problem">{backendSettings.loadError}</dd>
       {/if}
       {#if cacheError}
         <dt></dt>
-        <dd class="problem">{cacheError}</dd>
+        <dd class="settings-problem">{cacheError}</dd>
       {/if}
       <dt></dt>
       <dd>
@@ -365,16 +365,6 @@
   }
   .bad {
     color: var(--del-text);
-  }
-  .hint {
-    color: var(--text-3);
-    font-size: var(--fs-mono);
-  }
-  .problem {
-    color: var(--del-text);
-    font-size: var(--fs-mono);
-    white-space: pre-wrap;
-    overflow-wrap: anywhere;
   }
   summary {
     color: var(--text-2);

@@ -171,6 +171,18 @@ button {
   text-decoration: underline;
 }
 
+/* What a settings page or sheet says beside a field: a hint, or what went wrong. */
+.settings-hint {
+  color: var(--text-3);
+  font-size: var(--fs-mono);
+}
+.settings-problem {
+  color: var(--del-text);
+  font-size: var(--fs-mono);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
 .ctl.primary {
   border-color: var(--primary);
   background: var(--primary);

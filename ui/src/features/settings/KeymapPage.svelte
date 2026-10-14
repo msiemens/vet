@@ -55,7 +55,7 @@
   <button class="ctl" type="button" disabled={!anyChanged} onclick={() => keymap.resetAll()}>Reset all</button>
 </div>
 
-{#if problem}<p class="problem">{problem}</p>{/if}
+{#if problem}<p class="settings-problem line">{problem}</p>{/if}
 
 <div>
   {#each groups as group (group.area)}
@@ -65,7 +65,7 @@
           <li data-command={row.id}>
             <span class="label">{row.label}</span>
             {#if recording === row.id}
-              <span class="hint">Press a key combination, Esc to cancel</span>
+              <span class="settings-hint">Press a key combination, Esc to cancel</span>
               <button class="ctl" type="button" onclick={() => (recording = undefined)}>Cancel</button>
             {:else}
               {#if row.binding}
@@ -87,10 +87,10 @@
               </span>
             {/if}
             {#if row.sharedWith.length}
-              <p class="problem">Also used by {row.sharedWith.join(", ")}.</p>
+              <p class="settings-problem line">Also used by {row.sharedWith.join(", ")}.</p>
             {/if}
             {#if clash?.id === row.id}
-              <p class="problem">
+              <p class="settings-problem line">
                 <kbd>{clash.key}</kbd> is already used by {clash.others.join(", ")}.
                 <button
                   class="ctl"
@@ -146,8 +146,7 @@
   kbd.changed {
     border-color: var(--accent);
   }
-  .none,
-  .hint {
+  .none {
     color: var(--text-3);
     font-size: var(--fs-mono);
   }
@@ -155,11 +154,9 @@
     display: flex;
     gap: 4px;
   }
-  .problem {
+  .line {
     flex-basis: 100%;
     margin: 0;
-    color: var(--del-text);
-    font-size: var(--fs-mono);
   }
   .empty {
     color: var(--text-3);

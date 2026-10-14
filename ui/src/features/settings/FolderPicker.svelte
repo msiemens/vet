@@ -35,7 +35,7 @@
   <div class="tree">
     <ScrollArea>
       {#each rows as row (row.path)}
-        <TreeRow depth={row.depth} open={row.open} on={row.path === chosen} onclick={() => click(row)}>
+        <TreeRow depth={row.depth} open={row.open} letters={false} on={row.path === chosen} onclick={() => click(row)}>
           {#snippet glyph()}<FileIcon name={row.name} folder open={row.open} />{/snippet}
           {row.name}
         </TreeRow>

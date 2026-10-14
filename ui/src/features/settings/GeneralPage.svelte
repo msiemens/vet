@@ -45,8 +45,8 @@
       <span>days</span>
     </div>
   </div>
-  {#if backendSettings.loadError}<p class="problem">{backendSettings.loadError}</p>{/if}
-  {#if problem}<p class="problem" role="alert">{problem}</p>{/if}
+  {#if backendSettings.loadError}<p class="settings-problem">{backendSettings.loadError}</p>{/if}
+  {#if problem}<p class="settings-problem" role="alert">{problem}</p>{/if}
 </div>
 
 <style>
@@ -74,9 +74,5 @@
   }
   p {
     margin: 0;
-  }
-  .problem {
-    color: var(--del-text);
-    font-size: var(--fs-mono);
   }
 </style>

@@ -100,17 +100,8 @@
     padding: 0;
     padding-top: 2px;
   }
-  form :global(.hint) {
-    color: var(--text-3);
-    font-size: var(--fs-mono);
-  }
   form :global(p) {
     margin: 0;
-  }
-  form :global(.problem) {
-    color: var(--del-text);
-    white-space: pre-wrap;
-    overflow-wrap: anywhere;
   }
   .actions {
     display: flex;

@@ -61,7 +61,7 @@
 
 <div class="page">
   {#if accounts.loadError}
-    <p class="problem">{accounts.loadError}</p>
+    <p class="settings-problem">{accounts.loadError}</p>
   {/if}
   <SettingsTable
     name="accounts"
@@ -124,15 +124,15 @@
       {/if}
       {#if selected.problem}
         <dt></dt>
-        <dd class="problem">{selected.problem}</dd>
+        <dd class="settings-problem">{selected.problem}</dd>
       {/if}
       {#if selected.note}
         <dt></dt>
-        <dd class="hint">{selected.note}</dd>
+        <dd class="settings-hint">{selected.note}</dd>
       {/if}
       {#if problem?.key === selected.key}
         <dt></dt>
-        <dd class="problem" role="alert">{problem.message}</dd>
+        <dd class="settings-problem" role="alert">{problem.message}</dd>
       {/if}
       <dt></dt>
       <dd class="actions">
@@ -148,7 +148,7 @@
       </dd>
     </Facts>
   {/if}
-  {#if keychainWarning}<p class="problem" role="alert">{keychainWarning}</p>{/if}
+  {#if keychainWarning}<p class="settings-problem" role="alert">{keychainWarning}</p>{/if}
 </div>
 
 {#if sheet}
@@ -212,15 +212,6 @@
   .status.unusable,
   .soon {
     color: var(--del-text);
-  }
-  .hint {
-    color: var(--text-3);
-    font-size: var(--fs-mono);
-  }
-  .problem {
-    color: var(--del-text);
-    font-size: var(--fs-mono);
-    white-space: pre-wrap;
   }
   .actions {
     display: flex;
