@@ -1431,3 +1431,25 @@ async fn a_vote_survives_a_sync_that_fails_and_is_dropped_once_the_platform_has_
     fx.sync(&hosting).await;
     assert_eq!(pending(&fx).await, None, "voted elsewhere, so there is nothing to send");
 }
+
+#[tokio::test]
+async fn a_pull_request_is_headed_with_the_name_the_last_sync_found_and_not_the_stored_one() {
+    let (fx, hosting) = on_a_pull_request().await;
+    let source = pull_request_7();
+    let stored = PullRequestHead {
+        title: "Add keys".to_owned(),
+        draft: true,
+        fork: false,
+        target_branch: "main".to_owned(),
+    };
+    fx.session.remember_pull_request_head(&source, stored).await.unwrap();
+    hosting.0.lock().unwrap().discussion.title = "Add idempotency keys".to_owned();
+    hosting.0.lock().unwrap().discussion.draft = false;
+
+    fx.sync(&hosting).await;
+
+    let head = fx.session.pull_request_head(&source).await.unwrap().unwrap();
+    assert_eq!((head.title.as_str(), head.draft), ("Add idempotency keys", false));
+    let info = fx.session.discussion().await.unwrap().discussion;
+    assert_eq!(info.title, head.title, "what the header and the information say agree");
+}

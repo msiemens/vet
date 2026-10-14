@@ -109,7 +109,7 @@ use crate::acquisition::{Acquisition, BlobError};
 use crate::base;
 use crate::changeset::{BaseChoice, ChangesetId, CommitId, Snapshots, Source, Version, VersionChange, VersionOrigin};
 use crate::mutex::lock;
-use crate::platform::{PlatformError, Push};
+use crate::platform::{PlatformError, PullRequestCache, Push};
 use crate::ports::{
     BranchInfo, Clock, CommitInfo, Degraded, Dirty, GitError, GitRepo, LiveStore, ReviewWrites, Scan, StoreError,
     Watcher,
@@ -216,6 +216,8 @@ pub struct LiveSession<G, S: LiveStore> {
     /// The states of their source branch that the platforms list for pull requests, which are the
     /// versions the review of each has.
     pushes: std::sync::Mutex<HashMap<Source, Vec<Push>>>,
+    /// What the platforms said of pull requests, which the discussion of the one on view is kept in.
+    known: Arc<PullRequestCache>,
     /// The copies of the working tree's content into the store under way.
     ahead: Engine<Retained>,
     /// What a copy ahead of a review reads and writes through: the session's acquisition over
@@ -337,7 +339,6 @@ impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> L
             recorded: Vec::new(),
             acks: Vec::new(),
             threads,
-            discussion: None,
             changes: None,
         };
         Ok(Self::assemble(acquisition, name, repo, clock, state).await)
@@ -373,6 +374,7 @@ impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> L
             commit_infos: std::sync::Mutex::default(),
             merges: std::sync::Mutex::default(),
             pushes: std::sync::Mutex::default(),
+            known: Arc::default(),
             ahead: ahead::copies(&acquisition.tasks),
             copying: acquisition.clone(),
             acquisition,
@@ -395,6 +397,12 @@ impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> L
             copying: Arc::new(self.acquisition.through(git, store)),
             ..self
         }
+    }
+
+    /// The same session, keeping what it learns of pull requests in `known`, which is shared with
+    /// whoever else asks the platforms about them.
+    pub fn knowing_pull_requests_in(self, known: Arc<PullRequestCache>) -> Self {
+        Self { known, ..self }
     }
 
     /// The state of the stored review `id` of `changeset`, a changeset of `source`.
@@ -464,7 +472,6 @@ impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> L
             recorded: review.spans.into_iter().map(Arc::new).collect(),
             acks: review.acks,
             threads,
-            discussion: None,
             changes: None,
         }))
     }

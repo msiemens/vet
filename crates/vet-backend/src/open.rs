@@ -204,7 +204,8 @@ impl Wired {
                 .copying_through(
                     git.budgeted(budgets.background_io.clone()),
                     store.budgeted(budgets.background_io.clone()),
-                ),
+                )
+                .knowing_pull_requests_in(self.platforms.known()),
         );
         if self.closed.load(Ordering::SeqCst) {
             return Err(Error::Unavailable("the session was closed".into()));

@@ -54,8 +54,17 @@ impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> L
         self.published.read().source.clone()
     }
 
-    /// How the platform last named the pull request of `source`, as stored.
+    /// How the platform last named the pull request of `source`: as it said since Vet started, else
+    /// as stored.
     pub async fn pull_request_head(&self, source: &Source) -> Result<Option<PullRequestHead>> {
+        let stored = self.stored_pull_request_head(source).await?;
+        Ok(match source {
+            Source::PullRequest { remote, number } => self.known.head(remote, *number, stored),
+            _ => stored,
+        })
+    }
+
+    async fn stored_pull_request_head(&self, source: &Source) -> Result<Option<PullRequestHead>> {
         let store = &self.acquisition.store;
         Ok(store.pull_request_head(self.repo.clone(), source.clone()).await?)
     }
@@ -63,7 +72,7 @@ impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> L
     /// Stores how the platform names the pull request of `source` now, unless that is stored already.
     /// Answers whether it was not.
     pub async fn remember_pull_request_head(&self, source: &Source, head: PullRequestHead) -> Result<bool> {
-        if self.pull_request_head(source).await?.as_ref() == Some(&head) {
+        if self.stored_pull_request_head(source).await?.as_ref() == Some(&head) {
             return Ok(false);
         }
         self.hold()
@@ -302,7 +311,6 @@ impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> L
             recorded: Vec::new(),
             acks: Vec::new(),
             threads,
-            discussion: None,
             changes: None,
         })
     }

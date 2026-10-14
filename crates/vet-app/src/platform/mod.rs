@@ -10,12 +10,14 @@ mod discussion;
 mod fake;
 mod health;
 mod host;
+mod known;
 mod model;
 mod port;
 mod pushes;
 mod queue;
 mod remote;
 mod sync;
+mod watched;
 
 pub use accounts::{Account, AccountError, AccountState, Accounts};
 pub use checks::{Check, CheckLog, CommitChecks, LogFailure, Phase, PipelineAction, Run, RunSummary, Step};
@@ -31,6 +33,7 @@ pub use discussion::{
 pub(crate) use fake::FakeHosting;
 pub use health::{Health, Outcome, Standing};
 pub use host::{PlatformKind, normalize_host};
+pub use known::PullRequestCache;
 pub use model::{
     BlockingSource, ChangesAsked, ChangesRequest, ChangesetThreads, CiState, ForcePush, PipelineWords, PlatformError,
     PlatformTraits, Posting, PullRequest, PullRequestDetail, PullRequestHead, PullRequestListing, PullRequestQuery,
@@ -43,3 +46,4 @@ pub(crate) use queue::tests::{pr, viewer};
 pub use queue::{PullRequestRow, ReviewState, is_waiting_for_me, matches, queue_status, review_state, rows};
 pub use remote::{RemoteKey, parse_remote};
 pub use sync::{MessageSync, RemovedThread, StatusSync, SyncPlan, ThreadSync, reconcile};
+pub use watched::Watched;

@@ -163,13 +163,13 @@ struct Pushed {
 
 impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> LiveSession<G, S> {
     /// What the platform last said of the pull request on view besides its threads; `None` for
-    /// another changeset, and before the first sync.
+    /// another changeset, and before the pull request was first synced.
     pub async fn discussion(&self) -> Option<DiscussionView> {
         let st = self.published.read();
-        let Source::PullRequest { number, .. } = &st.source else {
+        let Source::PullRequest { remote, number } = &st.source else {
             return None;
         };
-        let (synced_at, discussion) = st.discussion.clone()?;
+        let (synced_at, discussion) = self.known.discussion(remote, *number)?;
         let unresolved_threads = st
             .threads
             .iter()
@@ -358,7 +358,8 @@ impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> L
             self.reload_threads(st, changeset).await?;
         }
         stored?;
-        st.discussion = Some((now, discussion.clone()));
+        let (remote, number) = pull_request(st)?;
+        self.known.record_discussion(&remote, number, now, discussion.clone());
         Ok(report)
     }
 
@@ -702,8 +703,8 @@ impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> L
         let _exchange = self.exchange.lock().await;
         let current = {
             let st = self.published.read();
-            pull_request(&st)?;
-            st.discussion.as_ref().and_then(|(_, d)| d.viewer_verdict.clone())
+            let (remote, number) = pull_request(&st)?;
+            (self.known.discussion(&remote, number)).and_then(|(_, d)| d.viewer_verdict)
         };
         let vote = (current.as_deref() != Some(verdict)).then(|| PendingVote {
             verdict: verdict.to_owned(),
@@ -1039,7 +1040,8 @@ impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> L
             let Some(id) = thread_of(st, comment) else { continue };
             if find_thread(st, id)?.is_flat() {
                 self.drop_message(st, id, MessageId(comment.key)).await?;
-                if let Some((_, discussion)) = st.discussion.as_mut() {
+                let (remote, number) = pull_request(st)?;
+                self.known.amend_discussion(&remote, number, |discussion| {
                     discussion.conversation.push(ConversationItem {
                         id: comment.comment.id.clone(),
                         author: comment.comment.author.clone(),
@@ -1048,7 +1050,7 @@ impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> L
                         kind: ConversationKind::Comment { mine: true },
                         body: comment.comment.body.clone(),
                     });
-                }
+                });
                 count += 1;
                 continue;
             }
@@ -1117,18 +1119,15 @@ impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> L
             return Err(SessionError::Invalid("a message cannot be empty".into()));
         }
         let _exchange = self.exchange.lock().await;
-        let remote = {
-            let st = self.published.read();
-            own_conversation_comment(&st, comment)?;
-            pull_request(&st)?.0
-        };
+        let (remote, number) = self.own_conversation_comment(comment)?;
         let posted = platform
             .edit_comment(&remote, &conversation_ref(comment), &body)
             .await?;
-        let mut st = self.hold().await;
-        if let Some(item) = conversation_mut(&mut st).and_then(|c| c.iter_mut().find(|i| i.id == comment)) {
-            item.body = posted.body;
-        }
+        self.known.amend_discussion(&remote, number, |discussion| {
+            if let Some(item) = discussion.conversation.iter_mut().find(|i| i.id == comment) {
+                item.body = posted.body;
+            }
+        });
         Ok(())
     }
 
@@ -1136,20 +1135,30 @@ impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> L
     /// platform at once.
     pub async fn remove_conversation_comment<P: Platform + Sync>(&self, platform: &P, comment: &str) -> Result<()> {
         let _exchange = self.exchange.lock().await;
-        let remote = {
-            let st = self.published.read();
-            own_conversation_comment(&st, comment)?;
-            pull_request(&st)?.0
-        };
+        let (remote, number) = self.own_conversation_comment(comment)?;
         match platform.delete_comment(&remote, &conversation_ref(comment)).await {
             Ok(()) | Err(PlatformError::NotFound(_)) => {}
             Err(e) => return Err(e.into()),
         }
-        let mut st = self.hold().await;
-        if let Some(conversation) = conversation_mut(&mut st) {
-            conversation.retain(|i| i.id != comment);
-        }
+        self.known.amend_discussion(&remote, number, |discussion| {
+            discussion.conversation.retain(|i| i.id != comment);
+        });
         Ok(())
+    }
+
+    /// The pull request on view, if `comment` is a comment of the viewer's in the conversation the
+    /// last sync found; fails otherwise.
+    fn own_conversation_comment(&self, comment: &str) -> Result<(RemoteKey, u64)> {
+        let (remote, number) = pull_request(&self.published.read())?;
+        let item = (self.known.discussion(&remote, number))
+            .and_then(|(_, d)| d.conversation.into_iter().find(|i| i.id == comment))
+            .ok_or_else(|| SessionError::NotFound(format!("comment {comment}")))?;
+        match item.kind {
+            ConversationKind::Comment { mine: true } => Ok((remote, number)),
+            _ => Err(SessionError::Invalid(
+                "only your own comments on the pull request can be changed".into(),
+            )),
+        }
     }
 
     async fn store_message(&self, thread: ThreadId, message: Message) -> Result<()> {
@@ -1233,25 +1242,6 @@ fn conversation_ref(comment: &str) -> CommentRef {
     CommentRef {
         id: comment.to_owned(),
         kind: CommentKind::Conversation,
-    }
-}
-
-fn conversation_mut(st: &mut State) -> Option<&mut Vec<ConversationItem>> {
-    st.discussion.as_mut().map(|(_, d)| &mut d.conversation)
-}
-
-/// Fails unless `comment` is a comment of the viewer's in the conversation the last sync found.
-fn own_conversation_comment(st: &State, comment: &str) -> Result<()> {
-    let item = st
-        .discussion
-        .as_ref()
-        .and_then(|(_, d)| d.conversation.iter().find(|i| i.id == comment))
-        .ok_or_else(|| SessionError::NotFound(format!("comment {comment}")))?;
-    match item.kind {
-        ConversationKind::Comment { mine: true } => Ok(()),
-        _ => Err(SessionError::Invalid(
-            "only your own comments on the pull request can be changed".into(),
-        )),
     }
 }
 

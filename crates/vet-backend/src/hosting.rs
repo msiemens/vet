@@ -1,13 +1,14 @@
 //! The platforms pull requests are on, and the one way they are called: every call goes through
-//! [`Hosting`], which notes how it went in the platforms' [`Health`] and tells the open projects
-//! when the standing of an account changed.
+//! [`Hosting`], which notes how it went in the platforms' [`Health`], keeps what it learns of pull
+//! requests in their [`PullRequestCache`], and tells the open projects when the standing of an
+//! account changed.
 
 use std::sync::{Arc, Mutex, PoisonError, Weak};
 
 use vet_app::platform::{
     CheckLog, CommentRef, CommitChecks, Discussion, Health, Outcome, PipelineAction, Platform, PlatformComment,
-    PlatformError, PlatformKind, PlatformTraits, PullRequestDetail, PullRequestListing, PullRequestQuery, RemoteKey,
-    Standing, Step, Submission, Submitted, Viewer,
+    PlatformError, PlatformKind, PlatformTraits, PullRequestCache, PullRequestDetail, PullRequestListing,
+    PullRequestQuery, RemoteKey, Standing, Step, Submission, Submitted, Viewer, Watched,
 };
 use vet_app::registry::Subscribers;
 use vet_mapping as mapping;
@@ -26,7 +27,8 @@ pub(crate) struct Announcer {
 pub(crate) struct Platforms {
     github: Arc<GitHub>,
     azure_devops: Arc<AzureDevOps>,
-    health: Health,
+    health: Arc<Health>,
+    known: Arc<PullRequestCache>,
     announcers: Arc<Mutex<Vec<Weak<Announcer>>>>,
 }
 
@@ -38,7 +40,8 @@ impl Platforms {
         Self {
             github,
             azure_devops,
-            health: Health::new(move |outcome| announce(&listeners, &process, outcome)),
+            health: Arc::new(Health::new(move |outcome| announce(&listeners, &process, outcome))),
+            known: Arc::default(),
             announcers,
         }
     }
@@ -52,10 +55,16 @@ impl Platforms {
 
     /// The client of the platform `kind`.
     pub(crate) fn hosting(self: &Arc<Self>, kind: PlatformKind) -> Hosting {
-        Hosting {
-            platforms: self.clone(),
-            kind,
-        }
+        let client = match kind {
+            PlatformKind::GitHub => Client::GitHub(self.github.clone()),
+            PlatformKind::AzureDevOps => Client::AzureDevOps(self.azure_devops.clone()),
+        };
+        Watched::new(client, kind, self.health.clone(), self.known.clone())
+    }
+
+    /// What the platforms said of pull requests.
+    pub(crate) fn known(&self) -> Arc<PullRequestCache> {
+        self.known.clone()
     }
 
     /// How the last call to the platform of `account` went, if there was one.
@@ -110,46 +119,32 @@ fn announce(announcers: &Mutex<Vec<Weak<Announcer>>>, process: &Subscribers<Conn
     }
 }
 
-pub(crate) struct Hosting {
-    platforms: Arc<Platforms>,
-    kind: PlatformKind,
+/// A call to a platform, watched and learned from.
+pub(crate) type Hosting = Watched<Client>;
+
+/// The client of one of the platforms.
+pub(crate) enum Client {
+    GitHub(Arc<GitHub>),
+    AzureDevOps(Arc<AzureDevOps>),
 }
 
 /// Calls `$call` on the client the platform is.
 macro_rules! on {
     ($self:ident, $client:ident => $call:expr) => {
-        match $self.kind {
-            PlatformKind::GitHub => {
-                let $client = &$self.platforms.github;
-                $call
-            }
-            PlatformKind::AzureDevOps => {
-                let $client = &$self.platforms.azure_devops;
-                $call
-            }
+        match $self {
+            Client::GitHub($client) => $call,
+            Client::AzureDevOps($client) => $call,
         }
     };
 }
 
-impl Hosting {
-    /// `call`, a call about `remote`, noted in the platforms' health.
-    async fn watched<T>(
-        &self,
-        remote: &RemoteKey,
-        call: impl Future<Output = Result<T, PlatformError>>,
-    ) -> Result<T, PlatformError> {
-        self.platforms.health.watch(&remote.account(), self.kind, call).await
-    }
-}
-
-impl Platform for Hosting {
+impl Platform for Client {
     fn traits(&self) -> PlatformTraits {
         on!(self, p => p.traits())
     }
 
     async fn viewer(&self, remote: &RemoteKey) -> Result<Viewer, PlatformError> {
-        self.watched(remote, async { on!(self, p => p.viewer(remote).await) })
-            .await
+        on!(self, p => p.viewer(remote).await)
     }
 
     async fn list_pull_requests(
@@ -157,47 +152,35 @@ impl Platform for Hosting {
         remote: &RemoteKey,
         query: &PullRequestQuery,
     ) -> Result<PullRequestListing, PlatformError> {
-        self.watched(remote, async {
-            on!(self, p => p.list_pull_requests(remote, query).await)
-        })
-        .await
+        on!(self, p => p.list_pull_requests(remote, query).await)
     }
 
     async fn pull_request(&self, remote: &RemoteKey, number: u64) -> Result<PullRequestDetail, PlatformError> {
-        self.watched(remote, async { on!(self, p => p.pull_request(remote, number).await) })
-            .await
+        on!(self, p => p.pull_request(remote, number).await)
     }
 
     async fn checks(&self, remote: &RemoteKey, commit: &str) -> Result<CommitChecks, PlatformError> {
-        self.watched(remote, async { on!(self, p => p.checks(remote, commit).await) })
-            .await
+        on!(self, p => p.checks(remote, commit).await)
     }
 
     async fn check_log(&self, remote: &RemoteKey, check: &str) -> Result<CheckLog, PlatformError> {
-        self.watched(remote, async { on!(self, p => p.check_log(remote, check).await) })
-            .await
+        on!(self, p => p.check_log(remote, check).await)
     }
 
     async fn steps(&self, remote: &RemoteKey, check: &str) -> Result<Vec<Step>, PlatformError> {
-        self.watched(remote, async { on!(self, p => p.steps(remote, check).await) })
-            .await
+        on!(self, p => p.steps(remote, check).await)
     }
 
     async fn pipeline_action(&self, remote: &RemoteKey, action: &PipelineAction) -> Result<(), PlatformError> {
-        self.watched(remote, async {
-            on!(self, p => p.pipeline_action(remote, action).await)
-        })
-        .await
+        on!(self, p => p.pipeline_action(remote, action).await)
     }
 
     async fn discussion(&self, remote: &RemoteKey, number: u64) -> Result<Discussion, PlatformError> {
-        self.watched(remote, async { on!(self, p => p.discussion(remote, number).await) })
-            .await
+        on!(self, p => p.discussion(remote, number).await)
     }
 
     async fn comment(&self, remote: &RemoteKey, comment: &CommentRef) -> Result<PlatformComment, PlatformError> {
-        self.watched(remote, async { on!(self, p => p.comment(remote, comment).await) })
-            .await
+        on!(self, p => p.comment(remote, comment).await)
     }
 
     async fn edit_comment(
@@ -206,24 +189,15 @@ impl Platform for Hosting {
         comment: &CommentRef,
         body: &str,
     ) -> Result<PlatformComment, PlatformError> {
-        self.watched(remote, async {
-            on!(self, p => p.edit_comment(remote, comment, body).await)
-        })
-        .await
+        on!(self, p => p.edit_comment(remote, comment, body).await)
     }
 
     async fn delete_comment(&self, remote: &RemoteKey, comment: &CommentRef) -> Result<(), PlatformError> {
-        self.watched(remote, async {
-            on!(self, p => p.delete_comment(remote, comment).await)
-        })
-        .await
+        on!(self, p => p.delete_comment(remote, comment).await)
     }
 
     async fn set_thread_resolved(&self, remote: &RemoteKey, thread: &str, resolved: bool) -> Result<(), PlatformError> {
-        self.watched(remote, async {
-            on!(self, p => p.set_thread_resolved(remote, thread, resolved).await)
-        })
-        .await
+        on!(self, p => p.set_thread_resolved(remote, thread, resolved).await)
     }
 
     async fn submit_review(
@@ -232,15 +206,11 @@ impl Platform for Hosting {
         number: u64,
         submission: &Submission,
     ) -> Result<Submitted, PlatformError> {
-        self.watched(remote, async {
-            on!(self, p => p.submit_review(remote, number, submission).await)
-        })
-        .await
+        on!(self, p => p.submit_review(remote, number, submission).await)
     }
 
     async fn vote(&self, remote: &RemoteKey, number: u64, verdict: &str) -> Result<(), PlatformError> {
-        self.watched(remote, async { on!(self, p => p.vote(remote, number, verdict).await) })
-            .await
+        on!(self, p => p.vote(remote, number, verdict).await)
     }
 }
 
