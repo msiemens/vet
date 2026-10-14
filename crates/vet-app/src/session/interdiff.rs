@@ -16,7 +16,7 @@ use super::manifest::{excluded_groups, file_views, target_view};
 use super::state::{Interdiffed, Shown, State, ack_of, find_diff, find_non_text, lifecycle_of, shown_items};
 use super::views::{InterdiffView, ManifestView, ReviewUpdateView, ReviewView};
 use super::{LiveSession, Result, SessionError};
-use crate::changeset::{Version, VersionChange};
+use crate::changeset::{Snapshots, Version, VersionChange};
 use crate::ports::{GitRepo, LiveStore};
 use crate::review::SpanOrigin;
 
@@ -39,6 +39,16 @@ impl Interdiffing {
     }
 }
 
+/// The content of `version`, which a push whose commits could not be had does not have.
+fn shown(version: &Version) -> Result<Snapshots> {
+    version.snapshots.ok_or_else(|| {
+        SessionError::Invalid(format!(
+            "version {} cannot be shown: the platform no longer has its commits",
+            version.n
+        ))
+    })
+}
+
 impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> LiveSession<G, S> {
     /// The interdiff of the versions `from` and `to` of the open review. Version 0 is the base the
     /// review started from, a tree without a change: what `to` changed is then all of its patch.
@@ -58,10 +68,16 @@ impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> L
             (versions.iter().find(|v| v.n == n).cloned()).ok_or_else(|| SessionError::NotFound(format!("version {n}")))
         };
         let a = if from == 0 {
-            let first = find(1)?;
+            // The base the review started from is the first that can be had.
+            let first = (versions.iter().find(|v| v.snapshots.is_some()).cloned())
+                .ok_or_else(|| SessionError::NotFound("version 1".into()))?;
+            let first_snapshots = shown(&first)?;
             Version {
                 n: 0,
-                target: first.base,
+                snapshots: Some(Snapshots {
+                    base: first_snapshots.base,
+                    target: first_snapshots.base,
+                }),
                 tip: first.base_commit.clone(),
                 change: VersionChange::default(),
                 ..first
@@ -70,11 +86,12 @@ impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> L
             find(from)?
         };
         let b = find(to)?;
+        let (a_snapshots, b_snapshots) = (shown(&a)?, shown(&b)?);
         let key = Interdiff {
-            base_a: a.base,
-            target_a: a.target,
-            base_b: b.base,
-            target_b: b.target,
+            base_a: a_snapshots.base,
+            target_a: a_snapshots.target,
+            base_b: b_snapshots.base,
+            target_b: b_snapshots.target,
         };
         Ok(Interdiffing {
             key,
@@ -138,7 +155,7 @@ impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> L
             interdiff: Some(InterdiffView {
                 from: id.from.n,
                 to: id.to.n,
-                rebased: id.from.base != id.to.base,
+                rebased: id.from.snapshots.map(|s| s.base) != id.to.snapshots.map(|s| s.base),
                 markable: id.markable,
                 limits,
             }),

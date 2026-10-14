@@ -6,7 +6,7 @@ use std::collections::HashMap;
 use sea_orm::sea_query::{SimpleExpr, Value};
 use sea_orm::{ColumnTrait, DbErr, Set};
 use vet_app::changeset::{
-    BaseChoice, ChangedFile, ChangesetId, CommitId, Lens, Source, Version, VersionChange, VersionOrigin,
+    BaseChoice, ChangedFile, ChangesetId, CommitId, Lens, Snapshots, Source, Version, VersionChange, VersionOrigin,
 };
 use vet_app::review::{ChangesetThread, NonTextAck, RecordedSpan, Review, ReviewId, ReviewSummary, SpanId, SpanOrigin};
 use vet_core::content::{
@@ -153,16 +153,21 @@ pub fn source_columns(source: &Source) -> (kinds::SourceKind, String) {
     }
 }
 
+/// A version without snapshots (a push whose commits could not be had) is not available and has
+/// empty ones.
 pub fn version_row(changeset: ChangesetId, v: &Version) -> version::ActiveModel {
+    let snapshot =
+        |pick: fn(&Snapshots) -> SnapshotId| v.snapshots.as_ref().map(pick).map_or_else(Vec::new, |s| s.0.0.to_vec());
     version::ActiveModel {
         changeset: Set(changeset.0 as i64),
         n: Set(v.n.into()),
-        base: Set(v.base.0.0.to_vec()),
+        base: Set(snapshot(|s| s.base)),
         base_commit: Set(v.base_commit.0.clone()),
-        target: Set(v.target.0.0.to_vec()),
+        target: Set(snapshot(|s| s.target)),
         tip: Set(v.tip.0.clone()),
         at: Set(v.at),
         origin: Set(v.origin.into()),
+        available: Set(v.snapshots.is_some()),
         ..Default::default()
     }
 }
@@ -197,12 +202,19 @@ pub fn version_from(m: version::Model, files: Vec<version_file::Model>) -> Resul
             })
         })
         .collect::<Result<_, DbErr>>()?;
+    let snapshots = if m.available {
+        Some(Snapshots {
+            base: SnapshotId(hash(&m.base)?),
+            target: SnapshotId(hash(&m.target)?),
+        })
+    } else {
+        None
+    };
     Ok(Version {
         change: VersionChange { files },
         n: u32::try_from(m.n).map_err(|_| corrupt("version number"))?,
-        base: SnapshotId(hash(&m.base)?),
+        snapshots,
         base_commit: CommitId(m.base_commit),
-        target: SnapshotId(hash(&m.target)?),
         tip: CommitId(m.tip),
         at: m.at,
         origin: m.origin.into(),

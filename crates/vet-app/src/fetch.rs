@@ -3,7 +3,7 @@
 //! that cannot be done (offline, refused) ends its task as failed and is otherwise
 //! harmless: the review does not wait for it or depend on it.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::{Mutex as StdMutex, PoisonError};
 use std::time::Duration;
 
@@ -30,6 +30,8 @@ pub struct Fetch<G> {
     listed_heads: Mutex<()>,
     /// How many times [`Fetch::refs`] was called, and the count when each ref was last fetched.
     fetched: StdMutex<(u64, HashMap<String, u64>)>,
+    /// The refs a remote refused when asked for them alone.
+    lost: StdMutex<HashSet<String>>,
 }
 
 /// A moment in the life of a [`Fetch`]: refs fetched after it are newer than anything known at it.
@@ -44,6 +46,7 @@ impl<G: Fetcher> Fetch<G> {
             running: Mutex::new(()),
             listed_heads: Mutex::new(()),
             fetched: StdMutex::default(),
+            lost: StdMutex::default(),
         }
     }
 
@@ -104,14 +107,7 @@ impl<G: Fetcher> Fetch<G> {
         title: String,
     ) -> Result<(), GitError> {
         let _only_one = self.running.lock().await;
-        {
-            let mut fetched = self.fetched();
-            fetched.0 += 1;
-            let at = fetched.0;
-            for update in &updates {
-                fetched.1.insert(update.destination.clone(), at);
-            }
-        }
+        self.note_fetching(&updates);
         let task = self.tasks.start(TaskKind::Fetch, title);
         let auth = authentication(credentials, remote).await;
         match self.git.fetch_refs(&remote.name, updates, auth).await {
@@ -126,6 +122,49 @@ impl<G: Fetcher> Fetch<G> {
                 Err(GitError::Remote(message))
             }
         }
+    }
+
+    /// Fetches `updates` of the sort a remote may well refuse (a commit it dropped), with no task
+    /// to fail for it. A ref the remote refused alone is not asked for again by [`Fetch::lost`].
+    pub async fn refs_asking(
+        &self,
+        credentials: &(impl Credentials + Sync),
+        remote: &RemoteInfo,
+        updates: Vec<RefUpdate>,
+    ) -> Result<(), GitError> {
+        let _only_one = self.running.lock().await;
+        self.note_fetching(&updates);
+        let auth = authentication(credentials, remote).await;
+        self.git
+            .fetch_refs(&remote.name, updates, auth)
+            .await
+            .map_err(|e| GitError::Remote(format!("{}: {e}", remote.name)))
+    }
+
+    /// Notes the refs `updates` write as fetched now.
+    fn note_fetching(&self, updates: &[RefUpdate]) {
+        let mut fetched = self.fetched();
+        fetched.0 += 1;
+        let at = fetched.0;
+        for update in updates {
+            fetched.1.insert(update.destination.clone(), at);
+        }
+    }
+
+    /// Remembers that the remote refused the ref `destination` when asked for it alone.
+    pub fn refused(&self, destination: &str) {
+        self.lost
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .insert(destination.to_owned());
+    }
+
+    /// The remote refused the ref `destination` when asked for it alone before.
+    pub fn lost(&self, destination: &str) -> bool {
+        self.lost
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .contains(destination)
     }
 
     /// Fetches every remote, one after the other, as one task; a remote that fails does not

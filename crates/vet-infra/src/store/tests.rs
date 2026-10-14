@@ -4,7 +4,7 @@ use std::time::Duration;
 use sea_orm::PaginatorTrait;
 use std::collections::HashSet;
 use tempfile::TempDir;
-use vet_app::changeset::{BaseChoice, ChangedFile, CommitId, Lens, RemoteKey, VersionChange, VersionOrigin};
+use vet_app::changeset::{BaseChoice, ChangedFile, CommitId, Lens, RemoteKey, Snapshots, VersionChange, VersionOrigin};
 use vet_app::gc::{Retention, collect, open_bases};
 use vet_app::ports::{GcReport, ReviewWrites, Store};
 use vet_app::review::{NonTextAck, SpanOrigin};
@@ -98,12 +98,18 @@ fn commit(id: &str) -> CommitId {
     CommitId(id.into())
 }
 
+fn snapshots(base: u8, target: u8) -> Snapshots {
+    Snapshots {
+        base: SnapshotId(h(base)),
+        target: SnapshotId(h(target)),
+    }
+}
+
 fn version(n: u32, base: SnapshotId, target: SnapshotId) -> Version {
     Version {
         n,
-        base,
+        snapshots: Some(Snapshots { base, target }),
         base_commit: commit("abc123"),
-        target,
         tip: commit("abc123"),
         at: i64::from(n) * 10,
         origin: VersionOrigin::Settled,
@@ -119,7 +125,7 @@ async fn review(store: &SqliteStore, base: SnapshotId, target: SnapshotId) -> (C
             "/repo".into(),
             Source::WorkingTree,
             BaseChoice::Commit { id: commit("abc123") },
-            version(1, base, target),
+            vec![version(1, base, target)],
             T0,
         )
         .await
@@ -252,7 +258,7 @@ async fn a_changeset_is_found_by_its_repository_and_source() {
                 (*repo).into(),
                 source.clone(),
                 BaseChoice::Commit { id: commit("a") },
-                version(1, SnapshotId(h(1)), SnapshotId(h(2))),
+                vec![version(1, SnapshotId(h(1)), SnapshotId(h(2)))],
                 T0,
             )
             .await
@@ -292,7 +298,7 @@ async fn the_lens_is_remembered_per_changeset_before_and_after_a_review_of_it_st
             "/repo".into(),
             feature(),
             BaseChoice::Commit { id: commit("a") },
-            version(1, SnapshotId(h(1)), SnapshotId(h(2))),
+            vec![version(1, SnapshotId(h(1)), SnapshotId(h(2)))],
             T0,
         )
         .await
@@ -385,7 +391,7 @@ async fn a_pull_requests_title_is_kept_with_its_changeset_across_a_review_starti
             "/repo".into(),
             pull_request(7),
             BaseChoice::Commit { id: commit("a") },
-            version(1, SnapshotId(h(1)), SnapshotId(h(2))),
+            vec![version(1, SnapshotId(h(1)), SnapshotId(h(2)))],
             T0,
         )
         .await
@@ -552,7 +558,7 @@ async fn a_pending_vote_is_kept_per_pull_request_in_its_state_across_a_restart_a
             "/repo".into(),
             pull_request(7),
             BaseChoice::Commit { id: commit("a") },
-            version(1, SnapshotId(h(1)), SnapshotId(h(2))),
+            vec![version(1, SnapshotId(h(1)), SnapshotId(h(2)))],
             T0,
         )
         .await
@@ -599,7 +605,7 @@ async fn spans_and_acks_belong_to_the_review_and_round_trip() {
             "/other".into(),
             Source::WorkingTree,
             BaseChoice::Commit { id: commit("abc123") },
-            version(1, SnapshotId(h(1)), SnapshotId(h(2))),
+            vec![version(1, SnapshotId(h(1)), SnapshotId(h(2)))],
             T0,
         )
         .await
@@ -926,7 +932,7 @@ async fn the_open_bases_are_the_latest_versions_of_the_changesets_with_an_open_r
             "/other".into(),
             Source::WorkingTree,
             BaseChoice::Commit { id: commit("abc123") },
-            version(1, SnapshotId(h(4)), SnapshotId(h(5))),
+            vec![version(1, SnapshotId(h(4)), SnapshotId(h(5)))],
             T0,
         )
         .await
@@ -971,12 +977,12 @@ async fn versions_are_numbered_per_changeset_and_a_new_review_starts_over() {
     assert_eq!(
         versions
             .iter()
-            .map(|v| (v.n, v.base, v.target, v.origin))
+            .map(|v| (v.n, v.snapshots, v.origin))
             .collect::<Vec<_>>(),
         [
-            (1, SnapshotId(h(1)), SnapshotId(h(2)), VersionOrigin::Settled),
-            (2, SnapshotId(h(1)), SnapshotId(h(3)), VersionOrigin::Settled),
-            (3, SnapshotId(h(4)), SnapshotId(h(3)), VersionOrigin::Observed),
+            (1, Some(snapshots(1, 2)), VersionOrigin::Settled),
+            (2, Some(snapshots(1, 3)), VersionOrigin::Settled),
+            (3, Some(snapshots(4, 3)), VersionOrigin::Observed),
         ]
     );
     assert_eq!(
@@ -989,8 +995,8 @@ async fn versions_are_numbered_per_changeset_and_a_new_review_starts_over() {
     assert_ne!(next, id);
     let versions = store.versions(changeset).await.unwrap();
     assert_eq!(
-        versions.iter().map(|v| (v.n, v.target)).collect::<Vec<_>>(),
-        [(1, SnapshotId(h(7)))]
+        versions.iter().map(|v| (v.n, v.snapshots)).collect::<Vec<_>>(),
+        [(1, Some(snapshots(6, 7)))]
     );
 }
 
@@ -1023,6 +1029,24 @@ async fn what_a_version_changed_is_stored_with_it_in_order_and_goes_with_its_rev
     review(&store, SnapshotId(h(6)), SnapshotId(h(7))).await;
     let rows = version_file::Entity::find().all(&store.reader.db).await.unwrap();
     assert!(rows.is_empty(), "the files of the replaced versions are gone");
+}
+
+#[tokio::test]
+async fn a_version_without_snapshots_is_stored_listed_and_collected_around() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = open(&dir).await;
+    let (changeset, _) = review(&store, SnapshotId(h(1)), SnapshotId(h(2))).await;
+    let lost = Version {
+        snapshots: None,
+        ..version(2, SnapshotId(h(1)), SnapshotId(h(3)))
+    };
+    store.writes().append_version(changeset, lost.clone()).await.unwrap();
+
+    let versions = store.versions(changeset).await.unwrap();
+    assert_eq!(versions[1], lost);
+    assert_eq!(versions[0].snapshots, Some(snapshots(1, 2)));
+    gc(&store, T0 + 1).await;
+    assert_eq!(store.versions(changeset).await.unwrap().len(), 2);
 }
 
 #[tokio::test]
@@ -1330,7 +1354,15 @@ async fn a_long_run_of_versions_over_a_large_tree_stays_small() {
     assert_eq!(node_count(&store).await, 101 + 2 * 49);
     let rows = tree_child::Entity::find().count(&store.reader.db).await.unwrap();
     assert!(rows < 2000 + 100 + 50 * 125, "{rows} child rows");
-    let last = store.versions(changeset).await.unwrap().last().unwrap().target;
+    let last = store
+        .versions(changeset)
+        .await
+        .unwrap()
+        .last()
+        .unwrap()
+        .snapshots
+        .unwrap()
+        .target;
     assert_eq!(store.snapshot(last).await.unwrap().unwrap().0.entries, entries);
 }
 

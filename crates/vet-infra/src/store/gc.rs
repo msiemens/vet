@@ -24,6 +24,7 @@ fn snapshot_id(bytes: &[u8]) -> Res<SnapshotId> {
 async fn facts(db: &impl ConnectionTrait) -> Res<GcFacts> {
     let mut snapshots_of: HashMap<i64, Vec<SnapshotId>> = HashMap::new();
     let versions: Vec<(i64, Vec<u8>, Vec<u8>)> = version::Entity::find()
+        .filter(version::Column::Available.eq(true))
         .select_only()
         .columns([
             version::Column::Changeset,

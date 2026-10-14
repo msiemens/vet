@@ -595,7 +595,8 @@ pub trait ReviewWrites {
     ) -> impl Future<Output = Result<(), StoreError>> + Send;
     /// Opens a review of the changeset of `source` in the repository at `repo`,
     /// storing the changeset if need be, with `base` as the chosen base rule.
-    /// `first` replaces the changeset's versions: a working tree is versioned
+    /// `versions` (oldest first, at least one: a pull request starts with every push it already
+    /// has) replace the changeset's versions: a working tree is versioned
     /// only while a review of it is open, so a new review starts over. `now` is
     /// unix seconds.
     fn start_review(
@@ -603,7 +604,7 @@ pub trait ReviewWrites {
         repo: String,
         source: Source,
         base: BaseChoice,
-        first: Version,
+        versions: Vec<Version>,
         now: i64,
     ) -> impl Future<Output = Result<(ChangesetId, ReviewId), StoreError>> + Send;
     /// `now` is unix seconds; `complete` is whether the review was complete.

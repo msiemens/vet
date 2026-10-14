@@ -59,8 +59,8 @@ pub fn plan(facts: &GcFacts, now: i64, retention: &Retention) -> GcPlan {
 pub async fn open_bases<S: ChangesetStore>(store: &S) -> Result<HashSet<SnapshotId>, StoreError> {
     let mut bases = HashSet::new();
     for changeset in store.open_changesets().await? {
-        if let Some(latest) = store.versions(changeset).await?.last() {
-            bases.insert(latest.base);
+        if let Some(snapshots) = store.versions(changeset).await?.last().and_then(|v| v.snapshots) {
+            bases.insert(snapshots.base);
         }
     }
     Ok(bases)

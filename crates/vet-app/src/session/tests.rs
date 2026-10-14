@@ -117,6 +117,9 @@ pub(crate) struct FakeGit {
     reads_fail: Arc<AtomicBool>,
     /// When set, looking up a branch's tip fails as git itself failing would, not as a missing branch.
     tips_fail: Arc<AtomicBool>,
+    /// When set, the tree of a commit the test did not add is not the base's but an error, as a
+    /// commit the repository does not have is.
+    unknown_commits_fail: Arc<AtomicBool>,
     /// What revisions (`merge-base <ref>` for merge bases) resolve to, with the commit's tree.
     commits: Arc<Mutex<HashMap<String, (CommitId, Snapshot)>>>,
     /// Largest blob `read_blob_capped` returns.
@@ -343,6 +346,9 @@ impl History for FakeGit {
         let known = self.commits.lock().unwrap();
         match known.values().find(|(c, _)| c == commit) {
             Some((_, snapshot)) => Ok(snapshot.clone()),
+            None if self.unknown_commits_fail.load(Ordering::Relaxed) => {
+                Err(GitError::UnknownRevision(format!("no commit {}", commit.0)))
+            }
             None => Ok(self.base.lock().unwrap().clone().unwrap()),
         }
     }
@@ -722,7 +728,7 @@ impl ReviewWrites for MemStore {
         repo: String,
         source: Source,
         choice: BaseChoice,
-        first: Version,
+        versions: Vec<Version>,
         _: i64,
     ) -> StoreResult<(ChangesetId, ReviewId)> {
         let mut mem = self.0.lock().unwrap();
@@ -742,7 +748,7 @@ impl ReviewWrites for MemStore {
             started: mem.started + 1,
             base: Some(choice),
             changeset: Some((repo, source)),
-            versions: vec![first],
+            versions,
             ..Default::default()
         };
         Ok((ChangesetId(1), ReviewId(mem.started)))
@@ -1041,12 +1047,18 @@ async fn the_first_mark_starts_the_review_at_version_1_and_retains_dirty_content
         panic!("{:?}", mem.versions)
     };
     assert_eq!(
-        (first.n, &first.base_commit, &first.tip, first.target, first.origin),
+        (
+            first.n,
+            &first.base_commit,
+            &first.tip,
+            first.snapshots.map(|s| s.target),
+            first.origin
+        ),
         (
             1,
             &CommitId("head".into()),
             &CommitId("head".into()),
-            started,
+            Some(started),
             VersionOrigin::Settled
         )
     );
@@ -1121,11 +1133,14 @@ async fn each_settled_snapshot_of_an_open_review_is_the_next_version() {
             (3, VersionOrigin::Settled, 900)
         ]
     );
-    assert_eq!(versions[2].target, target, "the version is the snapshot that settled");
+    assert_eq!(
+        versions[2].snapshots.map(|s| s.target),
+        Some(target),
+        "the version is the snapshot that settled"
+    );
+    let base_of = |v: &Version| (v.snapshots.map(|s| s.base), v.base_commit.clone(), v.tip.clone());
     assert!(
-        versions
-            .iter()
-            .all(|v| (v.base, &v.base_commit, &v.tip) == (versions[0].base, &versions[0].base_commit, &versions[0].tip)),
+        versions.iter().all(|v| base_of(v) == base_of(&versions[0])),
         "versions of one review share its base and the commit it started at"
     );
     // A filter change is not a version.
@@ -3401,7 +3416,7 @@ async fn a_rebase_is_a_version_with_the_new_base() {
     let (before, after) = (&versions[0], &versions[1]);
     assert_eq!(after.origin, VersionOrigin::Observed);
     assert_ne!(before.base_commit, after.base_commit);
-    assert_ne!(before.base, after.base);
+    assert_ne!(before.snapshots.map(|s| s.base), after.snapshots.map(|s| s.base));
     assert_eq!(after.base_commit, CommitId("m3".into()));
 }
 
@@ -4123,4 +4138,5 @@ mod ahead;
 mod derived;
 mod marks;
 mod publish;
+mod pushes;
 mod sync;

@@ -106,6 +106,7 @@
                 class="flat pick row"
                 class:on={row.shown}
                 type="button"
+                disabled={!row.available}
                 aria-current={row.shown ? "true" : undefined}
                 onclick={(e) => choose(row.n, e.shiftKey)}
               >
@@ -117,7 +118,7 @@
                 >
                 <span class="mono time">{clock(row.at, true)}</span>
                 <span class="names">
-                  {row.files}
+                  {row.available ? row.files : "unavailable"}
                   {#if row.reviewed}<span class="eye" title="Last reviewed here"><Icon name="eye" size={13} /></span
                     >{/if}
                 </span>

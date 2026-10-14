@@ -231,8 +231,9 @@ async fn prune_pull_request_refs(open: &Ready, list: &PullRequestList, since: Fe
     Ok(())
 }
 
-/// Fetches the head of pull request `number` of `remote` and its target branch, and stores how the
-/// platform names it. Answers whether that is not what was stored.
+/// Fetches the head of pull request `number` of `remote`, its target branch and its earlier
+/// pushes, tells the session the pushes, and stores how the platform names it. Answers whether
+/// that is not what was stored.
 pub(crate) async fn bring_in(
     open: &Open,
     session: &Live,
@@ -240,15 +241,16 @@ pub(crate) async fn bring_in(
     number: u64,
 ) -> std::result::Result<bool, FetchError> {
     let held = Held(&open.accounts);
-    let head =
+    let brought =
         pull_request::fetch_pull_request(&open.hosting(remote.kind()), &open.fetch, &held, remote, number).await?;
     let source = Source::PullRequest {
         remote: remote.clone(),
         number,
     };
+    session.remember_pushes(&source, brought.pushes);
     // The fetch is done; a title that cannot be stored is shown again after the next one.
     Ok(session
-        .remember_pull_request_head(&source, head)
+        .remember_pull_request_head(&source, brought.head)
         .await
         .unwrap_or_else(|error| {
             tracing::warn!(%error, "storing the title of a pull request failed");

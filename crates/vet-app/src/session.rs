@@ -60,6 +60,7 @@ mod lines;
 mod listing;
 mod manifest;
 mod marks;
+mod pushes;
 mod remap;
 mod revision;
 mod search;
@@ -106,9 +107,9 @@ pub use self::views::{
 };
 use crate::acquisition::{Acquisition, BlobError};
 use crate::base;
-use crate::changeset::{BaseChoice, ChangesetId, CommitId, Source, Version, VersionChange, VersionOrigin};
+use crate::changeset::{BaseChoice, ChangesetId, CommitId, Snapshots, Source, Version, VersionChange, VersionOrigin};
 use crate::mutex::lock;
-use crate::platform::PlatformError;
+use crate::platform::{PlatformError, Push};
 use crate::ports::{
     BranchInfo, Clock, CommitInfo, Degraded, Dirty, GitError, GitRepo, LiveStore, ReviewWrites, Scan, StoreError,
     Watcher,
@@ -212,6 +213,9 @@ pub struct LiveSession<G, S: LiveStore> {
     commit_infos: std::sync::Mutex<HashMap<CommitId, CommitInfo>>,
     /// How a branch came to hold a tip, by the tip and the branch's commit, which git does not change.
     merges: std::sync::Mutex<HashMap<(CommitId, CommitId), Option<MergedAs>>>,
+    /// The states of their source branch that the platforms list for pull requests, which are the
+    /// versions the review of each has.
+    pushes: std::sync::Mutex<HashMap<Source, Vec<Push>>>,
     /// The copies of the working tree's content into the store under way.
     ahead: Engine<Retained>,
     /// What a copy ahead of a review reads and writes through: the session's acquisition over
@@ -368,6 +372,7 @@ impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> L
             derived: Arc::new(Derived::new(&acquisition.tasks)),
             commit_infos: std::sync::Mutex::default(),
             merges: std::sync::Mutex::default(),
+            pushes: std::sync::Mutex::default(),
             ahead: ahead::copies(&acquisition.tasks),
             copying: acquisition.clone(),
             acquisition,
@@ -410,7 +415,11 @@ impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> L
         let Some(latest) = versions.last() else {
             return Ok(None);
         };
-        let Some((target, target_status)) = store.snapshot(latest.target).await? else {
+        // The latest version is the state the pull request was last fetched at: it has content.
+        let Some(latest_snapshots) = latest.snapshots else {
+            return Ok(None);
+        };
+        let Some((target, target_status)) = store.snapshot(latest_snapshots.target).await? else {
             return Ok(None);
         };
         let Ok(base) = acquisition.git.commit_snapshot(&latest.base_commit).await else {
@@ -422,9 +431,11 @@ impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> L
         // and re-resolving would turn every mark against the old base into
         // `SeenAgainstOldBase`. Moving the base is the user's call (§6.5).
         for (i, version) in versions.iter().enumerate() {
-            acquisition.record_commit(version.target, version.tip.clone());
-            acquisition.record_commit(version.base, version.base_commit.clone());
-            let previous = i.checked_sub(1).map(|p| versions[p].commits());
+            if let Some(snapshots) = version.snapshots {
+                acquisition.record_commit(snapshots.target, version.tip.clone());
+                acquisition.record_commit(snapshots.base, version.base_commit.clone());
+            }
+            let previous = Version::last_commits(&versions[..i]);
             Self::keep_commits(acquisition, changeset, version, previous).await?;
         }
         let threads = visible_threads(store.threads(changeset).await?, Some(id));
@@ -501,13 +512,26 @@ impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> L
         snapshots: &[(&Snapshot, &SnapshotStatus)],
         write: impl Future<Output = std::result::Result<T, StoreError>> + Send,
     ) -> Result<T> {
+        self.record_content(store, changeset, version, previous, snapshots)
+            .await?;
+        Ok(write.await?)
+    }
+
+    /// What [`LiveSession::record_version`] makes durable before the store's record of the version.
+    async fn record_content(
+        &self,
+        store: &S::Writes,
+        changeset: ChangesetId,
+        version: &Version,
+        previous: Option<(&CommitId, &CommitId)>,
+        snapshots: &[(&Snapshot, &SnapshotStatus)],
+    ) -> Result<()> {
         for (snapshot, status) in snapshots {
             store
                 .put_snapshot(Snapshot::clone(snapshot), SnapshotStatus::clone(status), version.at)
                 .await?;
         }
-        Self::keep_commits(&self.acquisition, changeset, version, previous).await?;
-        Ok(write.await?)
+        Self::keep_commits(&self.acquisition, changeset, version, previous).await
     }
 
     /// The write token, with the state as the last command left it.
@@ -554,37 +578,61 @@ impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> L
             _ => st.head.clone(),
         };
         let now = (self.clock)();
-        let first = Version {
-            n: 1,
-            base: st.base.id,
-            base_commit: st.base_commit.clone(),
-            target: st.target.id,
-            tip: head.clone(),
-            at: now,
-            origin: VersionOrigin::Settled,
-            change: first_change(&st.changes().diffed),
-        };
         let changeset = store.ensure_changeset(self.repo.clone(), st.source.clone()).await?;
         // Refs of an earlier review that was never finished would hold commits for nothing.
         git.delete_changeset_refs(changeset).await?;
+        // A pull request has the pushes the platform recorded as versions from the first one, the
+        // state it is at being the last.
+        let pushes = self.new_pushes(st, &[], &head);
+        let (earlier, previous) = match &pushes {
+            Some(pushes) if pushes.len() > 1 => self.history(st, &pushes[..pushes.len() - 1], 1, None).await?,
+            _ => (Vec::new(), None),
+        };
+        let change = match &previous {
+            Some((old_base, old_target)) => self.change_of((old_base, old_target), &st.base, &st.target).await?,
+            None => first_change(&st.changes().diffed),
+        };
+        let current = Version {
+            n: u32::try_from(earlier.len()).unwrap_or(u32::MAX) + 1,
+            snapshots: Some(Snapshots {
+                base: st.base.id,
+                target: st.target.id,
+            }),
+            base_commit: st.base_commit.clone(),
+            tip: head.clone(),
+            at: pushes.as_ref().and_then(|p| p.last()?.at).unwrap_or(now),
+            origin: VersionOrigin::Settled,
+            change,
+        };
+        let mut versions: Vec<Version> = earlier.iter().map(|r| r.version.clone()).collect();
+        versions.push(current.clone());
         let start = store.start_review(
             self.repo.clone(),
             st.source.clone(),
             st.base_choice.clone(),
-            first.clone(),
+            versions.clone(),
             now,
         );
+        for recording in &earlier {
+            let statuses = recording.snapshots();
+            let snapshots: Vec<(&Snapshot, &SnapshotStatus)> =
+                statuses.iter().map(|(s, status)| (*s, status)).collect();
+            let kept = Version::last_commits(&versions[..recording.version.n as usize - 1]);
+            self.record_content(&store, changeset, &recording.version, kept, &snapshots)
+                .await?;
+        }
         let base_status = SnapshotStatus::of(&st.base);
         let snapshots = [(&*st.base, &base_status), (&*st.target, &st.target_status)];
+        let kept = Version::last_commits(&versions[..versions.len() - 1]);
         let (_, id) = self
-            .record_version(&store, changeset, &first, None, &snapshots, start)
+            .record_version(&store, changeset, &current, kept, &snapshots, start)
             .await?;
         acquisition.record_commit(st.target.id, head.clone());
         st.head = head;
         st.changeset = Some(changeset);
         st.review = Some(OpenReview {
             id,
-            version: 1,
+            version: current.n,
             updated_at: now,
             last_reviewed: None,
             summary: None,
@@ -989,9 +1037,11 @@ impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> L
         if let (Some(review), Some(changeset)) = (&st.review, st.changeset) {
             let version = Version {
                 n: review.version + 1,
-                base: st.base.id,
+                snapshots: Some(Snapshots {
+                    base: st.base.id,
+                    target: snapshot.id,
+                }),
                 base_commit: st.base_commit.clone(),
-                target: snapshot.id,
                 tip: head.clone(),
                 at: (self.clock)(),
                 origin: VersionOrigin::Settled,

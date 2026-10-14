@@ -41,7 +41,7 @@ pub enum Source {
     /// A local branch's commits, or a remote-tracking branch's (`origin/feature`). Versions
     /// are the tips Vet observed.
     Branch { name: String },
-    /// A pull request. Versions are its pushes.
+    /// A pull request. Versions are the pushes the platform recorded.
     PullRequest { remote: RemoteKey, number: u64 },
 }
 
@@ -59,16 +59,25 @@ pub enum Lens {
 pub struct Version {
     /// 1-based, per changeset.
     pub n: u32,
-    pub base: SnapshotId,
-    /// The commit `base` is the tree of.
+    /// What the version's content is; none for a push of a pull request whose commits could not be
+    /// had, which is listed but cannot be shown.
+    pub snapshots: Option<Snapshots>,
+    /// The commit the base is the tree of; empty for a version without snapshots whose base is
+    /// not known.
     pub base_commit: CommitId,
-    pub target: SnapshotId,
-    /// The commit `target` is built on: `HEAD` for a working tree.
+    /// The commit the target is built on: `HEAD` for a working tree.
     pub tip: CommitId,
     /// Unix seconds.
     pub at: i64,
     pub origin: VersionOrigin,
     pub change: VersionChange,
+}
+
+/// The two trees a version is made of.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub struct Snapshots {
+    pub base: SnapshotId,
+    pub target: SnapshotId,
 }
 
 /// What a version changed against the one before it, or for the first version against its
@@ -98,7 +107,7 @@ pub enum VersionOrigin {
     /// The tree settled, or the review of it started.
     Settled,
     /// A branch's tip or its merge base was seen to have moved: new commits, an
-    /// amend or a rebase.
+    /// amend or a rebase. For a pull request: a push the platform recorded.
     Observed,
 }
 
@@ -108,10 +117,20 @@ impl Version {
         (&self.base_commit, &self.tip)
     }
 
+    /// The commits of the last of `versions` that has content: the ones a version after them
+    /// need not take a ref for again.
+    pub fn last_commits(versions: &[Self]) -> Option<(&CommitId, &CommitId)> {
+        versions.iter().rev().find(|v| v.snapshots.is_some()).map(Self::commits)
+    }
+
     /// The commits this version needs a ref for to stay materializable: its own,
-    /// unless the version before it, whose `commits` are `previous`, holds them already.
+    /// unless the version before it, whose `commits` are `previous`, holds them already. A version
+    /// without content has none to keep.
     pub fn commits_to_keep(&self, previous: Option<(&CommitId, &CommitId)>) -> Vec<(&'static str, &CommitId)> {
         let mut keep = Vec::new();
+        if self.snapshots.is_none() {
+            return keep;
+        }
         if previous.is_none_or(|(base, _)| *base != self.base_commit) {
             keep.push(("base", &self.base_commit));
         }
@@ -131,9 +150,11 @@ mod tests {
     fn version(n: u32, base: &str, tip: &str) -> Version {
         Version {
             n,
-            base: SnapshotId(Hash([0; 32])),
+            snapshots: Some(Snapshots {
+                base: SnapshotId(Hash([0; 32])),
+                target: SnapshotId(Hash([1; 32])),
+            }),
             base_commit: CommitId(base.into()),
-            target: SnapshotId(Hash([1; 32])),
             tip: CommitId(tip.into()),
             at: 0,
             origin: VersionOrigin::Settled,

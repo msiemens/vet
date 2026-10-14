@@ -8,6 +8,7 @@ const version = (n: number, over: Partial<VersionInfo> = {}): VersionInfo => ({
   n,
   at: n * 10,
   origin: "settled",
+  available: true,
   tip: null,
   base: null,
   reviewedHere: false,
@@ -30,6 +31,18 @@ void test("rows run newest first and name each version's files by their short na
     [
       [2, "retry.rs, job.rs", { added: 3, removed: 1 }],
       [1, "retry.rs", { added: 4, removed: 2 }],
+    ],
+  );
+});
+
+void test("a version whose commits are gone is a row that cannot be chosen", () => {
+  const rows = timelineRows([version(1), version(2, { available: false }), version(3)]);
+  assert.deepEqual(
+    rows.map((r) => [r.n, r.available]),
+    [
+      [3, true],
+      [2, false],
+      [1, true],
     ],
   );
 });

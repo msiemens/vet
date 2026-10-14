@@ -16,6 +16,11 @@ n: number,
  */
 at: number, origin: VersionOrigin, 
 /**
+ * The version can be shown. A push of a pull request whose commits the platform no longer
+ * gives is listed, and an `Interdiff` that names it fails.
+ */
+available: boolean, 
+/**
  * The commit the version is built on; absent once git has dropped it.
  */
 tip: CommitInfo | null, 

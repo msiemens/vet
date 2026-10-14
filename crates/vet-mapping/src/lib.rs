@@ -138,6 +138,7 @@ pub fn versions(versions: &[VersionView]) -> p::Response {
                     VersionOrigin::Settled => p::VersionOrigin::Settled,
                     VersionOrigin::Observed => p::VersionOrigin::Observed,
                 },
+                available: v.available,
                 tip: v.tip.as_ref().map(commit_info),
                 base: v.base.as_ref().map(commit_info),
                 reviewed_here: v.reviewed_here,

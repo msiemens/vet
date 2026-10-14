@@ -196,7 +196,7 @@ impl ReviewWrites for ReviewWriter {
         repo: String,
         source: Source,
         base: BaseChoice,
-        first: Version,
+        versions: Vec<Version>,
         now: i64,
     ) -> Result<(ChangesetId, ReviewId), StoreError> {
         let txn = self.db.begin().await?;
@@ -208,7 +208,9 @@ impl ReviewWrites for ReviewWriter {
             .filter(version::Column::Changeset.eq(changeset))
             .exec(&txn)
             .await?;
-        insert_version(&txn, ChangesetId(changeset as u64), &first).await?;
+        for version in &versions {
+            insert_version(&txn, ChangesetId(changeset as u64), version).await?;
+        }
         let (base_kind, base_value) = base_columns(base);
         let review = review::ActiveModel {
             changeset: Set(changeset),

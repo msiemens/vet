@@ -25,6 +25,10 @@ impl MigratorTrait for Migrator {
                 name: "m20261014_000002_settings",
                 sql: include_str!("migration/settings.sql"),
             }),
+            Box::new(Sql {
+                name: "m20261014_000003_version_availability",
+                sql: include_str!("migration/version_availability.sql"),
+            }),
         ]
     }
 }

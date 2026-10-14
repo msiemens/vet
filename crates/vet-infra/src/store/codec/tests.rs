@@ -86,9 +86,11 @@ fn an_anchor_row_that_is_not_what_the_codec_writes_is_corrupt() {
 fn version_value() -> Version {
     Version {
         n: 3,
-        base: SnapshotId(h(1)),
+        snapshots: Some(Snapshots {
+            base: SnapshotId(h(1)),
+            target: SnapshotId(h(2)),
+        }),
         base_commit: CommitId("aa".into()),
-        target: SnapshotId(h(2)),
         tip: CommitId("bb".into()),
         at: 1_700_000_000,
         origin: VersionOrigin::Observed,
@@ -124,6 +126,17 @@ fn version_models(v: &Version) -> (version::Model, Vec<version_file::Model>) {
 #[test]
 fn a_version_comes_back_with_its_changed_files_in_the_order_they_were_written() {
     let v = version_value();
+    let (row, files) = version_models(&v);
+
+    assert_eq!(version_from(row, files).unwrap(), v);
+}
+
+#[test]
+fn a_version_without_snapshots_comes_back_without_them() {
+    let v = Version {
+        snapshots: None,
+        ..version_value()
+    };
     let (row, files) = version_models(&v);
 
     assert_eq!(version_from(row, files).unwrap(), v);

@@ -35,7 +35,8 @@ pub enum View {
 pub enum VersionOrigin {
     /// The tree settled, or the review started with it.
     Settled,
-    /// A branch's tip or merge base was seen to have moved.
+    /// A branch's tip or merge base was seen to have moved, or the platform recorded a push of a
+    /// pull request.
     Observed,
 }
 
@@ -49,6 +50,9 @@ pub struct VersionInfo {
     /// Unix seconds the version was recorded.
     pub at: u32,
     pub origin: VersionOrigin,
+    /// The version can be shown. A push of a pull request whose commits the platform no longer
+    /// gives is listed, and an `Interdiff` that names it fails.
+    pub available: bool,
     /// The commit the version is built on; absent once git has dropped it.
     pub tip: Option<CommitInfo>,
     /// The commit of the version's base; absent once git has dropped it.

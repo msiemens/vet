@@ -47,7 +47,8 @@ export const pushesOf = (range: Range): { first: number; last: number } => ({
  * A click shows that push, what it changed from the version before it (the base for the first).
  * Clicking the only push shown goes back to the whole changeset. With `anchor`, the version clicked
  * before (a shift-click), it shows the block of pushes between the two. All the pushes are the
- * whole changeset, which is no range of its own.
+ * whole changeset, which is no range of its own. A version before the pushes that cannot be shown
+ * (its commits are gone) is skipped over: the pushes are compared with the one before it.
  */
 export function chooseRow(
   versions: readonly VersionInfo[],
@@ -57,9 +58,10 @@ export function chooseRow(
 ): Range | undefined {
   const latest = versions.at(-1)?.n;
   if (latest === undefined) return undefined;
-  const only = current !== undefined && current.from + 1 === clicked && current.to === clicked;
+  const comparedWith = (n: number) => [...versions].reverse().find((v) => v.n < n && v.available)?.n ?? 0;
+  const only = current?.from === comparedWith(clicked) && current.to === clicked;
   if (anchor === undefined && only) return undefined;
   const first = Math.min(anchor ?? clicked, clicked);
   const last = Math.max(anchor ?? clicked, clicked);
-  return normalised({ from: first - 1, to: last }, latest);
+  return normalised({ from: comparedWith(first), to: last }, latest);
 }

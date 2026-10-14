@@ -141,7 +141,11 @@ impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> L
             .into_iter()
             .find(|v| v.n == from)
             .ok_or_else(|| SessionError::NotFound(format!("version {from}")))?;
-        let Some((earlier, _)) = self.acquisition.store.snapshot(version.target).await? else {
+        let earlier = match version.snapshots {
+            Some(snapshots) => self.acquisition.store.snapshot(snapshots.target).await?.map(|(s, _)| s),
+            None => None,
+        };
+        let Some(earlier) = earlier else {
             return Err(SessionError::NotFound("snapshot of the version".into()));
         };
         let key = RepoPath::from(path);

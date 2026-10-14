@@ -29,7 +29,7 @@ impl Referenced for StoreReferences {
 mod tests {
     use std::time::{Duration, SystemTime};
 
-    use vet_app::changeset::{BaseChoice, CommitId, Source, Version, VersionChange, VersionOrigin};
+    use vet_app::changeset::{BaseChoice, CommitId, Snapshots, Source, Version, VersionChange, VersionOrigin};
     use vet_app::ports::{LiveStore, ReviewWrites};
     use vet_core::content::Hash;
     use vet_infra::materialize::kept::{KeptTrees, Limits};
@@ -61,9 +61,11 @@ mod tests {
         let commit = CommitId("abc123".into());
         let version = Version {
             n: 1,
-            base: snapshot(1),
+            snapshots: Some(Snapshots {
+                base: snapshot(1),
+                target: snapshot(2),
+            }),
             base_commit: commit.clone(),
-            target: snapshot(2),
             tip: commit.clone(),
             at: 0,
             origin: VersionOrigin::Settled,
@@ -75,7 +77,7 @@ mod tests {
                 "/repo".into(),
                 Source::WorkingTree,
                 BaseChoice::Commit { id: commit },
-                version,
+                vec![version],
                 0,
             )
             .await

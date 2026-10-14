@@ -227,13 +227,19 @@ pub mod version {
         pub changeset: i64,
         #[sea_orm(unique_key = "number")]
         pub n: i64,
+        /// The snapshot of the base; empty for a version that is not available.
         pub base: Vec<u8>,
         pub base_commit: String,
+        /// The snapshot of the target; empty for a version that is not available.
         pub target: Vec<u8>,
         pub tip: String,
         /// Unix seconds.
         pub at: i64,
         pub origin: VersionOrigin,
+        /// The version has snapshots. A push of a pull request whose commits could not be had has
+        /// none.
+        #[sea_orm(default_value = true)]
+        pub available: bool,
     }
 
     child_of_changeset!();

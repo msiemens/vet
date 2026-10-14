@@ -3,12 +3,16 @@ import { test } from "node:test";
 import type { VersionInfo } from "../generated/VersionInfo";
 import { chooseRow, defaultRange, normalised, pushesOf } from "./timelineRange.ts";
 
-/** Versions 1..`count`, with the one numbered `reviewed` the last one something was marked in. */
-const versions = (count: number, reviewed?: number): VersionInfo[] =>
+/**
+ * Versions 1..`count`, with the one numbered `reviewed` the last one something was marked in and
+ * those numbered `lost` not available.
+ */
+const versions = (count: number, reviewed?: number, lost: number[] = []): VersionInfo[] =>
   Array.from({ length: count }, (_, i) => ({
     n: i + 1,
     at: 0,
     origin: "settled",
+    available: !lost.includes(i + 1),
     tip: null,
     base: null,
     reviewedHere: i + 1 === reviewed,
@@ -49,6 +53,14 @@ void test("a shift-click shows the block of pushes between the two, whichever wa
   assert.deepEqual(chooseRow(versions(17), undefined, 17, 14), { from: 13, to: 17 });
   assert.deepEqual(chooseRow(versions(17), undefined, 12, 15), { from: 11, to: 15 });
   assert.deepEqual(chooseRow(versions(17), { from: 14, to: 15 }, 15, 15), { from: 14, to: 15 });
+});
+
+void test("a push after one that cannot be shown is compared with the one before that", () => {
+  const lost = versions(5, undefined, [3]);
+  assert.deepEqual(chooseRow(lost, undefined, 4), { from: 2, to: 4 });
+  assert.deepEqual(chooseRow(lost, { from: 2, to: 4 }, 4), undefined, "it is the only push shown then");
+  assert.deepEqual(chooseRow(lost, undefined, 5, 4), { from: 2, to: 5 });
+  assert.deepEqual(chooseRow(versions(3, undefined, [1]), undefined, 2), { from: 0, to: 2 });
 });
 
 void test("every push is the whole changeset, which is no range", () => {

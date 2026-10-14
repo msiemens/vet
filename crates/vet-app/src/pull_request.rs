@@ -4,8 +4,8 @@
 
 use crate::fetch::{Credentials, Fetch, FetchMark};
 use crate::platform::{
-    Platform, PlatformError, PlatformKind, PullRequest, PullRequestHead, PullRequestQuery, PullRequestRow, QueueTab,
-    RemoteKey, list_rows, parse_remote, rows,
+    Platform, PlatformError, PlatformKind, PullRequest, PullRequestHead, PullRequestQuery, PullRequestRow, Push,
+    QueueTab, RemoteKey, list_rows, parse_remote, rows,
 };
 use crate::ports::{Fetcher, GitError, RefUpdate, RemoteInfo};
 
@@ -17,15 +17,33 @@ pub struct PullRequestRefs {
     pub head: String,
     /// The tip of the branch the pull request is merged into, which its base is measured from.
     pub target: String,
+    /// What the refs of the pull request all start with.
+    prefix: String,
 }
 
 impl PullRequestRefs {
     pub fn of(remote: &RemoteKey, number: u64) -> Self {
-        let prefix = format!("{}{number}", Self::of_repository(remote));
+        let prefix = format!("{}{number}/", Self::of_repository(remote));
         Self {
-            head: format!("{prefix}/{HEAD}"),
-            target: format!("{prefix}/{TARGET}"),
+            head: format!("{prefix}{HEAD}"),
+            target: format!("{prefix}{TARGET}"),
+            prefix,
         }
+    }
+
+    /// What the refs of the pull request all start with.
+    pub fn prefix(&self) -> &str {
+        &self.prefix
+    }
+
+    /// What the refs of the earlier pushes of the pull request start with.
+    fn pushes(&self) -> String {
+        format!("{}{PUSH}/", self.prefix)
+    }
+
+    /// The ref that holds the earlier push of the pull request that was at `commit`.
+    pub fn push(&self, commit: &str) -> String {
+        format!("{}{commit}", self.pushes())
     }
 
     /// What the refs of every pull request of `remote` start with.
@@ -49,7 +67,8 @@ impl PullRequestRefs {
     fn number_of(remote: &RemoteKey, name: &str) -> Option<u64> {
         let (number, which) = name.strip_prefix(&Self::of_repository(remote))?.split_once('/')?;
         let parsed: u64 = number.parse().ok()?;
-        (parsed.to_string() == number && matches!(which, HEAD | TARGET)).then_some(parsed)
+        let ours = matches!(which, HEAD | TARGET) || which.strip_prefix(PUSH).is_some_and(|c| c.starts_with('/'));
+        (parsed.to_string() == number && ours).then_some(parsed)
     }
 
     /// What to fetch from the platform's repository to have both refs: the pull request's head and
@@ -112,6 +131,7 @@ impl<'a> From<&'a PullRequestRow> for Branches<'a> {
 
 const HEAD: &str = "head";
 const TARGET: &str = "target";
+const PUSH: &str = "push";
 
 /// A repository of a platform that one of the project's git remotes is.
 #[derive(Clone, PartialEq, Eq, Debug)]
@@ -280,15 +300,25 @@ impl std::fmt::Display for FetchError {
     }
 }
 
-/// Brings in the head of pull request `number` of `remote` and the branch it targets, so a
-/// changeset can be made of them. Answers with how the platform names it now.
+/// What bringing in a pull request learned of it.
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub struct BroughtIn {
+    /// How the platform names it now.
+    pub head: PullRequestHead,
+    /// The states of its source branch the platform lists, oldest first, the current one last. The
+    /// earlier ones that the remote still has are fetched.
+    pub pushes: Vec<Push>,
+}
+
+/// Brings in the head of pull request `number` of `remote`, the branch it targets and the states
+/// the head had before (as far as the remote gives them), so a changeset can be made of them.
 pub async fn fetch_pull_request<P: Platform, G: Fetcher>(
     platform: &P,
     fetch: &Fetch<G>,
     credentials: &(impl Credentials + Sync),
     remote: &RemoteKey,
     number: u64,
-) -> Result<PullRequestHead, FetchError> {
+) -> Result<BroughtIn, FetchError> {
     let detail = platform
         .pull_request(remote, number)
         .await
@@ -300,12 +330,50 @@ pub async fn fetch_pull_request<P: Platform, G: Fetcher>(
         .find(|h| h.key == *remote)
         .and_then(|h| remotes.iter().find(|r| r.name == h.remote))
         .ok_or_else(|| FetchError::NoRemote(format!("none of the remotes of this repository is {remote}")))?;
-    let updates = PullRequestRefs::of(remote, number).updates(remote.kind(), number, (&detail.pull_request).into());
+    let refs = PullRequestRefs::of(remote, number);
+    let updates = refs.updates(remote.kind(), number, (&detail.pull_request).into());
     fetch
         .refs(credentials, git_remote, updates, format!("Fetching #{number}"))
         .await
         .map_err(FetchError::Git)?;
-    Ok(PullRequestHead::of(&detail.pull_request))
+    fetch_earlier_pushes(fetch, credentials, git_remote, &refs, &detail.pushes).await;
+    Ok(BroughtIn {
+        head: PullRequestHead::of(&detail.pull_request),
+        pushes: detail.pushes,
+    })
+}
+
+/// Fetches the states of the source branch before the current one (the last of `pushes`) that are
+/// not in the repository, each into a ref of its own. A remote may have dropped some after a
+/// force-push; they are asked for one at a time then, and not again while the session lives.
+async fn fetch_earlier_pushes<G: Fetcher>(
+    fetch: &Fetch<G>,
+    credentials: &(impl Credentials + Sync),
+    git_remote: &RemoteInfo,
+    refs: &PullRequestRefs,
+    pushes: &[Push],
+) {
+    let Some((_, earlier)) = pushes.split_last() else {
+        return;
+    };
+    let have = fetch.refs_below(&refs.pushes()).await.unwrap_or_default();
+    let wanted: Vec<RefUpdate> = earlier
+        .iter()
+        .map(|push| RefUpdate {
+            source: push.head.clone(),
+            destination: refs.push(&push.head),
+        })
+        .filter(|update| !fetch.lost(&update.destination) && !have.iter().any(|tip| tip.name == update.destination))
+        .collect();
+    if wanted.is_empty() || fetch.refs_asking(credentials, git_remote, wanted.clone()).await.is_ok() {
+        return;
+    }
+    for update in wanted {
+        let destination = update.destination.clone();
+        if fetch.refs_asking(credentials, git_remote, vec![update]).await.is_err() {
+            fetch.refused(&destination);
+        }
+    }
 }
 
 /// The pull requests that were fetched into the repository and that `list` no longer has, of the
@@ -348,13 +416,15 @@ pub async fn delete_pull_request_refs<G: Fetcher>(
     pull_requests: &[(RemoteKey, u64)],
     since: FetchMark,
 ) -> Result<Vec<String>, GitError> {
-    let names = pull_requests
-        .iter()
-        .flat_map(|(remote, number)| {
-            let refs = PullRequestRefs::of(remote, *number);
-            [refs.head, refs.target]
-        })
-        .collect();
+    let mut names = Vec::new();
+    for (remote, number) in pull_requests {
+        let refs = PullRequestRefs::of(remote, *number);
+        let held = fetch.refs_below(refs.prefix()).await?;
+        names.extend([refs.head.clone(), refs.target.clone()]);
+        names.extend(held.into_iter().map(|tip| tip.name));
+    }
+    names.sort();
+    names.dedup();
     fetch.delete_refs(names, since).await
 }
 
@@ -848,7 +918,7 @@ mod tests {
             .unwrap();
 
         assert_eq!(
-            ready,
+            ready.head,
             PullRequestHead {
                 title: "PR 7".to_owned(),
                 draft: false,
@@ -857,7 +927,7 @@ mod tests {
             }
         );
         assert_eq!(
-            draft,
+            draft.head,
             PullRequestHead {
                 title: format!("PR {DRAFT}"),
                 draft: true,
@@ -865,6 +935,125 @@ mod tests {
                 target_branch: "release".to_owned(),
             }
         );
+    }
+
+    /// A platform that lists pull request 7 with the given states of its source branch.
+    struct Pushed(Vec<Push>);
+
+    impl Platform for Pushed {
+        fn traits(&self) -> crate::platform::PlatformTraits {
+            crate::platform::PlatformTraits::github()
+        }
+
+        async fn viewer(&self, _: &RemoteKey) -> Result<Viewer, PlatformError> {
+            unreachable!("a pull request is fetched")
+        }
+
+        async fn list_pull_requests(
+            &self,
+            _: &RemoteKey,
+            _: &PullRequestQuery,
+        ) -> Result<PullRequestListing, PlatformError> {
+            unreachable!("a pull request is fetched")
+        }
+
+        async fn pull_request(&self, _: &RemoteKey, number: u64) -> Result<PullRequestDetail, PlatformError> {
+            Ok(PullRequestDetail {
+                pull_request: pr(number),
+                base: "b0".to_owned(),
+                pushes: self.0.clone(),
+            })
+        }
+
+        async fn checks(&self, _: &RemoteKey, _: &str) -> Result<CommitChecks, PlatformError> {
+            unreachable!("a pull request is fetched")
+        }
+
+        async fn check_log(&self, _: &RemoteKey, _: &str) -> Result<CheckLog, PlatformError> {
+            unreachable!("a pull request is fetched")
+        }
+    }
+
+    fn push(head: &str) -> Push {
+        Push {
+            head: head.to_owned(),
+            at: None,
+            forced: false,
+        }
+    }
+
+    #[tokio::test]
+    async fn the_earlier_pushes_are_fetched_once_and_one_the_remote_dropped_is_not_asked_for_again() {
+        let app = github("acme/app");
+        let platform = Pushed(vec![push("c1"), push("c2"), push("c3")]);
+        let (fetch, fetched, refs, _) =
+            fetching_with(vec![info("origin", "https://github.com/acme/app")], vec![], &["c1"]);
+
+        let brought = fetch_pull_request(&platform, &fetch, &Anonymous, &app, 7)
+            .await
+            .unwrap();
+        fetch_pull_request(&platform, &fetch, &Anonymous, &app, 7)
+            .await
+            .unwrap();
+
+        let of = PullRequestRefs::of(&app, 7);
+        assert_eq!(
+            brought.pushes.iter().map(|p| p.head.as_str()).collect::<Vec<_>>(),
+            ["c1", "c2", "c3"],
+            "the platform's list is passed on whole"
+        );
+        let names = names(&refs);
+        assert!(names.contains(&of.push("c2")), "{names:?}");
+        assert!(!names.contains(&of.push("c1")), "the remote lacks it");
+        assert!(!names.contains(&of.push("c3")), "the current head has its own ref");
+        let sources: Vec<String> = fetched
+            .lock()
+            .unwrap()
+            .iter()
+            .flat_map(|(_, updates)| updates.iter().map(|u| u.source.clone()))
+            .filter(|s| s.starts_with('c'))
+            .collect();
+        assert_eq!(
+            sources,
+            ["c1", "c2", "c1", "c2"],
+            "c1 and c2 together, then each alone; the second call asks for neither"
+        );
+    }
+
+    #[tokio::test]
+    async fn the_refs_of_earlier_pushes_go_with_the_pull_request_when_it_is_closed() {
+        let app = github("acme/app");
+        let of = PullRequestRefs::of(&app, 7);
+        let (fetch, _, refs) = fetching_into(
+            vec![],
+            &[
+                &of.head,
+                &of.target,
+                &of.push("c1"),
+                &PullRequestRefs::of(&app, 70).push("c1"),
+            ],
+        );
+        let since = fetch.mark();
+
+        let deleted = delete_pull_request_refs(&fetch, &[(app.clone(), 7)], since)
+            .await
+            .unwrap();
+
+        assert_eq!(deleted.len(), 3);
+        assert_eq!(names(&refs), [PullRequestRefs::of(&app, 70).push("c1")]);
+        let unlisted = unlisted_fetched(&fetch, &listed_none(&app)).await.unwrap();
+        assert_eq!(unlisted, [(app, 70)], "a push ref belongs to its pull request");
+    }
+
+    fn listed_none(remote: &RemoteKey) -> PullRequestList {
+        PullRequestList {
+            rows: vec![],
+            sources: vec![RepositoryStatus {
+                remote: remote.clone(),
+                error: None,
+                truncated: false,
+            }],
+        }
     }
 
     #[tokio::test]

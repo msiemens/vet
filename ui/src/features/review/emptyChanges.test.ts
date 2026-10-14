@@ -146,6 +146,7 @@ void test("a workspace that was edited and put back lists its versions, newest f
     n,
     at: NOW / 1000 - 600 * (4 - n),
     origin: "settled",
+    available: true,
     reviewedHere: false,
     files,
   });
@@ -275,6 +276,7 @@ void test("a push that changed nothing says whether the base moved, and shows th
     n,
     at: NOW / 1000 - 60 * (5 - n),
     origin: "settled",
+    available: true,
     tip: commit(`tip${n}`),
     base: commit(base),
     reviewedHere: false,

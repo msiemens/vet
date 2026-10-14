@@ -19,6 +19,8 @@ pub struct VersionView {
     /// Unix seconds.
     pub at: i64,
     pub origin: VersionOrigin,
+    /// The version has content to show: not a push whose commits the platform no longer gave.
+    pub available: bool,
     /// The commit the version is built on; `None` once git has dropped it.
     pub tip: Option<CommitInfo>,
     /// The commit of the version's base; `None` once git has dropped it.
@@ -46,6 +48,7 @@ impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> L
                 n: v.n,
                 at: v.at,
                 origin: v.origin,
+                available: v.snapshots.is_some(),
                 tip: git.commit_info(&v.tip).await.ok(),
                 base: git.commit_info(&v.base_commit).await.ok(),
                 reviewed_here: last_reviewed == Some(v.n),

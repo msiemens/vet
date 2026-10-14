@@ -25,6 +25,8 @@ export interface TimelineRow {
   files: string;
   /** The lines the version changed; none when it changed no line. */
   lines?: LineDelta;
+  /** The version can be shown; a push whose commits the platform no longer gives cannot. */
+  available: boolean;
   /** The version something was last marked in. */
   reviewed: boolean;
   /** The push's changes are among those the review view shows. */
@@ -61,6 +63,7 @@ export function timelineRows(versions: readonly VersionInfo[], { range, byCommit
         commit: v.tip?.id,
         files: v.files.map((f) => basename(f.path)).join(", "),
         lines: added || removed ? { added, removed } : undefined,
+        available: v.available,
         reviewed: v.reviewedHere,
         shown: !byCommit && (!pushes || (v.n >= pushes.first && v.n <= pushes.last)),
         ring: !byCommit && v.n === ringAt,

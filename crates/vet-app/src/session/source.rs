@@ -4,6 +4,7 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
+use vet_core::content::Snapshot;
 use vet_core::filter::ReviewFilter;
 use vet_core::review::Thread;
 
@@ -12,7 +13,7 @@ use super::state::State;
 use super::{LiveSession, Result, SessionError, UnixClock};
 use crate::acquisition::Acquisition;
 use crate::base;
-use crate::changeset::{BaseChoice, ChangesetId, CommitId, Source, Version, VersionOrigin};
+use crate::changeset::{BaseChoice, ChangesetId, CommitId, Snapshots, Source, Version, VersionOrigin};
 use crate::platform::PullRequestHead;
 use crate::ports::{GitRepo, LiveStore, ReviewWrites};
 use crate::pull_request::PullRequestRefs;
@@ -187,22 +188,60 @@ impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> L
         if let (Some(review), Some(changeset)) = (&st.review, st.changeset) {
             // The old base's content is kept apart from git, which may drop its objects.
             self.retain_anchored(st, st.anchors()).await?;
-            let version = Version {
-                n: review.version + 1,
-                base: base.id,
-                base_commit: base_commit.clone(),
-                target: target.id,
-                tip: tip.clone(),
-                at: now,
-                origin: VersionOrigin::Observed,
-                change: self.change_of((&st.base, &st.target), &base, &target).await?,
+            let mut recorded = self.acquisition.store.versions(changeset).await?;
+            // A pull request moves by the pushes the platform lists after the ones recorded; the
+            // last of them is the state it moves to.
+            let tips: Vec<CommitId> = recorded.iter().map(|v| v.tip.clone()).collect();
+            let pushes = self.new_pushes(st, &tips, &tip);
+            let (earlier, previous) = match &pushes {
+                Some(pushes) if pushes.len() > 1 => {
+                    let left = Some((st.base.clone(), st.target.clone()));
+                    self.history(st, &pushes[..pushes.len() - 1], review.version + 1, left)
+                        .await?
+                }
+                _ => (Vec::new(), None),
             };
+            let (before_base, before_target) = previous.unwrap_or_else(|| (st.base.clone(), st.target.clone()));
+            let version = Version {
+                n: review.version + u32::try_from(earlier.len()).unwrap_or(u32::MAX) + 1,
+                snapshots: Some(Snapshots {
+                    base: base.id,
+                    target: target.id,
+                }),
+                base_commit: base_commit.clone(),
+                tip: tip.clone(),
+                at: pushes.as_ref().and_then(|p| p.last()?.at).unwrap_or(now),
+                origin: VersionOrigin::Observed,
+                change: self.change_of((&before_base, &before_target), &base, &target).await?,
+            };
+            for recording in earlier {
+                let statuses = recording.snapshots();
+                let snapshots: Vec<(&Snapshot, &SnapshotStatus)> =
+                    statuses.iter().map(|(s, status)| (*s, status)).collect();
+                let write = store.append_version(changeset, recording.version.clone());
+                self.record_version(
+                    store,
+                    changeset,
+                    &recording.version,
+                    Version::last_commits(&recorded),
+                    &snapshots,
+                    write,
+                )
+                .await?;
+                recorded.push(recording.version);
+            }
             let (base_status, target_status) = (SnapshotStatus::of(&base), SnapshotStatus::of(&target));
             let snapshots = [(&*target, &target_status), (&*base, &base_status)];
-            let previous = Some((&st.base_commit, &st.head));
             let write = store.append_version(changeset, version.clone());
-            self.record_version(store, changeset, &version, previous, &snapshots, write)
-                .await?;
+            self.record_version(
+                store,
+                changeset,
+                &version,
+                Version::last_commits(&recorded),
+                &snapshots,
+                write,
+            )
+            .await?;
             if let Some(review) = &mut st.review {
                 review.version = version.n;
                 review.updated_at = now;

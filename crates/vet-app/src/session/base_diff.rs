@@ -67,7 +67,10 @@ impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> L
             return Ok(None);
         };
         let versions = self.acquisition.store.versions(changeset).await?;
-        let Some(version) = versions.iter().find(|v| v.base == snapshot) else {
+        let Some(version) = versions
+            .iter()
+            .find(|v| v.snapshots.is_some_and(|s| s.base == snapshot))
+        else {
             return Ok(None);
         };
         Ok(self.acquisition.git.commit_info(&version.base_commit).await.ok())
