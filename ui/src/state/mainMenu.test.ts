@@ -54,6 +54,8 @@ const actions: AppActions = {
   openInBrowser: () => calls.push("browser"),
   showDialog: (d) => calls.push(`dialog ${d}`),
   showKeymap: () => calls.push("keymap"),
+  showAccounts: () => calls.push("accounts"),
+  showProjectSettings: () => calls.push("projectSettings"),
   quit: () => calls.push("quit"),
   toggleSoftWrap: () => calls.push("wrap"),
   toggleTool: (id) => calls.push(`tool ${id}`),
@@ -101,7 +103,7 @@ void test("macOS keeps Settings, About and Quit in the app menu and leaves the O
   assert.ok(!ids(submenu(mac, "help")).includes("app.about"));
 
   const other = menu();
-  assert.deepEqual(ids(submenu(other, "file")).slice(-3), ["app.settings", "-", "app.quit"]);
+  assert.deepEqual(ids(submenu(other, "file")).slice(-4), ["app.settings", "app.projectSettings", "-", "app.quit"]);
   assert.equal(find(other, "app.quit")?.label, "Exit");
   assert.equal(ids(submenu(other, "help")).at(-1), "app.about");
   assert.ok(flatten(other).every((i) => !i.predefined));
@@ -146,7 +148,14 @@ void test("without a project everything that needs one is disabled, not hidden, 
   const items = menu({ recent: [] }, { repoOpen: false, changesetOpen: false, reviewOpen: false, pullRequest: false });
   assert.equal(find(items, "recent")?.enabled, false);
   assert.equal(find(items, "file.open")?.enabled, undefined);
-  for (const id of ["file.close", "view.queue", "view.review", "changeset.switch", "changeset.refresh"]) {
+  for (const id of [
+    "app.projectSettings",
+    "file.close",
+    "view.queue",
+    "view.review",
+    "changeset.switch",
+    "changeset.refresh",
+  ]) {
     const item = find(items, id);
     assert.equal(item?.enabled, false, id);
     assert.ok(item.reason, id);

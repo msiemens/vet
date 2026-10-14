@@ -41,17 +41,25 @@
   isOn={(m) => m.project.path === path}
   listLabel="Recent projects"
   empty={recent.length ? "No matching projects" : "No recent projects"}
-  actions={canPick
-    ? [
-        {
-          label: "Open…",
-          key: commands.binding("file.open")?.label,
-          title: commands.hint("file.open"),
-          disabled: !commands.isEnabled("file.open"),
-          run: () => commands.run("file.open"),
-        },
-      ]
-    : []}
+  actions={[
+    ...(canPick
+      ? [
+          {
+            label: "Open…",
+            key: commands.binding("file.open")?.label,
+            title: commands.hint("file.open"),
+            disabled: !commands.isEnabled("file.open"),
+            run: () => commands.run("file.open"),
+          },
+        ]
+      : []),
+    {
+      label: "Project Settings…",
+      title: commands.hint("app.projectSettings"),
+      disabled: !commands.isEnabled("app.projectSettings"),
+      run: () => commands.run("app.projectSettings"),
+    },
+  ]}
   onchoose={(m) => {
     if (m.project.path !== path) openRecent(m.project.path);
   }}

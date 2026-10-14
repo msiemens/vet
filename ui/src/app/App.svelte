@@ -308,6 +308,7 @@
       showDialog: (d) => showDialog(d),
       showKeymap: () => showDialog("settings", "keymap"),
       showAccounts: () => showDialog("settings", "accounts"),
+      showProjectSettings: () => showDialog("settings", "trust"),
       quit: () => void quit(),
       toggleSoftWrap: () => setSoftWrap(softWrap === "never" ? "prose" : "never"),
       toggleTool: (id) => {

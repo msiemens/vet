@@ -36,6 +36,8 @@ export interface AppActions {
   showKeymap(): void;
   /** Opens Settings on the Accounts page. */
   showAccounts(): void;
+  /** Opens Settings on the Trust page, the first of the project's pages. */
+  showProjectSettings(): void;
   quit(): void;
   /** Wraps long lines, or stops wrapping them. */
   toggleSoftWrap(): void;
@@ -265,6 +267,13 @@ export function appCommands(a: AppActions): Command<CommandContext>[] {
       accelerator: "Cmd+,",
       inFields: true,
       run: () => a.showDialog("settings"),
+    },
+    {
+      id: "app.projectSettings",
+      label: "Project Settings…",
+      enabled: repoOpen,
+      disabledReason: needsProject,
+      run: () => a.showProjectSettings(),
     },
     { id: "app.accounts", label: "Accounts…", run: () => a.showAccounts() },
     { id: "app.about", label: "About Vet", run: () => a.showDialog("about") },

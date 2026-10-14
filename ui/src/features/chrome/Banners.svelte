@@ -11,7 +11,6 @@
   import { limitedMessage } from "./limitedMessage";
   import RestoreFailureList from "./RestoreFailureList.svelte";
   import { offBaseMessage } from "./scopeText";
-  import { trustMessage } from "./trustMessage";
 
   let {
     degraded,
@@ -57,7 +56,7 @@
 
 {#if pullRequest && !pullRequest.trusted && !dismissedLimited}
   <Banner
-    message={trustMessage(pullRequest)}
+    message="Analysis limited: PR source is untrusted."
     ondismiss={() => (dismissedLimited = true)}
     actions={[
       { label: "Trust this PR", onclick: ontrust },

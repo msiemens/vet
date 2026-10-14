@@ -42,9 +42,8 @@ export interface MenuState {
 
 /** Also offered by the project chip's menu. */
 export const openItem: MenuSpec = [{ command: "file.open" }];
-
 export function mainMenuSpec(s: MenuState): MenuSpec {
-  const settings = { command: "app.settings" };
+  const settings: MenuSpec = [{ command: "app.settings" }, { command: "app.projectSettings" }];
   const about = { command: "app.about" };
   const quit = { command: "app.quit", label: s.native ? "Quit Vet" : undefined };
 
@@ -59,7 +58,7 @@ export function mainMenuSpec(s: MenuState): MenuSpec {
     "-",
     { command: "tab.close" },
     { command: "tab.closeOthers" },
-    ...(s.native ? [] : (["-", settings, "-", quit] as MenuSpec)),
+    ...(s.native ? [] : (["-", ...settings, "-", quit] as MenuSpec)),
   ];
   const view: MenuSpec = [
     { command: "view.queue", checked: s.screen === "queue", radio: true },
@@ -192,7 +191,7 @@ export function mainMenuSpec(s: MenuState): MenuSpec {
             items: [
               about,
               "-",
-              settings,
+              ...settings,
               "-",
               { predefined: "services" },
               "-",

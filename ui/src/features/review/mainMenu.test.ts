@@ -101,7 +101,7 @@ void test("no two commands share a key on either platform, nor does a native acc
 });
 
 void test("Windows and macOS menus list the same commands in the same places apart from the app's own items", () => {
-  const appOnly = ["app.settings", "app.quit", "app.about"];
+  const appOnly = ["app.settings", "app.projectSettings", "app.quit", "app.about"];
   const flat = (items: MenuItem[]): string[] =>
     items.flatMap((i) =>
       i.predefined || i.separator || appOnly.includes(i.id) || ["app", "edit", "window"].includes(i.id)
