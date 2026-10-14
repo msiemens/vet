@@ -10,7 +10,7 @@ use std::time::Duration;
 use tokio::sync::Mutex;
 
 use crate::platform::{Credential, PlatformKind, parse_remote};
-use crate::ports::{FetchAuth, Fetcher, RefTip, RefUpdate, RemoteInfo};
+use crate::ports::{FetchAuth, Fetcher, GitError, RefTip, RefUpdate, RemoteInfo};
 use crate::progress::{TaskKind, Tasks};
 
 /// How often a project's remotes are fetched while it is open.
@@ -57,8 +57,8 @@ impl<G: Fetcher> Fetch<G> {
     }
 
     /// The refs whose names start with `prefix`, each with its commit.
-    pub async fn refs_below(&self, prefix: &str) -> Result<Vec<RefTip>, String> {
-        self.git.refs_below(prefix).await.map_err(|e| e.0)
+    pub async fn refs_below(&self, prefix: &str) -> Result<Vec<RefTip>, GitError> {
+        self.git.refs_below(prefix).await
     }
 
     /// Held while the pull requests of a listing are brought in: a second listing waits, and then
@@ -69,7 +69,7 @@ impl<G: Fetcher> Fetch<G> {
 
     /// Deletes those of the refs `names` that were not fetched since `since`, which must all be
     /// below `refs/vet/pr/`. Answers with the names it did not keep, there or not.
-    pub async fn delete_refs(&self, names: Vec<String>, since: FetchMark) -> Result<Vec<String>, String> {
+    pub async fn delete_refs(&self, names: Vec<String>, since: FetchMark) -> Result<Vec<String>, GitError> {
         let _only_one = self.running.lock().await;
         let doomed: Vec<String> = {
             let fetched = self.fetched();
@@ -81,7 +81,7 @@ impl<G: Fetcher> Fetch<G> {
         if doomed.is_empty() {
             return Ok(doomed);
         }
-        self.git.delete_refs(doomed.clone()).await.map_err(|e| e.0)?;
+        self.git.delete_refs(doomed.clone()).await?;
         let mut fetched = self.fetched();
         for name in &doomed {
             fetched.1.remove(name);
@@ -90,8 +90,8 @@ impl<G: Fetcher> Fetch<G> {
     }
 
     /// The remotes that have a fetch URL.
-    pub async fn remotes(&self) -> Result<Vec<RemoteInfo>, String> {
-        self.git.remotes().await.map_err(|e| e.0)
+    pub async fn remotes(&self) -> Result<Vec<RemoteInfo>, GitError> {
+        self.git.remotes().await
     }
 
     /// Fetches exactly `updates` from `remote`, as a task called `title`. The error is the
@@ -102,7 +102,7 @@ impl<G: Fetcher> Fetch<G> {
         remote: &RemoteInfo,
         updates: Vec<RefUpdate>,
         title: String,
-    ) -> Result<(), String> {
+    ) -> Result<(), GitError> {
         let _only_one = self.running.lock().await;
         {
             let mut fetched = self.fetched();
@@ -120,19 +120,19 @@ impl<G: Fetcher> Fetch<G> {
                 Ok(())
             }
             Err(e) => {
-                tracing::warn!(remote = %remote.name, error = %e.0, "fetching refs failed");
-                let message = format!("{}: {}", remote.name, e.0);
+                tracing::warn!(remote = %remote.name, error = %e, "fetching refs failed");
+                let message = format!("{}: {e}", remote.name);
                 task.fail(message.clone());
-                Err(message)
+                Err(GitError::Remote(message))
             }
         }
     }
 
     /// Fetches every remote, one after the other, as one task; a remote that fails does not
     /// stop the others, and what they brought counts. Fails only if the remotes cannot be read.
-    pub async fn run(&self, credentials: &(impl Credentials + Sync)) -> Result<Ran, String> {
+    pub async fn run(&self, credentials: &(impl Credentials + Sync)) -> Result<Ran, GitError> {
         let _only_one = self.running.lock().await;
-        let remotes = self.git.remotes().await.map_err(|e| e.0)?;
+        let remotes = self.git.remotes().await?;
         if remotes.is_empty() {
             return Ok(Ran {
                 fetched: 0,
@@ -146,8 +146,8 @@ impl<G: Fetcher> Fetch<G> {
             task.report(Some((done as u32, total)), Some(remote.name.clone()));
             let auth = authentication(credentials, remote).await;
             if let Err(e) = self.git.fetch(&remote.name, auth).await {
-                tracing::warn!(remote = %remote.name, error = %e.0, "fetch failed");
-                failures.push(format!("{}: {}", remote.name, e.0));
+                tracing::warn!(remote = %remote.name, error = %e, "fetch failed");
+                failures.push(format!("{}: {e}", remote.name));
             }
         }
         let fetched = remotes.len() - failures.len();
@@ -210,7 +210,6 @@ mod tests {
 
     use super::*;
     use crate::platform::{CredentialSource, Token};
-    use crate::ports::GitError;
     use crate::progress::{Task, TaskState};
 
     /// The remotes fetched so far, each with the token it was fetched with.
@@ -232,7 +231,7 @@ mod tests {
             let token = auth.map(|a| a.credential.token.expose().to_owned());
             self.fetched.lock().unwrap().push((remote.to_owned(), token));
             if self.failing.contains(&remote) {
-                return Err(GitError("connection refused".into()));
+                return Err(GitError::Remote("connection refused".into()));
             }
             Ok(1)
         }
@@ -250,7 +249,7 @@ mod tests {
                 .unwrap()
                 .push((format!("{remote} {}", wanted.join(" ")), token));
             if self.failing.contains(&remote) {
-                return Err(GitError("connection refused".into()));
+                return Err(GitError::Remote("connection refused".into()));
             }
             Ok(())
         }
@@ -373,7 +372,7 @@ mod tests {
             .await;
 
         assert_eq!(done, Ok(()));
-        assert_eq!(refused, Err("origin: connection refused".into()));
+        assert_eq!(refused, Err(GitError::Remote("origin: connection refused".into())));
         assert_eq!(
             *fetched.lock().unwrap(),
             [

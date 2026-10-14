@@ -8,7 +8,7 @@ use std::process::Command;
 
 use tempfile::TempDir;
 use vet_app::changeset::CommitId;
-use vet_app::ports::History;
+use vet_app::ports::{GitError, History};
 use vet_infra::git::GixRepo;
 
 fn git(dir: &Path, args: &[&str]) -> String {
@@ -130,8 +130,8 @@ async fn unresolvable_bases_have_user_facing_errors() {
     let p = fx.dir.path();
     let repo = GixRepo::new(p);
     assert_eq!(
-        repo.merge_base("nope", &fx.f2).await.unwrap_err().0,
-        "unknown branch or revision nope"
+        repo.merge_base("nope", &fx.f2).await.unwrap_err(),
+        GitError::UnknownRevision("unknown branch or revision nope".into())
     );
     assert_eq!(repo.resolve_commit("0123abc").await.unwrap(), None);
     assert_eq!(repo.resolve_commit("HEAD^{tree}").await.unwrap(), None);
@@ -139,7 +139,7 @@ async fn unresolvable_bases_have_user_facing_errors() {
     git(p, &["checkout", "-q", "--orphan", "unrelated"]);
     let z = commit(p, "z.txt", "z");
     assert_eq!(
-        repo.merge_base("main", &z).await.unwrap_err().0,
+        repo.merge_base("main", &z).await.unwrap_err().message(),
         "no common ancestor with main"
     );
 }

@@ -7,7 +7,7 @@ use crate::platform::{
     Platform, PlatformError, PlatformKind, PullRequest, PullRequestHead, PullRequestQuery, PullRequestRow, QueueTab,
     RemoteKey, list_rows, parse_remote, rows,
 };
-use crate::ports::{Fetcher, RefUpdate, RemoteInfo};
+use crate::ports::{Fetcher, GitError, RefUpdate, RemoteInfo};
 
 /// The refs of the repository that hold a pull request, kept apart from every branch and
 /// remote-tracking ref of the user's.
@@ -266,15 +266,16 @@ pub enum FetchError {
     Platform(PlatformError),
     /// None of the repository's remotes is the pull request's repository. Fit to show.
     NoRemote(String),
-    /// Git could not fetch it. Fit to show.
-    Git(String),
+    /// Git could not fetch it.
+    Git(GitError),
 }
 
 impl std::fmt::Display for FetchError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::Platform(e) => e.fmt(f),
-            Self::NoRemote(message) | Self::Git(message) => f.write_str(message),
+            Self::NoRemote(message) => f.write_str(message),
+            Self::Git(e) => e.fmt(f),
         }
     }
 }
@@ -314,7 +315,7 @@ pub async fn fetch_pull_request<P: Platform, G: Fetcher>(
 pub async fn unlisted_fetched<G: Fetcher>(
     fetch: &Fetch<G>,
     list: &PullRequestList,
-) -> Result<Vec<(RemoteKey, u64)>, String> {
+) -> Result<Vec<(RemoteKey, u64)>, GitError> {
     let mut found = Vec::new();
     for source in list.sources.iter().filter(|s| s.listed_whole()) {
         let remote = &source.remote;
@@ -346,7 +347,7 @@ pub async fn delete_pull_request_refs<G: Fetcher>(
     fetch: &Fetch<G>,
     pull_requests: &[(RemoteKey, u64)],
     since: FetchMark,
-) -> Result<Vec<String>, String> {
+) -> Result<Vec<String>, GitError> {
     let names = pull_requests
         .iter()
         .flat_map(|(remote, number)| {
@@ -374,7 +375,7 @@ pub async fn fetch_listed_heads<G: Fetcher>(
     fetch: &Fetch<G>,
     credentials: &(impl Credentials + Sync),
     list: &PullRequestList,
-) -> Result<bool, String> {
+) -> Result<bool, GitError> {
     let _one_listing = fetch.listed_heads().await;
     let remotes = fetch.remotes().await?;
     let newest: Vec<&ListedPullRequest> = list.rows.iter().take(LISTED_FETCHED).collect();
@@ -656,7 +657,7 @@ mod tests {
         ) -> Result<(), GitError> {
             self.fetched.lock().unwrap().push((remote.to_owned(), updates.clone()));
             if let Some(lacking) = updates.iter().find(|u| self.gone.contains(&u.source)) {
-                return Err(GitError(format!("{} is not on the remote", lacking.source)));
+                return Err(GitError::Remote(format!("{} is not on the remote", lacking.source)));
             }
             // The transfer takes a moment, in which another call may look at the refs.
             tokio::task::yield_now().await;

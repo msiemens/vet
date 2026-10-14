@@ -52,15 +52,16 @@ impl Error {
             Self::Session(e) => match e {
                 SessionError::Stale { .. } => ErrorKind::Outdated,
                 SessionError::NotFound(_) => ErrorKind::NotFound,
-                SessionError::NotText(_) | SessionError::Base(_) | SessionError::Invalid(_) => ErrorKind::Invalid,
-                SessionError::Git(_) | SessionError::Store(_) => ErrorKind::Internal,
+                SessionError::NotText(_) | SessionError::Invalid(_) => ErrorKind::Invalid,
+                SessionError::Git(e) => git_kind(e),
+                SessionError::Store(_) => ErrorKind::Internal,
                 SessionError::Platform(e) => platform_kind(e),
             },
             Self::Platform(e) => platform_kind(e),
             Self::Fetch(e) => match e {
                 FetchError::Platform(e) => platform_kind(e),
                 FetchError::NoRemote(_) => ErrorKind::NotFound,
-                FetchError::Git(_) => ErrorKind::Internal,
+                FetchError::Git(e) => git_kind(e),
             },
             Self::Servers(e) => match e {
                 ServersError::UnknownLanguage(_) => ErrorKind::NotFound,
@@ -72,12 +73,22 @@ impl Error {
                 AccountError::Rejected(_) => ErrorKind::Platform,
                 AccountError::Unreachable(_) => ErrorKind::Unavailable,
             },
-            Self::Store(_) | Self::Git(_) | Self::Internal(_) => ErrorKind::Internal,
+            Self::Git(e) => git_kind(e),
+            Self::Store(_) | Self::Internal(_) => ErrorKind::Internal,
             Self::NoSuchProject(_) => ErrorKind::NotFound,
             Self::Invalid(_) => ErrorKind::Invalid,
             Self::Unavailable(_) => ErrorKind::Unavailable,
             Self::Context { source, .. } => source.kind(),
         }
+    }
+}
+
+fn git_kind(error: &GitError) -> ErrorKind {
+    match error {
+        GitError::UnknownRevision(_) => ErrorKind::NotFound,
+        GitError::Unrelated(_) => ErrorKind::Invalid,
+        GitError::Remote(_) => ErrorKind::Unavailable,
+        GitError::Failed(_) => ErrorKind::Internal,
     }
 }
 

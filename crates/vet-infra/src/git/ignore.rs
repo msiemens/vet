@@ -19,7 +19,7 @@ pub(crate) fn unignored(repo: &gix::Repository, paths: Vec<RepoPath>) -> Result<
         .map_err(err)?;
     let root = repo
         .workdir()
-        .ok_or_else(|| GitError("bare repository".into()))?
+        .ok_or_else(|| GitError::failed("bare repository"))?
         .to_owned();
     let mut kept = Vec::new();
     for path in paths {

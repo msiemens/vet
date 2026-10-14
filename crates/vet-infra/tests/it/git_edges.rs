@@ -146,6 +146,18 @@ async fn a_branch_is_found_local_or_remote_tracking_and_otherwise_named_in_the_e
 }
 
 #[tokio::test]
+async fn a_branch_whose_commit_cannot_be_read_is_a_git_failure_not_a_missing_branch() {
+    let dir = repo();
+    let p = dir.path();
+    commit(p, "a.txt", "m1");
+    std::fs::write(p.join(".git/refs/heads/broken"), format!("{}\n", "ab".repeat(20))).unwrap();
+    let repo = GixRepo::new(p);
+
+    assert!(repo.branch_tip("broken").await.is_err());
+    assert_eq!(repo.branch_tip("nope").await.unwrap(), None);
+}
+
+#[tokio::test]
 async fn remote_branches_are_listed_unless_a_local_branch_follows_them_at_the_same_commit() {
     let dir = repo();
     let p = dir.path();

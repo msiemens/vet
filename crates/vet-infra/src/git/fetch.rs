@@ -90,8 +90,8 @@ fn headless(mut repo: gix::Repository) -> Result<gix::Repository, GitError> {
 /// "not accepted"; Vet passes none to ssh, so the message says what ssh itself said and what to do.
 fn fetch_err(remote: &str, url: Option<&gix::Url>, error: &(dyn std::error::Error + 'static)) -> GitError {
     match url.and_then(|url| ssh_denied(url, error)) {
-        Some(message) => GitError(format!("{remote}: {message}")),
-        None => err(error),
+        Some(message) => GitError::Remote(format!("{remote}: {message}")),
+        None => GitError::Remote(err(error).to_string()),
     }
 }
 
@@ -146,7 +146,7 @@ pub(super) fn fetch_refs(
     auth: Option<FetchAuth>,
 ) -> Result<(), GitError> {
     if let Some(outside) = updates.iter().find(|u| !u.destination.starts_with("refs/vet/")) {
-        return Err(GitError(format!(
+        return Err(GitError::failed(format!(
             "{} is not below refs/vet/, where fetched refs are kept",
             outside.destination
         )));
@@ -176,7 +176,7 @@ pub(super) fn refs_below(repo: &gix::Repository, prefix: &str) -> Result<Vec<Ref
 /// Deletes the refs `names` that exist, all or none if one is outside [`DELETABLE`].
 pub(super) fn delete_refs(repo: &gix::Repository, names: &[String]) -> Result<(), GitError> {
     if let Some(outside) = names.iter().find(|n| !n.starts_with(DELETABLE) || n.contains("..")) {
-        return Err(GitError(format!(
+        return Err(GitError::failed(format!(
             "{outside} is not below {DELETABLE}, so Vet does not delete it"
         )));
     }
@@ -218,14 +218,16 @@ fn run(repo: gix::Repository, name: &str, auth: Option<FetchAuth>, specs: Specs)
             .collect(),
     };
     if specs.is_empty() {
-        return Err(GitError(format!(
+        return Err(GitError::failed(format!(
             "{name} has no refspec that fetches into refs/remotes"
         )));
     }
     remote.replace_refspecs(specs, Direction::Fetch).map_err(err)?;
 
     let url = remote.url(Direction::Fetch).cloned();
-    let connection = remote.connect(Direction::Fetch).map_err(err)?;
+    let connection = remote
+        .connect(Direction::Fetch)
+        .map_err(|e| fetch_err(name, url.as_ref(), &e))?;
     let mut configured = connection.configured_credentials_for_current_url();
     let mut offered = false;
     let connection = connection.with_credentials(move |action| {

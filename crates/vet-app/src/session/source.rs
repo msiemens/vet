@@ -171,10 +171,7 @@ impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> L
         let tip = tip_of(git, &st.source).await?;
         // A merge base follows the history; a base on a commit stays where it is.
         let base_commit = match &st.base_choice {
-            BaseChoice::MergeBase { .. } => {
-                let resolved = base::resolve(git, st.base_choice.clone(), &tip).await;
-                resolved.map_err(SessionError::Base)?.1
-            }
+            BaseChoice::MergeBase { .. } => base::resolve(git, st.base_choice.clone(), &tip).await?.1,
             _ => st.base_commit.clone(),
         };
         if tip == st.head && base_commit == st.base_commit {
@@ -242,8 +239,7 @@ impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> L
                 base::for_pull_request(git, &PullRequestRefs::of(remote, *number), &tip).await
             }
             _ => base::for_branch(git, &tip).await,
-        }
-        .map_err(SessionError::Base)?;
+        }?;
         let base = Arc::new(git.commit_snapshot(&base_commit).await?);
         let target = Arc::new(git.commit_snapshot(&tip).await?);
         acquisition.record_commit(base.id, base_commit.clone());

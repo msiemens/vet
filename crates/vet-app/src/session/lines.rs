@@ -11,7 +11,7 @@ use super::source::tip_of;
 use crate::acquisition::Acquisition;
 use crate::base;
 use crate::changeset::{CommitId, Source};
-use crate::ports::{GitRepo, LiveStore};
+use crate::ports::{GitError, GitRepo, LiveStore};
 use crate::pull_request::PullRequestRefs;
 
 /// The lines between two commits. The key names both, and what git has of a commit never changes,
@@ -25,7 +25,7 @@ pub(super) struct LinesBetween {
 impl Kind for LinesBetween {
     type Value = LineDelta;
     /// Fit to show.
-    type Error = String;
+    type Error = GitError;
 
     fn retention(&self) -> Retention {
         Retention::Kept
@@ -93,10 +93,10 @@ async fn lines_between<G: GitRepo, S: LiveStore + Sync>(
     acquisition: &Acquisition<G, S>,
     base: &CommitId,
     tip: &CommitId,
-) -> Result<LineDelta, String> {
+) -> Result<LineDelta, GitError> {
     let git = &acquisition.git;
-    let old = git.commit_snapshot(base).await.map_err(|e| e.0)?;
-    let new = git.commit_snapshot(tip).await.map_err(|e| e.0)?;
-    let diff = git.diff(&acquisition.store, &old, &new).await.map_err(|e| e.0)?.diff;
+    let old = git.commit_snapshot(base).await?;
+    let new = git.commit_snapshot(tip).await?;
+    let diff = git.diff(&acquisition.store, &old, &new).await?.diff;
     Ok(diff.files.iter().map(|file| LineDelta::of(&file.hunks)).sum())
 }

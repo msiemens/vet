@@ -75,7 +75,7 @@ impl<'r> Worktree<'r> {
             stat: repo.stat_options().map_err(err)?,
             root: repo
                 .workdir()
-                .ok_or_else(|| GitError("bare repository".into()))?
+                .ok_or_else(|| GitError::failed("bare repository"))?
                 .to_owned(),
             cap,
             stats,

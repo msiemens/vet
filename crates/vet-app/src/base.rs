@@ -3,7 +3,7 @@
 //! the repository's default branch, a pull request's where its head left the fetched target.
 
 use crate::changeset::{BaseChoice, CommitId};
-use crate::ports::History;
+use crate::ports::{GitError, History};
 use crate::pull_request::PullRequestRefs;
 
 /// What the working tree is compared against: `pinned`, the `HEAD` it was opened at, wherever
@@ -14,8 +14,8 @@ pub fn for_working_tree(pinned: &CommitId) -> (BaseChoice, CommitId) {
 
 /// What a branch is compared against: where it left the repository's default branch, or `tip`
 /// itself (an empty changeset) when there is no such branch.
-pub async fn for_branch<G: History>(git: &G, tip: &CommitId) -> Result<(BaseChoice, CommitId), String> {
-    match git.default_reference().await.map_err(|e| e.0)? {
+pub async fn for_branch<G: History>(git: &G, tip: &CommitId) -> Result<(BaseChoice, CommitId), GitError> {
+    match git.default_reference().await? {
         Some(reference) => resolve(git, BaseChoice::MergeBase { reference }, tip).await,
         None => Ok((BaseChoice::Commit { id: tip.clone() }, tip.clone())),
     }
@@ -27,7 +27,7 @@ pub async fn for_pull_request<G: History>(
     git: &G,
     refs: &PullRequestRefs,
     tip: &CommitId,
-) -> Result<(BaseChoice, CommitId), String> {
+) -> Result<(BaseChoice, CommitId), GitError> {
     resolve(
         git,
         BaseChoice::MergeBase {
@@ -44,15 +44,17 @@ pub async fn resolve<G: History>(
     git: &G,
     choice: BaseChoice,
     tip: &CommitId,
-) -> Result<(BaseChoice, CommitId), String> {
+) -> Result<(BaseChoice, CommitId), GitError> {
     match choice {
         BaseChoice::MergeBase { reference } => {
-            let commit = git.merge_base(&reference, tip).await.map_err(|e| e.0)?;
+            let commit = git.merge_base(&reference, tip).await?;
             Ok((BaseChoice::MergeBase { reference }, commit))
         }
         BaseChoice::Commit { id } => {
-            let commit = (git.resolve_commit(&id.0).await.map_err(|e| e.0)?)
-                .ok_or_else(|| format!("unknown commit {}", id.0))?;
+            let commit = git
+                .resolve_commit(&id.0)
+                .await?
+                .ok_or_else(|| GitError::UnknownRevision(format!("unknown commit {}", id.0)))?;
             Ok((BaseChoice::Commit { id: commit.clone() }, commit))
         }
     }
@@ -102,13 +104,13 @@ pub struct Merging {
 /// The commit that brought `tip` into the first-parent history of `into`: the oldest commit of it
 /// that has `tip` among its ancestors. `None` when `into` merely advanced past `tip` (the commit
 /// after `tip` is its child, a fast-forward) or when `into` does not contain `tip`.
-pub async fn merging_commit<G: History>(git: &G, tip: &CommitId, into: &CommitId) -> Result<Option<Merging>, String> {
+pub async fn merging_commit<G: History>(git: &G, tip: &CommitId, into: &CommitId) -> Result<Option<Merging>, GitError> {
     // Along the history, `tip` is reachable from a commit exactly when it is not older than the merge.
-    let history = git.first_parent_range(tip, into).await.map_err(|e| e.0)?;
+    let history = git.first_parent_range(tip, into).await?;
     let (mut low, mut high) = (0, history.len());
     while low < high {
         let mid = (low + high) / 2;
-        let reaches = git.commits_behind(tip, &history[mid], 1).await.map_err(|e| e.0)? == 0;
+        let reaches = git.commits_behind(tip, &history[mid], 1).await? == 0;
         if reaches {
             high = mid;
         } else {
@@ -118,7 +120,7 @@ pub async fn merging_commit<G: History>(git: &G, tip: &CommitId, into: &CommitId
     let Some(merge) = history.get(low) else {
         return Ok(None);
     };
-    let detail = git.commit_detail(merge).await.map_err(|e| e.0)?;
+    let detail = git.commit_detail(merge).await?;
     Ok((detail.parents.first() != Some(tip)).then(|| Merging {
         commit: merge.clone(),
         before: detail.parents.first().cloned(),

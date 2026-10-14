@@ -8,7 +8,7 @@ use std::process::Command;
 
 use tempfile::TempDir;
 use vet_app::changeset::{ChangesetId, CommitId};
-use vet_app::ports::{ChangesetRefs, Fetcher, History, RefUpdate};
+use vet_app::ports::{ChangesetRefs, Fetcher, GitError, History, RefUpdate};
 use vet_infra::git::GixRepo;
 
 fn git(dir: &Path, args: &[&str]) -> String {
@@ -182,7 +182,7 @@ async fn a_refspec_that_would_write_a_local_branch_is_refused() {
 
     let error = repo.fetch("origin", None).await.unwrap_err();
 
-    assert_eq!(error.0, "origin has no refspec that fetches into refs/remotes");
+    assert_eq!(error.message(), "origin has no refspec that fetches into refs/remotes");
     assert_eq!(fx.outside_remotes(), before);
 }
 
@@ -304,10 +304,10 @@ async fn refs_outside_vets_namespace_are_refused_and_so_is_a_ref_the_remote_lack
         .unwrap_err();
 
     assert_eq!(
-        local_branch.0,
+        local_branch.message(),
         "refs/heads/pr-7 is not below refs/vet/, where fetched refs are kept"
     );
-    assert!(missing.0.contains("refs/pull/8/head"), "{}", missing.0);
+    assert!(missing.message().contains("refs/pull/8/head"), "{missing}");
     assert_eq!(fx.rev("refs/vet/pr/8/head"), None);
     assert_eq!(fx.outside_remotes(), before);
 }
@@ -350,7 +350,10 @@ async fn the_refs_of_fetched_pull_requests_are_listed_and_deleted_and_no_other_r
         .delete_refs(vec![app[0].clone(), "refs/vet/changesets/1/1/target".to_owned()])
         .await
         .unwrap_err();
-    assert!(outside.0.contains("refs/vet/changesets/1/1/target"), "{}", outside.0);
+    assert!(
+        outside.message().contains("refs/vet/changesets/1/1/target"),
+        "{outside}"
+    );
     let escaping = repo
         .delete_refs(vec!["refs/vet/pr/../changesets/1/1/target".to_owned()])
         .await;
@@ -404,10 +407,10 @@ async fn a_remote_that_cannot_be_reached_fails_with_a_message_and_changes_nothin
     let error = repo.fetch("origin", None).await.unwrap_err();
 
     assert!(
-        error.0.contains("origin.git"),
-        "names what could not be reached: {}",
-        error.0
+        error.message().contains("origin.git"),
+        "names what could not be reached: {error}"
     );
+    assert!(matches!(error, GitError::Remote(_)), "{error:?}");
     assert_eq!(fx.remote_ref("main"), old_main);
     assert_eq!(fx.outside_remotes(), before);
     assert!(repo.branches().await.is_ok(), "the repository still works");
@@ -442,8 +445,8 @@ async fn an_ssh_remote_that_refuses_the_key_says_so_in_every_kind_of_fetch() {
         .await
         .unwrap_err();
 
-    assert_eq!(configured.0, expected);
-    assert_eq!(refs.0, expected);
+    assert_eq!(configured, GitError::Remote(expected.into()));
+    assert_eq!(refs, GitError::Remote(expected.into()));
 }
 
 impl Fixture {

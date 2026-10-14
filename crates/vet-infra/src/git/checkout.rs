@@ -61,7 +61,7 @@ fn checked(path: &RepoPath) -> Result<&Path, GitError> {
         .split(|b| *b == b'/')
         .any(|part| part.is_empty() || part == b"." || part == b".." || part.eq_ignore_ascii_case(b".git"));
     if bad {
-        return Err(GitError(format!(
+        return Err(GitError::failed(format!(
             "refusing to write unsafe path {:?}",
             path.to_string_lossy()
         )));

@@ -82,12 +82,34 @@ pub struct Scan {
     pub status: SnapshotStatus,
 }
 
-#[derive(Clone, Debug)]
-pub struct GitError(pub String);
+/// Why a git operation failed; the message says what.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum GitError {
+    /// A branch, commit or ref the repository does not have.
+    UnknownRevision(String),
+    /// Two commits that have no history in common, where one is wanted.
+    Unrelated(String),
+    /// The remote could not be reached or refused the fetch.
+    Remote(String),
+    /// Git failed or the repository cannot be used.
+    Failed(String),
+}
+
+impl GitError {
+    pub fn failed(message: impl Into<String>) -> Self {
+        Self::Failed(message.into())
+    }
+
+    pub fn message(&self) -> &str {
+        match self {
+            Self::UnknownRevision(m) | Self::Unrelated(m) | Self::Remote(m) | Self::Failed(m) => m,
+        }
+    }
+}
 
 impl std::fmt::Display for GitError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str(&self.0)
+        f.write_str(self.message())
     }
 }
 

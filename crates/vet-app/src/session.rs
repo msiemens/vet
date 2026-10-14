@@ -129,8 +129,6 @@ pub enum SessionError {
     NotFound(String),
     /// The content cannot be shown or marked as text.
     NotText(String),
-    /// The chosen base does not resolve; the message is fit to show.
-    Base(String),
     /// The request does not apply to the thread or the text; the message is fit to show.
     Invalid(String),
     /// The platform could not do what the request needed of it.
@@ -141,12 +139,14 @@ impl fmt::Display for SessionError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Platform(e) => e.fmt(f),
-            Self::Git(e) => write!(f, "git: {}", e.0),
+            // A revision that is not there, or has no history in common, is said as it is: it is fit to show.
+            Self::Git(GitError::UnknownRevision(message) | GitError::Unrelated(message)) => f.write_str(message),
+            Self::Git(e) => write!(f, "git: {e}"),
             Self::Store(e) => write!(f, "store: {}", e.0),
             Self::Stale { current } => write!(f, "stale revision; the changeset is at revision {current}"),
             Self::NotFound(what) => write!(f, "no such {what}"),
             Self::NotText(path) => write!(f, "{path} has no text to show"),
-            Self::Base(message) | Self::Invalid(message) => f.write_str(message),
+            Self::Invalid(message) => f.write_str(message),
         }
     }
 }
@@ -634,7 +634,7 @@ impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> L
         self.revisions.advance(st.revision);
         // Refs left behind by a failure here are taken again with the next review's first version.
         if let Err(e) = self.acquisition.git.delete_changeset_refs(changeset).await {
-            tracing::warn!(error = %e.0, "could not release the refs of the finished review");
+            tracing::warn!(error = %e, "could not release the refs of the finished review");
         }
         Ok(complete)
     }
@@ -678,7 +678,7 @@ impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> L
         let default = git
             .default_branch()
             .await
-            .map_err(|e| tracing::warn!(error = %e.0, "the default branch is not found"))
+            .map_err(|e| tracing::warn!(error = %e, "the default branch is not found"))
             .ok()
             .flatten();
         let target = match &st.source {
@@ -694,7 +694,7 @@ impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> L
         let reference_tip = git
             .resolve_commit(reference)
             .await
-            .map_err(|e| tracing::warn!(error = %e.0, reference, "the branch holding the changeset cannot be read"))
+            .map_err(|e| tracing::warn!(error = %e, reference, "the branch holding the changeset cannot be read"))
             .ok()
             .flatten();
         let same_tip = reference_tip.as_ref() == Some(&st.head);
@@ -740,7 +740,7 @@ impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> L
                     .map(|info| (info, commits, since))
             }
             Err(e) => {
-                tracing::warn!(error = e, "the commit that merged the changeset is not found");
+                tracing::warn!(error = %e, "the commit that merged the changeset is not found");
                 return None;
             }
         };
@@ -1057,7 +1057,7 @@ impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> L
                     continue;
                 }
                 Err(e) => {
-                    tracing::warn!(error = %e.0, "reconciliation failed");
+                    tracing::warn!(error = %e, "reconciliation failed");
                     continue;
                 }
             };

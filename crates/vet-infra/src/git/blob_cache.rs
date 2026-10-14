@@ -46,7 +46,7 @@ impl BlobCache {
         repo.objects
             .try_find(&oid, &mut buf)
             .map_err(err)?
-            .ok_or_else(|| GitError(format!("missing object {oid}")))?;
+            .ok_or_else(|| GitError::failed(format!("missing object {oid}")))?;
         let id = BlobId::of(&buf);
         let mut ids = self.ids.lock().expect("not poisoned");
         ids.by_oid.insert(oid, id);

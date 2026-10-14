@@ -7,28 +7,36 @@ use vet_app::ports::{BranchInfo, CommitInfo, GitError};
 
 use super::{err, object_id};
 
-fn commit_of<'r>(repo: &'r gix::Repository, spec: &str) -> Option<gix::Commit<'r>> {
-    let id = repo.rev_parse_single(spec).ok()?;
-    id.object().ok()?.peel_to_commit().ok()
+/// The commit `spec` names, or none when it names nothing or something that is not a commit. A
+/// spec git cannot resolve is none (gix does not tell it from a failure to read the refs); an
+/// object that cannot be read or peeled is an error.
+fn commit_of<'r>(repo: &'r gix::Repository, spec: &str) -> Result<Option<gix::Commit<'r>>, GitError> {
+    let Ok(id) = repo.rev_parse_single(spec) else {
+        return Ok(None);
+    };
+    let object = id.object().map_err(err)?.peel_tags_to_end().map_err(err)?;
+    Ok((object.kind == gix::object::Kind::Commit).then(|| object.into_commit()))
 }
 
-pub(super) fn resolve_commit(repo: &gix::Repository, spec: &str) -> Option<CommitId> {
-    commit_of(repo, spec).map(|c| CommitId(c.id.to_string()))
+pub(super) fn resolve_commit(repo: &gix::Repository, spec: &str) -> Result<Option<CommitId>, GitError> {
+    Ok(commit_of(repo, spec)?.map(|c| CommitId(c.id.to_string())))
 }
 
 /// The tip of the local branch `name`, else of the remote-tracking branch of that name
 /// (`origin/feature`).
-pub(super) fn branch_tip(repo: &gix::Repository, name: &str) -> Option<CommitId> {
-    resolve_commit(repo, &format!("refs/heads/{name}"))
-        .or_else(|| resolve_commit(repo, &format!("refs/remotes/{name}")))
+pub(super) fn branch_tip(repo: &gix::Repository, name: &str) -> Result<Option<CommitId>, GitError> {
+    match resolve_commit(repo, &format!("refs/heads/{name}"))? {
+        Some(tip) => Ok(Some(tip)),
+        None => resolve_commit(repo, &format!("refs/remotes/{name}")),
+    }
 }
 
 pub(super) fn merge_base(repo: &gix::Repository, reference: &str, tip: &CommitId) -> Result<CommitId, GitError> {
-    let other =
-        commit_of(repo, reference).ok_or_else(|| GitError(format!("unknown branch or revision {reference}")))?;
+    let other = commit_of(repo, reference)?
+        .ok_or_else(|| GitError::UnknownRevision(format!("unknown branch or revision {reference}")))?;
     let base = repo
         .merge_base(other.id, object_id(tip)?)
-        .map_err(|_| GitError(format!("no common ancestor with {reference}")))?;
+        .map_err(|_| GitError::Unrelated(format!("no common ancestor with {reference}")))?;
     Ok(CommitId(base.to_string()))
 }
 

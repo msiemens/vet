@@ -71,7 +71,7 @@ pub async fn list_files(io: &Budget, root: &Path) -> Result<Vec<PathBuf>, String
             .budgeted(io.clone())
             .list_files()
             .await
-            .map_err(|e| e.0)?;
+            .map_err(|e| e.to_string())?;
         return Ok(files
             .iter()
             .filter_map(|f| paths::to_path(&f.0).ok())
@@ -263,7 +263,7 @@ impl Checkout for GixRepo {
             let stored = if entry.kind == EntryKind::Submodule {
                 None
             } else {
-                store.blob(entry.blob).await.map_err(|e| GitError(e.0))?
+                store.blob(entry.blob).await.map_err(|e| GitError::failed(e.0))?
             };
             bytes += stored.as_ref().map_or(0, Vec::len);
             batch.push((path.clone(), entry.clone(), stored));
@@ -366,13 +366,12 @@ impl History for GixRepo {
 
     async fn resolve_commit(&self, spec: &str) -> Result<Option<CommitId>, GitError> {
         let spec = spec.to_owned();
-        self.blocking(move |i| Ok(base::resolve_commit(&i.open()?, &spec)))
-            .await
+        self.blocking(move |i| base::resolve_commit(&i.open()?, &spec)).await
     }
 
     async fn branch_tip(&self, name: &str) -> Result<Option<CommitId>, GitError> {
         let name = name.to_owned();
-        self.blocking(move |i| Ok(base::branch_tip(&i.open()?, &name))).await
+        self.blocking(move |i| base::branch_tip(&i.open()?, &name)).await
     }
 
     async fn branches(&self) -> Result<Vec<BranchInfo>, GitError> {
@@ -475,7 +474,7 @@ impl Attributes for GixRepo {
         let mut stored = store
             .blobs(files.iter().map(|(_, blob)| *blob).collect())
             .await
-            .map_err(|e| GitError(e.0))?;
+            .map_err(|e| GitError::failed(e.0))?;
         let mut contents = Vec::new();
         for (path, blob) in files {
             let bytes = match stored.remove(&blob) {
@@ -494,7 +493,7 @@ impl Differ for GixRepo {
             .into_iter()
             .map(|(_, blob)| blob)
             .collect();
-        let stored = store.blobs(wanted).await.map_err(|e| GitError(e.0))?;
+        let stored = store.blobs(wanted).await.map_err(|e| GitError::failed(e.0))?;
         let (old, new) = (old.clone(), new.clone());
         self.blocking(move |i| i.diff(stored, &old, &new)).await
     }
@@ -512,7 +511,7 @@ fn changeset_ref_prefix(changeset: ChangesetId) -> String {
 
 /// A git error as a message that is fit to log: it may quote a remote's URL, whose credentials it hides.
 fn err(e: impl Display) -> GitError {
-    GitError(vet_log::redact_urls(&e.to_string()).into_owned())
+    GitError::failed(vet_log::redact_urls(&e.to_string()).into_owned())
 }
 
 fn object_id(commit: &CommitId) -> Result<gix::ObjectId, GitError> {

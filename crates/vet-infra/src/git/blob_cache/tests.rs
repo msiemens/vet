@@ -44,7 +44,7 @@ fn an_object_the_database_lacks_is_an_error_that_names_it() {
 
     let error = BlobCache::default().blob_id(&repo, missing).unwrap_err();
 
-    assert_eq!(error.0, format!("missing object {missing}"));
+    assert_eq!(error.message(), format!("missing object {missing}"));
 }
 
 #[test]

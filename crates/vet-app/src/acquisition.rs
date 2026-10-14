@@ -70,7 +70,7 @@ pub enum BlobError {
 impl fmt::Display for BlobError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::Git(e) => write!(f, "git: {}", e.0),
+            Self::Git(e) => write!(f, "git: {e}"),
             Self::Store(e) => write!(f, "store: {}", e.0),
         }
     }
@@ -146,7 +146,8 @@ impl<G: BlobReader, S: Store> Acquisition<G, S> {
             }
             wanted.entry(entry.blob).or_insert(path);
         }
-        let changed = |path: &RepoPath| GitError(format!("{} changed while being copied", path.to_string_lossy()));
+        let changed =
+            |path: &RepoPath| GitError::failed(format!("{} changed while being copied", path.to_string_lossy()));
         let put = async |batch: Vec<(BlobId, Vec<u8>)>| -> Result<(), BlobError> {
             let (ids, contents): (Vec<BlobId>, Vec<Vec<u8>>) = batch.into_iter().unzip();
             let put = self.store.put_blobs(contents).await?;
@@ -201,7 +202,7 @@ impl<G: History, S: Store> Acquisition<G, S> {
             return Ok((commit, snapshot, status));
         }
         // A commit's own tree is not necessarily in the store.
-        let snapshot = self.git.commit_snapshot(&commit).await.map_err(|e| e.0)?;
+        let snapshot = self.git.commit_snapshot(&commit).await.map_err(|e| e.to_string())?;
         if snapshot.id != id {
             return Err("the snapshot is not in the store".into());
         }

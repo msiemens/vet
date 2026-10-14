@@ -293,7 +293,7 @@ impl Checkout for FakeGit {
 impl BlobReader for FakeGit {
     async fn read_blob(&self, _: &RepoPath, blob: BlobId) -> std::result::Result<Option<Vec<u8>>, GitError> {
         if self.reads_fail.load(Ordering::Relaxed) {
-            return Err(GitError("the object cannot be read".into()));
+            return Err(GitError::failed("the object cannot be read"));
         }
         self.reads.lock().unwrap().push(blob);
         drop(self.paused.lock().await);
@@ -326,8 +326,8 @@ impl BlobReader for FakeGit {
             .spawn(move || {
                 let _ = done.send(job.run(&mut blobs));
             })
-            .map_err(|e| GitError(e.to_string()))?;
-        result.await.map_err(|e| GitError(e.to_string()))
+            .map_err(|e| GitError::failed(e.to_string()))?;
+        result.await.map_err(|e| GitError::failed(e.to_string()))
     }
 }
 
@@ -356,7 +356,7 @@ impl History for FakeGit {
         .iter()
         .find_map(|key| commits.get(key))
         .map(|(c, _)| c.clone())
-        .ok_or_else(|| GitError(format!("no common ancestor with {reference}")))
+        .ok_or_else(|| GitError::Unrelated(format!("no common ancestor with {reference}")))
     }
     async fn default_reference(&self) -> std::result::Result<Option<String>, GitError> {
         Ok(self.default_reference.lock().unwrap().clone())
@@ -380,7 +380,7 @@ impl History for FakeGit {
     }
     async fn branch_tip(&self, name: &str) -> std::result::Result<Option<CommitId>, GitError> {
         if self.tips_fail.load(Ordering::Relaxed) {
-            return Err(GitError("the repository cannot be opened".into()));
+            return Err(GitError::failed("the repository cannot be opened"));
         }
         self.resolve_commit(&format!("refs/heads/{name}")).await
     }
@@ -446,7 +446,7 @@ impl ChangesetRefs for FakeGit {
     }
     async fn delete_changeset_refs(&self, _: ChangesetId) -> std::result::Result<(), GitError> {
         if self.refs_stuck.load(Ordering::Relaxed) {
-            return Err(GitError("the refs cannot be deleted".into()));
+            return Err(GitError::failed("the refs cannot be deleted"));
         }
         self.refs.lock().unwrap().clear();
         Ok(())
@@ -478,7 +478,7 @@ impl Differ for FakeGit {
             .into_iter()
             .map(|(_, blob)| blob)
             .collect();
-        blobs.extend(store.blobs(wanted).await.map_err(|e| GitError(e.0))?);
+        blobs.extend(store.blobs(wanted).await.map_err(|e| GitError::failed(e.0))?);
         let mut out = SnapshotDiff::default();
         out.renames.0.extend(self.renames.lock().unwrap().iter().cloned());
         for change in changes(old, new) {

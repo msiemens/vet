@@ -46,7 +46,7 @@ impl<G: History + Checkout + Send + Sync, S: Store + Send + Sync> Materialize<G,
         {
             Ok(()) => Ok(()),
             Err(CheckoutError::MissingBlobs(blobs)) => Err(NotMaterializable::MissingBlobs(blobs)),
-            Err(CheckoutError::Git(e)) => Err(other(e.0)),
+            Err(CheckoutError::Git(e)) => Err(other(e.to_string())),
         }
     }
 }

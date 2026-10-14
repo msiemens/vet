@@ -26,7 +26,7 @@ impl Orchestrator {
 
     pub(crate) async fn list_pull_requests(&self, project: ProjectId) -> Result<Response> {
         let open = self.ready(project).await?;
-        let remotes = open.open.fetch.remotes().await.map_err(Error::Internal)?;
+        let remotes = open.open.fetch.remotes().await?;
         let candidates = hosted_repositories(&remotes, PlatformKind::GitHub);
         let mut hosts_with_account = Vec::new();
         for host in hosts_to_ask_about(&candidates) {
@@ -216,9 +216,7 @@ fn fetch_heads_in_background(open: Arc<Open>, list: PullRequestList) {
 /// one is on view or a review of it is open: those may need their commits before the platform can
 /// be asked again (a closed pull request's branch may be gone).
 async fn prune_pull_request_refs(open: &Ready, list: &PullRequestList, since: FetchMark) -> Result<()> {
-    let unlisted = pull_request::unlisted_fetched(&open.open.fetch, list)
-        .await
-        .map_err(Error::Internal)?;
+    let unlisted = pull_request::unlisted_fetched(&open.open.fetch, list).await?;
     if unlisted.is_empty() {
         return Ok(());
     }
@@ -237,9 +235,7 @@ async fn prune_pull_request_refs(open: &Ready, list: &PullRequestList, since: Fe
         .filter(|(_, (source, review))| **source != on_view && !matches!(review, RowReview::Open { .. }))
         .map(|(pull_request, _)| pull_request)
         .collect();
-    let deleted = pull_request::delete_pull_request_refs(&open.open.fetch, &doomed, since)
-        .await
-        .map_err(Error::Internal)?;
+    let deleted = pull_request::delete_pull_request_refs(&open.open.fetch, &doomed, since).await?;
     if !deleted.is_empty() {
         tracing::info!(
             refs = deleted.len(),

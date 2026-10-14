@@ -142,7 +142,7 @@ async fn a_copy_whose_content_is_not_what_the_tree_says_fails_and_the_first_mark
     fx.git.blobs.lock().unwrap().insert(id, numbered(10, &[4]).into_bytes());
 
     let copied = fx.session.copy_ahead().await;
-    assert!(matches!(copied, Err(SessionError::Git(e)) if e.0.contains("changed while being copied")));
+    assert!(matches!(copied, Err(SessionError::Git(e)) if e.message().contains("changed while being copied")));
     assert!(fx.session.set_seen(0, "a.txt", &[0], true).await.is_err());
     assert_eq!(fx.session.lifecycle().await, Lifecycle::Browsing);
 }
