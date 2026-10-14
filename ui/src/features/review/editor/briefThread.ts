@@ -1,7 +1,5 @@
 // What a thread's brief card (`briefCard.ts`) shows of its messages, worked out apart from the DOM.
 
-import type { ThreadMessage } from "../../../generated/ThreadMessage.ts";
-
 /** How many lines of a message the brief card shows before "Show all". */
 export const BRIEF_LINES = 4;
 
@@ -17,12 +15,4 @@ export function needsShowAll(text: string): boolean {
 export function briefMessages<T>(messages: readonly T[]): { shown: T[]; between: number } {
   if (messages.length <= 2) return { shown: [...messages], between: 0 };
   return { shown: [messages[0], messages[messages.length - 1]], between: messages.length - 2 };
-}
-
-/**
- * Whether the viewer has not read a message: someone else's, written after `seen` (unix seconds). Nothing is
- * new while there is no time they last looked.
- */
-export function isUnread(message: Pick<ThreadMessage, "mine" | "at">, seen: number | undefined): boolean {
-  return seen !== undefined && !message.mine && message.at > seen;
 }

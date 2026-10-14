@@ -19,8 +19,8 @@
   import SectionHead from "../../lib/ui/SectionHead.svelte";
   import SeenMeter from "../../lib/ui/SeenMeter.svelte";
   import { CheckRuns, failedFirst, passed } from "../checks";
-  import { ThreadCards, commentsSeen, groupThreads, seenKey, threadPlace } from "../comments";
-  import { isUnread, markdownBody, needsShowAll, buildBriefCard } from "../review";
+  import { ThreadCards, commentsSeen, groupThreads, isUnread, seenKey, threadPlace } from "../comments";
+  import { markdownBody, needsShowAll, buildBriefCard } from "../review";
   import type { Frame } from "../../state/reviewModel";
   import { changeset } from "../../state/changeset.svelte";
   import { checks } from "../../state/checks.svelte";

@@ -3,7 +3,7 @@ import { test } from "node:test";
 import type { ConversationEntry } from "../../generated/ConversationEntry.ts";
 import type { Thread } from "../../generated/Thread.ts";
 import type { ThreadMessage } from "../../generated/ThreadMessage.ts";
-import { seenKey, seenNow, unreadCount } from "./unread.ts";
+import { isUnread, seenKey, seenNow, unreadCount } from "./unread.ts";
 
 const entry = (at: number, kind: ConversationEntry["kind"]): ConversationEntry => ({
   id: `E${at}`,
@@ -48,9 +48,17 @@ const feed = {
 };
 
 void test("others' conversation comments and reviews since the tool window was last open are unread, the viewer's are not", () => {
-  assert.equal(unreadCount(feed, [], undefined), 2, "never opened: all of them");
+  assert.equal(unreadCount(feed, [], undefined), 0, "never opened: nothing is new yet");
+  assert.equal(unreadCount(feed, [], 50), 2);
   assert.equal(unreadCount(feed, [], 150), 1);
   assert.equal(unreadCount(feed, [], 200), 0);
+});
+
+void test("only what others wrote after the viewer last looked is unread", () => {
+  assert.equal(isUnread({ mine: false, at: 11 }, 10), true);
+  assert.equal(isUnread({ mine: false, at: 10 }, 10), false);
+  assert.equal(isUnread({ mine: true, at: 11 }, 10), false);
+  assert.equal(isUnread({ mine: false, at: 11 }, undefined), false, "nothing is new before the first look");
 });
 
 void test("replies to threads on the pull request count, comments on lines do not", () => {
