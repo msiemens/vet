@@ -1,12 +1,13 @@
 <script lang="ts">
-  // One row of a tree of symbols, as the Changes tree draws it: indent by depth, a column for the
-  // chevron (empty on a row that holds nothing, so names line up), a glyph, the name, what trails
-  // it, and a column for the letter of the change. A row of the Structure tool is one line; a row
-  // of the Symbol panel may `wrap`, so no name is cut.
+  // One row of a tree, as the Changes tree draws it: indent by depth, a column for the chevron (empty
+  // on a row that holds nothing, so names line up), a glyph, the name, what trails it, a count and a
+  // column for the letter of the change. The rows of the file tree, the symbol lists, the groups of
+  // Problems, Find and Comments are all this row. A row of the Structure tool is one line; a row of
+  // the Symbol panel may `wrap`, so no name is cut.
   import type { Snippet } from "svelte";
   import type { StatusLetter } from "../changeLetter";
   import ChangeLetter from "./ChangeLetter.svelte";
-  import Icon from "./Icon.svelte";
+  import Chevron from "./Chevron.svelte";
 
   let {
     depth = 0,
@@ -15,15 +16,23 @@
     mono = false,
     wrap = false,
     gone = false,
+    flagged = false,
+    heading = false,
+    hot = false,
     on = false,
     cur = false,
+    interactive = true,
+    letters = true,
+    class: extra,
     title,
     status,
     statusTitle,
+    count,
     tabindex,
     disabled = false,
     onclick,
     onmousemove,
+    oncontextmenu,
     glyph,
     children,
     trailing,
@@ -38,53 +47,85 @@
     wrap?: boolean;
     /** Struck through: a symbol the change removed. */
     gone?: boolean;
+    /** A hunk of the file is flagged: its name reads as a warning. */
+    flagged?: boolean;
+    /** The row names a group of rows, and its name is bold. */
+    heading?: boolean;
+    /** The group matters more than the others: its count stands out. */
+    hot?: boolean;
     /** The selected row. */
     on?: boolean;
     /** The row the keys act on. */
     cur?: boolean;
+    /** A button; without it the row is a line of the list that nothing is done with. */
+    interactive?: boolean;
+    /** The row ends with the column of change letters. */
+    letters?: boolean;
+    /** Classes of the row's element, for what the list around it marks. */
+    class?: string;
     title?: string;
     /** The letter of the change. */
     status?: StatusLetter;
     statusTitle?: string;
+    /** How many rows the row holds or stands for, after what trails the name. */
+    count?: number | string;
     tabindex?: number;
     disabled?: boolean;
     onclick?: (e: MouseEvent) => void;
     onmousemove?: (e: MouseEvent) => void;
+    oncontextmenu?: (e: MouseEvent) => void;
     glyph?: Snippet;
     children: Snippet;
     trailing?: Snippet;
   } = $props();
 </script>
 
-<button
-  class="flat pick tw {tone}"
-  class:wrap
-  class:gone
-  class:on
-  class:cur
-  type="button"
-  {tabindex}
-  {title}
-  {disabled}
-  aria-expanded={open}
-  style:padding-left="calc(8px + {depth} * var(--w-indent))"
-  {onclick}
-  {onmousemove}
->
-  <span class="chev"
-    >{#if open !== undefined}<Icon name={open ? "open" : "closed"} size={10} />{/if}</span
-  >
+{#snippet content()}
+  <Chevron {open} />
   {@render glyph?.()}
   <span class="name" class:mono>{@render children()}</span>
   {@render trailing?.()}
-  <ChangeLetter letter={status} title={statusTitle} />
-</button>
+  {#if count !== undefined}<span class="n" class:hot>{count}</span>{/if}
+  {#if letters}<ChangeLetter letter={status} title={statusTitle} />{/if}
+{/snippet}
+
+{#if interactive}
+  <button
+    class={["flat pick tw", tone, extra]}
+    class:wrap
+    class:gone
+    class:flagged
+    class:heading
+    class:on
+    class:cur
+    type="button"
+    {tabindex}
+    {title}
+    {disabled}
+    aria-expanded={open}
+    style:padding-left="calc(var(--pad-tree) + {depth} * var(--w-indent))"
+    {onclick}
+    {onmousemove}
+    {oncontextmenu}
+  >
+    {@render content()}
+  </button>
+{:else}
+  <div
+    class={["pick tw", tone, extra]}
+    class:cur
+    {title}
+    style:padding-left="calc(var(--pad-tree) + {depth} * var(--w-indent))"
+  >
+    {@render content()}
+  </div>
+{/if}
 
 <style>
   .tw {
     display: flex;
     align-items: center;
-    gap: 6px;
+    gap: var(--gap-tree);
     height: var(--h-row);
     width: 100%;
     padding-right: 10px;
@@ -101,14 +142,7 @@
     line-height: 16px;
     white-space: normal;
   }
-  /* A fixed column, so names line up whether or not a row has a chevron. */
-  .chev {
-    flex: none;
-    width: var(--w-chev);
-    display: inline-flex;
-    justify-content: center;
-  }
-  .wrap .chev,
+  .wrap :global(.chev),
   .wrap :global(.change-letter) {
     height: 16px;
     align-items: center;
@@ -129,6 +163,13 @@
   .name.mono {
     font-size: var(--fs-mono-s);
   }
+  .heading .name {
+    font-weight: 600;
+  }
+  .n.hot {
+    color: var(--accent);
+    font-weight: 600;
+  }
   .strong {
     color: var(--text);
   }
@@ -140,6 +181,9 @@
   }
   .soft :global(.kind) {
     opacity: 0.6;
+  }
+  .flagged .name {
+    color: var(--warn);
   }
   .gone .name {
     text-decoration: line-through;

@@ -10,7 +10,6 @@
   import { plainKey } from "../../lib/listKeys";
   import { aimIndex, stepMatch, type Range } from "../../lib/speedSearch";
   import { fullName } from "../../lib/symbolLabel";
-  import ChangeLetter from "../../lib/ui/ChangeLetter.svelte";
   import FileIcon from "../../lib/ui/FileIcon.svelte";
   import Icon from "../../lib/ui/Icon.svelte";
   import IconButton from "../../lib/ui/IconButton.svelte";
@@ -35,7 +34,7 @@
   import { AllFiles } from "./AllFiles.svelte";
   import type { AllRow } from "./allFilesRows";
   import CommitList from "./CommitList.svelte";
-  import { excludedRows, extraRows } from "./excludedRows";
+  import { type ExcludedRow, excludedRows, extraRows } from "./excludedRows";
   import NarrowingChip from "./NarrowingChip.svelte";
   import { closedKey, fileSymbolRows, type SymbolRow } from "./symbolRows";
   import { type Row, buildRows, buildTree, filterRows, summarize } from "./tree";
@@ -452,23 +451,23 @@
   hit: Hit,
   entry?: DirEntry,
 )}
-  <button
-    class="flat pick tw dir"
-    class:dim={entry?.excluded}
-    class:cur={hit.cursor}
-    type="button"
-    tabindex="-1"
+  <TreeRow
+    {depth}
+    {open}
+    tone={entry?.excluded ? "soft" : "plain"}
+    letters={false}
+    cur={hit.cursor}
     title={path}
-    style:padding-left="calc(8px + {depth} * var(--w-indent))"
-    aria-expanded={open}
+    tabindex={-1}
     onclick={() => clickDir(index, ontoggle)}
     oncontextmenu={(e) => menu(e, path, true)}
   >
-    <span class="chev"><Icon name={open ? "open" : "closed"} size={10} /></span>
-    <FileIcon {name} folder {open} />
-    <span class="name chain"><PathText path={name} title={path} ranges={hit.ranges} /></span>
-    {#if entry?.changed}<span class="mark" title="Contains changes"></span>{/if}
-  </button>
+    {#snippet glyph()}<FileIcon {name} folder {open} />{/snippet}
+    <PathText path={name} title={path} ranges={hit.ranges} />
+    {#snippet trailing()}
+      {#if entry?.changed}<span class="mark" title="Contains changes"></span>{/if}
+    {/snippet}
+  </TreeRow>
 {/snippet}
 
 {#snippet fileRow(index: number, path: string, name: string, depth: number, hit: Hit, entry?: DirEntry)}
@@ -477,46 +476,58 @@
   {@const flagged = file?.completion.flaggedHunks ?? 0}
   {@const analysis = tool === "changes" ? symbols.files.get(path) : undefined}
   {@const open = search.active || isOpen(path)}
-  <button
-    class="flat pick tw"
-    class:on={path === (pressed ?? selected)}
-    class:dim={entry?.excluded}
-    class:cur={hit.cursor}
-    class:flagged
-    type="button"
-    tabindex="-1"
+  <TreeRow
+    {depth}
+    open={analysis?.state === "done" && analysis.symbols.length ? open : undefined}
+    tone={entry?.excluded ? "soft" : "strong"}
+    flagged={flagged > 0}
+    on={path === (pressed ?? selected)}
+    cur={hit.cursor}
     title={flagged ? `${path}\n${flagged} flagged ${flagged === 1 ? "hunk" : "hunks"}` : path}
-    style:padding-left="calc(8px + {depth} * var(--w-indent))"
+    status={s?.status}
+    tabindex={-1}
     onclick={(e) => clickFile(e, path, index)}
     oncontextmenu={(e) => menu(e, path, false)}
   >
-    <span class="chev">
-      {#if analysis?.state === "done" && analysis.symbols.length}<Icon name={open ? "open" : "closed"} size={10} />{/if}
-    </span>
-    <FileIcon {name} />
-    <span class="name"><Marked text={name} ranges={hit.ranges} /></span>
-    {#if analysis?.state === "loading"}
-      <Spinner label="Analysing the symbols" />
-    {:else if analysis?.state === "failed"}
-      <span class="warn" title={analysis.message}><SeverityIcon severity="warning" /></span>
-    {:else if analysis?.state === "done" && analysis.symbols.length && !open}
-      {@const n = analysis.symbols.length}
-      <span class="mono x" title="{n} changed {n === 1 ? 'symbol' : 'symbols'}">{n}</span>
-    {/if}
-    {#if s?.mode}<span class="mono x" title="File mode changed">{s.mode}</span>{/if}
-    {#if s && file}
-      {@const { added, removed } = file.delta}
-      <DiffBar
-        width={22}
-        {added}
-        {removed}
-        seen={s.seenPercent}
-        old={s.oldBasePercent}
-        title="{deltaText(added, removed)}, {Math.round(s.seenPercent)}% seen"
-      />
-    {/if}
-    <ChangeLetter letter={s?.status} />
-  </button>
+    {#snippet glyph()}<FileIcon {name} />{/snippet}
+    <Marked text={name} ranges={hit.ranges} />
+    {#snippet trailing()}
+      {#if analysis?.state === "loading"}
+        <Spinner label="Analysing the symbols" />
+      {:else if analysis?.state === "failed"}
+        <span class="warn" title={analysis.message}><SeverityIcon severity="warning" /></span>
+      {:else if analysis?.state === "done" && analysis.symbols.length && !open}
+        {@const n = analysis.symbols.length}
+        <span class="n" title="{n} changed {n === 1 ? 'symbol' : 'symbols'}">{n}</span>
+      {/if}
+      {#if s?.mode}<span class="n" title="File mode changed">{s.mode}</span>{/if}
+      {#if s && file}
+        {@const { added, removed } = file.delta}
+        <DiffBar
+          width={22}
+          {added}
+          {removed}
+          seen={s.seenPercent}
+          old={s.oldBasePercent}
+          title="{deltaText(added, removed)}, {Math.round(s.seenPercent)}% seen"
+        />
+      {/if}
+    {/snippet}
+  </TreeRow>
+{/snippet}
+
+{#snippet heldRow(held: ExcludedRow, onclick?: () => void)}
+  <TreeRow
+    interactive={onclick !== undefined}
+    tone="soft"
+    letters={false}
+    tabindex={-1}
+    title="{held.name}: {held.why}"
+    {onclick}
+  >
+    {held.name}
+    {#snippet trailing()}<span class="why">{held.why}</span>{/snippet}
+  </TreeRow>
 {/snippet}
 
 {#snippet symbolRow(index: number, r: SymbolRow, hit: Hit)}
@@ -618,37 +629,23 @@
           {@const r = shownChanges.at(i)}
           {@const held = heldRows.at(i - shownChanges.length - 1)}
           {#if !r && excluded && i === shownChanges.length}
-            <button
-              class="flat tw excluded"
-              type="button"
-              tabindex="-1"
-              aria-expanded={excludedOpen}
+            <TreeRow
+              open={excludedOpen}
+              tone="soft"
+              letters={false}
+              count={excludedFiles}
+              tabindex={-1}
               title="{excluded.lines} changed lines and {excluded.items} other changes excluded by the review filter"
               onclick={() => (excludedOpen = !excludedOpen)}
             >
-              <span class="chev"><Icon name={excludedOpen ? "open" : "closed"} size={10} /></span><Icon
-                name="filter"
-                size={11}
-                stroke={2}
-              />Excluded<span class="mono x">{excludedFiles}</span>
-            </button>
+              {#snippet glyph()}<Icon name="filter" size={11} stroke={2} />{/snippet}
+              Excluded
+            </TreeRow>
           {:else if !r && held?.path !== undefined}
             {@const path = held.path}
-            <button
-              class="flat tw held"
-              type="button"
-              tabindex="-1"
-              title="{held.name}: {held.why}"
-              onclick={() => onopen(path)}
-            >
-              <span class="name">{held.name}</span>
-              <span class="why">{held.why}</span>
-            </button>
+            {@render heldRow(held, () => onopen(path))}
           {:else if !r && held}
-            <div class="tw held" title="{held.name}: {held.why}">
-              <span class="name">{held.name}</span>
-              <span class="why">{held.why}</span>
-            </div>
+            {@render heldRow(held)}
           {:else if r?.kind === "dir"}
             {@const hit = { cursor: i === cursor, ranges: hits?.get(r) }}
             {@render dirRow(
@@ -730,43 +727,6 @@
     flex-direction: column;
     outline: none;
   }
-  .tw {
-    display: flex;
-    align-items: center;
-    gap: 6px;
-    height: var(--h-row);
-    width: 100%;
-    padding-right: 10px;
-    text-align: left;
-    white-space: nowrap;
-    font-size: var(--fs-ctl);
-    box-sizing: border-box;
-  }
-  .dir {
-    color: var(--text-2);
-  }
-  .dim {
-    color: var(--text-3);
-  }
-  .flagged .name {
-    color: var(--warn);
-  }
-  /* A fixed column, so names line up whether or not a row has a chevron. */
-  .chev {
-    flex: none;
-    width: var(--w-chev);
-    display: inline-flex;
-    justify-content: center;
-  }
-  .name {
-    flex: 1;
-    min-width: 0;
-    overflow: hidden;
-    text-overflow: ellipsis;
-  }
-  .chain {
-    display: flex;
-  }
   .mark {
     flex: none;
     width: 6px;
@@ -774,25 +734,12 @@
     border-radius: 50%;
     background: var(--old-base);
   }
-  .x {
-    flex: none;
-    font-size: 11px;
-    color: var(--text-2);
-  }
   .warn {
     flex: none;
     display: inline-flex;
   }
   .progress {
     flex: none;
-  }
-  .excluded {
-    padding-left: 8px;
-    color: var(--text-3);
-  }
-  .held {
-    padding-left: calc(8px + var(--w-chev) + 6px);
-    color: var(--text-3);
   }
   .why {
     flex: none;

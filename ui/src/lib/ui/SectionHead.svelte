@@ -2,7 +2,7 @@
      button is the whole row; `aside` puts further controls after it. -->
 <script lang="ts">
   import type { Snippet } from "svelte";
-  import Icon from "./Icon.svelte";
+  import Chevron from "./Chevron.svelte";
 
   let {
     title,
@@ -32,7 +32,7 @@
 
 <div class="head">
   <button class="flat tog" type="button" aria-expanded={open} onclick={ontoggle}>
-    <span class="chev"><Icon name={open ? "open" : "closed"} size={10} /></span>
+    <Chevron {open} />
     {@render before?.()}
     {title}
     {@render after?.()}
@@ -54,19 +54,13 @@
     min-width: 0;
     display: flex;
     align-items: center;
-    gap: 6px;
+    gap: var(--gap-tree);
     height: var(--h-ctl);
-    padding: 0 4px 0 8px;
+    padding: 0 4px 0 var(--pad-tree);
     font-size: 12px;
     font-weight: 600;
     color: var(--text-2);
     text-align: left;
-  }
-  .chev {
-    flex: none;
-    width: var(--w-chev);
-    display: inline-flex;
-    justify-content: center;
   }
   .summary {
     margin-left: auto;

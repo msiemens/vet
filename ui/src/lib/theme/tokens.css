@@ -190,6 +190,11 @@
   --w-scrollbar: 12px;
   --w-chev: 14px;
   --w-indent: 12px;
+  /* A tree row: where it starts, the gap between its parts, and where its name starts (what a line
+     under a folding row aligns with). */
+  --pad-tree: 8px;
+  --gap-tree: 6px;
+  --inset-tree-name: calc(var(--pad-tree) + var(--w-chev) + var(--gap-tree));
   /* The edge every element inserted into a code column shares: where a hunk bar's text starts, the base
      diff's box, change cards and comment thread cards. */
   --inset-hunk: 10px;
