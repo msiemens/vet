@@ -742,6 +742,42 @@ async fn a_pull_request_comes_with_its_pushes_from_every_page_of_force_pushes() 
 }
 
 #[tokio::test]
+async fn the_timeline_is_paged_in_full_once_per_head_of_a_pull_request() {
+    set_now(NOW);
+    let head = Arc::new(Mutex::new("c4c4c4"));
+    let served = head.clone();
+    let fake = Fake::start(move |request, _| {
+        let head = *served.lock().unwrap();
+        if request.variables()["after"].is_null() {
+            Canned::json(&DETAIL_PAGE_1.replace("c4c4c4", head))
+        } else {
+            Canned::json(DETAIL_PAGE_2)
+        }
+    });
+    let github = client(&fake);
+
+    let first = github.pull_request(&remote(), 101).await.unwrap();
+    let again = github.pull_request(&remote(), 101).await.unwrap();
+
+    assert_eq!(
+        fake.graphql_requests().len(),
+        3,
+        "the second read asked for the first page only"
+    );
+    assert_eq!(first.pushes, again.pushes);
+
+    *head.lock().unwrap() = "d5d5d5";
+    let pushed = github.pull_request(&remote(), 101).await.unwrap();
+
+    assert_eq!(
+        fake.graphql_requests().len(),
+        5,
+        "a push moved the head: every page again"
+    );
+    assert_eq!(pushed.pushes.last().map(|p| p.head.as_str()), Some("d5d5d5"));
+}
+
+#[tokio::test]
 async fn a_pull_request_that_is_not_there_is_not_found() {
     let fake = Fake::start(|_, _| {
         Canned::json(

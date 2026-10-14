@@ -31,8 +31,8 @@ use serde::Deserialize;
 use serde::de::DeserializeOwned;
 use serde_json::{Value, json};
 use vet_app::platform::{
-    CheckLog, CommentRef, CommitChecks, Credential, CredentialProvider, Discussion, PipelineAction, Platform,
-    PlatformComment, PlatformError, PlatformKind, PlatformTraits, PullRequestDetail, PullRequestListing,
+    CheckLog, CommentRef, CommitChecks, Credential, CredentialProvider, Discussion, ForcePush, PipelineAction,
+    Platform, PlatformComment, PlatformError, PlatformKind, PlatformTraits, PullRequestDetail, PullRequestListing,
     PullRequestQuery, QueueTab, RemoteKey, Step, Submission, Submitted, Viewer, pushes_from_force_pushes,
 };
 
@@ -189,6 +189,8 @@ struct State {
     viewers: Cache<String, Viewer>,
     /// The checks of commits whose checks are all done, which nothing changes any more.
     checks: Cache<(RemoteKey, String), CommitChecks>,
+    /// The force-pushes of a pull request, whole, by its number and the head they were read at.
+    timelines: Cache<(RemoteKey, u64, String), Vec<ForcePush>>,
 }
 
 impl State {
@@ -199,6 +201,7 @@ impl State {
             lists: Cache::new(CACHED),
             viewers: Cache::new(CACHED),
             checks: Cache::new(CACHED),
+            timelines: Cache::new(CACHED),
         }
     }
 }
@@ -520,7 +523,14 @@ impl<C: CredentialProvider + Sync> Platform for GitHubClient<C> {
             let next = page.end_cursor.clone().filter(|_| page.has_next_page);
             if detail.is_none() {
                 let (first, pushes) = node.into_detail()?;
+                // The force-pushes only grow with a push, which moves the head.
+                let key = (remote.clone(), number, first.pull_request.head.clone());
+                let known = self.state().timelines.get(&key).cloned();
                 detail = Some(first);
+                if let Some(known) = known {
+                    force_pushes = known;
+                    break;
+                }
                 force_pushes.extend(pushes);
             } else {
                 force_pushes.extend(wire::force_pushes(node.timeline_items.nodes)?);
@@ -531,6 +541,8 @@ impl<C: CredentialProvider + Sync> Platform for GitHubClient<C> {
             }
         }
         let mut detail = detail.ok_or_else(not_found)?;
+        let key = (remote.clone(), number, detail.pull_request.head.clone());
+        self.state().timelines.insert(key, force_pushes.clone(), (self.now)());
         detail.pushes = pushes_from_force_pushes(&force_pushes, &detail.pull_request.head);
         Ok(detail)
     }
