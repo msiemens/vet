@@ -98,8 +98,10 @@ async fn next_diagnostics(
     }
 }
 
-/// A backend on a crate whose working tree introduces one error and keeps another.
-async fn reviewing() -> (Client, ProjectId, tempfile::TempDir) {
+/// A backend on a crate whose working tree introduces one error and keeps another. The directory
+/// the store lives in is returned too, and must be kept: its reader pool opens connections as they
+/// are needed, and one opened after the directory was dropped fails.
+async fn reviewing() -> (Client, ProjectId, tempfile::TempDir, tempfile::TempDir) {
     let repo = rust_repo();
     let data = tempfile::tempdir().unwrap();
     let handler = Arc::new(Orchestrator::new(open_store(data.path()).await.unwrap(), config()));
@@ -116,7 +118,7 @@ async fn reviewing() -> (Client, ProjectId, tempfile::TempDir) {
         .call(Request::SetReviewShown { project, shown: true })
         .await
         .unwrap();
-    (client, project, repo)
+    (client, project, repo, data)
 }
 
 fn has_new(diagnostics: &[Diagnostic], compared: bool) -> bool {
@@ -126,7 +128,7 @@ fn has_new(diagnostics: &[Diagnostic], compared: bool) -> bool {
 #[tokio::test]
 #[ignore = "needs rust-analyzer"]
 async fn the_compared_problems_are_pushed_with_the_origins_the_comparison_found() {
-    let (mut client, project, _repo) = reviewing().await;
+    let (mut client, project, _repo, _data) = reviewing().await;
 
     let (diagnostics, compared) = next_diagnostics(&mut client.inbox, project, Duration::from_secs(180), has_new)
         .await
@@ -149,7 +151,7 @@ async fn the_compared_problems_are_pushed_with_the_origins_the_comparison_found(
 #[tokio::test]
 #[ignore = "needs rust-analyzer"]
 async fn the_first_answer_comes_with_the_origins_pending() {
-    let (mut client, project, _repo) = reviewing().await;
+    let (mut client, project, _repo, _data) = reviewing().await;
 
     let (_, compared) = next_diagnostics(&mut client.inbox, project, Duration::from_secs(180), |_, _| true)
         .await
@@ -163,7 +165,7 @@ async fn the_first_answer_comes_with_the_origins_pending() {
 #[tokio::test]
 #[ignore = "needs rust-analyzer"]
 async fn nothing_more_is_analysed_once_the_review_screen_goes_away() {
-    let (mut client, project, _repo) = reviewing().await;
+    let (mut client, project, _repo, _data) = reviewing().await;
     // The first answer, with the origins pending, is in.
     let _ = next_diagnostics(&mut client.inbox, project, Duration::from_secs(180), |_, compared| {
         !compared

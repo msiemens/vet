@@ -101,8 +101,10 @@ async fn next_symbols(
 }
 
 /// A backend on a crate with both files changed in the working tree, the review screen shown, and
-/// `open` remembered as the files the window has open.
-async fn reviewing(open: &[&str]) -> (Client, ProjectId, tempfile::TempDir) {
+/// `open` remembered as the files the window has open. The directory the store lives in is
+/// returned too, and must be kept: its reader pool opens connections as they are needed, and one
+/// opened after the directory was dropped fails ("unable to open database file").
+async fn reviewing(open: &[&str]) -> (Client, ProjectId, tempfile::TempDir, tempfile::TempDir) {
     let repo = rust_repo();
     write(repo.path(), "src/lib.rs", DIRTY_LIB);
     write(repo.path(), "src/other.rs", DIRTY_OTHER);
@@ -130,14 +132,14 @@ async fn reviewing(open: &[&str]) -> (Client, ProjectId, tempfile::TempDir) {
         .call(Request::SetReviewShown { project, shown: true })
         .await
         .unwrap();
-    (client, project, repo)
+    (client, project, repo, data)
 }
 
 #[tokio::test]
 #[ignore = "needs rust-analyzer"]
 async fn the_changed_symbols_are_pushed_without_being_asked_for() {
     // The file the window has open is analysed alone first, so this answer is its own.
-    let (mut client, project, _repo) = reviewing(&["src/lib.rs"]).await;
+    let (mut client, project, _repo, _data) = reviewing(&["src/lib.rs"]).await;
 
     let symbols = next_symbols(&mut client.inbox, project, Duration::from_secs(180))
         .await
@@ -159,7 +161,7 @@ async fn the_changed_symbols_are_pushed_without_being_asked_for() {
 #[tokio::test]
 #[ignore = "needs rust-analyzer"]
 async fn the_open_file_is_analysed_first() {
-    let (mut client, project, _repo) = reviewing(&["src/other.rs"]).await;
+    let (mut client, project, _repo, _data) = reviewing(&["src/other.rs"]).await;
 
     let first = next_symbols(&mut client.inbox, project, Duration::from_secs(180))
         .await
@@ -176,7 +178,7 @@ async fn the_open_file_is_analysed_first() {
 async fn nothing_more_is_analysed_once_the_review_screen_goes_away() {
     // The open file is its own batch, analysed before the rest: hiding after it is answered must
     // leave the other file unanalysed.
-    let (mut client, project, _repo) = reviewing(&["src/other.rs"]).await;
+    let (mut client, project, _repo, _data) = reviewing(&["src/other.rs"]).await;
     let first = next_symbols(&mut client.inbox, project, Duration::from_secs(180))
         .await
         .expect("an answer");
