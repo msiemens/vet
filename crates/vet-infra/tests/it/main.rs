@@ -8,6 +8,7 @@ mod fetch;
 mod gh_accounts;
 mod git;
 mod git_edges;
+mod listing;
 mod lsp;
 mod materialize;
 mod remerge;

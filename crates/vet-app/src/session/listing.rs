@@ -3,9 +3,8 @@
 
 use super::{LiveSession, Result};
 use crate::changeset::{CommitId, Source};
-use crate::ports::{BranchInfo, GitRepo, LiveStore};
+use crate::ports::{BranchInfo, GitRepo, LiveStore, SourceReview};
 use crate::review::ReviewSummary;
-use vet_core::review::ThreadStatus;
 
 /// A remote branch whose latest commit is older than this many days is not offered.
 const RECENT_DAYS: i64 = 30;
@@ -81,6 +80,25 @@ fn offered_remote(divergence: Option<Divergence>, age_days: i64, keep: bool) -> 
     keep || (divergence.is_none_or(|d| d.ahead > 0) && age_days <= RECENT_DAYS)
 }
 
+/// What a source's latest review is, as a row shows it.
+fn row_review(state: &SourceReview) -> RowReview {
+    match &state.latest {
+        None => RowReview::None,
+        Some(review) if review.closed_at.is_none() => RowReview::Open {
+            version: state.latest_version.max(1),
+            started_at: review.opened_at,
+            last_reviewed: review.last_reviewed,
+            progress: review.summary,
+        },
+        Some(review) => RowReview::Finished {
+            complete: review.complete,
+            started_at: review.opened_at,
+            finished_at: review.closed_at.unwrap_or(review.opened_at),
+            last_reviewed: review.last_reviewed,
+        },
+    }
+}
+
 impl<G: GitRepo + Sync, S: LiveStore + Sync> LiveSession<G, S> {
     /// The working tree, every local branch, and the remote branches worth reviewing.
     pub async fn changesets(&self) -> Result<ChangesetList> {
@@ -92,10 +110,25 @@ impl<G: GitRepo + Sync, S: LiveStore + Sync> LiveSession<G, S> {
         };
         let default_branch = git.default_branch().await?;
         let all = git.branches().await?;
-        let (review, open_threads) = self.row_state(&Source::WorkingTree).await?;
+        // The review database is read once for the whole list, not once per row.
+        let sources: Vec<Source> = std::iter::once(Source::WorkingTree)
+            .chain(all.iter().map(|branch| Source::Branch {
+                name: branch.name.clone(),
+            }))
+            .collect();
+        let states = self
+            .acquisition
+            .store
+            .source_reviews(self.repo.clone(), &sources)
+            .await?;
+        let state_of = |source: &Source| states.iter().find(|state| &state.source == source);
+        let (working, threads) = match state_of(&Source::WorkingTree) {
+            Some(state) => (row_review(state), state.open_threads),
+            None => (RowReview::None, 0),
+        };
         let mut rows = vec![ChangesetRow {
-            review,
-            open_threads,
+            review: working,
+            open_threads: threads,
             source: Source::WorkingTree,
             title: "Working tree".into(),
             checked_out: false,
@@ -119,7 +152,10 @@ impl<G: GitRepo + Sync, S: LiveStore + Sync> LiveSession<G, S> {
             let source = Source::Branch {
                 name: branch.name.clone(),
             };
-            let (review, open_threads) = self.row_state(&source).await?;
+            let (review, open_threads) = match state_of(&source) {
+                Some(state) => (row_review(state), state.open_threads),
+                None => (RowReview::None, 0),
+            };
             let keep = source == on_view || matches!(review, RowReview::Open { .. });
             // The default branch holds what the others are compared with: it has something to
             // review only while it has commits that are not pushed yet.
@@ -166,13 +202,14 @@ impl<G: GitRepo + Sync, S: LiveStore + Sync> LiveSession<G, S> {
         Ok(ChangesetList { on_view, rows })
     }
 
-    /// What Vet has of the latest review of each of `sources`, in their order.
+    /// What Vet has of the latest review of each of `sources`, in their order. One batched read.
     pub async fn reviews_of(&self, sources: &[Source]) -> Result<Vec<RowReview>> {
-        let mut reviews = Vec::with_capacity(sources.len());
-        for source in sources {
-            reviews.push(self.row_state(source).await?.0);
-        }
-        Ok(reviews)
+        let states = self
+            .acquisition
+            .store
+            .source_reviews(self.repo.clone(), sources)
+            .await?;
+        Ok(states.iter().map(row_review).collect())
     }
 
     async fn divergence(&self, branch: &BranchInfo, default: &CommitId) -> Result<Divergence> {
@@ -183,40 +220,5 @@ impl<G: GitRepo + Sync, S: LiveStore + Sync> LiveSession<G, S> {
             ahead: ahead as u32,
             behind: behind as u32,
         })
-    }
-
-    /// What Vet has of the changeset's latest review, and how many of its threads are open.
-    async fn row_state(&self, source: &Source) -> Result<(RowReview, u32)> {
-        let store = &self.acquisition.store;
-        let Some(changeset) = store.changeset(self.repo.clone(), source.clone()).await? else {
-            return Ok((RowReview::None, 0));
-        };
-        let open_threads = store
-            .threads(changeset)
-            .await?
-            .iter()
-            .filter(|t| t.thread.status == ThreadStatus::Open)
-            .count() as u32;
-        let Some(review) = store.latest_review(changeset).await? else {
-            return Ok((RowReview::None, open_threads));
-        };
-        let Some(review) = store.review(review).await? else {
-            return Ok((RowReview::None, open_threads));
-        };
-        let review = match review.closed_at {
-            None => RowReview::Open {
-                version: store.versions(changeset).await?.last().map_or(1, |v| v.n),
-                started_at: review.opened_at,
-                last_reviewed: review.last_reviewed,
-                progress: review.summary,
-            },
-            Some(finished_at) => RowReview::Finished {
-                complete: review.complete.unwrap_or(false),
-                started_at: review.opened_at,
-                finished_at,
-                last_reviewed: review.last_reviewed,
-            },
-        };
-        Ok((review, open_threads))
     }
 }

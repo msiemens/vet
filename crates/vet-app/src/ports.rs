@@ -472,6 +472,36 @@ pub trait GcStore {
     ) -> impl Future<Output = Result<GcReport, StoreError>> + Send;
 }
 
+/// What the list of changesets reads of the review database, batched for all its sources: the
+/// changeset, how many of its threads are open, its latest review and its newest version.
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub struct SourceReview {
+    pub source: Source,
+    /// The changeset of `source`, if the repository has one.
+    pub changeset: Option<ChangesetId>,
+    /// Threads of the changeset that are open.
+    pub open_threads: u32,
+    /// The latest review of the changeset, open or finished.
+    pub latest: Option<ReviewRow>,
+    /// The number of the changeset's newest version; 0 when it has none.
+    pub latest_version: u32,
+}
+
+/// The latest review of a changeset, as a listing row reads it (its marks are not needed).
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub struct ReviewRow {
+    /// Unix seconds.
+    pub opened_at: i64,
+    /// Unix seconds; `None` while open.
+    pub closed_at: Option<i64>,
+    /// Whether the review was complete when it was finished.
+    pub complete: bool,
+    /// The number of the version something was last marked in.
+    pub last_reviewed: Option<u32>,
+    /// How far the review was when it was last measured.
+    pub summary: Option<ReviewSummary>,
+}
+
 /// Changesets and their versions (§3). A changeset is found by the repository
 /// root and its source.
 pub trait ChangesetStore {
@@ -481,6 +511,13 @@ pub trait ChangesetStore {
         repo: String,
         source: Source,
     ) -> impl Future<Output = Result<Option<ChangesetId>, StoreError>> + Send;
+    /// What the listing reads of `sources`' latest reviews, in the order asked for. One batched
+    /// read for the whole list, not one per source.
+    fn source_reviews(
+        &self,
+        repo: String,
+        sources: &[Source],
+    ) -> impl Future<Output = Result<Vec<SourceReview>, StoreError>> + Send;
     /// The lens the changeset of `source` was last put in; `None` if it never was.
     fn lens(&self, repo: String, source: Source) -> impl Future<Output = Result<Option<Lens>, StoreError>> + Send;
     /// How the platform last named the pull request of `source`; `None` if it was never stored.

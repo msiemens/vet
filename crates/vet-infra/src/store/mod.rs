@@ -35,8 +35,8 @@ use sea_orm::{
 use sea_orm_migration::MigratorTrait;
 use vet_app::changeset::{ChangesetId, CommitId, Lens, Source, Version};
 use vet_app::platform::{PullRequestHead, RemoteKey, StoredDiscussion};
-use vet_app::ports::{ChangesetStore, LiveStore, ReviewStore, Store, StoreError, ThreadStore};
-use vet_app::review::{ChangesetThread, Review, ReviewId};
+use vet_app::ports::{ChangesetStore, LiveStore, ReviewRow, ReviewStore, SourceReview, Store, StoreError, ThreadStore};
+use vet_app::review::{ChangesetThread, Review, ReviewId, ReviewSummary};
 use vet_app::trust::PullRequestTrust;
 use vet_core::content::{BlobId, Hash, Snapshot, SnapshotId, SnapshotStatus};
 use vet_core::filter::ReviewFilter;
@@ -447,6 +447,77 @@ impl ChangesetStore for SqliteStore {
         Ok(find_changeset(&self.reader.db, repo, &source)
             .await?
             .map(|id| ChangesetId(id as u64)))
+    }
+
+    async fn source_reviews(&self, repo: String, sources: &[Source]) -> Result<Vec<SourceReview>, StoreError> {
+        let db = &self.reader.db;
+        let changesets = changeset::Entity::find()
+            .filter(changeset::Column::Repo.eq(repo))
+            .all(db)
+            .await?;
+        let ids: Vec<i64> = changesets.iter().map(|c| c.id).collect();
+        // One query each, whatever the number of sources: the reviews newest first, the versions
+        // (for the newest number), and the id of each open thread.
+        let reviews = review::Entity::find()
+            .filter(review::Column::Changeset.is_in(ids.clone()))
+            .order_by_asc(review::Column::Changeset)
+            .order_by_desc(review::Column::Id)
+            .all(db)
+            .await?;
+        let versions = version::Entity::find()
+            .filter(version::Column::Changeset.is_in(ids.clone()))
+            .all(db)
+            .await?;
+        let open: Vec<i64> = thread::Entity::find()
+            .filter(thread::Column::Changeset.is_in(ids))
+            .filter(thread::Column::Status.eq(kinds::ThreadStatus::Open))
+            .select_only()
+            .column(thread::Column::Changeset)
+            .into_tuple()
+            .all(db)
+            .await?;
+        let mut latest: HashMap<i64, &review::Model> = HashMap::new();
+        for review in &reviews {
+            latest.entry(review.changeset).or_insert(review);
+        }
+        let mut newest: HashMap<i64, u32> = HashMap::new();
+        for version in &versions {
+            let at = newest.entry(version.changeset).or_insert(0);
+            *at = (*at).max(u32::try_from(version.n).unwrap_or(u32::MAX));
+        }
+        let mut counting: HashMap<i64, u32> = HashMap::new();
+        for id in open {
+            *counting.entry(id).or_insert(0) += 1;
+        }
+        let summary =
+            |review: &review::Model| match (review.summary_total, review.summary_seen, review.summary_old_base) {
+                (Some(total), Some(seen), Some(old_base)) => Some(ReviewSummary {
+                    total: u32::try_from(total).unwrap_or(0),
+                    seen: u32::try_from(seen).unwrap_or(0),
+                    old_base: u32::try_from(old_base).unwrap_or(0),
+                }),
+                _ => None,
+            };
+        Ok(sources
+            .iter()
+            .map(|source| {
+                let (kind, key) = source_columns(source);
+                let found = changesets.iter().find(|c| c.kind == kind && c.key == key);
+                SourceReview {
+                    source: source.clone(),
+                    changeset: found.map(|c| ChangesetId(c.id as u64)),
+                    open_threads: found.map_or(0, |c| counting.get(&c.id).copied().unwrap_or(0)),
+                    latest: found.and_then(|c| latest.get(&c.id).copied()).map(|review| ReviewRow {
+                        opened_at: review.opened_at,
+                        closed_at: review.closed_at,
+                        complete: review.complete,
+                        last_reviewed: review.last_reviewed.and_then(|n| u32::try_from(n).ok()),
+                        summary: summary(review),
+                    }),
+                    latest_version: found.map_or(0, |c| newest.get(&c.id).copied().unwrap_or(0)),
+                }
+            })
+            .collect())
     }
 
     async fn lens(&self, repo: String, source: Source) -> Result<Option<Lens>, StoreError> {

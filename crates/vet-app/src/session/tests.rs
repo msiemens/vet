@@ -25,8 +25,8 @@ use crate::changeset::{BaseChoice, ChangesetId, CommitId, Lens, RemoteKey, Sourc
 use crate::platform::{Discussion, FakeHosting, PullRequestHead, StoredDiscussion};
 use crate::ports::{
     Attributes, BlobJob, BlobRead, BlobReader, BlobSession, BranchInfo, ChangesetRefs, ChangesetStore, Checkout,
-    CommitDetail, CommitInfo, Differ, Dirty, GitError, History, Remerged, ReviewStore, Scan, Scanner, Store,
-    StoreError, TextDiff, ThreadStore,
+    CommitDetail, CommitInfo, Differ, Dirty, GitError, History, Remerged, ReviewRow, ReviewStore, Scan, Scanner,
+    SourceReview, Store, StoreError, TextDiff, ThreadStore,
 };
 use crate::pull_request::PullRequestRefs;
 use crate::review::{ChangesetThread, NonTextAck, RecordedSpan, Review, ReviewId, ReviewSummary, SpanId, SpanOrigin};
@@ -626,6 +626,46 @@ impl ChangesetStore for MemStore {
     }
     async fn versions(&self, _: ChangesetId) -> StoreResult<Vec<Version>> {
         Ok(self.0.lock().unwrap().versions.clone())
+    }
+    async fn source_reviews(&self, repo: String, sources: &[Source]) -> StoreResult<Vec<SourceReview>> {
+        let mut states = Vec::with_capacity(sources.len());
+        for source in sources {
+            let changeset = self.changeset(repo.clone(), source.clone()).await?;
+            let open_threads = match changeset {
+                Some(id) => self
+                    .threads(id)
+                    .await?
+                    .iter()
+                    .filter(|t| t.thread.status == vet_core::review::ThreadStatus::Open)
+                    .count() as u32,
+                None => 0,
+            };
+            let latest = match changeset {
+                Some(_) => match self.latest_review(ChangesetId(1)).await? {
+                    Some(id) => self.review(id).await?.map(|review| ReviewRow {
+                        opened_at: review.opened_at,
+                        closed_at: review.closed_at,
+                        complete: review.complete.unwrap_or(false),
+                        last_reviewed: review.last_reviewed,
+                        summary: review.summary,
+                    }),
+                    None => None,
+                },
+                None => None,
+            };
+            let latest_version = match changeset {
+                Some(_) => self.versions(ChangesetId(1)).await?.last().map_or(0, |v| v.n),
+                None => 0,
+            };
+            states.push(SourceReview {
+                source: source.clone(),
+                changeset,
+                open_threads,
+                latest,
+                latest_version,
+            });
+        }
+        Ok(states)
     }
 }
 
