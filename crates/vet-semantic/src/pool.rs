@@ -122,6 +122,25 @@ enum Health {
     Restarted(Instant),
     /// Died soon after that, or could not be started anew; the reason.
     Stopped(String),
+    /// A start failed: the same error is answered until `retry_at`, so a server that cannot
+    /// start is not restored and launched again by every query.
+    Failed {
+        error: LaunchError,
+        retry_at: Instant,
+        /// In a row, which lengthens the wait.
+        failures: u32,
+    },
+}
+
+/// How long a first failed start is answered without another try; each failure in a row
+/// doubles it, up to [`MAX_RETRY_WAIT`].
+const RETRY_WAIT: Duration = Duration::from_secs(5);
+const MAX_RETRY_WAIT: Duration = Duration::from_secs(300);
+
+fn retry_wait(failures: u32) -> Duration {
+    RETRY_WAIT
+        .saturating_mul(2u32.saturating_pow(failures.saturating_sub(1)))
+        .min(MAX_RETRY_WAIT)
 }
 
 /// The key of a question about a whole immutable tree.
@@ -716,9 +735,21 @@ impl<M: Materializer, L: ServerLauncher> Inner<M, L> {
         if let Some(lease) = self.join(&key) {
             return Ok(engine::Computed::new(lease, false));
         }
-        let (Started { server, identity, .. }, basis, dir_guard) = self.launch(&key, &backend).await?;
+        let launched = self.launch(&key, &backend).await;
+        let (Started { server, identity, .. }, basis, dir_guard) = match launched {
+            Ok(launched) => launched,
+            Err(e) => {
+                if let PoolError::Launch(error) = &e {
+                    self.note_failed_start(&key, generation, error);
+                }
+                return Err(e);
+            }
+        };
         let entry = {
             let mut state = self.lock();
+            if matches!(state.health.get(&key), Some(Health::Failed { .. })) {
+                state.health.remove(&key);
+            }
             let stale = state.generations.get(&key.backend).copied().unwrap_or(0) != generation;
             state.tick += 1;
             if !stale {
@@ -810,6 +841,27 @@ impl<M: Materializer, L: ServerLauncher> Inner<M, L> {
         (supervision.told)(&key.backend, outcome);
     }
 
+    /// Notes that the start of `key` failed with `error`, unless the backend was restarted by
+    /// hand since `generation`.
+    fn note_failed_start(&self, key: &PoolKey, generation: u64, error: &LaunchError) {
+        let mut state = self.lock();
+        if state.generations.get(&key.backend).copied().unwrap_or(0) != generation {
+            return;
+        }
+        let failures = match state.health.get(key) {
+            Some(Health::Failed { failures, .. }) => failures + 1,
+            _ => 1,
+        };
+        state.health.insert(
+            key.clone(),
+            Health::Failed {
+                error: error.clone(),
+                retry_at: Instant::now() + retry_wait(failures),
+                failures,
+            },
+        );
+    }
+
     /// Notes `health` of `key`, unless the backend was restarted by hand since `generation`.
     fn remember(&self, key: &PoolKey, generation: u64, health: Health) {
         let mut state = self.lock();
@@ -821,8 +873,12 @@ impl<M: Materializer, L: ServerLauncher> Inner<M, L> {
     /// The server for `key`: the running one, the one being started, or a new one.
     async fn lease(self: &Arc<Self>, key: &PoolKey, backend: &Backend) -> Result<Lease<M, L>, PoolError> {
         admit(backend, key.policy)?;
-        if let Some(Health::Stopped(why)) = self.lock().health.get(key) {
-            return Err(PoolError::Stopped(why.clone()));
+        match self.lock().health.get(key) {
+            Some(Health::Stopped(why)) => return Err(PoolError::Stopped(why.clone())),
+            Some(Health::Failed { error, retry_at, .. }) if Instant::now() < *retry_at => {
+                return Err(PoolError::Launch(error.clone()));
+            }
+            _ => {}
         }
         if let Some(lease) = self.join(key) {
             return Ok(lease);
@@ -2065,7 +2121,7 @@ mod tests {
     }
 
     #[test]
-    fn waiters_see_a_failed_start_and_the_next_caller_retries() {
+    fn waiters_see_a_failed_start_and_later_callers_are_answered_alike_until_it_is_retried() {
         let (pool, counters) = pool(2);
         counters.fail_start.store(true, Ordering::SeqCst);
         block_on(async {
@@ -2077,9 +2133,47 @@ mod tests {
             assert!(pool.keys().is_empty());
             assert_eq!(counters.guards_dropped.load(Ordering::SeqCst), 1);
 
+            // Neither a restore nor a launch runs again while the failure is fresh.
             counters.fail_start.store(false, Ordering::SeqCst);
+            for _ in 0..3 {
+                assert!(matches!(
+                    pool.lease(&key, &backend(true)).await,
+                    Err(PoolError::Launch(_))
+                ));
+            }
+            assert_eq!(counters.started.load(Ordering::SeqCst), 1);
+            assert_eq!(counters.materialized.load(Ordering::SeqCst), 1);
+
+            // A restart by hand, or the retry time passing, tries again.
+            pool.restart(&key.backend).await;
             pool.lease(&key, &backend(true)).await.unwrap().release().await;
             assert_eq!(counters.started.load(Ordering::SeqCst), 2);
+        });
+    }
+
+    #[test]
+    fn a_failed_start_is_retried_once_its_wait_has_passed_and_the_waits_grow() {
+        let (pool, counters) = pool(2);
+        let key = snapshot_key(1);
+        block_on(async {
+            counters.fail_start.store(true, Ordering::SeqCst);
+            assert!(pool.lease(&key, &backend(true)).await.is_err());
+            let waited = |pool: &Pool<_, _>| match pool.inner.lock().health.get(&key) {
+                Some(Health::Failed { retry_at, .. }) => retry_at.saturating_duration_since(Instant::now()),
+                _ => panic!("no failure recorded"),
+            };
+            let first = waited(&pool);
+            pool.inner.lock().health.insert(
+                key.clone(),
+                Health::Failed {
+                    error: LaunchError::Spawn("boom".into()),
+                    retry_at: Instant::now(),
+                    failures: 1,
+                },
+            );
+            assert!(pool.lease(&key, &backend(true)).await.is_err());
+            assert_eq!(counters.started.load(Ordering::SeqCst), 2);
+            assert!(waited(&pool) > first, "a repeated failure waits longer");
         });
     }
 
