@@ -151,7 +151,8 @@ async fn the_projects_tsserver_runs_only_where_analysis_may_execute_project_code
     std::fs::write(project.path().join("a.ts"), "export const x = 1;\n").unwrap();
 
     let launcher = LspLauncher::new(servers(&setup), NoRestore);
-    let started = launcher
+    // The typescript beside the server on PATH serves, or none does and the start fails.
+    let _ = launcher
         .start(
             project.path(),
             Tree::Immutable,
@@ -159,7 +160,6 @@ async fn the_projects_tsserver_runs_only_where_analysis_may_execute_project_code
             AnalysisPolicy::LIMITED,
         )
         .await;
-    assert!(started.is_err(), "no typescript of Vet's own is installed here");
     assert!(!marker.exists(), "the project's tsserver ran without trust");
 
     // Trusted, the project's own typescript is the one the server answers through.

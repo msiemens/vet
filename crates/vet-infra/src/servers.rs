@@ -119,8 +119,15 @@ impl ToolResolver {
     /// The `tsserver` the language server must use: the project's own
     /// `typescript`, so its answers match what the project compiles with, else
     /// the fallback Vet installed beside the server. The project's is a program node
-    /// runs, so it is used only where the policy lets analysis execute project code.
-    fn tsserver(&self, spec: &Language, project: &Path, policy: AnalysisPolicy) -> Option<(PathBuf, String)> {
+    /// runs, so it is used only where the policy lets analysis execute project code; without
+    /// that, the typescript installed beside the server itself serves (a user's own install).
+    fn tsserver(
+        &self,
+        spec: &Language,
+        project: &Path,
+        policy: AnalysisPolicy,
+        server: &Path,
+    ) -> Option<(PathBuf, String)> {
         let project_package = project.join("node_modules").join("typescript");
         let fallback = self.install_dir(spec).join("node_modules").join("typescript");
         let mut candidates = Vec::new();
@@ -128,6 +135,9 @@ impl ToolResolver {
             candidates.push((project_package, "the project's"));
         }
         candidates.push((fallback, "Vet's fallback"));
+        if !policy.allow_executing {
+            candidates.extend(modules_above(server).map(|dir| (dir.join("typescript"), "the server's")));
+        }
         candidates.into_iter().find_map(|(package, whose)| {
             let tsserver = package.join("lib").join("tsserver.js");
             tsserver.is_file().then(|| {
@@ -155,6 +165,18 @@ pub(crate) async fn probe_version(probes: &Budget, spec: &Language, program: &Pa
     out.ok
         .then(|| out.stdout.lines().next().unwrap_or("").trim().to_owned())
         .filter(|v| !v.is_empty())
+}
+
+/// The `node_modules` directories above `program`, once links are resolved, nearest first: where
+/// the packages installed beside a server are.
+fn modules_above(program: &Path) -> impl Iterator<Item = PathBuf> {
+    let real = std::fs::canonicalize(program).unwrap_or_else(|_| program.to_owned());
+    real.ancestors()
+        .skip(1)
+        .filter(|dir| dir.file_name().is_some_and(|name| name == "node_modules"))
+        .map(Path::to_owned)
+        .collect::<Vec<_>>()
+        .into_iter()
 }
 
 /// The `version` of the npm package in `package`.
@@ -240,7 +262,7 @@ impl ServerResolver for ToolResolver {
         let mut tsserver = None;
         let mut compiler = None;
         if spec.compiler == Compiler::TypeScript {
-            tsserver = Some(match self.tsserver(spec, project, policy) {
+            tsserver = Some(match self.tsserver(spec, project, policy, &path) {
                 Some((path, whose)) => {
                     compiler = Some(path.clone());
                     Tsserver::Using { whose, path }
@@ -248,8 +270,9 @@ impl ServerResolver for ToolResolver {
                 // Left to itself the server would look for the project's typescript.
                 None if !policy.allow_executing => {
                     return ServerState::Missing {
-                        reason: "the project's typescript is not run for what is not trusted, and Vet's own \
-                                 typescript is not installed. Install it from the language servers settings."
+                        reason: "the project's typescript is not run for what is not trusted, and neither \
+                                 Vet's own nor one beside the server is installed. Install Vet's from the \
+                                 language servers settings."
                             .into(),
                     };
                 }
@@ -585,6 +608,39 @@ mod tests {
         );
         assert!(
             matches!(&server.tsserver, Some(Tsserver::Using { whose, .. }) if whose.contains("Vet's fallback")),
+            "{:?}",
+            server.tsserver
+        );
+    }
+
+    #[tokio::test]
+    async fn without_trust_a_user_installed_server_is_served_by_the_typescript_beside_it() {
+        let data = tempfile::tempdir().unwrap();
+        let global = tempfile::tempdir().unwrap();
+        let modules = std::fs::canonicalize(global.path()).unwrap().join("node_modules");
+        let bin = modules.join("typescript-language-server/bin");
+        touch(&bin.join("typescript-language-server"));
+        let project = tempfile::tempdir().unwrap();
+        touch(&project.path().join("node_modules/typescript/lib/tsserver.js"));
+        let resolver = ToolResolver::with_host(data.path().to_owned(), host(false, vec![bin]));
+
+        let typescript = language("typescript");
+        let state = resolver
+            .resolve(&typescript, project.path(), None, AnalysisPolicy::LIMITED)
+            .await;
+        assert!(matches!(state, ServerState::Missing { .. }), "{state:?}");
+
+        let beside = modules.join("typescript/lib/tsserver.js");
+        touch(&beside);
+        let server = found(
+            resolver
+                .resolve(&typescript, project.path(), None, AnalysisPolicy::LIMITED)
+                .await,
+        );
+        assert_eq!(server.origin, ServerOrigin::Path);
+        assert_eq!(server.command.compiler.as_deref(), Some(beside.as_path()));
+        assert!(
+            matches!(&server.tsserver, Some(Tsserver::Using { whose, .. }) if whose.contains("the server's")),
             "{:?}",
             server.tsserver
         );
