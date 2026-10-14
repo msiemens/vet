@@ -48,6 +48,8 @@ struct Mock {
     /// The status a refusal uses; 0 means a rate limit (429). A plain failure (500) is not gated
     /// by the client, so a test can tell the prefetch's own stop from the client's.
     refusal: u16,
+    /// A pull request the platform does not have, which answers 404.
+    missing: Option<u64>,
     /// How long answering a discussion takes, so a viewer's read can be seen to not wait for it.
     delay: Duration,
 }
@@ -186,7 +188,7 @@ fn github(mock: Arc<Mutex<Mock>>) -> Fake {
         }
         if query.contains("body isDraft state") {
             let number = number_of(request);
-            let (delay, description, refusal) = {
+            let (delay, description, refusal, missing) = {
                 let mock = mock.lock().unwrap();
                 (
                     mock.delay,
@@ -196,6 +198,7 @@ fn github(mock: Arc<Mutex<Mock>>) -> Fake {
                         .map(|p| p.description.clone())
                         .unwrap_or_default(),
                     mock.refusal,
+                    mock.missing,
                 )
             };
             if !delay.is_zero() {
@@ -205,6 +208,9 @@ fn github(mock: Arc<Mutex<Mock>>) -> Fake {
             let refused = mock.limit_after.is_some_and(|n| mock.discussions >= n);
             mock.discussions += 1;
             drop(mock);
+            if missing == Some(number) {
+                return Canned::status(404, r#"{"message":"not found"}"#);
+            }
             return if refused {
                 let status = if refusal == 0 { 429 } else { refusal };
                 Canned::status(status, r#"{"message":"refused"}"#).with("Retry-After", "1")
@@ -399,6 +405,67 @@ async fn the_details_of_a_listed_pull_request_are_fetched_ahead_and_a_changed_on
     list(&client, project).await;
     assert_eq!(stored_description(repo.path(), 7).await.as_deref(), Some("third"));
     assert_eq!(answered(&mock), 3, "a changed pull request is fetched");
+}
+
+#[tokio::test]
+async fn a_pull_request_that_is_gone_does_not_stop_the_others() {
+    let (mock, fake, repo, _scratch) = fixture();
+    {
+        let mut mock = mock.lock().unwrap();
+        // #8 is gone; #9 and #7 are still fetched.
+        mock.missing = Some(8);
+        let head = mock.prs[0].head.clone();
+        mock.prs.push(Pr {
+            number: 9,
+            updated_at: "2024-05-04T12:00:00Z".to_owned(),
+            description: "third".to_owned(),
+            head,
+        });
+    }
+    let (_handler, client) = backend(repo.path(), &fake.base()).await;
+    let project = client.open(repo.path()).await;
+
+    list(&client, project).await;
+
+    assert_eq!(stored_description(repo.path(), 9).await.as_deref(), Some("third"));
+    assert_eq!(stored_description(repo.path(), 7).await.as_deref(), Some("first"));
+    assert!(stored_now(repo.path(), 8).await.is_none());
+    assert_eq!(
+        answered(&mock),
+        3,
+        "the gone pull request is passed over, the account is not"
+    );
+}
+
+#[tokio::test]
+async fn prefetching_stops_when_the_project_closes() {
+    let (mock, fake, repo, _scratch) = fixture();
+    {
+        let mut mock = mock.lock().unwrap();
+        let head = mock.prs[0].head.clone();
+        mock.prs.push(Pr {
+            number: 9,
+            updated_at: "2024-05-04T12:00:00Z".to_owned(),
+            description: "third".to_owned(),
+            head,
+        });
+        // Slow platforms, so the prefetch is still running when the project closes.
+        mock.delay = Duration::from_millis(200);
+    }
+    let (_handler, client) = backend(repo.path(), &fake.base()).await;
+    let project = client.open(repo.path()).await;
+
+    list(&client, project).await;
+    tokio::time::sleep(Duration::from_millis(50)).await;
+    client.call(Request::CloseProject { project }).await.unwrap();
+    tokio::time::sleep(Duration::from_millis(700)).await;
+
+    assert_eq!(
+        answered(&mock),
+        1,
+        "the one in flight when the project closed, and no more"
+    );
+    assert!(stored_now(repo.path(), 9).await.is_none());
 }
 
 #[tokio::test]

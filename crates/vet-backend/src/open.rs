@@ -121,6 +121,8 @@ pub(crate) struct Wired {
     fetching: TaskSlot,
     /// The copy of the working tree's content ahead of a review; a newer tree's replaces it.
     copying: TaskSlot,
+    /// The details of the queue's pull requests fetched ahead; a newer list's replaces it.
+    prefetching: TaskSlot,
     closed: AtomicBool,
     trees: Arc<KeptTrees>,
     /// The answers of the language servers kept between launches.
@@ -157,6 +159,12 @@ impl Wired {
     /// Hands over the task that fetches periodically, which ends with the session.
     pub(crate) fn keep_fetching(&self, task: AbortHandle) {
         self.fetching.keep(task);
+    }
+
+    /// Hands over the details fetched ahead of the queue; a newer list's replaces it, and it ends
+    /// with the session.
+    pub(crate) fn keep_prefetching(&self, task: AbortHandle) {
+        self.prefetching.keep(task);
     }
 
     /// Copies the working tree's content into the store in the background, so the first mark
@@ -329,6 +337,7 @@ impl Resident for Wired {
         self.fetching.stop();
         self.settling.stop();
         self.copying.stop();
+        self.prefetching.stop();
         if let Some(Ok(booted)) = self.booted.get() {
             booted.semantics.shutdown().await;
         }
@@ -453,6 +462,7 @@ impl Orchestrator {
             edits_waiting: Arc::default(),
             fetching: TaskSlot::default(),
             copying: TaskSlot::default(),
+            prefetching: TaskSlot::default(),
             closed: AtomicBool::new(false),
             trees: self.trees.clone(),
             answers: self.answers.clone(),

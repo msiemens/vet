@@ -77,13 +77,14 @@ impl Orchestrator {
             tracing::warn!(%error, "deleting the refs of pull requests no longer listed failed");
         }
         fetch_heads_in_background(open.open.clone(), list.clone());
-        prefetch_details(
+        let prefetching = prefetch_details(
             self.platforms.clone(),
             self.store.clone(),
             self.platforms.known(),
             list.clone(),
             self.config.prefetch_pace,
         );
+        open.open.keep_prefetching(prefetching);
         for source in &list.sources {
             if let Some(error) = &source.error {
                 // The client told of a rate limit once, when it began.
@@ -201,15 +202,17 @@ const PREFETCH_LIMIT: usize = 20;
 
 /// Fetches the details of the newest listed pull requests whose `updatedAt` the stored copy does
 /// not have, in the background, so a revisit shows them at once. An unchanged pull request is not
-/// asked for. The platform is asked `pace` between two; a list whose account is limited or failing
-/// stops there. Spawned, so it never delays the list the viewer asked for.
+/// asked for. The platform is asked `pace` between two; an account that is limited or failing is
+/// left alone for the rest of the run, a pull request that is merely gone is passed over. Never
+/// delays the list the viewer asked for; the task is handed to the project, which replaces it with
+/// the next list's and stops it when the project closes.
 fn prefetch_details(
     platforms: Arc<Platforms>,
     store: SqliteStore,
     known: Arc<PullRequestCache>,
     list: PullRequestList,
     pace: Duration,
-) {
+) -> tokio::task::AbortHandle {
     tokio::spawn(async move {
         let mut stopped: std::collections::HashSet<String> = std::collections::HashSet::new();
         let mut fetched = 0usize;
@@ -260,12 +263,17 @@ fn prefetch_details(
                         %error,
                         "prefetching a pull request's details failed"
                     );
-                    stopped.insert(account);
+                    // A pull request that is gone says nothing of the account; only an account the
+                    // platform left unwell (limited, unreachable, refused) stops the rest.
+                    if matches!(platforms.standing(&account), Some(Standing::Failing(_))) {
+                        stopped.insert(account);
+                    }
                 }
             }
             tokio::time::sleep(pace).await;
         }
-    });
+    })
+    .abort_handle()
 }
 
 /// Brings in the pull requests of `list` that are not in the repository, so the queue can count
