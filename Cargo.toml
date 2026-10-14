@@ -59,7 +59,6 @@ ts-rs = "12"
 blake3 = { version = "1.8.7", default-features = false }
 globset = { version = "0.4.20", default-features = false }
 imara-diff = { package = "gix-imara-diff", version = "0.3.0" }
-similar = { version = "3.2.0", default-features = false }
 unicode-normalization = { version = "0.1", default-features = false }
 percent-encoding = "2.3"
 pulldown-cmark = { version = "0.13.4", default-features = false }

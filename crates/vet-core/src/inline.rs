@@ -1,6 +1,6 @@
 //! Word-level changes inside a line hunk, for intra-line highlighting.
 
-use similar::{Algorithm, DiffOp, capture_diff_slices};
+use imara_diff::{Algorithm, Diff, InternedInput};
 
 use crate::content::Hunk;
 use crate::text::{Lines, unit_len};
@@ -35,32 +35,17 @@ pub fn hunk_changes(base: &Lines, target: &Lines, hunk: &Hunk) -> Vec<TextChange
         return vec![whole];
     }
     let (old_at, new_at) = (offsets(&old), offsets(&new));
+    let mut input = InternedInput::default();
+    input.update_before(old.iter().copied());
+    input.update_after(new.iter().copied());
+    let diff = Diff::compute(Algorithm::Myers, &input);
     let mut out: Vec<TextChange> = Vec::new();
-    for op in capture_diff_slices(Algorithm::Myers, &old, &new) {
-        let (old_range, new_range) = match op {
-            DiffOp::Equal { .. } => continue,
-            DiffOp::Delete {
-                old_index,
-                old_len,
-                new_index,
-            } => (old_index..old_index + old_len, new_index..new_index),
-            DiffOp::Insert {
-                old_index,
-                new_index,
-                new_len,
-            } => (old_index..old_index, new_index..new_index + new_len),
-            DiffOp::Replace {
-                old_index,
-                old_len,
-                new_index,
-                new_len,
-            } => (old_index..old_index + old_len, new_index..new_index + new_len),
-        };
+    for change in diff.hunks() {
         let change = TextChange {
-            from_base: base0 + old_at[old_range.start],
-            to_base: base0 + old_at[old_range.end],
-            from_target: target0 + new_at[new_range.start],
-            to_target: target0 + new_at[new_range.end],
+            from_base: base0 + old_at[change.before.start as usize],
+            to_base: base0 + old_at[change.before.end as usize],
+            from_target: target0 + new_at[change.after.start as usize],
+            to_target: target0 + new_at[change.after.end as usize],
         };
         match out.last_mut() {
             Some(last)
