@@ -1,6 +1,7 @@
-//! Restarting a language's server: the backend with a language server that names its process in
-//! every hover, leaves a hover on line 1 unanswered, dies at a hover on line 2, and can be made
-//! to fail its start. Needs `python3` for that server: the tests are ignored and run by `ci/tool-tests.sh`.
+//! Restarting and stopping a language's server: the backend with a language server that names its
+//! process in every hover, leaves a hover on line 1 unanswered, dies at a hover on line 2, and can
+//! be made to fail its start. Needs `python3` for that server: the tests are ignored and run by
+//! `ci/tool-tests.sh`.
 
 #![allow(clippy::disallowed_methods)]
 
@@ -271,6 +272,31 @@ async fn requests_in_flight_on_the_old_server_fail_as_restarted() {
     assert!(unavailable.message.contains("restarted"), "{}", unavailable.message);
 
     assert_ne!(rig.pid().await, before);
+}
+
+#[tokio::test]
+#[ignore = "needs python3"]
+async fn changing_trust_stops_the_servers_started_under_the_old_policy_and_the_next_query_starts_one_anew() {
+    let rig = Rig::start().await;
+    let trust = |trusted| {
+        rig.call(Request::SetProjectTrusted {
+            project: rig.project,
+            trusted,
+        })
+    };
+    let untrusted = rig.pid().await;
+
+    trust(true).await.unwrap();
+    assert!(gone(untrusted).await, "the server of the old policy is still running");
+    let trusted = rig.pid().await;
+
+    trust(false).await.unwrap();
+    assert!(
+        gone(trusted).await,
+        "the server of the withdrawn trust is still running"
+    );
+    let again = rig.pid().await;
+    assert!(again != untrusted && again != trusted);
 }
 
 #[tokio::test]
