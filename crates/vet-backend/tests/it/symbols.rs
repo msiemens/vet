@@ -136,7 +136,8 @@ async fn reviewing(open: &[&str]) -> (Client, ProjectId, tempfile::TempDir) {
 #[tokio::test]
 #[ignore = "needs rust-analyzer"]
 async fn the_changed_symbols_are_pushed_without_being_asked_for() {
-    let (mut client, project, _repo) = reviewing(&[]).await;
+    // The file the window has open is analysed alone first, so this answer is its own.
+    let (mut client, project, _repo) = reviewing(&["src/lib.rs"]).await;
 
     let symbols = next_symbols(&mut client.inbox, project, Duration::from_secs(180))
         .await
@@ -173,11 +174,13 @@ async fn the_open_file_is_analysed_first() {
 #[tokio::test]
 #[ignore = "needs rust-analyzer"]
 async fn nothing_more_is_analysed_once_the_review_screen_goes_away() {
-    let (mut client, project, _repo) = reviewing(&[]).await;
+    // The open file is its own batch, analysed before the rest: hiding after it is answered must
+    // leave the other file unanalysed.
+    let (mut client, project, _repo) = reviewing(&["src/other.rs"]).await;
     let first = next_symbols(&mut client.inbox, project, Duration::from_secs(180))
         .await
         .expect("an answer");
-    assert_eq!(first.path, "src/lib.rs");
+    assert_eq!(first.path, "src/other.rs");
 
     client
         .call(Request::SetReviewShown { project, shown: false })
@@ -187,6 +190,6 @@ async fn nothing_more_is_analysed_once_the_review_screen_goes_away() {
         next_symbols(&mut client.inbox, project, Duration::from_secs(10))
             .await
             .is_none(),
-        "the second file is not analysed once the screen is away"
+        "the other file is not analysed once the screen is away"
     );
 }

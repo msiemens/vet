@@ -4,6 +4,7 @@
 
 use std::sync::Arc;
 
+use futures::stream::{self, StreamExt};
 use vet_app::session::FileStatus;
 use vet_core::content::RepoPath;
 use vet_protocol::{Event, Response, Unavailable, UnavailableKind};
@@ -11,6 +12,11 @@ use vet_protocol::{Event, Response, Unavailable, UnavailableKind};
 use crate::Open;
 use crate::analysis::changed_files;
 use crate::open::Booted;
+
+/// Files whose target side is read at once, as the window did.
+const TARGET_AT_ONCE: usize = 4;
+/// Files whose comparison with the base runs at once, which is slower and needs the servers.
+const COMPARED_AT_ONCE: usize = 2;
 
 /// Starts (or restarts) the task that analyses the changeset's files for problems. A newer run
 /// replaces the older; the review screen going away or the project closing stops it.
@@ -29,16 +35,28 @@ async fn run(open: Arc<Open>) {
         Err(_) => return,
     };
     let revision = booted.session.revision().await;
-    let files = changed_files(&open, &booted, |file| {
+    let (opened, rest) = changed_files(&open, &booted, |file| {
         file.status != FileStatus::Deleted && file.target_lines > 0
     })
     .await;
     for compared in [false, true] {
-        for path in &files {
+        let at_once = if compared { COMPARED_AT_ONCE } else { TARGET_AT_ONCE };
+        // The files the viewer has open first, then the rest; each batch a few at a time.
+        for batch in [&opened, &rest] {
+            stream::iter(batch.iter().cloned())
+                .for_each_concurrent(at_once, |path| {
+                    let (open, booted) = (open.clone(), booted.clone());
+                    async move {
+                        if !open.screens.shown() || booted.session.revision().await != revision {
+                            return;
+                        }
+                        push(&open, &booted, revision, &path, compared).await;
+                    }
+                })
+                .await;
             if !open.screens.shown() || booted.session.revision().await != revision {
                 return;
             }
-            push(&open, &booted, revision, path, compared).await;
         }
     }
 }
@@ -68,7 +86,7 @@ async fn push(open: &Open, booted: &Booted, revision: u32, path: &str, compared:
         },
         Ok(_) => return,
         Err(error) => {
-            tracing::warn!(path, %error, "analysing a file's diagnostics failed");
+            tracing::warn!(%path, %error, "analysing a file's diagnostics failed");
             Event::FileDiagnostics {
                 project: open.id,
                 revision,

@@ -16,6 +16,7 @@ vet-highlight.workspace = true
 vet-mapping.workspace = true
 vet-log.workspace = true
 tracing.workspace = true
+futures = { workspace = true, features = ["alloc"] }
 tokio = { workspace = true, features = ["rt-multi-thread", "macros", "sync", "time"] }
 
 [dev-dependencies]

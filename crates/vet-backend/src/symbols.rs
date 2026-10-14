@@ -3,7 +3,9 @@
 //! (SPEC §7.3, A13). It runs while the review screen shows the changeset (D81).
 
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU32, Ordering};
 
+use futures::stream::{self, StreamExt};
 use vet_core::content::RepoPath;
 use vet_protocol::{DerivedInputs, Event, FileSymbols, Response, Unavailable, UnavailableKind};
 
@@ -12,6 +14,9 @@ use crate::analysis::changed_files;
 use crate::error::Error;
 use crate::open::Booted;
 
+/// Files analysed at once, as the window did.
+const AT_ONCE: usize = 4;
+
 /// Starts (or restarts) the task that analyses the changeset's changed symbols. A newer run
 /// replaces the older; the review screen going away or the project closing stops it.
 pub(crate) fn refresh_symbols_in_background(open: Arc<Open>) {
@@ -19,35 +24,48 @@ pub(crate) fn refresh_symbols_in_background(open: Arc<Open>) {
     open.keep_symbols(task.abort_handle());
 }
 
-/// Analyses each changed file's symbols, the open ones first, and pushes each answer as it comes.
-/// Stops when nothing is left, the review screen goes away or the revision moves (a newer run
-/// analyses the new revision).
+/// Analyses each changed file's symbols, the open ones first, a few at a time, and pushes each
+/// answer as it comes. Stops when nothing is left, the review screen goes away or the revision
+/// moves (a newer run analyses the new revision).
 async fn run(open: Arc<Open>) {
     let booted = match open.booted().await {
         Ok(booted) => booted.clone(),
         Err(_) => return,
     };
     let revision = booted.session.revision().await;
-    let files = changed_files(&open, &booted, |file| !file.hunks.is_empty()).await;
-    let total = files.len() as u32;
-    for (done, path) in files.into_iter().enumerate() {
+    let (opened, rest) = changed_files(&open, &booted, |file| !file.hunks.is_empty()).await;
+    let total = (opened.len() + rest.len()) as u32;
+    let done = Arc::new(AtomicU32::new(0));
+    // The files the viewer has open first, then the rest; each batch a few at a time.
+    for batch in [opened, rest] {
+        stream::iter(batch)
+            .for_each_concurrent(AT_ONCE, |path| {
+                let (open, booted, done) = (open.clone(), booted.clone(), done.clone());
+                async move {
+                    if !open.screens.shown() || booted.session.revision().await != revision {
+                        return;
+                    }
+                    let symbols = match booted.file_symbols(revision, &path).await {
+                        Ok(Response::FileSymbols(symbols)) => symbols,
+                        Ok(_) => return,
+                        Err(error) => {
+                            tracing::warn!(%path, %error, "analysing a file's symbols failed");
+                            failed(revision, &path, &booted, &error)
+                        }
+                    };
+                    let analysed = done.fetch_add(1, Ordering::Relaxed) + 1;
+                    open.subscribers.broadcast(Event::FileSymbols {
+                        project: open.id,
+                        symbols,
+                        done: analysed,
+                        total,
+                    });
+                }
+            })
+            .await;
         if !open.screens.shown() || booted.session.revision().await != revision {
             return;
         }
-        let symbols = match booted.file_symbols(revision, &path).await {
-            Ok(Response::FileSymbols(symbols)) => symbols,
-            Ok(_) => continue,
-            Err(error) => {
-                tracing::warn!(path, %error, "analysing a file's symbols failed");
-                failed(revision, &path, &booted, &error)
-            }
-        };
-        open.subscribers.broadcast(Event::FileSymbols {
-            project: open.id,
-            symbols,
-            done: done as u32 + 1,
-            total,
-        });
     }
 }
 

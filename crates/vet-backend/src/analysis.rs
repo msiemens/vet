@@ -5,11 +5,16 @@ use vet_app::session::{FileView, View};
 use crate::Open;
 use crate::open::Booted;
 
-/// The changed files of the changeset on view that `keep` accepts, the files the viewer has open
-/// first, then the rest in the order the changeset lists them.
-pub(crate) async fn changed_files(open: &Open, booted: &Booted, keep: fn(&FileView) -> bool) -> Vec<String> {
+/// The changed files of the changeset on view that `keep` accepts, as two batches: the files the
+/// viewer has open, in the order the window shows them, then the rest in the changeset's order.
+/// The open files are read first.
+pub(crate) async fn changed_files(
+    open: &Open,
+    booted: &Booted,
+    keep: fn(&FileView) -> bool,
+) -> (Vec<String>, Vec<String>) {
     let Ok(manifest) = booted.session.manifest(View::Changeset).await else {
-        return Vec::new();
+        return (Vec::new(), Vec::new());
     };
     let paths: Vec<String> = manifest
         .files
@@ -20,20 +25,17 @@ pub(crate) async fn changed_files(open: &Open, booted: &Booted, keep: fn(&FileVi
     open_first(paths, &open.open_files())
 }
 
-/// `paths`, with those in `first` moved to the front in `first`'s order; the rest keep their order.
-fn open_first(paths: Vec<String>, first: &[String]) -> Vec<String> {
-    let mut ordered: Vec<String> = Vec::with_capacity(paths.len());
-    for open in first {
-        if paths.contains(open) && !ordered.contains(open) {
-            ordered.push(open.clone());
+/// `paths` as the open ones and the rest: those in `first` (each once, in `first`'s order) that the
+/// changeset has, then the others in their order.
+fn open_first(paths: Vec<String>, first: &[String]) -> (Vec<String>, Vec<String>) {
+    let mut opened: Vec<String> = Vec::new();
+    for path in first {
+        if paths.contains(path) && !opened.contains(path) {
+            opened.push(path.clone());
         }
     }
-    for path in paths {
-        if !ordered.contains(&path) {
-            ordered.push(path);
-        }
-    }
-    ordered
+    let rest = paths.into_iter().filter(|path| !opened.contains(path)).collect();
+    (opened, rest)
 }
 
 #[cfg(test)]
@@ -48,14 +50,16 @@ mod tests {
             "c.rs".to_owned(),
             "d.rs".to_owned(),
         ];
-        let ordered = open_first(paths, &["c.rs".to_owned(), "a.rs".to_owned()]);
-        assert_eq!(ordered, ["c.rs", "a.rs", "b.rs", "d.rs"]);
+        let (opened, rest) = open_first(paths, &["c.rs".to_owned(), "a.rs".to_owned()]);
+        assert_eq!(opened, ["c.rs", "a.rs"]);
+        assert_eq!(rest, ["b.rs", "d.rs"]);
     }
 
     #[test]
     fn an_open_file_not_in_the_changeset_is_ignored() {
         let paths = vec!["a.rs".to_owned(), "b.rs".to_owned()];
-        let ordered = open_first(paths, &["gone.rs".to_owned(), "b.rs".to_owned()]);
-        assert_eq!(ordered, ["b.rs", "a.rs"]);
+        let (opened, rest) = open_first(paths, &["gone.rs".to_owned(), "b.rs".to_owned()]);
+        assert_eq!(opened, ["b.rs"]);
+        assert_eq!(rest, ["a.rs"]);
     }
 }
