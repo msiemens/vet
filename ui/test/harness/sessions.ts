@@ -7,6 +7,7 @@ import { changeset } from "../../src/state/changeset.svelte.ts";
 import { problems } from "../../src/state/problems.svelte.ts";
 import { queue } from "../../src/state/queue.svelte.ts";
 import { reviewShown } from "../../src/state/reviewShown.svelte.ts";
+import { serverList } from "../../src/state/serverList.svelte.ts";
 // Asks for the changeset's symbols while it is shown.
 import "../../src/state/symbols.svelte.ts";
 import { threads } from "../../src/state/threads.svelte.ts";
@@ -262,11 +263,16 @@ export const sessions: Record<string, (h: Harness) => Promise<void>> = {
     const asked = () => h.sent.filter((r) => ANALYSES.has(r.type)).length;
     const told = (shown: boolean) => h.sent.filter((r) => r.type === "setReviewShown" && r.shown === shown).length;
     await h.step("rows chosen on the queue", async () => {
+      // The files that are asked about are those a language serves, once the servers are known:
+      // the fixture's own are served by none.
+      await h.until(() => serverList.servers.length > 0, "the servers");
+      h.fixture.write("d.rs", "wt", [3]);
+      await h.until(() => changeset.paths.includes("d.rs"), "the Rust file in the working tree");
       await changeset.openChangeset({ type: "branch", name: "feature" });
       await h.until(() => changeset.facts?.target.changeset.type === "branch", "the branch");
       await changeset.openChangeset({ type: "workingTree" });
       await h.until(() => changeset.facts?.target.changeset.type === "workingTree", "the working tree");
-      if (!problems.analysable.length) throw new Error("the changeset has no file to analyse");
+      if (!problems.analysable.includes("d.rs")) throw new Error("the changeset has no file to analyse");
       await sleep(500);
       if (asked() || told(true)) throw new Error("the queue asked the language servers for something");
     });
