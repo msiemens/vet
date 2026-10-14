@@ -6,6 +6,7 @@ use std::collections::HashSet;
 use tempfile::TempDir;
 use vet_app::changeset::{BaseChoice, ChangedFile, CommitId, Lens, RemoteKey, Snapshots, VersionChange, VersionOrigin};
 use vet_app::gc::{Retention, collect, open_bases};
+use vet_app::platform::{Discussion, PullRequestState};
 use vet_app::ports::{GcReport, ReviewWrites, Store};
 use vet_app::review::{NonTextAck, SpanOrigin};
 use vet_core::content::{
@@ -1499,4 +1500,95 @@ async fn reads_are_answered_while_a_write_is_open_and_see_only_what_was_committe
         store.changeset("/other".into(), Source::WorkingTree).await.unwrap(),
         Some(ChangesetId(other as u64))
     );
+}
+
+/// The details of a pull request with just a description, enough for the store's test.
+fn discussion(description: &str) -> Discussion {
+    Discussion {
+        title: "PR".to_owned(),
+        url: "https://github.com/acme/app/pull/7".to_owned(),
+        description: description.to_owned(),
+        draft: false,
+        source_branch: "feature".to_owned(),
+        target_branch: "main".to_owned(),
+        state: PullRequestState::Open,
+        author: "ada".to_owned(),
+        author_name: "Ada".to_owned(),
+        author_avatar: None,
+        reviewers: Vec::new(),
+        viewer_verdict: None,
+        labels: Vec::new(),
+        ci: None,
+        conversation: Vec::new(),
+        threads: Vec::new(),
+        complete: true,
+    }
+}
+
+fn app() -> RemoteKey {
+    RemoteKey {
+        host: "github.com".to_owned(),
+        path: "acme/app".to_owned(),
+    }
+}
+
+#[tokio::test]
+async fn a_pull_requests_details_are_kept_an_older_copy_replaces_nothing_newer_and_the_oldest_read_goes_first() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = open(&dir).await;
+    let writes = store.writes();
+
+    writes
+        .set_discussion(app(), 7, "c1".into(), 100, T0, &discussion("first"))
+        .await
+        .unwrap();
+    let kept = store.stored_discussion(app(), 7).await.unwrap().unwrap();
+    assert_eq!((kept.updated_at, kept.discussion.description.as_str()), (100, "first"));
+
+    // A copy older than what is kept replaces nothing.
+    writes
+        .set_discussion(app(), 7, "c1".into(), 50, T0 + 1, &discussion("older"))
+        .await
+        .unwrap();
+    assert_eq!(
+        store
+            .stored_discussion(app(), 7)
+            .await
+            .unwrap()
+            .unwrap()
+            .discussion
+            .description,
+        "first"
+    );
+
+    // What the platform says now does.
+    writes
+        .set_discussion(app(), 7, "c2".into(), 200, T0 + 2, &discussion("newer"))
+        .await
+        .unwrap();
+    assert_eq!(
+        store
+            .stored_discussion(app(), 7)
+            .await
+            .unwrap()
+            .unwrap()
+            .discussion
+            .description,
+        "newer"
+    );
+
+    // The table is bounded: only the 256 pull requests read most recently are kept.
+    for n in 1..=300u64 {
+        writes
+            .set_discussion(app(), n, "c".into(), 1, T0 + 100 + n as i64, &discussion("x"))
+            .await
+            .unwrap();
+    }
+    assert!(
+        store.stored_discussion(app(), 7).await.unwrap().is_none(),
+        "the pull request read longest ago went first"
+    );
+    assert!(store.stored_discussion(app(), 300).await.unwrap().is_some());
+    let kept = store.stored_discussion(app(), 250).await.unwrap();
+    assert!(kept.is_some());
 }

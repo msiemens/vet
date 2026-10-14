@@ -613,3 +613,36 @@ pub mod recent_project {
 
     impl ActiveModelBehavior for ActiveModel {}
 }
+
+/// What a platform last said of a pull request, besides its own threads, kept so a revisit shows it
+/// before the platform is asked again. One row per pull request; `detail` is the stored form of
+/// [`vet_app::platform::StoredDiscussion`].
+pub mod pull_request {
+    use sea_orm::entity::prelude::*;
+
+    #[derive(Clone, Debug, PartialEq, DeriveEntityModel)]
+    #[sea_orm(table_name = "pull_request")]
+    pub struct Model {
+        #[sea_orm(primary_key)]
+        pub id: i64,
+        #[sea_orm(unique_key = "key")]
+        pub host: String,
+        #[sea_orm(unique_key = "key")]
+        pub path: String,
+        #[sea_orm(unique_key = "key")]
+        pub number: i64,
+        /// The commit the source branch was at when the details were read.
+        pub head: String,
+        /// The platform's `updatedAt` of the pull request when the details were read (unix seconds).
+        pub updated_at: i64,
+        /// When Vet read them (unix seconds); the oldest rows are evicted first.
+        pub synced_at: i64,
+        /// The details, as JSON.
+        pub detail: String,
+    }
+
+    #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]
+    pub enum Relation {}
+
+    impl ActiveModelBehavior for ActiveModel {}
+}

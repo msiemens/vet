@@ -1,6 +1,7 @@
 //! What hosting platforms say about pull requests, in terms that hold for every
 //! platform, and how each platform is described to the rest of Vet (SPEC §11).
 
+use serde::{Deserialize, Serialize};
 use vet_core::content::LineDelta;
 
 use super::host::PlatformKind;
@@ -167,7 +168,7 @@ pub struct Viewer {
 }
 
 /// The rolled-up state of a commit's checks.
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Serialize, Deserialize)]
 pub enum CiState {
     Pending,
     Success,
@@ -186,7 +187,7 @@ pub enum ReviewRequest {
 }
 
 /// What a reviewer concluded.
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Serialize, Deserialize)]
 pub enum ReviewVerdict {
     Approved,
     ChangesRequested,

@@ -22,7 +22,7 @@ use super::manifest::{old_path_of, update_of};
 use super::state::{check_revision, outcome};
 use super::*;
 use crate::changeset::{BaseChoice, ChangesetId, CommitId, Lens, RemoteKey, Source, Version, VersionOrigin};
-use crate::platform::{FakeHosting, PullRequestHead};
+use crate::platform::{Discussion, FakeHosting, PullRequestHead, StoredDiscussion};
 use crate::ports::{
     Attributes, BlobJob, BlobRead, BlobReader, BlobSession, BranchInfo, ChangesetRefs, ChangesetStore, Checkout,
     CommitDetail, CommitInfo, Differ, Dirty, GitError, History, Remerged, ReviewStore, Scan, Scanner, Store,
@@ -542,6 +542,8 @@ struct Mem {
     project_trusted: bool,
     trusted_heads: HashMap<Source, CommitId>,
     pins: HashMap<Source, CommitId>,
+    /// What a platform last said of a pull request, by remote and number.
+    discussions: HashMap<(RemoteKey, u64), StoredDiscussion>,
 }
 
 impl Mem {
@@ -618,6 +620,9 @@ impl ChangesetStore for MemStore {
             .then_some(ChangesetId(1))
             .into_iter()
             .collect())
+    }
+    async fn stored_discussion(&self, remote: RemoteKey, number: u64) -> StoreResult<Option<StoredDiscussion>> {
+        Ok(self.0.lock().unwrap().discussions.get(&(remote, number)).cloned())
     }
     async fn versions(&self, _: ChangesetId) -> StoreResult<Vec<Version>> {
         Ok(self.0.lock().unwrap().versions.clone())
@@ -699,6 +704,25 @@ impl ReviewWrites for MemStore {
         self.0.lock().unwrap().heads.insert(source, head);
         Ok(())
     }
+    async fn set_discussion(
+        &self,
+        remote: RemoteKey,
+        number: u64,
+        _: String,
+        updated_at: i64,
+        synced_at: i64,
+        discussion: &Discussion,
+    ) -> StoreResult<()> {
+        self.0.lock().unwrap().discussions.insert(
+            (remote, number),
+            StoredDiscussion {
+                updated_at,
+                synced_at,
+                discussion: discussion.clone(),
+            },
+        );
+        Ok(())
+    }
     async fn set_pinned_base(&self, _: String, source: Source, base: Option<CommitId>) -> StoreResult<()> {
         let mut mem = self.0.lock().unwrap();
         match base {
@@ -745,6 +769,7 @@ impl ReviewWrites for MemStore {
             project_trusted: mem.project_trusted,
             trusted_heads: std::mem::take(&mut mem.trusted_heads),
             pins: std::mem::take(&mut mem.pins),
+            discussions: std::mem::take(&mut mem.discussions),
             started: mem.started + 1,
             base: Some(choice),
             changeset: Some((repo, source)),

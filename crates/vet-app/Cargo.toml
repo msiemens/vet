@@ -15,7 +15,8 @@ vet-engine.workspace = true
 tokio = { workspace = true, features = ["sync", "time"] }
 # Asking a platform for several commits' checks at once.
 futures = { workspace = true, features = ["alloc"] }
-# What `az` prints.
+# What `az` prints, and the stored form of what a platform said of a pull request.
+serde = { workspace = true, features = ["derive"] }
 serde_json.workspace = true
 tracing.workspace = true
 # The names in a remote URL, which may come escaped or not.

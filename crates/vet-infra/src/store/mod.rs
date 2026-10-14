@@ -34,7 +34,7 @@ use sea_orm::{
 };
 use sea_orm_migration::MigratorTrait;
 use vet_app::changeset::{ChangesetId, CommitId, Lens, Source, Version};
-use vet_app::platform::PullRequestHead;
+use vet_app::platform::{PullRequestHead, RemoteKey, StoredDiscussion};
 use vet_app::ports::{ChangesetStore, LiveStore, ReviewStore, Store, StoreError, ThreadStore};
 use vet_app::review::{ChangesetThread, Review, ReviewId};
 use vet_app::trust::PullRequestTrust;
@@ -526,6 +526,16 @@ impl ChangesetStore for SqliteStore {
             .all(&self.reader.db)
             .await?;
         Ok(ids.into_iter().map(|id| ChangesetId(id as u64)).collect())
+    }
+
+    async fn stored_discussion(&self, remote: RemoteKey, number: u64) -> Result<Option<StoredDiscussion>, StoreError> {
+        let row = pull_request::Entity::find()
+            .filter(pull_request::Column::Host.eq(remote.host))
+            .filter(pull_request::Column::Path.eq(remote.path))
+            .filter(pull_request::Column::Number.eq(number as i64))
+            .one(&self.reader.db)
+            .await?;
+        Ok(row.map(detail_from).transpose()?)
     }
 
     async fn versions(&self, changeset: ChangesetId) -> Result<Vec<Version>, StoreError> {

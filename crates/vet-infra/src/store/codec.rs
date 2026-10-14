@@ -8,6 +8,7 @@ use sea_orm::{ColumnTrait, DbErr, Set};
 use vet_app::changeset::{
     BaseChoice, ChangedFile, ChangesetId, CommitId, Lens, Snapshots, Source, Version, VersionChange, VersionOrigin,
 };
+use vet_app::platform::{Discussion, StoredDiscussion};
 use vet_app::review::{ChangesetThread, NonTextAck, RecordedSpan, Review, ReviewId, ReviewSummary, SpanId, SpanOrigin};
 use vet_core::content::{
     BlobId, EntryKind, FileEntry, Hash, LineDelta, LineRange, NonTextKind, RepoPath, SnapshotId, SnapshotStatus,
@@ -20,8 +21,8 @@ use vet_core::review::{
 };
 
 use super::entity::{
-    ack, anchor, changeset, kinds, message, project_filter_item, review, snapshot_path, span, thread, tree_child,
-    version, version_file,
+    ack, anchor, changeset, kinds, message, project_filter_item, pull_request, review, snapshot_path, span, thread,
+    tree_child, version, version_file,
 };
 
 pub fn corrupt(what: &str) -> DbErr {
@@ -685,6 +686,41 @@ pub fn target_from(m: &thread::Model, anchor: Option<&anchor::Model>) -> Result<
         }),
         kinds::ThreadKind::Changeset => Ok(CommentTarget::Changeset),
     }
+}
+
+/// The row keeping `discussion`, the details of `remote`'s pull request `number`.
+pub fn detail_row(
+    host: String,
+    path: String,
+    number: u64,
+    head: String,
+    updated_at: i64,
+    synced_at: i64,
+    discussion: &Discussion,
+) -> Result<pull_request::ActiveModel, DbErr> {
+    let detail = serde_json::to_string(discussion)
+        .map_err(|e| DbErr::Custom(format!("cannot store a pull request's details: {e}")))?;
+    Ok(pull_request::ActiveModel {
+        host: Set(host),
+        path: Set(path),
+        number: Set(number as i64),
+        head: Set(head),
+        updated_at: Set(updated_at),
+        synced_at: Set(synced_at),
+        detail: Set(detail),
+        ..Default::default()
+    })
+}
+
+/// The details a stored row keeps.
+pub fn detail_from(m: pull_request::Model) -> Result<StoredDiscussion, DbErr> {
+    let discussion = serde_json::from_str(&m.detail)
+        .map_err(|e| DbErr::Custom(format!("cannot read a pull request's stored details: {e}")))?;
+    Ok(StoredDiscussion {
+        updated_at: m.updated_at,
+        synced_at: m.synced_at,
+        discussion,
+    })
 }
 
 #[cfg(test)]

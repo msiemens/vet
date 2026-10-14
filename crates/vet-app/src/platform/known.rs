@@ -15,8 +15,9 @@ const KEPT: usize = 256;
 type Key = (RemoteKey, u64);
 
 struct Known {
-    /// When the platform last changed the pull request, as of the observation `head` is from.
-    head: Option<(PullRequestHead, i64)>,
+    /// When the platform last changed the pull request, as of the observation `head` is from, and
+    /// the commit its source branch was at then.
+    head: Option<(PullRequestHead, i64, String)>,
     /// What the discussion was when it was last read, and when (unix seconds).
     discussion: Option<(i64, Discussion)>,
     /// Orders the entries by how recently they were observed.
@@ -78,10 +79,18 @@ impl PullRequestCache {
     pub fn observe(&self, remote: &RemoteKey, pull_request: &PullRequest) {
         let mut entries = self.entries();
         let known = entries.entry(remote, pull_request.number);
-        if known.head.as_ref().is_some_and(|(_, at)| *at > pull_request.updated_at) {
+        if known
+            .head
+            .as_ref()
+            .is_some_and(|(_, at, _)| *at > pull_request.updated_at)
+        {
             return;
         }
-        known.head = Some((PullRequestHead::of(pull_request), pull_request.updated_at));
+        known.head = Some((
+            PullRequestHead::of(pull_request),
+            pull_request.updated_at,
+            pull_request.head.clone(),
+        ));
     }
 
     /// How the platform last named the pull request. What was not learnt since Vet started is read
@@ -90,7 +99,7 @@ impl PullRequestCache {
     pub fn head(&self, remote: &RemoteKey, number: u64, stored: Option<PullRequestHead>) -> Option<PullRequestHead> {
         let entries = self.entries();
         let known = entries.by_pull_request.get(&(remote.clone(), number));
-        if let Some((head, _)) = known.and_then(|k| k.head.as_ref()) {
+        if let Some((head, _, _)) = known.and_then(|k| k.head.as_ref()) {
             return Some(head.clone());
         }
         let mut head = stored?;
@@ -100,12 +109,24 @@ impl PullRequestCache {
         Some(head)
     }
 
+    /// The commit the pull request's source branch was at and the platform's `updatedAt` when it
+    /// was last observed; none if it was not.
+    pub fn revision(&self, remote: &RemoteKey, number: u64) -> Option<(String, i64)> {
+        let entries = self.entries();
+        entries
+            .by_pull_request
+            .get(&(remote.clone(), number))?
+            .head
+            .as_ref()
+            .map(|(_, at, commit)| (commit.clone(), *at))
+    }
+
     /// Notes the discussion of the pull request as read at `at`, which is as current as anything
     /// the platform said of it before: the name it gives the pull request replaces the one known.
     pub fn record_discussion(&self, remote: &RemoteKey, number: u64, at: i64, discussion: Discussion) {
         let mut entries = self.entries();
         let known = entries.entry(remote, number);
-        if let Some((head, _)) = known.head.as_mut() {
+        if let Some((head, _, _)) = known.head.as_mut() {
             named_by(head, &discussion);
         }
         known.discussion = Some((at, discussion));

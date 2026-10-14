@@ -15,7 +15,7 @@ use vet_semantic::policy::AnalysisPolicy;
 use vet_semantic::ports::{BackendId, ServerConfig};
 
 use crate::changeset::{BaseChoice, ChangesetId, CommitId, Lens, Source, Version};
-use crate::platform::{Credential, PlatformKind, PullRequestHead};
+use crate::platform::{Credential, Discussion, PlatformKind, PullRequestHead, RemoteKey, StoredDiscussion};
 use crate::review::{ChangesetThread, NonTextAck, Review, ReviewId, ReviewSummary, SpanId, SpanOrigin};
 use crate::trust::PullRequestTrust;
 
@@ -512,6 +512,13 @@ pub trait ChangesetStore {
     ) -> impl Future<Output = Result<Option<PendingVote>, StoreError>> + Send;
     /// The changesets a review of which is open, in any repository.
     fn open_changesets(&self) -> impl Future<Output = Result<Vec<ChangesetId>, StoreError>> + Send;
+    /// The details of `remote`'s pull request `number` as the platform last gave them, kept across
+    /// runs; `None` if they were never stored.
+    fn stored_discussion(
+        &self,
+        remote: RemoteKey,
+        number: u64,
+    ) -> impl Future<Output = Result<Option<StoredDiscussion>, StoreError>> + Send;
     /// The versions in order of their numbers.
     fn versions(&self, changeset: ChangesetId) -> impl Future<Output = Result<Vec<Version>, StoreError>> + Send;
 }
@@ -563,6 +570,17 @@ pub trait ReviewWrites {
         repo: String,
         source: Source,
         head: PullRequestHead,
+    ) -> impl Future<Output = Result<(), StoreError>> + Send;
+    /// Remembers the details of `remote`'s pull request `number` as the platform gave them at
+    /// `updated_at`, read at `synced_at`. A copy older than what is kept replaces nothing newer.
+    fn set_discussion(
+        &self,
+        remote: RemoteKey,
+        number: u64,
+        head: String,
+        updated_at: i64,
+        synced_at: i64,
+        discussion: &Discussion,
     ) -> impl Future<Output = Result<(), StoreError>> + Send;
     /// Pins the commit the working tree of `source` is compared against while no review of it is
     /// open, or with `None` lets the next session pin its own. The changeset is stored if need be.

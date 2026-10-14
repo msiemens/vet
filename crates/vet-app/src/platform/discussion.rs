@@ -1,10 +1,12 @@
 //! What people say on a pull request, in terms that hold for every platform: the review threads
 //! with their comments, the flat conversation, who reviews it, and what Vet posts.
 
+use serde::{Deserialize, Serialize};
+
 use super::model::{CiState, PlatformError, ReviewVerdict};
 
 /// Which side of the diff a comment's lines are on.
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Serialize, Deserialize)]
 pub enum DiffSide {
     /// The lines the pull request removes: the file as it is in the base.
     Left,
@@ -13,7 +15,7 @@ pub enum DiffSide {
 }
 
 /// One comment, as the platform has it.
-#[derive(Clone, PartialEq, Eq, Debug)]
+#[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize)]
 pub struct PlatformComment {
     pub id: String,
     pub author: String,
@@ -30,7 +32,7 @@ pub struct PlatformComment {
 }
 
 /// A review thread: comments on lines of a file, or on the file.
-#[derive(Clone, PartialEq, Eq, Debug)]
+#[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize)]
 pub struct PlatformThreadData {
     pub id: String,
     pub path: String,
@@ -48,7 +50,7 @@ pub struct PlatformThreadData {
 
 /// One entry of the flat conversation: a comment on the pull request itself, or a review that was
 /// given.
-#[derive(Clone, PartialEq, Eq, Debug)]
+#[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize)]
 pub struct ConversationItem {
     pub id: String,
     pub author: String,
@@ -59,7 +61,7 @@ pub struct ConversationItem {
     pub body: String,
 }
 
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Serialize, Deserialize)]
 pub enum ConversationKind {
     /// A comment on the pull request; one the viewer wrote they can edit and delete.
     Comment { mine: bool },
@@ -68,7 +70,7 @@ pub enum ConversationKind {
 }
 
 /// Whether the pull request still takes changes.
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Serialize, Deserialize)]
 pub enum PullRequestState {
     Open,
     Closed,
@@ -76,7 +78,7 @@ pub enum PullRequestState {
 }
 
 /// Where a reviewer stands.
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Serialize, Deserialize)]
 pub enum ReviewerState {
     /// Asked, and has not given a verdict (or it was withdrawn).
     Waiting,
@@ -85,7 +87,7 @@ pub enum ReviewerState {
     Commented,
 }
 
-#[derive(Clone, PartialEq, Eq, Debug)]
+#[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize)]
 pub struct Reviewer {
     /// The login, or `organization/team`.
     pub login: String,
@@ -95,7 +97,7 @@ pub struct Reviewer {
 }
 
 /// Everything the Comments tool window shows of a pull request besides Vet's own threads.
-#[derive(Clone, PartialEq, Eq, Debug)]
+#[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize)]
 pub struct Discussion {
     pub title: String,
     pub url: String,
@@ -122,6 +124,19 @@ pub struct Discussion {
     /// Every thread of the pull request is in `threads`. A thread missing from a partial listing
     /// is not gone.
     pub complete: bool,
+}
+
+/// The details of one pull request as the platform last gave them, kept so that a revisit shows
+/// them before the platform is asked again (`vet.sqlite`, one row per pull request).
+#[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize)]
+pub struct StoredDiscussion {
+    /// The platform's `updatedAt` of the pull request these details were read at (unix seconds).
+    /// A copy older than what the platform now says replaces nothing newer.
+    pub updated_at: i64,
+    /// When Vet read them (unix seconds).
+    pub synced_at: i64,
+    /// What the platform said of the pull request.
+    pub discussion: Discussion,
 }
 
 /// Which kind of comment an id names; the platforms keep them apart.

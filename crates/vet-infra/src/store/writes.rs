@@ -1,8 +1,10 @@
 //! `vet_app::ports::ReviewWrites` on the one write connection.
 
-use sea_orm::{ActiveModelTrait, ColumnTrait, DbErr, EntityTrait, QueryFilter, Set, TransactionTrait};
+use sea_orm::{
+    ActiveModelTrait, ColumnTrait, DbErr, EntityTrait, QueryFilter, QueryOrder, QuerySelect, Set, TransactionTrait,
+};
 use vet_app::changeset::{BaseChoice, ChangesetId, CommitId, Lens, Source, Version};
-use vet_app::platform::PullRequestHead;
+use vet_app::platform::{Discussion, PullRequestHead, RemoteKey};
 use vet_app::ports::{ReviewWrites, StoreError};
 use vet_app::review::{NonTextAck, ReviewId, ReviewSummary, SpanId, SpanOrigin};
 use vet_core::content::{Snapshot, SnapshotStatus};
@@ -19,6 +21,9 @@ use super::{
     write_filter,
 };
 use std::collections::HashSet;
+
+/// How many pull requests' details are kept; the one read longest ago goes first.
+const KEPT_PULL_REQUESTS: usize = 256;
 
 impl ReviewWrites for ReviewWriter {
     async fn put_snapshot(&self, snapshot: Snapshot, status: SnapshotStatus, at: i64) -> Result<(), StoreError> {
@@ -115,6 +120,63 @@ impl ReviewWrites for ReviewWriter {
         }
         .update(&txn)
         .await?;
+        Ok(txn.commit().await?)
+    }
+
+    async fn set_discussion(
+        &self,
+        remote: RemoteKey,
+        number: u64,
+        head: String,
+        updated_at: i64,
+        synced_at: i64,
+        discussion: &Discussion,
+    ) -> Result<(), StoreError> {
+        let txn = self.db.begin().await?;
+        let existing = pull_request::Entity::find()
+            .filter(pull_request::Column::Host.eq(remote.host.clone()))
+            .filter(pull_request::Column::Path.eq(remote.path.clone()))
+            .filter(pull_request::Column::Number.eq(number as i64))
+            .one(&txn)
+            .await?;
+        if existing.as_ref().is_some_and(|r| r.updated_at > updated_at) {
+            // What is kept is newer: what the platform says replaces nothing newer.
+            return Ok(());
+        }
+        let row = detail_row(
+            remote.host,
+            remote.path,
+            number,
+            head,
+            updated_at,
+            synced_at,
+            discussion,
+        )?;
+        match existing {
+            Some(old) => {
+                let mut row = row;
+                row.id = Set(old.id);
+                row.update(&txn).await?;
+            }
+            None => {
+                row.insert(&txn).await?;
+            }
+        }
+        // Bound the table: the pull requests read longest ago go first.
+        let ids: Vec<i64> = pull_request::Entity::find()
+            .order_by_desc(pull_request::Column::SyncedAt)
+            .order_by_desc(pull_request::Column::Id)
+            .select_only()
+            .column(pull_request::Column::Id)
+            .into_tuple()
+            .all(&txn)
+            .await?;
+        if ids.len() > KEPT_PULL_REQUESTS {
+            pull_request::Entity::delete_many()
+                .filter(pull_request::Column::Id.is_in(ids[KEPT_PULL_REQUESTS..].to_vec()))
+                .exec(&txn)
+                .await?;
+        }
         Ok(txn.commit().await?)
     }
 

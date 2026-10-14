@@ -27,7 +27,7 @@ pub use credentials::{
 pub use discussion::{
     CommentKind, CommentRef, ConversationItem, ConversationKind, DiffSide, Discussion, NewConversationComment,
     NewReply, NewThread, PlatformComment, PlatformThreadData, PostedComment, PostedThread, PullRequestState, Reviewer,
-    ReviewerState, Submission, Submitted,
+    ReviewerState, StoredDiscussion, Submission, Submitted,
 };
 #[cfg(test)]
 pub(crate) use fake::FakeHosting;

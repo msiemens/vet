@@ -29,6 +29,10 @@ impl MigratorTrait for Migrator {
                 name: "m20261014_000003_version_availability",
                 sql: include_str!("migration/version_availability.sql"),
             }),
+            Box::new(Sql {
+                name: "m20261014_000004_pull_request_details",
+                sql: include_str!("migration/pull_request_details.sql"),
+            }),
         ]
     }
 }
@@ -127,7 +131,8 @@ mod tests {
             server_path::Entity,
             recent_project::Entity,
             backend_setting::Entity,
-            preference::Entity
+            preference::Entity,
+            pull_request::Entity
         );
         out
     }

@@ -163,13 +163,27 @@ struct Pushed {
 
 impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> LiveSession<G, S> {
     /// What the platform last said of the pull request on view besides its threads; `None` for
-    /// another changeset, and before the pull request was first synced.
+    /// another changeset, and before the pull request was first synced. What was not read from the
+    /// platform in this run is read from the store, so a revisit shows it at once.
     pub async fn discussion(&self) -> Option<DiscussionView> {
-        let st = self.published.read();
-        let Source::PullRequest { remote, number } = &st.source else {
+        let source = self.published.read().source.clone();
+        let Source::PullRequest { remote, number } = &source else {
             return None;
         };
-        let (synced_at, discussion) = self.known.discussion(remote, *number)?;
+        let (synced_at, discussion) = match self.known.discussion(remote, *number) {
+            Some(found) => found,
+            None => {
+                let stored = self
+                    .acquisition
+                    .store
+                    .stored_discussion(remote.clone(), *number)
+                    .await
+                    .ok()
+                    .flatten()?;
+                (stored.synced_at, stored.discussion)
+            }
+        };
+        let st = self.published.read();
         let unresolved_threads = st
             .threads
             .iter()
@@ -360,6 +374,12 @@ impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> L
         stored?;
         let (remote, number) = pull_request(st)?;
         self.known.record_discussion(&remote, number, now, discussion.clone());
+        // Kept for the next run: a revisit shows them before the platform is asked again.
+        if let Some((head, updated_at)) = self.known.revision(&remote, number) {
+            store
+                .set_discussion(remote, number, head, updated_at, now, discussion)
+                .await?;
+        }
         Ok(report)
     }
 
