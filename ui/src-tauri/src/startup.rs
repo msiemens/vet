@@ -7,20 +7,13 @@ use std::sync::{Condvar, Mutex, PoisonError};
 use serde::Serialize;
 use tauri::{AppHandle, Emitter, Manager, WebviewUrl, WebviewWindowBuilder};
 
-use crate::backend::{self, Backend, wsl_distro};
+use vet_host::backend::{Backend, Connection, Step, repo_path, wsl_distro};
+
+use crate::backend;
 
 const SPLASH: &str = "splash";
 /// Sent to the splash with the new [`Progress`] at every step.
 const EVENT: &str = "vet-startup";
-
-#[derive(Clone, Copy, PartialEq, Eq, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub enum Step {
-    StartingBackend,
-    WaitingForReady,
-    /// The backend is up; the main window connects to it and shows.
-    LoadingUi,
-}
 
 /// Where startup is. A failure keeps the step it happened in.
 #[derive(Clone, Serialize)]
@@ -126,9 +119,7 @@ pub fn launch(app: &AppHandle) {
     let app = app.clone();
     std::thread::spawn(move || {
         let startup = app.state::<Startup>();
-        let launched = Backend::launch(backend::repo_path(), backend::spawner(), |step| {
-            startup.report(&app, step)
-        });
+        let launched = Backend::launch(repo_path(), backend::spawner(), |step| startup.report(&app, step));
         match launched {
             Ok(backend) => {
                 app.manage(backend);
@@ -158,7 +149,7 @@ pub fn retry_startup(app: AppHandle, startup: tauri::State<Startup>) {
 /// The main window's connection to the backend, once the backend is up. After the backend exited it
 /// is the one started in its place; none while that starts.
 #[tauri::command]
-pub async fn backend_connection(app: AppHandle) -> Result<backend::Connection, String> {
+pub async fn backend_connection(app: AppHandle) -> Result<Connection, String> {
     tauri::async_runtime::spawn_blocking(move || {
         app.state::<Startup>().wait_until_backend_is_up();
         app.state::<Backend>().connection()

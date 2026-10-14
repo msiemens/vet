@@ -7,14 +7,10 @@
 //! `credential-hosts.json` of the app config directory (hosts only, never a token), which is how
 //! the page finds them all when it connects.
 
-use std::path::{Path, PathBuf};
-use std::sync::{Mutex, PoisonError};
-
 use keyring::Entry;
 use serde::Serialize;
 use tauri::{AppHandle, Manager};
-
-use crate::files::write_atomic;
+use vet_host::credential_hosts::CredentialHosts;
 
 const FILE: &str = "credential-hosts.json";
 
@@ -32,49 +28,11 @@ fn entry(host: &str) -> Result<Entry, String> {
     Entry::new(&format!("vet:{host}"), ACCOUNT).map_err(|e| format!("cannot open the keychain: {e}"))
 }
 
-fn index_file(app: &AppHandle) -> Result<PathBuf, String> {
+fn hosts(app: &AppHandle) -> Result<CredentialHosts, String> {
     app.path()
         .app_config_dir()
-        .map(|dir| dir.join(FILE))
+        .map(|dir| CredentialHosts::new(dir.join(FILE)))
         .map_err(|e| format!("no config directory: {e}"))
-}
-
-/// The hosts listed in `file`; none if it is missing or damaged, in which case the keychain's
-/// tokens are still there but are not found until they are stored again.
-fn read_hosts(file: &Path) -> Vec<String> {
-    let Ok(text) = std::fs::read_to_string(file) else {
-        return Vec::new();
-    };
-    serde_json::from_str(&text).unwrap_or_else(|e| {
-        tracing::warn!(error = %e, "ignoring the list of hosts with a token");
-        Vec::new()
-    })
-}
-
-fn write_hosts(file: &Path, hosts: &[String]) -> Result<(), String> {
-    let text = serde_json::to_string_pretty(hosts).map_err(|e| e.to_string())?;
-    write_atomic(file, &text).map_err(|e| format!("cannot write {}: {e}", file.display()))
-}
-
-/// Serializes the read-change-write of the list, which commands on different threads run.
-static INDEX: Mutex<()> = Mutex::new(());
-
-fn update_hosts(file: &Path, change: impl FnOnce(Vec<String>) -> Vec<String>) -> Result<(), String> {
-    let _held = INDEX.lock().unwrap_or_else(PoisonError::into_inner);
-    write_hosts(file, &change(read_hosts(file)))
-}
-
-/// `hosts` with `host` in it, once.
-fn with_host(mut hosts: Vec<String>, host: &str) -> Vec<String> {
-    if !hosts.iter().any(|h| h == host) {
-        hosts.push(host.to_owned());
-    }
-    hosts
-}
-
-fn without_host(mut hosts: Vec<String>, host: &str) -> Vec<String> {
-    hosts.retain(|h| h != host);
-    hosts
 }
 
 /// The token of one host, if the keychain has it.
@@ -89,10 +47,10 @@ fn token_of(host: &str) -> Result<Option<String>, String> {
 /// Every token the keychain holds for a host in the list.
 #[tauri::command]
 pub async fn stored_credentials(app: AppHandle) -> Result<Vec<StoredCredential>, String> {
-    let file = index_file(&app)?;
+    let hosts = hosts(&app)?;
     tauri::async_runtime::spawn_blocking(move || {
         let mut found = Vec::new();
-        for host in read_hosts(&file) {
+        for host in hosts.list() {
             if let Some(token) = token_of(&host)? {
                 found.push(StoredCredential { host, token });
             }
@@ -113,12 +71,12 @@ pub async fn stored_credential(host: String) -> Result<Option<String>, String> {
 
 #[tauri::command]
 pub async fn store_credential(app: AppHandle, host: String, token: String) -> Result<(), String> {
-    let file = index_file(&app)?;
+    let hosts = hosts(&app)?;
     tauri::async_runtime::spawn_blocking(move || {
         entry(&host)?
             .set_password(&token)
             .map_err(|e| format!("cannot store the token of {host} in the keychain: {e}"))?;
-        update_hosts(&file, |hosts| with_host(hosts, &host))
+        hosts.add(&host)
     })
     .await
     .map_err(|e| e.to_string())?
@@ -126,53 +84,14 @@ pub async fn store_credential(app: AppHandle, host: String, token: String) -> Re
 
 #[tauri::command]
 pub async fn remove_credential(app: AppHandle, host: String) -> Result<(), String> {
-    let file = index_file(&app)?;
+    let hosts = hosts(&app)?;
     tauri::async_runtime::spawn_blocking(move || {
         match entry(&host)?.delete_credential() {
             Ok(()) | Err(keyring::Error::NoEntry) => {}
             Err(e) => return Err(format!("cannot remove the token of {host} from the keychain: {e}")),
         }
-        update_hosts(&file, |hosts| without_host(hosts, &host))
+        hosts.remove(&host)
     })
     .await
     .map_err(|e| e.to_string())?
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn a_host_is_listed_once_and_taken_off_when_removed() {
-        let hosts = with_host(with_host(Vec::new(), "github.com"), "github.com");
-        assert_eq!(hosts, ["github.com"]);
-        let hosts = with_host(hosts, "dev.azure.com");
-        assert_eq!(without_host(hosts, "github.com"), ["dev.azure.com"]);
-    }
-
-    #[test]
-    fn the_list_survives_a_restart_and_a_missing_or_damaged_file_means_no_hosts() {
-        let dir = tempfile::tempdir().unwrap();
-        let file = dir.path().join("config").join(FILE);
-        assert!(read_hosts(&file).is_empty());
-
-        write_hosts(&file, &["github.com".into(), "ghe.corp.example".into()]).unwrap();
-        assert_eq!(read_hosts(&file), ["github.com", "ghe.corp.example"]);
-
-        std::fs::write(&file, "[\"github.com\"").unwrap();
-        assert!(read_hosts(&file).is_empty());
-    }
-
-    #[test]
-    fn hosts_stored_at_the_same_time_are_all_listed() {
-        let dir = tempfile::tempdir().unwrap();
-        let file = dir.path().join(FILE);
-        std::thread::scope(|scope| {
-            for n in 0..16 {
-                let file = &file;
-                scope.spawn(move || update_hosts(file, |hosts| with_host(hosts, &format!("host{n}"))).unwrap());
-            }
-        });
-        assert_eq!(read_hosts(&file).len(), 16);
-    }
 }

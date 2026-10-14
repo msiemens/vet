@@ -7,7 +7,6 @@ mod backend;
 mod browser;
 mod credentials;
 mod dialog;
-mod files;
 mod geometry;
 mod input;
 mod menu;
@@ -16,8 +15,8 @@ mod window;
 
 use tauri::{Emitter, Manager, RunEvent};
 
-use backend::Backend;
 use startup::Startup;
+use vet_host::backend::Backend;
 
 pub fn run() {
     let mut log = vet_log::data_dir().map(|dir| vet_log::init(&dir.join(vet_log::LOGS)));

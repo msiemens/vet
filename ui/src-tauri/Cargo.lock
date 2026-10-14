@@ -4539,6 +4539,17 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0b928f33d975fc6ad9f86c8f283853ad26bdd5b10b7f1542aa2fa15e2289105a"
 
 [[package]]
+name = "vet-host"
+version = "0.0.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "tempfile",
+ "tracing",
+ "vet-protocol",
+]
+
+[[package]]
 name = "vet-log"
 version = "0.0.0"
 dependencies = [
@@ -4572,8 +4583,8 @@ dependencies = [
  "tauri-plugin-opener",
  "tempfile",
  "tracing",
+ "vet-host",
  "vet-log",
- "vet-protocol",
  "windows",
 ]
 

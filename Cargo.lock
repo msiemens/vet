@@ -5487,6 +5487,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "vet-host"
+version = "0.0.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "tempfile",
+ "tracing",
+ "vet-protocol",
+]
+
+[[package]]
 name = "vet-infra"
 version = "0.0.0"
 dependencies = [

@@ -9,8 +9,8 @@ use std::sync::{Mutex, MutexGuard, PoisonError};
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Manager, Monitor, PhysicalPosition, PhysicalSize, Window, WindowEvent};
 
-use crate::backend;
-use crate::files::write_atomic;
+use vet_host::backend::repo_path;
+use vet_host::files::write_atomic;
 
 /// The welcome screen's size in logical pixels.
 const WELCOME_SIZE: (f64, f64) = (960.0, 620.0);
@@ -278,7 +278,7 @@ pub fn init(app: &AppHandle) -> tauri::Result<()> {
     let Some(window) = app.get_webview_window(MAIN) else {
         return Ok(());
     };
-    let mode = if backend::repo_path().is_some() {
+    let mode = if repo_path().is_some() {
         Mode::Project
     } else {
         Mode::Welcome

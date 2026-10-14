@@ -12,6 +12,7 @@ members = [
     "crates/vet-mapping",
     "crates/vet-log",
     "crates/vet-engine",
+    "crates/vet-host",
 ]
 
 # The Tauri host pulls in a large dependency tree and system webview libraries;

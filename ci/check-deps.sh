@@ -11,6 +11,7 @@ declare -A ALLOWED=(
     [vet-protocol]=""
     [vet-log]=""
     [vet-engine]=""
+    [vet-host]="vet-protocol"
     [vet-transport]="vet-protocol"
     [vet-highlight]="vet-core"
     [vet-semantic]="vet-core vet-highlight vet-engine"
