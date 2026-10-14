@@ -8,16 +8,10 @@ import type { Side } from "../../../generated/Side";
 import type { TextContent } from "../../../generated/TextContent";
 import type { View } from "../../../generated/View";
 import { NO_HIGHLIGHTS, decodeHighlights } from "../../../lib/highlights.ts";
+import { outdated } from "../../../lib/requestError.ts";
 import type { Backend } from "../../../state/backend";
 import { atRevision } from "../../../state/revision.ts";
 import type { Loaded } from "./mount";
-
-/** The reply belonged to another revision than the view that asked. */
-export class StaleRevision extends Error {
-  constructor() {
-    super("stale revision");
-  }
-}
 
 export interface FileSource {
   /** Both sides of a changed file with their highlights. */
@@ -45,7 +39,7 @@ export function fileSource(backend: Backend, revision: number, view: View): File
           targetHighlights: NO_HIGHLIGHTS,
         };
       const reply = atRevision(revision, await backend.fileContents(file.path, view));
-      if (!reply) throw new StaleRevision();
+      if (!reply) throw outdated();
       return {
         base: reply.base ?? "",
         target: reply.target ?? "",
@@ -57,7 +51,7 @@ export function fileSource(backend: Backend, revision: number, view: View): File
     },
     async text(path) {
       const reply = atRevision(revision, await backend.fileText(path, view));
-      if (!reply) throw new StaleRevision();
+      if (!reply) throw outdated();
       return reply.content;
     },
     itemBlob: (path, kind, side) => backend.itemBlob(revision, path, kind, side, view),

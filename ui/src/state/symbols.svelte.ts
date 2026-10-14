@@ -8,6 +8,7 @@ import { untrack } from "svelte";
 import { SvelteMap } from "svelte/reactivity";
 import type { Calls } from "../generated/Calls";
 import type { ChangedSymbol } from "../generated/ChangedSymbol";
+import type { ErrorKind } from "../generated/ErrorKind";
 import type { Reachability } from "../generated/Reachability";
 import type { RemovalImpact } from "../generated/RemovalImpact";
 import type { Side } from "../generated/Side";
@@ -18,15 +19,17 @@ import type { Unavailable } from "../generated/Unavailable";
 import type { Usages } from "../generated/Usages";
 import { isAbort } from "../lib/abort";
 import { errorText } from "../lib/errorText";
+import { kindOf } from "../lib/requestError";
 import type { Backend } from "./backend";
 import { changeset } from "./changeset.svelte";
 import { CursorFollow } from "./cursorFollow";
 import { reviewShown } from "./reviewShown.svelte";
 import { session } from "./session.svelte";
 import { keyOf } from "./symbolKey";
-import { analyseFiles, isGone, planLoad, reconcile, type Shown } from "./symbolLoad";
+import { analyseFiles, planLoad, reconcile, type Shown } from "./symbolLoad";
 
-export type Load<T> = { state: "loading" } | { state: "done"; value: T } | { state: "failed"; message: string };
+export type Load<T> =
+  { state: "loading" } | { state: "done"; value: T } | { state: "failed"; message: string; kind?: ErrorKind };
 
 /** The signature the backend found; `unavailable` says why there is none. */
 export interface Signature {
@@ -265,7 +268,7 @@ class SymbolsState {
       (l) => {
         this.signature = l;
         // The symbol went with a change of the text.
-        if (l.state === "failed" && isGone(l.message)) this.clearSelection();
+        if (l.state === "failed" && l.kind === "notFound") this.clearSelection();
       },
     );
     if (selected.change === "removed") {
@@ -305,7 +308,9 @@ class SymbolsState {
     query().then(
       (value) => run === this.detailRun && set({ state: "done", value }),
       (error: unknown) =>
-        run === this.detailRun && !isAbort(error) && set({ state: "failed", message: errorText(error) }),
+        run === this.detailRun &&
+        !isAbort(error) &&
+        set({ state: "failed", message: errorText(error), kind: kindOf(error) }),
     );
     return { state: "loading" };
   }

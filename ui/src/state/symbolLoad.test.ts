@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import type { ChangedSymbol } from "../generated/ChangedSymbol";
 import type { SymbolInfo } from "../generated/SymbolInfo";
-import { analyseFiles, isGone, planLoad, reconcile, type Outcome } from "./symbolLoad.ts";
+import { analyseFiles, planLoad, reconcile, type Outcome } from "./symbolLoad.ts";
 
 const backend = {};
 const info = (path: string, name: string): SymbolInfo => ({
@@ -30,11 +30,6 @@ void test("a symbol on show is updated to what the new analysis says, and unchan
   assert.deepEqual(reconcile(shown, { path: "a.rs", symbols: [] }), { symbol: shown.symbol, change: undefined });
   // Another file's analysis says nothing about it.
   assert.equal(reconcile(shown, { path: "b.rs", symbols: [] }), shown);
-});
-
-void test("a failure that names a missing symbol means it is gone", () => {
-  assert.equal(isGone("no such symbol a.rs::f"), true);
-  assert.equal(isGone("the language server crashed"), false);
 });
 
 /** Asks that the test answers one by one. */

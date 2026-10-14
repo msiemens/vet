@@ -5,9 +5,6 @@
 import type { View } from "../generated/View";
 import { sameView } from "./view.ts";
 
-/** Said when a request is refused or rejected because the views it came from are about to be replaced. */
-export const STALE_NOTICE = "Changes arrived — try again";
-
 export interface Shown {
   readonly revision: number;
   readonly view: View;

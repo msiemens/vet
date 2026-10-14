@@ -43,9 +43,6 @@ export function reconcile(shown: Shown, found: { path: string; symbols: readonly
     : shown;
 }
 
-/** Whether a failed request says the symbol is not there any more. */
-export const isGone = (message: string): boolean => message.includes("no such symbol");
-
 export type Outcome<R> = { ok: true; value: R } | { ok: false; error: unknown };
 
 export interface AnalyseOptions<R> {

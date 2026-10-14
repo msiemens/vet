@@ -3,8 +3,8 @@
 // then the staged vote.
 
 import type { PullRequestInfo } from "../../generated/PullRequestInfo";
+import { notices } from "../../state/notices.svelte";
 import { platform } from "../../state/platform.svelte";
-import { session } from "../../state/session.svelte";
 import { postedNote, waitingNote } from "./pullRequest";
 
 /** The verdict the form has chosen, else the platform's first. */
@@ -20,11 +20,11 @@ export async function sendComments(info: PullRequestInfo): Promise<boolean> {
       const done = await platform.submit(chosenVerdict(info), platform.review.body);
       if (done?.problem !== null) return false;
       [platform.review.open, platform.review.body] = [false, ""];
-      session.notice = done.skipped > 0 ? `Review submitted. ${waitingNote(done.skipped)}` : "Review submitted";
+      notices.show(done.skipped > 0 ? `Review submitted. ${waitingNote(done.skipped)}` : "Review submitted");
     } else {
       const done = await platform.post();
       if (done?.problem !== null) return false;
-      session.notice = postedNote(done);
+      notices.show(postedNote(done));
     }
     return true;
   } finally {

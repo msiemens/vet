@@ -8,11 +8,11 @@ import type { PlatformStatus } from "../generated/PlatformStatus";
 import type { PlatformTraits } from "../generated/PlatformTraits";
 import type { PullRequestInfo } from "../generated/PullRequestInfo";
 import type { ReviewSubmitted } from "../generated/ReviewSubmitted";
-import { errorText } from "../lib/errorText";
 import { HoldTimer } from "../lib/ui/holdTimer";
 import { AccountResync } from "./accountResync";
 import type { Backend } from "./backend";
 import { changeset } from "./changeset.svelte";
+import { notices } from "./notices.svelte";
 import { queue } from "./queue.svelte";
 import { session } from "./session.svelte";
 import { threads } from "./threads.svelte";
@@ -124,7 +124,7 @@ class PlatformStore {
     try {
       await this.backend?.syncThreads();
     } catch (error) {
-      session.notice = `Could not sync comments: ${errorText(error)}`;
+      notices.failed("Could not sync comments", error);
     }
   }
 
@@ -134,7 +134,7 @@ class PlatformStore {
     try {
       submitted = await this.backend?.submitReview(verdict, body.trim() || null);
     } catch (error) {
-      session.notice = `Could not submit the review: ${errorText(error)}`;
+      notices.failed("Could not submit the review", error);
       return undefined;
     }
     await threads.reload();
@@ -147,7 +147,7 @@ class PlatformStore {
     try {
       posted = await this.backend?.postDrafts();
     } catch (error) {
-      session.notice = `Could not post the comments: ${errorText(error)}`;
+      notices.failed("Could not post the comments", error);
       return undefined;
     }
     await threads.reload();
@@ -169,7 +169,7 @@ class PlatformStore {
     try {
       await request;
     } catch (error) {
-      session.notice = `Could not ${what}: ${errorText(error)}`;
+      notices.failed(`Could not ${what}`, error);
       return false;
     }
     await this.reload();
@@ -191,7 +191,7 @@ class PlatformStore {
     try {
       await request;
     } catch (error) {
-      session.notice = `Could not ${what}: ${errorText(error)}`;
+      notices.failed(`Could not ${what}`, error);
       return false;
     }
     await this.reload();

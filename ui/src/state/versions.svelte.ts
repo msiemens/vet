@@ -1,9 +1,9 @@
 // The versions of the open review, as the backend lists them: the timeline's rows.
 
 import type { VersionInfo } from "../generated/VersionInfo";
-import { errorText } from "../lib/errorText";
 import type { Backend } from "./backend";
 import { changeset } from "./changeset.svelte";
+import { notices } from "./notices.svelte";
 import { session } from "./session.svelte";
 
 class VersionStore {
@@ -43,7 +43,7 @@ class VersionStore {
       const versions = await backend.versions();
       if (seq === this.seq) this.items = versions;
     } catch (error) {
-      if (seq === this.seq) session.notice = `Could not load the timeline: ${errorText(error)}`;
+      if (seq === this.seq) notices.failed("Could not load the timeline", error);
     }
   }
 }

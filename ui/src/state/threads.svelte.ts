@@ -5,9 +5,9 @@ import type { EditChoice } from "../generated/EditChoice";
 import type { Thread } from "../generated/Thread";
 import type { ThreadStatus } from "../generated/ThreadStatus";
 import type { ThreadTarget } from "../generated/ThreadTarget";
-import { errorText } from "../lib/errorText";
 import type { Backend } from "./backend";
 import { changeset } from "./changeset.svelte";
+import { notices } from "./notices.svelte";
 import { session } from "./session.svelte";
 import type { Shown } from "./shown";
 import { rangeKey } from "./timelineRange";
@@ -61,7 +61,7 @@ class ThreadStore {
       const { revision, threads } = await backend.threads(view);
       if (seq === this.seq) this.set(threads, revision, rangeKey(range));
     } catch (error) {
-      if (seq === this.seq) session.notice = `Could not load comments: ${errorText(error)}`;
+      if (seq === this.seq) notices.failed("Could not load comments", error);
     }
   }
 

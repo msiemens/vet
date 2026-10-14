@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import type { FileLayout } from "../../../state/reviewModel.ts";
 import type { Backend } from "../../../state/backend.ts";
-import { StaleRevision, fileSource } from "./fileSource.ts";
+import { fileSource } from "./fileSource.ts";
 
 const reply = (revision: number) => ({
   type: "fileContents",
@@ -43,7 +43,7 @@ void test("a changed file loads with the hunks of the manifest it belongs to", a
 
 void test("a reply of another revision is refused", async () => {
   const { backend } = backendAt(4);
-  await assert.rejects(fileSource(backend, 3).contents(file(1, 10)), StaleRevision);
+  await assert.rejects(fileSource(backend, 3).contents(file(1, 10)), { kind: "outdated" });
 });
 
 void test("a file without text lines is not requested: the backend refuses it", async () => {

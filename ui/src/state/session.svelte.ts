@@ -1,18 +1,16 @@
-// The window's session with the backend: the connection, the open repository and the notice
-// shown to the viewer. The stores of what the repository holds (changeset, threads, semantics) take
-// the backend and report failures from here.
+// The window's session with the backend: the connection and the open repository. The stores of
+// what the repository holds (changeset, threads, semantics) take the backend from here.
 
 import { errorText } from "../lib/errorText";
 import { Backend, type LinkState } from "./backend";
 import { hasNativeDialogs, pickRepository, restartBackend, setWindowMode } from "./host";
+import { notices } from "./notices.svelte";
 import { preferenceSync } from "./preferenceSync";
 import { recent } from "./recent.svelte";
 import { RepoOpener } from "./repoOpener";
 
 class SessionStore {
   status = $state("connecting…");
-  /** A short message for the viewer about a request that did not go through. */
-  notice = $state<string>();
   backend = $state.raw<Backend>();
   /** Whether the connection to the backend is up; it connects again by itself when it drops. */
   link = $state<LinkState>("connected");
@@ -95,7 +93,7 @@ class SessionStore {
       await restartBackend();
       this.connected().retryConnection();
     } catch (error) {
-      this.notice = `Could not restart the backend: ${errorText(error)}`;
+      notices.failed("Could not restart the backend", error);
     }
   }
 

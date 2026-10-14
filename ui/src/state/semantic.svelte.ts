@@ -9,12 +9,14 @@ import type { SemanticLocation } from "../generated/SemanticLocation";
 import type { Side } from "../generated/Side";
 import type { Unavailable } from "../generated/Unavailable";
 import { isAbort } from "../lib/abort";
+import { STALE_NOTICE } from "../lib/notice";
 import type { HoverAnswer } from "./backend";
 import { changeset } from "./changeset.svelte";
 import { commands } from "./commands";
 import { DefinitionProbe } from "./definitionProbe";
 import { DiagnosticsBook, type FileDiagnostics } from "./diagnosticsBook";
 import { InFlight } from "./inFlight";
+import { notices } from "./notices.svelte";
 import { progress } from "./progress.svelte";
 import { type SemanticSummary, summarize } from "./semanticSummary";
 import { serverList } from "./serverList.svelte";
@@ -125,12 +127,12 @@ class SemanticStore {
     try {
       const r = await backend.definition(revision, side, path, line, col);
       this.note(revision, path, r.unavailable);
-      if (r.unavailable) session.notice = r.unavailable.message;
-      else if (!r.locations.length) session.notice = "No definition found";
+      if (r.unavailable) notices.show(r.unavailable.message);
+      else if (!r.locations.length) notices.show("No definition found");
       else return r.locations;
     } catch (error) {
       // Only the changeset moving on aborts a definition: the view that asked is about to be replaced.
-      if (isAbort(error)) session.notice = "Changes arrived — try again";
+      if (isAbort(error)) notices.show(STALE_NOTICE);
       else changeset.reportFailure(error, revision);
     }
     return undefined;

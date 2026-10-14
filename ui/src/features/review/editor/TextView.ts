@@ -13,6 +13,7 @@ import type { View } from "../../../generated/View";
 import type { TextSpan } from "../../../generated/TextSpan";
 import { errorText } from "../../../lib/errorText";
 import { type Highlights, decodeHighlights } from "../../../lib/highlights";
+import { isKind } from "../../../lib/requestError";
 import type { SoftWrap } from "../../../lib/softWrap";
 import { iconSvg } from "../../../lib/ui/icons";
 import { type MarkLayout, type ScrollMark, Scrollbar } from "../../../lib/ui/scrollbar";
@@ -34,7 +35,7 @@ import {
   setStates,
 } from "./fileChanges";
 import { hunkAtLine, oldLinesOf, stepHunk } from "./fileLayout";
-import { type FileSource, StaleRevision } from "./fileSource";
+import { type FileSource } from "./fileSource";
 import { findMarks, setFindMarks } from "./findMarks";
 import type { FindOptions, FindPos } from "./findMatches";
 import { FindRun } from "./findRun";
@@ -138,7 +139,7 @@ export class TextView {
     root.style.containerType = "inline-size";
     this.cards = new TextThreads(path, threads.shown, threads.listeners, readMetrics(root).line);
     const fail = (error: unknown) => {
-      if (!this.destroyed && !(error instanceof StaleRevision)) this.placeholder(errorText(error));
+      if (!this.destroyed && !isKind(error, "outdated")) this.placeholder(errorText(error));
     };
     if (changes?.file.hunks.length) {
       // The changes come with the text, and the old lines the removals and the cards show.

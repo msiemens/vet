@@ -155,6 +155,20 @@ void test("a request on the socket that dropped fails and is not sent again", as
   assert.deepEqual(backend.last.requests(), []);
 });
 
+void test("a request the backend refuses rejects with the kind it names, one that lost the connection with unavailable", async () => {
+  const backend = new FakeBackend();
+  const conn = await connect(backend);
+
+  const refused = conn.request({ type: "recentProjects" });
+  const id = backend.last.requests()[0].id;
+  backend.last.push({ type: "error", id, kind: "outdated", message: "stale revision; the changeset is at revision 4" });
+  await assert.rejects(refused, { name: "RequestError", kind: "outdated" });
+
+  const lost = conn.request({ type: "recentProjects" });
+  backend.sockets[0].close();
+  await assert.rejects(lost, { name: "RequestError", kind: "unavailable" });
+});
+
 void test("a request made while connecting again waits and goes out on the new socket", async () => {
   const backend = new FakeBackend();
   const conn = await connect(backend);

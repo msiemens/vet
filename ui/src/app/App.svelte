@@ -64,7 +64,6 @@
   import type { Thread } from "../generated/Thread";
   import { letterOfStatus } from "../lib/changeLetter";
   import { ciIcon } from "../lib/ciStatus";
-  import { errorText } from "../lib/errorText";
   import { clock } from "../lib/format";
   import { repoName } from "../lib/paths";
   import { platformName } from "../lib/platformName";
@@ -74,6 +73,7 @@
   import ContextMenu from "../lib/ui/ContextMenu.svelte";
   import { setDoubleClickMs } from "../lib/ui/doubleClick";
   import Toast from "../lib/ui/Toast.svelte";
+  import { browse } from "../state/browse";
   import { changeset } from "../state/changeset.svelte";
   import { checks } from "../state/checks.svelte";
   import {
@@ -85,7 +85,6 @@
     hasNativeMenu,
     hostLabel,
     inTauri,
-    openUrl,
     quit,
     showFolder,
     showWindow,
@@ -100,6 +99,7 @@
   import type { Place } from "../state/foundPlace";
   import { keymap } from "../state/keymap.svelte";
   import { mainMenu } from "../state/mainMenu.svelte";
+  import { notices } from "../state/notices.svelte";
   import { pendingEdits } from "../state/pendingEdits.svelte";
   import { minute } from "../state/minute.svelte";
   import { platform } from "../state/platform.svelte";
@@ -314,7 +314,7 @@
         switcherOpen = true;
       },
       openPullRequest: () => void openPullRequest(),
-      openInBrowser: (at) => browse(at ?? platform.info?.url),
+      openInBrowser: (at) => showInBrowser(at ?? platform.info?.url),
       showDialog: (d) => showDialog(d),
       showKeymap: () => showDialog("settings", "keymap"),
       showAccounts: () => showDialog("settings", "accounts"),
@@ -507,27 +507,27 @@
     try {
       const path = await session.connected().logDirectory();
       if (canShowFolder) await showFolder(path);
-      else session.notice = `The log is in ${path}`;
+      else notices.show(`The log is in ${path}`);
     } catch (e) {
-      session.notice = `Cannot show the log: ${errorText(e)}`;
+      notices.failed("Cannot show the log", e);
     }
   }
 
   async function clearSemanticCaches() {
     const problem = await backendSettings.clearCaches();
-    session.notice = problem === undefined ? "Semantic caches cleared" : `Cannot clear the semantic caches: ${problem}`;
+    notices.show(problem === undefined ? "Semantic caches cleared" : `Cannot clear the semantic caches: ${problem}`);
   }
 
   async function restartLanguageServer(language: string) {
     const problem = await serverList.restart(language);
-    if (problem !== undefined) session.notice = `Cannot restart the ${language} language server: ${problem}`;
+    if (problem !== undefined) notices.show(`Cannot restart the ${language} language server: ${problem}`);
   }
 
   /** Asks for a pull request by its number, in the repository the project has on GitHub. */
   async function openPullRequest() {
     if (!queue.sources.length) await queue.loadPullRequests();
     if (queue.sources.length) dialog = "pullRequest";
-    else session.notice = "This project has no GitHub remote to open a pull request from";
+    else notices.show("This project has no GitHub remote to open a pull request from");
   }
 
   /** Every way of opening a project (recent list, menu, folder dialog, typed path) ends here. */
@@ -543,7 +543,7 @@
   /** The review view compares the last reviewed version with the latest; with nothing after it, the changeset shows. */
   async function showChangesSinceReview() {
     const since = defaultRange(versions.items);
-    if (!since) session.notice = "Nothing has changed since your last review";
+    if (!since) notices.show("Nothing has changed since your last review");
     await changeset.setRange(since);
   }
 
@@ -560,12 +560,9 @@
     document.querySelector<HTMLElement>('[aria-label="Timeline"]')?.focus();
   }
 
-  /** Shows a web address in the browser. */
-  function browse(url: string | undefined) {
-    if (url === undefined) return;
-    void openUrl(url).catch((e: unknown) => {
-      session.notice = `Could not open the browser: ${errorText(e)}`;
-    });
+  /** Shows a web address in the browser, if there is one. */
+  function showInBrowser(url: string | undefined) {
+    if (url !== undefined) browse(url);
   }
 
   /** Shows the Pipelines tool, or moves the focus into it where it is shown. */
@@ -825,7 +822,7 @@
               checks={pipelineCommit === undefined ? undefined : checks.of(pipelineCommit)}
               commit={pipelineCommit}
               onlog={(job, run) => void controller?.openLog(job, logKey(job, run))}
-              onbrowser={browse}
+              onbrowser={showInBrowser}
               onsignin={() => showDialog("settings", "accounts")}
               oneditor={() => controller?.focusEditor()}
               onclose={() => (bottomTool = undefined)}
@@ -855,9 +852,9 @@
 
 <ConnectionNotice link={session.link} canRestart={canRestartBackend} onrestart={() => session.restartBackend()} />
 
-{#if session.notice}
-  {#key session.notice}
-    <Toast message={session.notice} onclose={() => (session.notice = undefined)} />
+{#if notices.text}
+  {#key notices.text}
+    <Toast message={notices.text} onclose={() => notices.close()} />
   {/key}
 {/if}
 

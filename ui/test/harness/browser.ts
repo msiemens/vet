@@ -252,15 +252,17 @@ async function runSession(
   const ready = async (js: string) => (await page(js)) as boolean;
   await until(() => ready(`!!document.querySelector(".review")`), "the app");
   await page(`(async () => {
-    const [changeset, session, commands, versions] = await Promise.all([
+    const [changeset, session, commands, versions, notices] = await Promise.all([
       import("/src/state/changeset.svelte.ts"),
       import("/src/state/session.svelte.ts"),
       import("/src/state/commands.ts"),
       import("/src/state/versions.svelte.ts"),
+      import("/src/state/notices.svelte.ts"),
     ]);
     window.__t = {
       changeset: changeset.changeset,
       session: session.session,
+      notices: notices.notices,
       commands: commands.commands,
       versions: versions.versions,
     };
@@ -328,13 +330,11 @@ async function runSession(
       return other.toggleFlag((await other.manifest(CHANGESET)).revision, path, hunk, CHANGESET);
     },
     async step(name, run, expected = {}) {
-      await page(
-        `(() => { window.__requests.marks = 0; window.__requests.failed = []; __t.session.notice = undefined; })()`,
-      );
+      await page(`(() => { window.__requests.marks = 0; window.__requests.failed = []; __t.notices.close(); })()`);
       await run();
       await settle();
       const found = await check();
-      const { marks, failed, notice } = (await page(`({ ...window.__requests, notice: __t.session.notice })`)) as {
+      const { marks, failed, notice } = (await page(`({ ...window.__requests, notice: __t.notices.text })`)) as {
         marks: number;
         failed: string[];
         notice?: string;

@@ -10,6 +10,7 @@ import type { Request } from "../../src/generated/Request.ts";
 import type { Shown } from "../../src/state/shown.ts";
 import { Backend } from "../../src/state/backend.ts";
 import { changeset } from "../../src/state/changeset.svelte.ts";
+import { notices } from "../../src/state/notices.svelte.ts";
 import { queue } from "../../src/state/queue.svelte.ts";
 import { session } from "../../src/state/session.svelte.ts";
 import { threads } from "../../src/state/threads.svelte.ts";
@@ -264,7 +265,7 @@ export async function runSession(script: (h: Harness) => Promise<void>): Promise
         const marksBefore = sent.filter((r) => MARKS.has(r.type)).length;
         const listingsBefore = sent.filter((r) => r.type === "listPullRequests").length;
         failed.length = 0;
-        session.notice = undefined;
+        notices.close();
         await run();
         // What another window did reaches this one as events after `run` ended.
         activity = Date.now();
@@ -279,7 +280,7 @@ export async function runSession(script: (h: Harness) => Promise<void>): Promise
         if (expected.listings !== undefined && listings !== expected.listings)
           step("the number of times the step asked for the pull requests", listings, expected.listings);
         if (failed.length) step("requests the backend rejected", failed.slice(), []);
-        if (session.notice !== expected.notice) step("the notice after the step", session.notice, expected.notice);
+        if (notices.text !== expected.notice) step("the notice after the step", notices.text, expected.notice);
         results.push({ name, violations });
         process.stderr.write(`  ${name}: ${violations.length ? `${violations.length} differences` : "ok"}\n`);
       },

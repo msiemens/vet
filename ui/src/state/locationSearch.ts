@@ -6,6 +6,7 @@ import type { LocationRow } from "../generated/LocationRow.ts";
 import type { LocationRows } from "../generated/LocationRows.ts";
 import type { Side } from "../generated/Side.ts";
 import { Debounced } from "../lib/debounced.ts";
+import { STALE_NOTICE } from "../lib/notice.ts";
 import type { CaretRect, PickerKind, PickerSink, PickerView } from "./pickerTypes.ts";
 
 /** How long a search runs before the popup shows "Searching…". */
@@ -107,7 +108,7 @@ export class LocationSearch {
       if (!current()) return;
       this.running = undefined;
       picker.close();
-      if (this.deps.isAbort(error)) this.deps.notice("Changes arrived — try again");
+      if (this.deps.isAbort(error)) this.deps.notice(STALE_NOTICE);
       else this.deps.fail(error, search.revision);
       return;
     }

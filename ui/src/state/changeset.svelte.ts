@@ -15,10 +15,12 @@ import type { View } from "../generated/View";
 import type { CommitUnit } from "../generated/CommitUnit";
 import type { Lens } from "../generated/Lens";
 import { errorText } from "../lib/errorText";
+import { STALE_NOTICE } from "../lib/notice";
 import { pathsBelow } from "../lib/paths";
 import { LatestLoad } from "./latestLoad";
 import { commitToShow, neighbour } from "./commitLens";
 import { keyId } from "./changesetKey";
+import { notices } from "./notices.svelte";
 import { PendingOpen } from "./pendingOpen";
 import {
   type ChangesetFacts,
@@ -34,7 +36,7 @@ import { newReviewCells } from "./reviewCells.svelte";
 import { reportFailure, reviewMarks } from "./reviewMarks";
 import { type WriteListener } from "./reviewSource";
 import { session } from "./session.svelte";
-import { STALE_NOTICE, type Shown, isCurrent } from "./shown";
+import { type Shown, isCurrent } from "./shown";
 import type { ViewSource } from "./viewScope.svelte";
 import { type Range, normalised, rangeKey, rangeView } from "./timelineRange";
 import { CHANGESET, commitView } from "./view";
@@ -179,7 +181,7 @@ class ChangesetStore implements ViewSource {
           if (!this.pendingOpen.announced(keyId(event.changeset))) return;
           this.clear();
           this.notifyOpening({ type: "opened", changeset: event.changeset });
-          void this.refresh().catch((error: unknown) => (session.notice = errorText(error)));
+          void this.refresh().catch((error: unknown) => notices.report(error));
         } else if (event.type === "snapshotSettled" || event.type === "targetChanged") void this.refresh();
         else if (event.type === "lensChanged") void this.followLens(event.lens);
         // A mark made in a range or a commit is announced as that of the changeset's file, which they do not show.
@@ -191,7 +193,7 @@ class ChangesetStore implements ViewSource {
       }),
     );
     session.onResync(() => {
-      if (this.layout) this.refresh().catch((error: unknown) => (session.notice = errorText(error)));
+      if (this.layout) this.refresh().catch((error: unknown) => notices.report(error));
     });
     session.onClose(() => this.clear());
   }
@@ -269,7 +271,7 @@ class ChangesetStore implements ViewSource {
         if (!range && commit === undefined) throw error;
         if (range) this.range = undefined;
         else this.commitIndex = undefined;
-        session.notice = errorText(error);
+        notices.report(error);
         continue;
       }
       const latest = manifest.review.state === "open" ? manifest.review.version : undefined;
@@ -295,7 +297,7 @@ class ChangesetStore implements ViewSource {
       const { commits } = await session.connected().commits();
       if (seq === this.commitsSeq) this.commits = commits;
     } catch (error) {
-      if (seq === this.commitsSeq) session.notice = `Could not load the commits: ${errorText(error)}`;
+      if (seq === this.commitsSeq) notices.failed("Could not load the commits", error);
     }
   }
 
@@ -307,7 +309,7 @@ class ChangesetStore implements ViewSource {
     try {
       await this.refresh();
     } catch (error) {
-      session.notice = errorText(error);
+      notices.report(error);
     }
   }
 
@@ -331,7 +333,7 @@ class ChangesetStore implements ViewSource {
     try {
       await session.connected().setLens(lens);
     } catch (error) {
-      session.notice = errorText(error);
+      notices.report(error);
     }
   }
 
@@ -344,7 +346,7 @@ class ChangesetStore implements ViewSource {
     try {
       await this.refresh();
     } catch (error) {
-      session.notice = errorText(error);
+      notices.report(error);
     }
   }
 
@@ -356,7 +358,7 @@ class ChangesetStore implements ViewSource {
     try {
       await this.refresh();
     } catch (error) {
-      session.notice = errorText(error);
+      notices.report(error);
     }
   }
 
@@ -374,7 +376,7 @@ class ChangesetStore implements ViewSource {
     try {
       await this.refresh();
     } catch (error) {
-      session.notice = errorText(error);
+      notices.report(error);
     }
   }
 
@@ -391,7 +393,7 @@ class ChangesetStore implements ViewSource {
   admit(shown: Shown): boolean {
     const asked = this.layout && { revision: this.layout.shown.revision, view: this.view };
     if (isCurrent(shown, asked)) return true;
-    session.notice = STALE_NOTICE;
+    notices.show(STALE_NOTICE);
     return false;
   }
 
@@ -477,7 +479,7 @@ class ChangesetStore implements ViewSource {
     try {
       return await session.connected().listChangesets();
     } catch (error) {
-      session.notice = errorText(error);
+      notices.report(error);
       return undefined;
     }
   }
@@ -487,7 +489,7 @@ class ChangesetStore implements ViewSource {
     try {
       return await session.connected().listPullRequests();
     } catch (error) {
-      session.notice = errorText(error);
+      notices.report(error);
       return undefined;
     }
   }
@@ -514,11 +516,11 @@ class ChangesetStore implements ViewSource {
     try {
       await backend.openChangeset(key);
     } catch (error) {
-      session.notice = errorText(error);
+      notices.report(error);
     }
     if (!this.pendingOpen.settle(token)) return;
     this.notifyOpening({ type: "unannounced" });
-    await this.refresh().catch((error: unknown) => (session.notice = errorText(error)));
+    await this.refresh().catch((error: unknown) => notices.report(error));
   }
 
   /** Fetches the remotes. The footer shows the task; the lists follow with `changesetsChanged`. */
@@ -526,7 +528,7 @@ class ChangesetStore implements ViewSource {
     try {
       await session.connected().fetch();
     } catch (error) {
-      session.notice = errorText(error);
+      notices.report(error);
     }
   }
 
@@ -538,9 +540,9 @@ class ChangesetStore implements ViewSource {
     try {
       this.range = undefined;
       const complete = await session.connected().finishReview();
-      session.notice = complete ? "Review finished: everything was seen" : "Review finished with unseen changes left";
+      notices.show(complete ? "Review finished: everything was seen" : "Review finished with unseen changes left");
     } catch (error) {
-      session.notice = errorText(error);
+      notices.report(error);
     }
   }
 
@@ -581,7 +583,7 @@ class ChangesetStore implements ViewSource {
     try {
       await session.connected().setProjectTrusted(trusted);
     } catch (error) {
-      session.notice = errorText(error);
+      notices.report(error);
     }
   }
 
@@ -590,7 +592,7 @@ class ChangesetStore implements ViewSource {
     try {
       await session.connected().trustPullRequest();
     } catch (error) {
-      session.notice = errorText(error);
+      notices.report(error);
     }
   }
 
@@ -599,7 +601,7 @@ class ChangesetStore implements ViewSource {
     try {
       await session.connected().excludePath(path, dir);
     } catch (error) {
-      session.notice = errorText(error);
+      notices.report(error);
     }
   }
 
@@ -620,7 +622,7 @@ class ChangesetStore implements ViewSource {
     try {
       await session.connected().narrowReview(changeset, filter);
     } catch (error) {
-      session.notice = errorText(error);
+      notices.report(error);
     }
   }
 
@@ -629,7 +631,7 @@ class ChangesetStore implements ViewSource {
     try {
       return await session.connected().listDirectory(path);
     } catch (error) {
-      session.notice = errorText(error);
+      notices.report(error);
       return undefined;
     }
   }

@@ -10,6 +10,7 @@ import type { Request } from "../generated/Request";
 import type { Response } from "../generated/Response";
 import type { ServerMessage } from "../generated/ServerMessage";
 import { abortError } from "../lib/abort.ts";
+import { RequestError } from "../lib/requestError.ts";
 import { LogBudget, reportFailedRequest } from "./errorLog.ts";
 import { Pending } from "./pending.ts";
 
@@ -151,7 +152,7 @@ export class Connection {
    * they are not sent again. Then connecting again starts.
    */
   private dropped() {
-    this.pending.rejectAll(new Error("connection closed"));
+    this.pending.rejectAll(new RequestError("unavailable", "connection closed"));
     this.setState("reconnecting");
     this.stalledTimer = setTimeout(() => this.setState("stalled"), this.timing.stalledAfter);
     this.attempts = 0;
@@ -253,7 +254,7 @@ export class Connection {
       };
       const timer = setTimeout(() => {
         settle();
-        reject(new Error("no connection to the backend"));
+        reject(new RequestError("unavailable", "no connection to the backend"));
       }, this.timing.requestWait);
       signal?.addEventListener("abort", onAbort, { once: true });
       this.waiting.add(resume);
@@ -286,7 +287,7 @@ export class Connection {
         console.error("backend:", message.message);
         return;
       }
-      this.pending.reject(message.id, new Error(message.message));
+      this.pending.reject(message.id, new RequestError(message.kind, message.message));
     } else if (message.type === "cancelled") {
       this.pending.reject(message.id, abortError());
     }

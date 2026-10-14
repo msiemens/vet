@@ -7,10 +7,11 @@ import type { BaseDiff } from "../generated/BaseDiff";
 import type { CommentAt } from "../generated/CommentAt";
 import type { HunkState } from "../generated/HunkState";
 import type { NonTextKind } from "../generated/NonTextKind";
-import { errorText } from "../lib/errorText";
+import { STALE_NOTICE } from "../lib/notice";
+import { RequestError } from "../lib/requestError";
 import type { Backend } from "./backend";
-import { STALE_NOTICE, type Shown, isCurrent } from "./shown";
-import { session } from "./session.svelte";
+import { notices } from "./notices.svelte";
+import { type Shown, isCurrent } from "./shown";
 
 /** What a request that marks answers with: a file's review state. */
 export type Answer = Awaited<ReturnType<Backend["toggleHunk"]>>;
@@ -30,12 +31,14 @@ export interface MarkHost {
   hunks(path: string): readonly HunkState[];
 }
 
-/** Tells the viewer why a request failed: when the manifest has moved on from the revision it was sent for, the views are about to be replaced and the action has to be repeated. */
+/**
+ * Tells the viewer why a request failed. When the backend says the revision is outdated, or the
+ * manifest has moved on from the revision the request was sent for before the backend could say so,
+ * the views are about to be replaced and the action has to be repeated.
+ */
 export function reportFailure(error: unknown, sent: number | undefined, current: number | undefined) {
-  session.notice =
-    sent !== undefined && current !== undefined && current !== sent
-      ? STALE_NOTICE
-      : `Request failed: ${errorText(error)}`;
+  if (sent !== undefined && current !== undefined && current !== sent) notices.show(STALE_NOTICE);
+  else notices.failed("Request failed", error);
 }
 
 export function reviewMarks(host: MarkHost) {
@@ -104,7 +107,7 @@ export function reviewMarks(host: MarkHost) {
     },
     /** Where a comment on a part of the file attaches in `shown`; rejects if `shown` is not current. */
     async commentTarget(shown: Shown, path: string, at: CommentAt) {
-      if (!host.admit(shown)) throw new Error(STALE_NOTICE);
+      if (!host.admit(shown)) throw new RequestError("outdated", STALE_NOTICE);
       return host.backend().commentTarget(shown.revision, path, at, shown.view);
     },
   };

@@ -7,6 +7,7 @@ import type { CommitChecks } from "../generated/CommitChecks";
 import { Debounced } from "../lib/debounced";
 import { errorText } from "../lib/errorText";
 import { refreshDelay } from "./checkRefresh";
+import { notices } from "./notices.svelte";
 import { session } from "./session.svelte";
 
 /** How long after a run was changed it is asked about once more: the platform has not shown it at once. */
@@ -77,13 +78,13 @@ class CheckStore {
       if (checks.length) this.loadedAt = Math.floor(Date.now() / 1000);
       // A limit is said by the Pipelines tool and the footer; the toast would only repeat it.
       if (error !== this.lastError && error && limitedUntil === undefined) {
-        session.notice = `Could not load the checks: ${error}`;
+        notices.show(`Could not load the checks: ${error}`);
       }
       this.lastError = error;
     } catch (error) {
       if (seq !== this.seq) return;
       const text = errorText(error);
-      if (text !== this.lastError) session.notice = `Could not load the checks: ${text}`;
+      if (text !== this.lastError) notices.failed("Could not load the checks", error);
       this.lastError = text;
     }
     if (this.wanted.some((id) => this.items.get(id)?.state === "pending")) {

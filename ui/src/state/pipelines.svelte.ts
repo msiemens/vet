@@ -8,6 +8,7 @@ import type { PipelineStep } from "../generated/PipelineStep";
 import { errorText } from "../lib/errorText";
 import { toggleIn } from "../lib/foldKeys";
 import { checks } from "./checks.svelte";
+import { notices } from "./notices.svelte";
 import { session } from "./session.svelte";
 
 /** What `act` says to the viewer when the platform took a cancel. */
@@ -94,16 +95,16 @@ class PipelineStore {
     try {
       const outcome = await backend.changePipeline(action);
       if (outcome.type === "accepted") {
-        if (action.type === "cancel") session.notice = CANCELLING;
+        if (action.type === "cancel") notices.show(CANCELLING);
         checks.refresh([commit]);
       } else if (outcome.type === "forbidden") {
         if (account !== undefined) this.denied.add(account);
-        session.notice = `${outcome.message}. The actions stay off until the token changes.`;
+        notices.show(`${outcome.message}. The actions stay off until the token changes.`);
       } else {
-        session.notice = `Paused. ${outcome.message}`;
+        notices.show(`Paused. ${outcome.message}`);
       }
     } catch (error) {
-      session.notice = `Could not change the run: ${errorText(error)}`;
+      notices.failed("Could not change the run", error);
     } finally {
       this.busy = false;
     }

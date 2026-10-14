@@ -4,7 +4,6 @@
   import type { Snippet } from "svelte";
   import type { CheckRun } from "../../generated/CheckRun";
   import type { Thread } from "../../generated/Thread";
-  import { errorText } from "../../lib/errorText";
   import { flagPreference } from "../../lib/preferences.svelte";
   import { platformName } from "../../lib/platformName";
   import Avatar from "../../lib/ui/Avatar.svelte";
@@ -20,13 +19,12 @@
   import { ThreadCards, commentsSeen, groupThreads, isUnread, seenKey, threadPlace } from "../comments";
   import { markdownBody, needsShowAll, buildBriefCard } from "../review";
   import type { Frame } from "../../state/reviewModel";
+  import { browse } from "../../state/browse";
   import { changeset } from "../../state/changeset.svelte";
   import { checks } from "../../state/checks.svelte";
   import { commands } from "../../state/commands";
-  import { openUrl } from "../../state/host";
   import { minute } from "../../state/minute.svelte";
   import { platform } from "../../state/platform.svelte";
-  import { session } from "../../state/session.svelte";
   import { threads } from "../../state/threads.svelte";
   import { versions } from "../../state/versions.svelte";
   import ChangesetName from "./ChangesetName.svelte";
@@ -116,19 +114,13 @@
     if (row) commands.run("changeset.openInBrowser", commands.context({ row: { key: row.key, url: pull?.url } }));
   }
 
-  function openLink(url: string) {
-    void openUrl(url).catch((e: unknown) => {
-      session.notice = `Could not open the browser: ${errorText(e)}`;
-    });
-  }
-
   const card = (thread: Thread, isOpen: boolean, toggle: () => void) =>
     buildBriefCard(thread, isOpen, {
       place: threadPlace(thread),
       isNew,
       toggle,
       openThread: () => onopenthread(thread),
-      openLink,
+      openLink: browse,
     });
 </script>
 
@@ -206,7 +198,7 @@
               <div
                 class:vet-msg-clamp={!descriptionAll && needsShowAll(description)}
                 {@attach (box: HTMLElement) => {
-                  box.replaceChildren(markdownBody(description, { openLink }));
+                  box.replaceChildren(markdownBody(description, { openLink: browse }));
                 }}
               ></div>
               {#if !descriptionAll && needsShowAll(description)}

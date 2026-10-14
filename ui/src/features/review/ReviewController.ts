@@ -19,10 +19,11 @@ import { nextPaint } from "../../lib/nextPaint";
 import { platformName } from "../../lib/platformName";
 import { preferences } from "../../lib/preferences.svelte";
 import type { Backend } from "../../state/backend";
+import { browse } from "../../state/browse";
 import type { Changeset } from "../../state/changeset.svelte";
 import { contextMenus } from "../../state/contextMenu.svelte";
 import { findSets } from "../../state/findSets.svelte";
-import { openUrl } from "../../state/host";
+import { notices } from "../../state/notices.svelte";
 import { platform } from "../../state/platform.svelte";
 import { locationPicker } from "../../state/locationPicker.svelte";
 import { LocationSearch } from "../../state/locationSearch";
@@ -34,7 +35,7 @@ import { semantic } from "../../state/semantic.svelte";
 import { serverList } from "../../state/serverList.svelte";
 import { languageOf, withoutFeature } from "../../state/serverStatus";
 import { session } from "../../state/session.svelte";
-import { STALE_NOTICE, type Shown, isCurrent } from "../../state/shown";
+import { type Shown, isCurrent } from "../../state/shown";
 import { sameView } from "../../state/view";
 import { type StructureTarget, structure } from "../../state/structure.svelte";
 import { symbols } from "../../state/symbols.svelte";
@@ -43,7 +44,8 @@ import { rangeKey } from "../../state/timelineRange";
 import { type ScopeSpec, type ViewScope, type ViewSource, newScope, scopeKey } from "../../state/viewScope.svelte";
 import type { Thread } from "../../generated/Thread";
 import { SUBMIT_KEY } from "../../lib/composer";
-import { errorText } from "../../lib/errorText";
+import { STALE_NOTICE } from "../../lib/notice";
+import { RequestError } from "../../lib/requestError";
 import { ChangesetView, type Listeners, type PanePosition, type ViewHooks } from "./editor/ChangesetView";
 import { fileSource } from "./editor/fileSource";
 import { type FindOptions, type PathPos, fromPathPos, orderOf, toPathPos } from "./editor/findMatches";
@@ -162,7 +164,7 @@ export class ReviewController {
   /** Show Usages and Go to Implementation: goes to the one place found, or lists the places in the popup. */
   private search = new LocationSearch({
     picker: locationPicker,
-    notice: (text) => (session.notice = text),
+    notice: (text) => notices.show(text),
     isAbort,
     fail: (error, revision) => this.changeset.reportFailure(error, revision),
     restartServer: (language) => serverList.restart(language),
@@ -485,7 +487,7 @@ export class ReviewController {
   /** Runs a request that marks or comments in `source`, unless the view on screen is read-only: then it says so and `refuse` answers. */
   private async editing<T>(source: ViewSource, request: () => Promise<T>, refuse: () => T): Promise<T> {
     if (source !== this.changeset || !this.screenReadOnly) return request();
-    session.notice = READ_ONLY_NOTE;
+    notices.show(READ_ONLY_NOTE);
     return refuse();
   }
 
@@ -531,7 +533,7 @@ export class ReviewController {
     const { revision, commits } = await this.backend.commits();
     const id =
       revision === shown.revision && this.changeset.shownCommit === index ? commits[index]?.commit.id : undefined;
-    if (id === undefined) throw new Error(STALE_NOTICE);
+    if (id === undefined) throw new RequestError("outdated", STALE_NOTICE);
     return id;
   }
 
@@ -738,7 +740,7 @@ export class ReviewController {
     ownTab: boolean,
   ) {
     if (at.external) {
-      session.notice = `Outside the repository: ${at.path}`;
+      notices.show(`Outside the repository: ${at.path}`);
       return;
     }
     await this.showFound({ type: "view", view: { type: "changeset" } }, ownTab, undefined, at);
@@ -807,7 +809,7 @@ export class ReviewController {
   /** Goes to the flagged hunk after or before the current one, across files; says so when there is none. */
   private stepFlagged(delta: 1 | -1): boolean {
     if (this.goToFlagged(this.flaggedFrom(this.hunkPlace(), delta))) return true;
-    session.notice = delta > 0 ? "No further flagged hunk" : "No earlier flagged hunk";
+    notices.show(delta > 0 ? "No further flagged hunk" : "No earlier flagged hunk");
     return false;
   }
 
@@ -848,7 +850,7 @@ export class ReviewController {
   /** Shows a place the popup listed, which the tab `from` asked for: in its file's tab, or says where it is when it is outside the repository. */
   private async openRow(from: TabId, row: LocationRow, side: Side) {
     if (row.external) {
-      session.notice = `Outside the repository: ${row.path}`;
+      notices.show(`Outside the repository: ${row.path}`);
       return;
     }
     const line = row.line - 1;
@@ -863,7 +865,7 @@ export class ReviewController {
     const location = found?.[0];
     if (!location) return;
     if (location.external) {
-      session.notice = `Defined outside the repository: ${location.path}`;
+      notices.show(`Defined outside the repository: ${location.path}`);
       return;
     }
     await this.openLocation(from, location.path, location.span.start.line, side, location.span);
@@ -914,7 +916,7 @@ export class ReviewController {
     try {
       commit = await this.commitAt(origin);
     } catch (error) {
-      session.notice = errorText(error);
+      notices.report(error);
       return undefined;
     }
     const id = fileTab(path, commit);
@@ -923,7 +925,7 @@ export class ReviewController {
     const scope = spec && this.scope(spec);
     await scope?.whenLoaded();
     if (scope?.gone) {
-      session.notice = "That commit is not in the changeset any more";
+      notices.show("That commit is not in the changeset any more");
       return undefined;
     }
     const current = this.tabs.modes.get(id);
@@ -1053,10 +1055,7 @@ export class ReviewController {
         const subject = threads.items.find((t) => t.id === thread);
         if (subject) void contextMenus.open(threadMenu, x, y, { thread: subject });
       },
-      openLink: (url) =>
-        void openUrl(url).catch((e: unknown) => {
-          session.notice = `Could not open the browser: ${errorText(e)}`;
-        }),
+      openLink: browse,
       submitKey: commands.keyLabel(SUBMIT_KEY),
       draftScope: () => `${this.backend.project}/${this.key}`,
     };
@@ -1339,7 +1338,7 @@ export class ReviewController {
       try {
         log = await this.backend.checkLog(run.id);
       } catch (error) {
-        session.notice = `Could not load the log of ${run.name}: ${errorText(error)}`;
+        notices.failed(`Could not load the log of ${run.name}`, error);
         return;
       }
       this.logs.set(id, log);

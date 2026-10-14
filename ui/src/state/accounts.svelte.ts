@@ -6,6 +6,7 @@ import type { Account } from "../generated/Account";
 import { errorText } from "../lib/errorText";
 import type { Backend } from "./backend";
 import { removeStoredCredential, storeCredential, storedCredential, storedCredentials } from "./host";
+import { notices } from "./notices.svelte";
 import { session } from "./session.svelte";
 
 export type AddResult = { ok: true; host: string; warning?: string } | { ok: false; error: string };
@@ -40,7 +41,7 @@ class AccountsStore {
       const stored = await storedCredentials();
       for (const { host, token } of stored) await backend.setCredentials(host, token, false);
     } catch (e) {
-      session.notice = `Cannot restore the saved access tokens: ${errorText(e)}`;
+      notices.failed("Cannot restore the saved access tokens", e);
     }
   }
 
@@ -50,7 +51,7 @@ class AccountsStore {
       const token = await storedCredential(host);
       if (token !== null) await backend.setCredentials(host, token, false);
     } catch (e) {
-      session.notice = `Cannot read the access token of ${host}: ${errorText(e)}`;
+      notices.failed(`Cannot read the access token of ${host}`, e);
     }
   }
 

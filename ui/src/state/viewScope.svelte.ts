@@ -7,15 +7,15 @@ import type { BaseDiff } from "../generated/BaseDiff";
 import type { CommentAt } from "../generated/CommentAt";
 import type { CommitUnit } from "../generated/CommitUnit";
 import type { NonTextKind } from "../generated/NonTextKind";
-import { errorText } from "../lib/errorText";
+import { STALE_NOTICE } from "../lib/notice";
 import type { Backend } from "./backend";
 import { LatestLoad } from "./latestLoad";
+import { notices } from "./notices.svelte";
 import { newReviewCells } from "./reviewCells.svelte";
 import { type Answer, reviewMarks } from "./reviewMarks";
 import { type FileLayout, type FileState, type Parts, type ViewLayout, partsOf } from "./reviewModel";
 import type { ReviewSource, WriteListener } from "./reviewSource";
-import { session } from "./session.svelte";
-import { STALE_NOTICE, type Shown, isCurrent } from "./shown";
+import { type Shown, isCurrent } from "./shown";
 import { CHANGESET, commitView } from "./view";
 
 /** What a file tab reads and does in its view: the changeset store implements it for the view on screen, `ViewScope` for the others. */
@@ -96,7 +96,7 @@ class Scope implements ViewSource {
           this.reported = false;
         },
         (error: unknown) => {
-          if (!this.reported) session.notice = errorText(error);
+          if (!this.reported) notices.report(error);
           this.reported = true;
         },
       );
@@ -187,7 +187,7 @@ class Scope implements ViewSource {
 
   admit(shown: Shown): boolean {
     if (this.layout && isCurrent(shown, this.layout.shown)) return true;
-    session.notice = STALE_NOTICE;
+    notices.show(STALE_NOTICE);
     return false;
   }
 

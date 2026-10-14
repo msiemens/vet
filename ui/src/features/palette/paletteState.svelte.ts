@@ -1,9 +1,9 @@
 // Search Everywhere's state: whether the popup is up, its tab and query, what was chosen lately in
 // the open project, and the viewer's setting. The popup (`Palette.svelte`) draws it.
 
-import { errorText } from "../../lib/errorText";
 import { Preference, flagPreference } from "../../lib/preferences.svelte";
 import { type CommandContext, commands } from "../../state/commands";
+import { notices } from "../../state/notices.svelte";
 import { session } from "../../state/session.svelte";
 import { type PaletteTab, remember } from "./paletteRows";
 import { type Found, SymbolSearch } from "./symbolSearch";
@@ -50,7 +50,7 @@ class PaletteState {
       apply: (found) => (this.served = found),
       fail: (query, revision, error) => {
         this.served = { query, revision, languages: [] };
-        session.notice = `Could not search the symbols: ${errorText(error)}`;
+        notices.failed("Could not search the symbols", error);
       },
     },
   );
@@ -94,7 +94,7 @@ class PaletteState {
       const listing = await backend.listFiles();
       if (ask === this.asked) this.files = listing;
     } catch (error) {
-      if (ask === this.asked) session.notice = `Could not list the files: ${errorText(error)}`;
+      if (ask === this.asked) notices.failed("Could not list the files", error);
     } finally {
       if (ask === this.asked) this.listing = false;
     }
