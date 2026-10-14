@@ -12,51 +12,53 @@ vet-semantic.workspace = true
 vet-app.workspace = true
 vet-log.workspace = true
 vet-engine.workspace = true
-tokio = { version = "1.53.2", features = ["sync", "time", "macros", "rt", "process", "io-util", "fs"] }
-dirs = "7.0.0"
-sea-orm = { version = "2.0.4", default-features = false, features = ["sqlx-sqlite", "runtime-tokio-rustls", "macros"] }
-sea-orm-migration = { version = "2.0.4", default-features = false, features = ["sqlx-sqlite", "runtime-tokio-rustls"] }
-gix = { version = "0.88", default-features = false, features = ["sha1", "parallel", "index", "dirwalk", "excludes", "attributes", "blob-diff", "worktree-mutation", "revision", "merge", "blocking-network-client", "blocking-http-transport-reqwest"] }
-lsp-types = "0.97"
-serde_json = "1.0.151"
-toml = { version = "1.1", default-features = false, features = ["parse", "serde"] }
-globset = { version = "0.4.20", default-features = false }
-regex = { version = "1.13", default-features = false, features = ["std", "perf", "unicode"] }
+tokio = { workspace = true, features = ["sync", "time", "macros", "rt", "process", "io-util", "fs"] }
+dirs.workspace = true
+sea-orm = { workspace = true, features = ["sqlx-sqlite", "runtime-tokio-rustls", "macros"] }
+sea-orm-migration = { workspace = true, features = ["sqlx-sqlite", "runtime-tokio-rustls"] }
+gix = { workspace = true, features = ["sha1", "parallel", "index", "dirwalk", "excludes", "attributes", "blob-diff", "worktree-mutation", "revision", "merge", "blocking-network-client", "blocking-http-transport-reqwest"] }
+lsp-types.workspace = true
+serde_json.workspace = true
+toml = { workspace = true, features = ["parse", "serde"] }
+globset.workspace = true
+regex = { workspace = true, features = ["std", "perf", "unicode"] }
 # Reads which anchors a search pattern has.
-regex-syntax = { version = "0.8", default-features = false, features = ["std", "unicode"] }
-url = "2.5.8"
+regex-syntax = { workspace = true, features = ["std", "unicode"] }
+url.workspace = true
 # The HTTP client for the hosting platforms. rustls with the operating system's trust
 # store (a company CA is trusted as in the browser) and the `ring` provider, which the
 # database driver already builds; the system proxy settings apply.
-reqwest = { version = "0.13.5", default-features = false, features = ["rustls-no-provider", "system-proxy", "json"] }
-rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }
-serde = { version = "1.0.229", features = ["derive"] }
+reqwest = { workspace = true, features = ["rustls-no-provider", "system-proxy", "json"] }
+rustls = { workspace = true, features = ["ring", "std", "tls12"] }
+serde = { workspace = true, features = ["derive"] }
 # The platform API crates send their requests through the `reqwest` client above.
-# `azure_core` always enables the aws-lc TLS provider, so aws-lc gets compiled. It is not
-# used: `ring` is installed as the default.
-octocrab = { version = "0.54.2", default-features = false, features = ["reqwest", "retry", "jwt-rust-crypto"] }
-azure_devops_rust_api = { version = "0.39.1", default-features = false, features = ["reqwest", "git", "ims", "build", "policy"] }
-azure_core = { version = "1", default-features = false, features = ["reqwest"] }
-async-trait = "0.1"
+# octocrab needs exactly one JWT backend; `jwt-aws-lc-rs` reuses the aws-lc that
+# `azure_core` always compiles (its TLS provider), where `jwt-rust-crypto` would add
+# its own RSA and elliptic-curve crates. aws-lc is not used for TLS: `ring` is
+# installed as the default.
+octocrab = { workspace = true, features = ["reqwest", "retry", "jwt-aws-lc-rs"] }
+azure_devops_rust_api = { workspace = true, features = ["reqwest", "git", "ims", "build", "policy"] }
+azure_core = { workspace = true, features = ["reqwest"] }
+async-trait.workspace = true
 # Failures of the platforms are logged as structured events; the subscriber is the binary's.
-tracing = "0.1"
-futures = { version = "0.3", default-features = false, features = ["alloc"] }
-tower = { version = "0.5", default-features = false, features = ["retry"] }
-http = "1.5.0"
+tracing.workspace = true
+futures = { workspace = true, features = ["alloc"] }
+tower = { workspace = true, features = ["retry"] }
+http.workspace = true
 # The times the platforms write.
-time = { version = "0.3", default-features = false, features = ["parsing", "macros"] }
+time = { workspace = true, features = ["parsing", "macros"] }
 
 [target.'cfg(not(windows))'.dependencies]
-notify = "8.2.0"
+notify.workspace = true
 # Signalling a run's process group, and syncing content (`fsync`, Apple's `F_FULLFSYNC`),
 # without `unsafe`.
-rustix = { version = "1.1", features = ["process", "fs"] }
+rustix = { workspace = true, features = ["process", "fs"] }
 
 [target.'cfg(windows)'.dependencies]
-windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Security", "Win32_Storage_FileSystem", "Win32_System_IO", "Win32_System_JobObjects", "Win32_System_Threading"] }
+windows-sys = { workspace = true, features = ["Win32_Foundation", "Win32_Security", "Win32_Storage_FileSystem", "Win32_System_IO", "Win32_System_JobObjects", "Win32_System_Threading"] }
 
 [lints]
 workspace = true
 
 [dev-dependencies]
-tempfile = "3.27.0"
+tempfile.workspace = true

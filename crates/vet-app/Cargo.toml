@@ -12,17 +12,17 @@ vet-semantic.workspace = true
 vet-engine.workspace = true
 # The runtime-agnostic async mutex that serializes a session's review state, and the
 # timeout on a CLI tool's answer.
-tokio = { version = "1.53.2", features = ["sync", "time"] }
+tokio = { workspace = true, features = ["sync", "time"] }
 # Asking a platform for several commits' checks at once.
-futures = { version = "0.3", default-features = false, features = ["alloc"] }
+futures = { workspace = true, features = ["alloc"] }
 # What `az` prints.
-serde_json = "1.0.151"
-tracing = "0.1"
+serde_json.workspace = true
+tracing.workspace = true
 # The names in a remote URL, which may come escaped or not.
-percent-encoding = "2.3"
+percent-encoding.workspace = true
 
 [dev-dependencies]
-tokio = { version = "1.53.2", features = ["macros", "rt", "time"] }
+tokio = { workspace = true, features = ["macros", "rt", "time"] }
 
 [lints]
 workspace = true

@@ -9,11 +9,11 @@ publish.workspace = true
 # the LSP client. TS types are generated from it
 # (`cargo test -p vet-protocol`, output in ui/src/generated; see .cargo/config.toml).
 [dependencies]
-serde = { version = "1", features = ["derive"] }
-ts-rs = "12"
+serde = { workspace = true, features = ["derive"] }
+ts-rs.workspace = true
 
 [dev-dependencies]
-serde_json = "1"
+serde_json.workspace = true
 
 [lints]
 workspace = true
