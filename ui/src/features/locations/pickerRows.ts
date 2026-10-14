@@ -4,6 +4,7 @@
 
 import type { LocationRow } from "../../generated/LocationRow.ts";
 import type { StatusLetter } from "../../lib/changeLetter.ts";
+import { count } from "../../lib/format.ts";
 import { match } from "../../lib/speedSearch.ts";
 import { placeLabel } from "../../lib/symbolLabel.ts";
 
@@ -99,8 +100,7 @@ export function groupRows(rows: readonly LocationRow[], statusOf: (path: string)
 
 /** The header's count: `1,340`, with how many of them are listed when the answer was cut. */
 export function countText(total: number, listed: number): { count: string; cut?: string } {
-  const format = (n: number) => n.toLocaleString("en-US");
-  return total > listed ? { count: format(total), cut: `first ${format(listed)}` } : { count: format(total) };
+  return total > listed ? { count: count(total), cut: `first ${count(listed)}` } : { count: count(total) };
 }
 
 /**

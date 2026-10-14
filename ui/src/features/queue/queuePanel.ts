@@ -9,7 +9,8 @@ import type { Reviewer } from "../../generated/Reviewer";
 import type { RowReview } from "../../generated/RowReview";
 import type { Thread } from "../../generated/Thread";
 import type { VersionInfo } from "../../generated/VersionInfo";
-import { plural } from "../../lib/plural.ts";
+import { ciIcon } from "../../lib/ciStatus.ts";
+import { count, plural } from "../../lib/format.ts";
 import { type QueueRow, authorOf, sourceText, updatedText } from "./queueRows.ts";
 
 /** One clause of a reason; `bold` is the name it is about. */
@@ -42,9 +43,7 @@ export function metaOf(row: QueueRow, files: number | undefined, nowMs = Date.no
     return [
       { type: "text", text: "Live changes on" },
       ...(row.branch ? [{ type: "mono" as const, text: row.branch }] : []),
-      ...(files === undefined
-        ? []
-        : [{ type: "text" as const, text: `${plural(files, "file", "files")}, not committed` }]),
+      ...(files === undefined ? [] : [{ type: "text" as const, text: `${plural(files, "file")}, not committed` }]),
     ];
   }
   const author = authorOf(row);
@@ -57,8 +56,6 @@ export function metaOf(row: QueueRow, files: number | undefined, nowMs = Date.no
     ...(updated ? [{ type: "text" as const, text: `updated ${updated}` }] : []),
   ];
 }
-
-const number = new Intl.NumberFormat("en");
 
 /** How many messages someone else wrote after the viewer last looked in threads the viewer is in. */
 export function repliesForYou(threads: readonly Thread[], isNew: (message: Thread["messages"][number]) => boolean) {
@@ -90,15 +87,12 @@ export function reasonOf(input: {
     const parts: Part[] = [
       ...failed.map((name) => ({ bold: name, text: " failed" })),
       ...(failed.length === 0 && pull.ci === "failure" ? [{ text: "Checks failed" }] : []),
-      ...(pull.unresolvedThreads > 0
-        ? [{ text: plural(pull.unresolvedThreads, "unresolved thread", "unresolved threads") }]
-        : []),
+      ...(pull.unresolvedThreads > 0 ? [{ text: plural(pull.unresolvedThreads, "unresolved thread") }] : []),
       ...changes,
     ];
     return { tone: "bad", parts, protection: parts.length === 0 && platform === "github" };
   }
-  const checks = { success: "Checks pass", failure: "Checks failing", pending: "Checks running" } as const;
-  const ci = pull.ci === "success" || pull.ci === "failure" || pull.ci === "pending" ? checks[pull.ci] : undefined;
+  const ci = ciIcon(pull.ci)?.phrase;
   const approved = approvedBy(info?.reviewers ?? []);
   const parts: Part[] = [
     ...(ci ? [{ text: ci }] : []),
@@ -147,10 +141,10 @@ export function reviewSummary(input: {
   let detail = "";
   if (review.state === "finished") detail = review.complete ? "complete" : "with changes unseen";
   else if (completion && review.state === "none") {
-    detail = `${number.format(completion.lines)} changed ${completion.lines === 1 ? "line" : "lines"}`;
-    if (files !== undefined) detail += ` in ${plural(files, "file", "files")}`;
+    detail = plural(completion.lines, "changed line");
+    if (files !== undefined) detail += ` in ${plural(files, "file")}`;
   } else if (completion) {
-    detail = `${number.format(completion.seenLines)} of ${number.format(completion.lines)} lines seen`;
+    detail = `${count(completion.seenLines)} of ${count(completion.lines)} lines seen`;
   }
   const finishedWhole = review.state === "finished" && review.complete;
   const summary: ReviewSummary = {
@@ -169,8 +163,8 @@ export function reviewSummary(input: {
     const older = completion?.oldBaseLines ?? 0;
     summary.pushes =
       `${plural(review.version - reviewed, ...noun)} since you last reviewed ` +
-      `(v${reviewed} → v${review.version}): ${plural(changed, "file", "files")} changed` +
-      (older > 0 ? `, and ${plural(older, "line", "lines")} you had seen changed again` : "");
+      `(v${reviewed} → v${review.version}): ${plural(changed, "file")} changed` +
+      (older > 0 ? `, and ${plural(older, "line")} you had seen changed again` : "");
   }
   if (completion && completion.oldBaseLines > 0) {
     summary.oldBaseNote = `${plural(completion.oldBaseLines, "line was", "lines were")} seen against an older base.`;

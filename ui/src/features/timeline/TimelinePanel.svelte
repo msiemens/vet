@@ -1,6 +1,7 @@
 <script lang="ts">
   import type { CommitInfo } from "../../generated/CommitInfo";
   import type { VersionInfo } from "../../generated/VersionInfo";
+  import { clock } from "../../lib/format";
   import BottomToolHeader from "../../lib/ui/BottomToolHeader.svelte";
   import CiStatus from "../../lib/ui/CiStatus.svelte";
   import EmptyState from "../../lib/ui/EmptyState.svelte";
@@ -60,8 +61,6 @@
   /** The version clicked last, which a shift-click runs the block from. */
   let anchor = $state<number>();
 
-  const time = (at: number) => new Date(at * 1000).toLocaleTimeString(undefined, { hour12: false });
-
   function choose(n: number, shift: boolean) {
     // A commit on view is replaced by the push, whatever was shown before it.
     const current = byCommit ? undefined : range;
@@ -116,7 +115,7 @@
                       ></span>{/if}</span
                   >v{row.n}</span
                 >
-                <span class="mono time">{time(row.at)}</span>
+                <span class="mono time">{clock(row.at, true)}</span>
                 <span class="names">
                   {row.files}
                   {#if row.reviewed}<span class="eye" title="Last reviewed here"><Icon name="eye" size={13} /></span
@@ -142,7 +141,7 @@
                       ></span>{/if}</span
                   >base</span
                 >
-                <span class="mono time">{time(base.commit.time)}</span>
+                <span class="mono time">{clock(base.commit.time, true)}</span>
                 <span class="names"
                   ><span class="mono">{base.commit.shortId}</span>
                   <span class="subject">{base.commit.subject}</span></span

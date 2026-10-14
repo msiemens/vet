@@ -8,6 +8,7 @@ import type { ReviewerState } from "../../generated/ReviewerState";
 import type { ReviewSubmitted } from "../../generated/ReviewSubmitted";
 import type { Thread } from "../../generated/Thread";
 import type { ThreadMessage } from "../../generated/ThreadMessage";
+import { plural } from "../../lib/format.ts";
 import type { StatusTone } from "../../lib/ui/statusTone.ts";
 
 export function stateLabel(info: Pick<PullRequestInfo, "state" | "draft">): string {
@@ -23,7 +24,7 @@ export function stateTone(state: PullRequestInfo["state"]): StatusTone {
 export function blockerText(blocker: Blocker): string {
   switch (blocker.type) {
     case "threads":
-      return `${blocker.count} unresolved ${blocker.count === 1 ? "thread" : "threads"}`;
+      return plural(blocker.count, "unresolved thread");
     case "checks":
       return "checks";
     case "changesRequested":
@@ -46,7 +47,7 @@ export function reviewerMark(state: ReviewerState): string {
 
 /** What is said of the drafts that were not posted because their code is gone or their thread has an edit to settle. */
 export function waitingNote(count: number): string {
-  return `${count} ${count === 1 ? "draft waits" : "drafts wait"}: its code is gone or its thread has an edit to settle.`;
+  return `${plural(count, "draft waits", "drafts wait")}: its code is gone or its thread has an edit to settle.`;
 }
 
 /** The messages that `SubmitReview` or `PostDrafts` would post: the drafts and failed ones of threads of a platform. */
@@ -65,7 +66,7 @@ export const waitingToPost = (threads: readonly Thread[], vote: PendingVote | nu
 
 /** What is told after a post went through: how many comments were posted, and the vote if one was cast. */
 export function postedNote(done: Pick<ReviewSubmitted, "posted" | "skipped" | "voteCast">): string {
-  const comments = `${done.posted} ${done.posted === 1 ? "comment" : "comments"} posted`;
+  const comments = `${plural(done.posted, "comment")} posted`;
   const told = done.posted === 0 && done.voteCast ? "Vote cast" : done.voteCast ? `${comments}, vote cast` : comments;
   return done.skipped > 0 ? `${told}. ${waitingNote(done.skipped)}` : told;
 }

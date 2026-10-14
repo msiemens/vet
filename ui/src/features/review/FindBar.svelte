@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { plural } from "../../lib/format";
   import { SEARCH_OPTION_TOGGLES } from "../../lib/search/optionToggles";
   import FilterChip from "../../lib/ui/FilterChip.svelte";
   import IconButton from "../../lib/ui/IconButton.svelte";
@@ -58,7 +59,7 @@
   const countTitle = $derived(
     summary.error ??
       (summary.skipped
-        ? `${summary.skipped} ${summary.skipped === 1 ? "file is" : "files are"} over the size limit and not searched`
+        ? `${plural(summary.skipped, "file is", "files are")} over the size limit and not searched`
         : undefined),
   );
 

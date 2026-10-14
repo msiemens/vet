@@ -5,7 +5,9 @@
   import { tick, untrack } from "svelte";
   import type { Unavailable } from "../../generated/Unavailable";
   import { arrowKey, toggled } from "../../lib/foldKeys";
+  import { plural } from "../../lib/format";
   import { plainKey } from "../../lib/listKeys";
+  import { basename } from "../../lib/paths";
   import { RestoreFailureList, limitedMessage, onlyStoodIn } from "../chrome";
   import Banner from "../../lib/ui/Banner.svelte";
   import BottomToolHeader from "../../lib/ui/BottomToolHeader.svelte";
@@ -299,7 +301,7 @@
   /** `message` with its backticked names as code. */
   const parts = (message: string) => message.split(/`([^`]+)`/).map((text, i) => ({ text, code: i % 2 === 1 }));
   const plainText = (message: string) => message.replaceAll("`", "");
-  const place = (p: Problem, withFile: boolean) => `${withFile ? `${p.path.split("/").pop()}` : ""}:${p.line + 1}`;
+  const place = (p: Problem, withFile: boolean) => `${withFile ? basename(p.path) : ""}:${p.line + 1}`;
   const tip = (p: Problem) =>
     [
       plainText(p.diagnostic.message),
@@ -310,7 +312,6 @@
     ]
       .filter(Boolean)
       .join("\n");
-  const base = (path: string) => path.slice(path.lastIndexOf("/") + 1);
 </script>
 
 <section aria-label="Problems" data-filter-keys onfocusin={() => nav.focusin()}>
@@ -449,9 +450,7 @@
         icon="check"
         tone="ok"
         title="No problems in {scopeName}"
-        text={reach.answered
-          ? `${reach.answered} analysed ${reach.answered === 1 ? "file" : "files"} checked.`
-          : undefined}
+        text={reach.answered ? `${plural(reach.answered, "analysed file")} checked.` : undefined}
       />
     {:else if empty?.kind === "partial"}
       <EmptyState title="No problems so far in {scopeName}" text="{reach.answered} of {reach.total} files analysed." />
@@ -461,7 +460,7 @@
         <button class="link" type="button" onclick={() => (problems.origin = "all")}>Show all</button>
       </EmptyState>
     {:else if empty?.kind === "hidden"}
-      <EmptyState title="{empty.hidden} {empty.hidden === 1 ? 'problem' : 'problems'} hidden by the filters">
+      <EmptyState title="{plural(empty.hidden, 'problem')} hidden by the filters">
         <button class="link" type="button" onclick={clearFilters}>Clear filters</button>
       </EmptyState>
     {:else if everyFileUnserved}
@@ -506,7 +505,7 @@
                 tabindex={-1}
                 onclick={(e) => click(e, i)}
               >
-                {#snippet glyph()}<FileIcon name={base(item.path)} />{/snippet}
+                {#snippet glyph()}<FileIcon name={basename(item.path)} />{/snippet}
                 <PathText path={item.path} />
               </TreeRow>
             {:else if item.kind === "problem"}
@@ -542,7 +541,7 @@
             {:else if item.kind === "wait"}
               <TreeRow interactive={false} tone="soft" letters={false}>
                 {#snippet glyph()}<Spinner />{/snippet}
-                Waiting for {item.server}: {item.files.map(base).join(", ")}
+                Waiting for {item.server}: {item.files.map(basename).join(", ")}
               </TreeRow>
             {:else if item.kind === "na"}
               <TreeRow
@@ -557,7 +556,7 @@
               >
             {:else}
               <TreeRow depth={item.depth} interactive={false} letters={false} cur={i === cursor}>
-                {#snippet glyph()}<FileIcon name={base(item.path)} />{/snippet}
+                {#snippet glyph()}<FileIcon name={basename(item.path)} />{/snippet}
                 <PathText path={item.path} />
                 {#snippet trailing()}
                   <span class="why">{item.why.label}</span>

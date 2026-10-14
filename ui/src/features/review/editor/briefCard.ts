@@ -5,6 +5,7 @@
 
 import type { Thread } from "../../../generated/Thread.ts";
 import type { ThreadMessage } from "../../../generated/ThreadMessage.ts";
+import { count, noun } from "../../../lib/format.ts";
 import { splitPath } from "../../../lib/paths.ts";
 import { iconSvg } from "../../../lib/ui/icons.ts";
 import { briefMessages, needsShowAll } from "./briefThread.ts";
@@ -104,7 +105,7 @@ export function buildBriefCard(thread: Thread, open: boolean, brief: BriefOption
     if (i === 1 && between > 0) {
       const line = el("div", "vet-thread-more");
       line.innerHTML = iconSvg("closed", 9, 2);
-      line.append(`${between} more ${between === 1 ? "reply" : "replies"}`);
+      line.append(`${count(between)} more ${noun(between, "reply", "replies")}`);
       card.append(line);
     }
     card.append(briefMessage(thread, message, brief));

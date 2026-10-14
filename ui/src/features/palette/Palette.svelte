@@ -4,6 +4,7 @@
   // Shift+Enter shows a changed file or symbol in All changes, Escape closes.
   import { tick, untrack } from "svelte";
   import { letterOfChange, letterOfStatus } from "../../lib/changeLetter";
+  import { plural } from "../../lib/format";
   import { bindingOf, matches } from "../../lib/keymap";
   import { splitPath } from "../../lib/paths";
   import ChangeLetter from "../../lib/ui/ChangeLetter.svelte";
@@ -506,7 +507,7 @@
         <EmptyState
           title="No results for “{palette.query.trim()}”"
           text={hidden
-            ? `${hidden} unchanged ${hidden === 1 ? "file matches" : "files match"}, and are not searched.`
+            ? `${plural(hidden, "unchanged file matches", "unchanged files match")}, and are not searched.`
             : undefined}
         >
           {#snippet actions()}

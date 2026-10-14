@@ -6,6 +6,7 @@ import type { PullRequestInfo } from "../../generated/PullRequestInfo";
 import type { Thread } from "../../generated/Thread";
 import type { ThreadMessage } from "../../generated/ThreadMessage";
 import { isSubmitKey } from "../../lib/composer.ts";
+import { noun, plural } from "../../lib/format.ts";
 import { platformName } from "../../lib/platformName.ts";
 import type { MenuItem } from "../../lib/ui/menuItem.ts";
 import { inOrder } from "./groups.ts";
@@ -48,9 +49,9 @@ export function summarizeOutgoing(
 
 /** The button's tooltip: how much is outgoing, and how much of it failed. A staged vote makes them items, not comments. */
 export function outgoingTitle(summary: OutgoingSummary, withVote: boolean): string {
-  const noun = (n: number) => (withVote ? (n === 1 ? "item" : "items") : n === 1 ? "comment" : "comments");
-  if (summary.failed > 0) return `${summary.failed} of ${summary.count} outgoing ${noun(summary.count)} failed to post`;
-  if (summary.count > 0) return `${summary.count} outgoing ${noun(summary.count)}`;
+  const what = (n: number) => noun(n, withVote ? "item" : "comment");
+  if (summary.failed > 0) return `${summary.failed} of ${summary.count} outgoing ${what(summary.count)} failed to post`;
+  if (summary.count > 0) return `${summary.count} outgoing ${what(summary.count)}`;
   return "No outgoing comments";
 }
 
@@ -72,7 +73,7 @@ export const destination = (info: Pick<PullRequestInfo, "number" | "platform">):
 /** What the Post button says it posts: the comments that wait, and the vote if one does. */
 export function postLabel(comments: number, vote: boolean): string {
   if (comments === 0 && vote) return "Post vote";
-  const n = `Post ${comments} ${comments === 1 ? "comment" : "comments"}`;
+  const n = `Post ${plural(comments, "comment")}`;
   return vote ? `${n} and vote` : n;
 }
 

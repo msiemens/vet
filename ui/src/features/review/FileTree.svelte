@@ -7,6 +7,7 @@
   import { dirname } from "../../lib/paths";
   import { letterOfChange } from "../../lib/changeLetter";
   import { arrowKey, toggleIn } from "../../lib/foldKeys";
+  import { plural } from "../../lib/format";
   import { plainKey } from "../../lib/listKeys";
   import { aimIndex, stepMatch, type Range } from "../../lib/speedSearch";
   import { fullName } from "../../lib/symbolLabel";
@@ -35,6 +36,7 @@
   import { AllFiles } from "./AllFiles.svelte";
   import type { AllRow } from "./allFilesRows";
   import CommitList from "./CommitList.svelte";
+  import { excludedCount } from "./emptyChanges";
   import { type ExcludedRow, excludedRows, extraRows } from "./excludedRows";
   import NarrowingChip from "./NarrowingChip.svelte";
   import { closedKey, fileSymbolRows, type SymbolRow } from "./symbolRows";
@@ -291,7 +293,7 @@
   const shownAll = $derived(searchedAll?.rows ?? all.rows);
   const hits: ReadonlyMap<object, Range[]> | undefined = $derived((searchedChanges ?? searchedAll)?.hits);
 
-  const excludedFiles = $derived(excluded?.groups.reduce((sum, g) => sum + g.count, 0) ?? 0);
+  const excludedFiles = $derived(excludedCount(excluded?.groups ?? []));
   const hasExcluded = $derived(excludedFiles > 0 && !search.active);
   const heldRows = $derived(excludedRows(excluded?.groups ?? []));
   const extra = $derived(extraRows(hasExcluded, excludedOpen, heldRows));
@@ -481,7 +483,7 @@
     flagged={flagged > 0}
     on={path === (pressed ?? selected)}
     cur={hit.cursor}
-    title={flagged ? `${path}\n${flagged} flagged ${flagged === 1 ? "hunk" : "hunks"}` : path}
+    title={flagged ? `${path}\n${plural(flagged, "flagged hunk")}` : path}
     status={s?.status}
     tabindex={-1}
     onclick={(e) => clickFile(e, path, index)}
@@ -496,7 +498,7 @@
         <span class="warn" title={analysis.message}><SeverityIcon severity="warning" /></span>
       {:else if analysis?.state === "done" && analysis.symbols.length && !open}
         {@const n = analysis.symbols.length}
-        <span class="n" title="{n} changed {n === 1 ? 'symbol' : 'symbols'}">{n}</span>
+        <span class="n" title={plural(n, "changed symbol")}>{n}</span>
       {/if}
       {#if s?.mode}<span class="n" title="File mode changed">{s.mode}</span>{/if}
       {#if s && file}

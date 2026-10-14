@@ -2,6 +2,7 @@
   import { onMount } from "svelte";
   import type { CheckRun } from "../../generated/CheckRun";
   import type { Thread } from "../../generated/Thread";
+  import { plural } from "../../lib/format";
   import { readStored, writeStored } from "../../lib/storage";
   import Avatar from "../../lib/ui/Avatar.svelte";
   import CiStatus from "../../lib/ui/CiStatus.svelte";
@@ -218,9 +219,7 @@
             {#if comments > 0}
               <span
                 class="threads"
-                title={row.pullRequest
-                  ? `${comments} ${comments === 1 ? "comment" : "comments"}`
-                  : `${comments} open ${comments === 1 ? "thread" : "threads"}`}
+                title={row.pullRequest ? plural(comments, "comment") : plural(comments, "open thread")}
                 ><Icon name="comments" size={13} />{comments}</span
               >
             {/if}

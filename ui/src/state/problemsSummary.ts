@@ -2,7 +2,7 @@
 // shown as zero (SPEC I6): a file no server has answered for counts as waiting or as not analysed,
 // and a file whose problems cannot be told new from existing is named, not counted as either.
 
-import { plural } from "../lib/plural.ts";
+import { plural } from "../lib/format.ts";
 import type { Counts } from "./problemRows.ts";
 
 /** Whether the answers for some files still compare with the base, say which problems are new, or could not. */

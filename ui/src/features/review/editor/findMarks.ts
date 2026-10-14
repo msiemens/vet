@@ -6,6 +6,7 @@
 import { getChunks, getOriginalDoc } from "@codemirror/merge";
 import { type Extension, StateEffect, StateField } from "@codemirror/state";
 import { Decoration, type DecorationSet, EditorView, ViewPlugin, type ViewUpdate } from "@codemirror/view";
+import { plural } from "../../../lib/format.ts";
 import { NO_MARKS, type ViewMarks } from "./findView";
 import { lineStart } from "./positions";
 import { hiddenRegions } from "./semantic";
@@ -142,7 +143,7 @@ const gapBadges = ViewPlugin.fromClass(
             if (!n) continue;
             const badge = document.createElement("span");
             badge.className = GAP;
-            badge.textContent = n === 1 ? "1 match" : `${n} matches`;
+            badge.textContent = plural(n, "match", "matches");
             bar.append(badge);
           }
         },

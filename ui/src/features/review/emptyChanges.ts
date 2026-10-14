@@ -14,8 +14,11 @@ import type { ReviewFilter } from "../../generated/ReviewFilter";
 import type { ReviewInfo } from "../../generated/ReviewInfo";
 import type { Target } from "../../generated/Target";
 import type { VersionInfo } from "../../generated/VersionInfo";
+import { noun, plural } from "../../lib/format.ts";
+import { basename } from "../../lib/paths.ts";
 import { platformName } from "../../lib/platformName.ts";
 import { shortTime } from "../../lib/shortTime.ts";
+import { deltaText, sumDelta } from "../../lib/ui/lineDelta.ts";
 import { chooseRow } from "../../state/timelineRange.ts";
 
 /** A piece of a row's value: plain text, or code (a hash, a branch, a path). */
@@ -101,8 +104,7 @@ export interface EmptyInput {
 }
 
 const mono = (text: string): Seg => ({ mono: text });
-const plural = (n: number, one: string, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
-const delta = (d: LineDelta) => `+${d.added} −${d.removed}`;
+const delta = (d: LineDelta) => deltaText(d.added, d.removed);
 const BROWSE: Action = { id: "browse", label: "Browse all files" };
 const OTHER: Action = { id: "other", label: "Open another changeset" };
 const BACK: Action = { id: "back", label: "Back to all changes" };
@@ -190,13 +192,17 @@ export function lifting(project: ReviewFilter, by: readonly ExcludedBy[]): Revie
   }, project);
 }
 
+/** The files the review leaves out, all groups together. */
+export const excludedCount = (groups: readonly ExcludedGroup[]): number => groups.reduce((sum, g) => sum + g.count, 0);
+
 /** The files of a group listed in its panel before the rest are counted. */
 const LISTED = 5;
 
 function filtered(input: EmptyInput): EmptyView {
   const narrowed = input.excluded.find((g) => g.by.some((b) => b.kind === "narrowing"));
-  const count = input.excluded.reduce((sum, g) => sum + g.count, 0);
-  const lines = input.excluded.reduce((sum, g) => sum + g.delta.added + g.delta.removed, 0);
+  const count = excludedCount(input.excluded);
+  const { added, removed } = sumDelta(input.excluded.map((g) => g.delta));
+  const lines = added + removed;
   const panels: Panel[] = [];
   if (narrowed) {
     panels.push({
@@ -237,7 +243,7 @@ function filtered(input: EmptyInput): EmptyView {
       glyph: "emptyFilter",
       title: `Nothing in ${where}`,
       lead: narrowed
-        ? `This review is narrowed to ${where}. The ${plural(narrowed.count, "changed file")} ${narrowed.count === 1 ? "is" : "are"} elsewhere.`
+        ? `This review is narrowed to ${where}. The ${plural(narrowed.count, "changed file")} ${noun(narrowed.count, "is", "are")} elsewhere.`
         : `This review is narrowed to ${where}, and the project's filter leaves out everything that changed.`,
       panels,
       actions: [
@@ -249,7 +255,7 @@ function filtered(input: EmptyInput): EmptyView {
   return {
     glyph: "emptyFilter",
     title: "Everything is filtered out",
-    lead: `${count === 1 ? "The changed file" : `All ${count} changed files`} (${plural(lines, "line")}) ${count === 1 ? "is" : "are"} excluded by the review filter.`,
+    lead: `${noun(count, "The changed file", `All ${plural(count, "changed file")}`)} (${plural(lines, "line")}) ${noun(count, "is", "are")} excluded by the review filter.`,
     panels,
     actions: [
       { id: "filter", label: "Edit review filter…" },
@@ -321,14 +327,8 @@ function emptyWorkingTree(input: EmptyInput): EmptyView {
   const undone = input.review.state === "open" && input.versions.length > 1;
   if (undone) {
     const rows: Row[] = [...input.versions].reverse().map((v) => {
-      const total = v.files.reduce(
-        (sum, f) => ({ added: sum.added + f.delta.added, removed: sum.removed + f.delta.removed }),
-        {
-          added: 0,
-          removed: 0,
-        },
-      );
-      const names = v.files.map((f) => f.path.slice(f.path.lastIndexOf("/") + 1)).join(", ");
+      const total = sumDelta(v.files.map((f) => f.delta));
+      const names = v.files.map((f) => basename(f.path)).join(", ");
       // The tree matches the base now, so the newest version that changed a file is the one that put
       // the files back as they were before the version it follows.
       const undid = v.n === input.versions.length && v.files.length > 0 ? ` · undid v${v.n - 1}` : "";

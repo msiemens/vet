@@ -7,6 +7,7 @@
   import { letterOfStatus } from "../../lib/changeLetter";
   import { errorText } from "../../lib/errorText";
   import { toggleIn } from "../../lib/foldKeys";
+  import { count, noun, plural } from "../../lib/format";
   import { segments, trimmed } from "../../lib/foundText";
   import { basename, dirname } from "../../lib/paths";
   import { NO_HIGHLIGHTS } from "../../lib/highlights";
@@ -167,8 +168,8 @@
     if (!results || pending) return "Searching…";
     const { hits, files: found, truncated } = results;
     if (!hits) return "0 matches";
-    const count = `${hits.toLocaleString()}${truncated ? "+" : ""} ${hits === 1 ? "match" : "matches"} in ${found.length} ${found.length === 1 ? "file" : "files"}`;
-    return truncated ? `${count}, narrow the query` : count;
+    const text = `${count(hits)}${truncated ? "+" : ""} ${noun(hits, "match", "matches")} in ${plural(found.length, "file")}`;
+    return truncated ? `${text}, narrow the query` : text;
   });
 
   const sides: { id: SearchSide; label: string }[] = [
@@ -343,7 +344,7 @@
     }
     if (pending && !results) return { text: "Searching…", bad: false };
     if (results && !results.files.length)
-      return { text: `No matches in ${results.searched} ${results.searched === 1 ? "file" : "files"}.`, bad: false };
+      return { text: `No matches in ${plural(results.searched, "file")}.`, bad: false };
     return undefined;
   });
 

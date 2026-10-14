@@ -1,6 +1,7 @@
 // The order of a `Table`'s rows: by one sortable column, either way, or the order its owner gives
 // them in (the default). Rows that sort alike keep the default order between them.
 
+import { collator } from "../format.ts";
 import type { Column } from "./columns";
 
 export type Direction = "ascending" | "descending";
@@ -19,11 +20,11 @@ export function nextSort<R>(sort: Sort | undefined, column: Column<R>): Sort | u
   return sort.direction === first ? { column: column.id, direction: opposite(first) } : undefined;
 }
 
-const collator = new Intl.Collator(undefined, { numeric: true });
+const text = collator({ numeric: true });
 
 function compare(a: string | number, b: string | number): number {
   if (typeof a === "number" && typeof b === "number") return a - b;
-  return collator.compare(String(a), String(b));
+  return text.compare(String(a), String(b));
 }
 
 /** The rows in the order of `sort`; without one, or by a column that cannot sort, as given. */

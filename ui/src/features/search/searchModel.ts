@@ -7,6 +7,7 @@ import type { SearchLine } from "../../generated/SearchLine.ts";
 import type { SearchLineKind } from "../../generated/SearchLineKind.ts";
 import type { SearchScope } from "../../generated/SearchScope.ts";
 import type { View } from "../../generated/View.ts";
+import { plural } from "../../lib/format.ts";
 
 /** A place to search, as the scope menu lists it. */
 export interface ScopeChoice {
@@ -47,7 +48,7 @@ export function scopeChoices(s: ScopeSources): ScopeChoice[] {
     {
       id: CHANGES_SCOPE,
       label: "All changes",
-      detail: `${s.files} changed ${s.files === 1 ? "file" : "files"}`,
+      detail: plural(s.files, "changed file"),
       group: "view",
       scope: { type: "view", view: { type: "changeset" } },
     },

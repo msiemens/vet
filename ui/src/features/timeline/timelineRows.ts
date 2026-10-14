@@ -4,6 +4,7 @@ import type { CommitInfo } from "../../generated/CommitInfo";
 import type { LineDelta } from "../../generated/LineDelta";
 import type { VersionInfo } from "../../generated/VersionInfo";
 import { basename } from "../../lib/paths.ts";
+import { sumDelta } from "../../lib/ui/lineDelta.ts";
 import { type Range, pushesOf } from "../../state/timelineRange.ts";
 
 /** A file the range changes, as the panel lists it. */
@@ -53,8 +54,7 @@ export function timelineRows(versions: readonly VersionInfo[], { range, byCommit
   const ringAt = range?.from ?? 0;
   return versions
     .map((v): TimelineRow => {
-      const added = v.files.reduce((sum, f) => sum + f.delta.added, 0);
-      const removed = v.files.reduce((sum, f) => sum + f.delta.removed, 0);
+      const { added, removed } = sumDelta(v.files.map((f) => f.delta));
       return {
         n: v.n,
         at: v.at,

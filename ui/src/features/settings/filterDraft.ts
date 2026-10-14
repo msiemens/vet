@@ -3,7 +3,7 @@
 // judge (SPEC I5); nothing here reads one.
 
 import type { PatternMatch } from "../../generated/PatternMatch";
-import { plural } from "../../lib/plural.ts";
+import { plural } from "../../lib/format.ts";
 
 /** What is typed into a pattern list: edits to rows by index, and the text of the add field. */
 export interface PatternDraft {

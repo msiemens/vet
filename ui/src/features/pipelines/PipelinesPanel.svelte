@@ -7,6 +7,7 @@
   import type { CommitChecks } from "../../generated/CommitChecks";
   import type { Pipeline } from "../../generated/Pipeline";
   import { phaseLook } from "../../lib/ciStatus";
+  import { clock, durationText } from "../../lib/format";
   import { platformName } from "../../lib/platformName";
   import Banner from "../../lib/ui/Banner.svelte";
   import BottomToolHeader from "../../lib/ui/BottomToolHeader.svelte";
@@ -21,10 +22,8 @@
   import { checks as checkStore } from "../../state/checks.svelte";
   import { pipelines } from "../../state/pipelines.svelte";
   import { platform } from "../../state/platform.svelte";
-  import { durationText } from "../checks";
   import {
     type ActionKind,
-    clock,
     defaultJob,
     disabledReason,
     finished,

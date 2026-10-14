@@ -3,7 +3,9 @@
 
 import type { Completion } from "../../../generated/Completion.ts";
 import type { FileReview } from "../../../generated/FileReview.ts";
+import { plural } from "../../../lib/format.ts";
 import { pathText } from "../../../lib/splitText.ts";
+import { deltaParts } from "../../../lib/ui/lineDelta.ts";
 import type { FileLayout } from "../../../state/reviewModel.ts";
 import { el, iconButton, reconfirmButton } from "./dom.ts";
 
@@ -64,7 +66,7 @@ export function badgeFind(found: HTMLElement, matches: number | undefined) {
   if (matches === undefined) return;
   found.textContent = String(matches);
   found.classList.toggle("none", matches === 0);
-  found.title = matches === 1 ? "1 match in this file" : `${matches} matches in this file`;
+  found.title = `${plural(matches, "match", "matches")} in this file`;
 }
 
 export function fileHeader(file: FileLayout, actions: HeaderActions): FileHeader {
@@ -79,7 +81,8 @@ export function fileHeader(file: FileLayout, actions: HeaderActions): FileHeader
     actions.comment &&
     iconButton("Comment on this file", "comments", () => actions.comment?.(), "vet-icon-btn vet-review-action");
   const delta = el("span", "delta mono");
-  delta.innerHTML = `<span class="add">+${file.delta.added}</span> <span class="del">−${file.delta.removed}</span>`;
+  const [added, removed] = deltaParts(file.delta.added, file.delta.removed);
+  delta.append(el("span", "add", added), " ", el("span", "del", removed));
   const count = el("span", "count");
   const found = el("span", "found");
   found.hidden = true;

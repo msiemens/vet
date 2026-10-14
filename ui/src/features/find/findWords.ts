@@ -1,12 +1,11 @@
 // What the Find tool says in words, purely.
 
-const plural = (n: number, one: string, many = `${one}s`) => `${n.toLocaleString("en-US")} ${n === 1 ? one : many}`;
-
-const base = (path: string) => path.slice(path.lastIndexOf("/") + 1);
+import { count, plural } from "../../lib/format.ts";
+import { basename } from "../../lib/paths.ts";
 
 /** The banner of a set whose code has changed since it ran; `files` are those the later versions changed, if known. */
 export function staleText(files: readonly string[]): string {
-  const names = files.map(base);
+  const names = files.map(basename);
   const where = names.length ? ` (${names.join(", ")})` : "";
   return `The code changed since this ran${where}. Rows in changed files may have moved.`;
 }
@@ -15,8 +14,7 @@ export function staleText(files: readonly string[]): string {
 export const rerunText = ({ fresh, gone }: { fresh: number; gone: number }) => `Rerun: ${fresh} new, ${gone} gone.`;
 
 /** The banner of a list that was cut. */
-export const cutText = (shown: number, total: number) =>
-  `Showing the first ${shown.toLocaleString("en-US")} of ${total.toLocaleString("en-US")}.`;
+export const cutText = (shown: number, total: number) => `Showing the first ${count(shown)} of ${count(total)}.`;
 
 /** The status line's count: places, files, and the ones not seen. */
 export function countText(places: number, files: number, notSeen: number): string {

@@ -5,6 +5,7 @@
 import type { OutlineSymbol } from "../generated/OutlineSymbol";
 import type { SymbolChange } from "../generated/SymbolChange";
 import type { SymbolInfo } from "../generated/SymbolInfo";
+import { collator } from "../lib/format.ts";
 import { match, type Range } from "../lib/speedSearch.ts";
 import { nameOf } from "../lib/symbolLabel.ts";
 import { keyOf } from "./symbolKey.ts";
@@ -79,8 +80,7 @@ function link(symbols: readonly OutlineSymbol[]): { entries: Entry[]; roots: Ent
   return { entries, roots };
 }
 
-// One collator: `localeCompare` creates one per call.
-const collator = new Intl.Collator(undefined, { sensitivity: "base" });
+const names = collator({ sensitivity: "base" });
 
 /** The visible rows, with the unfiltered ones in the order the backend listed them. */
 export function structureRows(symbols: readonly OutlineSymbol[], o: RowOptions): StructureRow[] {
@@ -105,7 +105,7 @@ export function structureRows(symbols: readonly OutlineSymbol[], o: RowOptions):
 
   const rows: StructureRow[] = [];
   const walk = (level: Entry[], depth: number) => {
-    const ordered = o.sort ? [...level].sort((a, b) => collator.compare(a.name, b.name)) : level;
+    const ordered = o.sort ? [...level].sort((a, b) => names.compare(a.name, b.name)) : level;
     for (const e of ordered) {
       if (!listed.get(e)) continue;
       const shown = e.children.filter((c) => listed.get(c));

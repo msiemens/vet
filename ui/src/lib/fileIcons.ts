@@ -2,6 +2,8 @@
 // (`lib/ui/fileIconUrls.ts` holds their pictures); a lookup is a map read, so a row costs nothing
 // more than its name. The tables are the only list of icons: an id they can answer needs a picture.
 
+import { basename } from "./paths.ts";
+
 /** Names that have an icon whatever their extension, in lower case. */
 const NAMES = {
   "cargo.toml": "rust",
@@ -316,6 +318,6 @@ export function fileIcon(name: string): FileIconId {
 
 /** The icon of a folder by its name; a chain of folders (`crates/vet-core/src`) takes its last one's. */
 export function folderIcon(name: string, open: boolean): FileIconId {
-  const kind = folderByName.get(name.slice(name.lastIndexOf("/") + 1).toLowerCase());
+  const kind = folderByName.get(basename(name).toLowerCase());
   return kind ? `folder-${kind}${open ? "-open" : ""}` : open ? "folder-open" : "folder";
 }

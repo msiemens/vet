@@ -10,20 +10,27 @@ export interface CiLook {
   title: string;
 }
 
+/** A commit's checks in words, besides how they show. */
+export interface CiStateLook extends CiLook {
+  /** Where things stand, as the queue's header says it; none for checks that wait for approval. */
+  phrase?: string;
+  /** What the checks are doing, after a count: "3 failing". */
+  word: string;
+}
+
+const CI_STATES = {
+  success: { icon: "check", tone: "ok", title: "Checks passed", phrase: "Checks pass", word: "passed" },
+  failure: { icon: "close", tone: "failing", title: "Checks failing", phrase: "Checks failing", word: "failing" },
+  pending: { icon: "timeline", tone: "running", title: "Checks running", phrase: "Checks running", word: "running" },
+  needsApproval: { icon: "lock", tone: "waiting", title: "Waiting for approval to run", word: "waiting" },
+} as const satisfies Partial<Record<CiState, CiStateLook>>;
+
+/** How passed checks show; what checks that decided nothing read as in words. */
+export const CI_PASSED: CiStateLook = CI_STATES.success;
+
 /** How the checks of a commit show; none for no checks, and for checks that decided nothing (neutral, skipped). */
-export function ciIcon(ci: CiState | undefined): CiLook | undefined {
-  switch (ci) {
-    case "success":
-      return { icon: "check", tone: "ok", title: "Checks passed" };
-    case "failure":
-      return { icon: "close", tone: "failing", title: "Checks failing" };
-    case "pending":
-      return { icon: "timeline", tone: "running", title: "Checks running" };
-    case "needsApproval":
-      return { icon: "lock", tone: "waiting", title: "Waiting for approval to run" };
-    default:
-      return undefined;
-  }
+export function ciIcon(ci: CiState | undefined): CiStateLook | undefined {
+  return ci !== undefined && ci in CI_STATES ? CI_STATES[ci as keyof typeof CI_STATES] : undefined;
 }
 
 /** How a run, job or step shows: its phase while it waits, runs or was stopped, else how it ended. */

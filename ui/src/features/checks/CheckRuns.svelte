@@ -3,8 +3,8 @@
 <script lang="ts">
   import type { CheckRun } from "../../generated/CheckRun";
   import { ciIcon } from "../../lib/ciStatus";
+  import { durationText } from "../../lib/format";
   import CiStatus from "../../lib/ui/CiStatus.svelte";
-  import { durationText } from "./checkRows";
 
   let {
     runs,

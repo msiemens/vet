@@ -42,7 +42,7 @@
   } from "../features/palette";
   import { NotificationCards, PlatformFooter, copyText } from "../features/platform";
   import { FindPanel } from "../features/find";
-  import { PipelinesPanel, belongsTo, clock, headerTitle, logKey } from "../features/pipelines";
+  import { PipelinesPanel, belongsTo, headerTitle, logKey } from "../features/pipelines";
   import { ProblemsPanel } from "../features/problems";
   import { ChangesetSwitcher, OpenPullRequestDialog, QueueScreen, queueCommands, targetLabel } from "../features/queue";
   import {
@@ -63,7 +63,9 @@
   import { ProjectSwitcher, recentCommands, WelcomeScreen } from "../features/welcome";
   import type { Thread } from "../generated/Thread";
   import { letterOfStatus } from "../lib/changeLetter";
+  import { ciIcon } from "../lib/ciStatus";
   import { errorText } from "../lib/errorText";
+  import { clock } from "../lib/format";
   import { repoName } from "../lib/paths";
   import { platformName } from "../lib/platformName";
   import { type SoftWrap, storeSoftWrap, storedSoftWrap } from "../lib/softWrap";
@@ -217,8 +219,7 @@
       return { count: 0, text: "" };
     }
     const count = badgeCount(head);
-    const word = head.state === "failure" ? "failing" : head.state === "pending" ? "running" : "waiting";
-    return { count, text: `${count} ${word}`, bad: head.state === "failure" };
+    return { count, text: `${count} ${ciIcon(head.state)?.word ?? "waiting"}`, bad: head.state === "failure" };
   });
   // The tool belongs to a pull request; while the changeset reloads there are no facts yet and it stays.
   $effect(() => {

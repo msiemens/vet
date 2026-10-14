@@ -5,6 +5,7 @@
 
 import type { ModeChange } from "../../generated/ModeChange";
 import { letterOfStatus, type StatusLetter } from "../../lib/changeLetter.ts";
+import { collator } from "../../lib/format.ts";
 import { basename, compactChain, dirname } from "../../lib/paths.ts";
 import { match, type Range } from "../../lib/speedSearch.ts";
 import type { FileLayout, ReviewedFile } from "../../state/reviewModel.ts";
@@ -60,9 +61,7 @@ export function modeChange(file: FileLayout): FileSummary["mode"] {
   return change ? MODE[change] : undefined;
 }
 
-// One collator: `localeCompare` creates one per call.
-const collator = new Intl.Collator();
-const byName = (a: string, b: string) => collator.compare(a, b);
+const byName = collator().compare;
 
 /** Directories first, then files, each by name; single-directory chains merged. */
 export function buildTree(paths: readonly string[]): DirNode {

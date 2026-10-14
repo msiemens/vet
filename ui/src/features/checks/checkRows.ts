@@ -28,11 +28,3 @@ export function badgeCount(checks: CommitChecks): number {
 export function failedFirst(runs: readonly CheckRun[]): CheckRun[] {
   return [...runs.filter((r) => r.state === "failure"), ...runs.filter((r) => r.state !== "failure")];
 }
-
-/** A run's duration as `4m 40s`, `12s` or `1h 02m`. */
-export function durationText(seconds: number): string {
-  const minutes = Math.floor(seconds / 60);
-  if (seconds < 60) return `${seconds}s`;
-  if (minutes < 60) return `${minutes}m ${String(seconds % 60).padStart(2, "0")}s`;
-  return `${Math.floor(minutes / 60)}h ${String(minutes % 60).padStart(2, "0")}m`;
-}

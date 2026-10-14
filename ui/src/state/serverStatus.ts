@@ -4,11 +4,12 @@
 import type { ServerFeatures } from "../generated/ServerFeatures";
 import type { ServerInfo } from "../generated/ServerInfo";
 import type { Task } from "../generated/Task";
+import { basename } from "../lib/paths.ts";
 import type { SemanticSummary } from "./semanticSummary";
 import { fractionOf } from "./taskHeadline.ts";
 
 function extensionOf(path: string): string | undefined {
-  const name = path.slice(path.lastIndexOf("/") + 1);
+  const name = basename(path);
   const dot = name.lastIndexOf(".");
   return dot > 0 ? name.slice(dot + 1).toLowerCase() : undefined;
 }
@@ -20,7 +21,7 @@ function extensionOf(path: string): string | undefined {
 function serves(server: ServerInfo, path: string): boolean {
   const extension = extensionOf(path);
   if (extension !== undefined && server.extensions.includes(extension)) return true;
-  const name = path.slice(path.lastIndexOf("/") + 1);
+  const name = basename(path);
   return server.fileNames.some((n) => name === n || name.startsWith(`${n}.`));
 }
 

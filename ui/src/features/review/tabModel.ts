@@ -3,6 +3,7 @@
 // file's text) is the tab's state.
 
 import type { TabId, TabKind } from "../../state/commands.ts";
+import { plural } from "../../lib/format.ts";
 import type { Mode, ViewMode } from "../../lib/viewMode.ts";
 
 export const CHANGES: TabId = "changes";
@@ -28,7 +29,7 @@ export const hasDiff = (id: TabId): boolean => kindOf(id) !== "log";
 
 /** What the Changes tab's tooltip says: the subject of the commit shown, if one is, and how many files it lists. */
 export const changesTitle = (files: number, subject?: string): string =>
-  `${subject === undefined ? "" : `${subject}\n`}${files} changed ${files === 1 ? "file" : "files"}`;
+  `${subject === undefined ? "" : `${subject}\n`}${plural(files, "changed file")}`;
 
 /** The path of a file tab; `undefined` for the Changes tab and a log. */
 export const pathOf = (id: TabId): string | undefined => {

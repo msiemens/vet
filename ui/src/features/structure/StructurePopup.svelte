@@ -3,6 +3,7 @@
   // a filter field on top. A click or Enter jumps to the symbol and closes it; Escape closes it.
   import type { SymbolInfo } from "../../generated/SymbolInfo";
   import { LIST } from "../../lib/listKeys";
+  import { basename } from "../../lib/paths";
   import IconButton from "../../lib/ui/IconButton.svelte";
   import KeyHint from "../../lib/ui/KeyHint.svelte";
   import { ListNav } from "../../lib/ui/listNav";
@@ -45,7 +46,7 @@
         })
       : [],
   );
-  const fileName = $derived(target?.path.split("/").pop());
+  const fileName = $derived(target && basename(target.path));
 
   // The popup opens on the symbol the cursor is in; what is typed or toggled starts the list over.
   $effect(() => {

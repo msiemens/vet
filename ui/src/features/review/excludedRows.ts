@@ -22,9 +22,6 @@ export function excludedRows(groups: readonly ExcludedGroup[]): ExcludedRow[] {
   });
 }
 
-/** The files the review leaves out, all groups together. */
-export const excludedCount = (groups: readonly ExcludedGroup[]): number => groups.reduce((sum, g) => sum + g.count, 0);
-
 /** The rows the tree adds after the files: none without excluded changes, the group's own, and while it is open what it holds. */
 export const extraRows = (excluded: boolean, open: boolean, rows: readonly ExcludedRow[]): number =>
   excluded ? 1 + (open ? rows.length : 0) : 0;

@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import type { CheckRun } from "../../generated/CheckRun.ts";
 import type { CommitChecks } from "../../generated/CommitChecks.ts";
-import { badgeCount, durationText, failedFirst, passed } from "./checkRows.ts";
+import { badgeCount, failedFirst, passed } from "./checkRows.ts";
 
 const run = (state: CheckRun["state"]): CheckRun => ({ id: "1", name: "build", state, phase: "finished", log: false });
 const commit = (...states: CheckRun["state"][]): CommitChecks => ({
@@ -39,15 +39,4 @@ void test("failed runs come first and every group keeps its order", () => {
     failedFirst(runs).map((r) => r.id),
     ["b", "d", "a", "c"],
   );
-});
-
-void test("durations read as the platform shows them", () => {
-  assert.deepEqual([12, 65, 192, 280, 3600, 3725].map(durationText), [
-    "12s",
-    "1m 05s",
-    "3m 12s",
-    "4m 40s",
-    "1h 00m",
-    "1h 02m",
-  ]);
 });

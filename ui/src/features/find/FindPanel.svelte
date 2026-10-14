@@ -5,6 +5,7 @@
   import { untrack } from "svelte";
   import { letterOfStatus } from "../../lib/changeLetter";
   import { arrowKey, toggled } from "../../lib/foldKeys";
+  import { count, noun } from "../../lib/format";
   import { plainKey } from "../../lib/listKeys";
   import ChangeLetter from "../../lib/ui/ChangeLetter.svelte";
   import FileIcon from "../../lib/ui/FileIcon.svelte";
@@ -304,8 +305,8 @@
             {set.filters.query.trim()
               ? `No result contains "${set.filters.query.trim()}".`
               : "The filters hide every result."}
-            {set.places.length} kept
-            {set.places.length === 1 ? "result is" : "results are"} hidden.
+            {count(set.places.length)} kept
+            {noun(set.places.length, "result is", "results are")} hidden.
             <button class="ctl" type="button" onclick={clearFilters}>Remove filters</button>
           </EmptyState>
         {:else}

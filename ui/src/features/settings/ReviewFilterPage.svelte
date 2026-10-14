@@ -1,7 +1,7 @@
 <script lang="ts">
   import type { PatternMatch } from "../../generated/PatternMatch";
   import type { ReviewFilter } from "../../generated/ReviewFilter";
-  import { noun } from "../../lib/plural";
+  import { noun } from "../../lib/format";
   import Checkbox from "../../lib/ui/Checkbox.svelte";
   import SettingsSection from "../../lib/ui/SettingsSection.svelte";
   import { changeset } from "../../state/changeset.svelte";

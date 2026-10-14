@@ -16,6 +16,7 @@ import type { SymbolInfo } from "../../generated/SymbolInfo";
 import type { SymbolKind } from "../../generated/SymbolKind";
 import type { SymbolName } from "../../generated/SymbolName";
 import type { Usages } from "../../generated/Usages";
+import { plural } from "../../lib/format.ts";
 import { MODULE_LEVEL, containersOf, fileName, partsOf, shortLabel } from "../../lib/symbolLabel.ts";
 import { describeFate, type FateTone, rowTitle } from "./symbolDetail.ts";
 
@@ -304,7 +305,7 @@ function placesBody(places: readonly Place[], key: string): Pick<Body, "entries"
     branch: true,
     muted: true,
     count: n,
-    title: `${n} ${n === 1 ? "place" : "places"} in tests`,
+    title: `${plural(n, "place")} in tests`,
     children: tests,
   };
   return { entries, tail: [branch] };

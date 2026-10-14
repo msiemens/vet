@@ -8,6 +8,7 @@ import type { PullRequestRow } from "../../generated/PullRequestRow";
 import type { QueueStatus } from "../../generated/QueueStatus";
 import type { RowReview } from "../../generated/RowReview";
 import type { Target } from "../../generated/Target";
+import { plural } from "../../lib/format.ts";
 import { shortTime } from "../../lib/shortTime.ts";
 
 /** A row of the queue: a local changeset, or a pull request with what the platform lists of it. */
@@ -119,7 +120,7 @@ export function sourceText(row: QueueRow): string {
   if (row.pullRequest) return row.pullRequest.fork ?? "origin";
   if (row.key.type === "workingTree") return row.branch ?? "";
   const ahead = row.divergence?.ahead;
-  return ahead === undefined ? "local" : `local · ${ahead} ${ahead === 1 ? "commit" : "commits"}`;
+  return ahead === undefined ? "local" : `local · ${plural(ahead, "commit")}`;
 }
 
 /** What the Changes column says of a row. */

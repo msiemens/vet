@@ -6,6 +6,7 @@
   import type { SymbolInfo } from "../../generated/SymbolInfo";
   import { arrowKey } from "../../lib/foldKeys";
   import { plainKey } from "../../lib/listKeys";
+  import { basename } from "../../lib/paths";
   import { aimIndex, stepMatch } from "../../lib/speedSearch";
   import FileIcon from "../../lib/ui/FileIcon.svelte";
   import Icon from "../../lib/ui/Icon.svelte";
@@ -52,7 +53,7 @@
         })
       : [],
   );
-  const fileName = $derived(target?.path.split("/").pop());
+  const fileName = $derived(target && basename(target.path));
   const allShut = $derived(structure.closed.size > 0);
 
   // A search belongs to the file it was typed in.
