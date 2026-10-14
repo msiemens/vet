@@ -481,8 +481,8 @@ pub enum Request {
         filter: ReviewFilter,
     },
     /// What each include and exclude glob of the draft `filter` matches among the changed files of
-    /// the changeset on view: files and lines, whatever else the filter does. A glob that is
-    /// invalid is answered, not failed on. Changes nothing. Answers with
+    /// the changeset on view: files and lines, whatever else the filter does; and how many changed
+    /// files lie at or below each root. A glob that is invalid is answered, not failed on. Changes nothing. Answers with
     /// `Response::PatternMatches`.
     PatternMatches {
         project: ProjectId,

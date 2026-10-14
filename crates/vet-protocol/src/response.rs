@@ -179,10 +179,11 @@ pub enum Response {
         revision: u32,
         paths: Vec<String>,
     },
-    /// The answer to `PatternMatches`, at `revision`: one entry per glob of the draft filter, in
-    /// the order it lists them.
+    /// The answer to `PatternMatches`, at `revision`: one entry per root and glob of the draft
+    /// filter, in the order it lists them. `roots` holds the changed files at or below each root.
     PatternMatches {
         revision: u32,
+        roots: Vec<u32>,
         include: Vec<PatternMatch>,
         exclude: Vec<PatternMatch>,
     },

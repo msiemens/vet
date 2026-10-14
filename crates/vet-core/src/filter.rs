@@ -58,6 +58,12 @@ impl ReviewFilter {
     }
 }
 
+/// Whether `path` is `root` or lies below it; `root` is a directory as [`ReviewFilter::normalized`] leaves it.
+pub fn is_under(path: &RepoPath, root: &RepoPath) -> bool {
+    let p = path.0.as_slice();
+    p.starts_with(&root.0) && (p.len() == root.0.len() || p[root.0.len()] == b'/')
+}
+
 /// Which rule of the filter leaves a path out.
 #[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Debug)]
 pub enum Exclusion {
@@ -106,9 +112,7 @@ impl CompiledFilter<'_> {
 
     /// Whether `path` is under one of the roots, or there are none.
     fn in_roots(&self, path: &RepoPath) -> bool {
-        let p = path.0.as_slice();
-        let under = |root: &RepoPath| p.starts_with(&root.0) && (p.len() == root.0.len() || p[root.0.len()] == b'/');
-        self.roots.is_empty() || self.roots.iter().any(under)
+        self.roots.is_empty() || self.roots.iter().any(|root| is_under(path, root))
     }
 
     pub fn passes(&self, path: &RepoPath) -> bool {

@@ -742,6 +742,7 @@ pub fn pattern_matches(m: &PatternMatches) -> p::Response {
     };
     p::Response::PatternMatches {
         revision: m.revision,
+        roots: m.roots.clone(),
         include: each(&m.include),
         exclude: each(&m.exclude),
     }

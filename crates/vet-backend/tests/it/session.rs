@@ -1786,6 +1786,7 @@ async fn each_glob_of_a_draft_filter_counts_the_changed_files_and_lines_it_match
         revision,
         include,
         exclude,
+        ..
     } = client
         .call(Request::PatternMatches { project, filter: draft })
         .await
@@ -1822,6 +1823,49 @@ async fn each_glob_of_a_draft_filter_counts_the_changed_files_and_lines_it_match
         "a draft is not applied"
     );
     assert!(client.no_event());
+}
+
+#[tokio::test]
+async fn each_root_of_a_draft_filter_counts_the_changed_files_below_it() {
+    let fx = fixture(
+        &[
+            ("a.txt", "1\n"),
+            ("docs/b.md", "1\n"),
+            ("docs/deep/c.md", "x\n"),
+            ("docsx/d.md", "x\n"),
+            ("same.txt", "x\n"),
+        ],
+        &[
+            ("a.txt", "2\n"),
+            ("docs/b.md", "2\n"),
+            ("docs/deep/c.md", "y\n"),
+            ("docsx/d.md", "y\n"),
+            ("same.txt", "x\n"),
+        ],
+    )
+    .await;
+    let client = Client::new(&fx.handler);
+    let project = open(&client, fx.repo.path()).await;
+    let draft = ReviewFilter {
+        roots: vec!["docs".into(), "docs/deep".into(), "same.txt".into(), "missing".into()],
+        // The roots are counted whatever else the filter does.
+        exclude: vec!["*.md".into()],
+        ..Default::default()
+    };
+
+    let Response::PatternMatches { roots, .. } = client
+        .call(Request::PatternMatches { project, filter: draft })
+        .await
+        .unwrap()
+    else {
+        panic!("not the matches")
+    };
+
+    assert_eq!(
+        roots,
+        [2, 1, 0, 0],
+        "docs holds two changed files and docsx none of them; an unchanged file and a missing folder hold none"
+    );
 }
 
 #[tokio::test]

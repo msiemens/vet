@@ -3,7 +3,7 @@
 use std::collections::BTreeMap;
 
 use vet_core::content::{EntryKind, LineDelta, RepoPath};
-use vet_core::filter::{PatternMatcher, ReviewFilter};
+use vet_core::filter::{PatternMatcher, ReviewFilter, is_under};
 
 use super::{LiveSession, Result, SessionError, View};
 use crate::ports::{GitRepo, LiveStore};
@@ -51,17 +51,19 @@ pub struct PatternMatch {
     pub invalid: Option<String>,
 }
 
-/// What each glob of a draft filter matches, in the order the filter lists them.
+/// What each root and glob of a draft filter matches, in the order the filter lists them.
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub struct PatternMatches {
     pub revision: u32,
+    /// For each root, the changed files at or below it.
+    pub roots: Vec<u32>,
     pub include: Vec<PatternMatch>,
     pub exclude: Vec<PatternMatch>,
 }
 
 impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> LiveSession<G, S> {
-    /// What each include and exclude glob of `filter` matches among the changed files of the
-    /// changeset on view, whatever else the filter does.
+    /// What each include and exclude glob of `filter` matches, and how many changed files lie below
+    /// each root, among the changed files of the changeset on view, whatever else the filter does.
     pub async fn pattern_matches(&self, filter: &ReviewFilter) -> Result<PatternMatches> {
         let (st, _) = self.viewing(View::Changeset).await?;
         let diff = &st.changes().diffed.diff;
@@ -94,6 +96,11 @@ impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> L
         };
         Ok(PatternMatches {
             revision: st.revision,
+            roots: filter
+                .roots
+                .iter()
+                .map(|root| lines.keys().filter(|p| is_under(p, root)).count() as u32)
+                .collect(),
             include: filter.include.iter().map(matched).collect(),
             exclude: filter.exclude.iter().map(matched).collect(),
         })
