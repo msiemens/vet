@@ -367,6 +367,37 @@ async fn a_long_conversation_is_read_to_its_oldest_comment_and_review() {
 }
 
 #[tokio::test]
+async fn too_long_a_conversation_makes_a_partial_listing_that_says_so() {
+    set_now(NOW);
+    // A conversation that never reaches its oldest comment: every page has one before it.
+    let comment_n = |n: u32| with(issue_comment(0), "id", json!(format!("IC{n}")));
+    let fake = Fake::start(move |request, _| match call_of(request).as_str() {
+        "discussion" => {
+            let mut page: Value = serde_json::from_str(&first_page(json!([]), None)).unwrap();
+            page["data"]["repository"]["pullRequest"]["comments"] = backwards_page(comment_n, 1_000_000, 1_000_050);
+            Canned::json(&page.to_string())
+        }
+        "earlier" => {
+            let before: u32 = request.variables()["before"].as_str().unwrap().parse().unwrap();
+            let page = backwards_page(comment_n, before - 50, before);
+            data(json!({ "repository": { "pullRequest": { "comments": page } } }))
+        }
+        other => panic!("unexpected {other}"),
+    });
+
+    let found = client(&fake).discussion(&remote(), 482).await.unwrap();
+
+    assert!(!found.complete);
+    let comments = found.conversation.iter().filter(|i| i.id.starts_with("IC")).count();
+    assert!((2000..2100).contains(&comments), "{comments} comments");
+    assert!(
+        calls(&fake).len() < 60,
+        "the paging stopped: {} calls",
+        calls(&fake).len()
+    );
+}
+
+#[tokio::test]
 async fn comments_are_changed_and_removed_with_the_calls_for_their_kind_and_threads_are_resolved() {
     set_now(NOW);
     let fake = Fake::start(|request, _| match call_of(request).as_str() {

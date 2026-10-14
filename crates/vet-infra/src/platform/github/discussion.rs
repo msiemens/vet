@@ -33,6 +33,10 @@ const MAX_THREADS: usize = 2000;
 /// before them are read until the oldest.
 const CONVERSATION_PAGE: u32 = 50;
 
+/// The most comments, and the most reviews, read from one pull request; past it the listing is
+/// partial, like one that stops at [`MAX_THREADS`].
+const MAX_CONVERSATION: usize = 2000;
+
 const REVIEW: &str = "id state body submittedAt viewerDidAuthor author { login avatarUrl ... on User { name } }";
 
 const REVIEW_COMMENT: &str = "id body createdAt lastEditedAt state viewerDidAuthor author { login avatarUrl ... on User { name } } originalCommit { oid }";
@@ -466,8 +470,8 @@ impl<C: CredentialProvider + Sync> GitHubClient<C> {
         Ok(more)
     }
 
-    /// Every node of `connection` of the pull request: those of `newest`, its last page, and of
-    /// the pages before it.
+    /// The nodes of `connection` of the pull request: those of `newest`, its last page, and of
+    /// the pages before it, as far as [`MAX_CONVERSATION`] allows; and whether that is all of them.
     async fn all_backwards<T: DeserializeOwned>(
         &self,
         host: &str,
@@ -476,7 +480,7 @@ impl<C: CredentialProvider + Sync> GitHubClient<C> {
         connection: &str,
         fields: &str,
         newest: BackwardsPage<T>,
-    ) -> Result<Vec<T>, PlatformError> {
+    ) -> Result<(Vec<T>, bool), PlatformError> {
         let (owner, name, number) = pull_request;
         let mut before = newest
             .page_info
@@ -484,6 +488,9 @@ impl<C: CredentialProvider + Sync> GitHubClient<C> {
             .filter(|_| newest.page_info.has_previous_page);
         let mut found: Vec<T> = newest.nodes.into_iter().flatten().collect();
         while let Some(cursor) = before {
+            if found.len() >= MAX_CONVERSATION {
+                return Ok((found, false));
+            }
             let data: Value = self
                 .graphql(
                     host,
@@ -496,7 +503,7 @@ impl<C: CredentialProvider + Sync> GitHubClient<C> {
             before = page.page_info.start_cursor.filter(|_| page.page_info.has_previous_page);
             found.extend(page.nodes.into_iter().flatten());
         }
-        Ok(found)
+        Ok((found, true))
     }
 
     /// Every thread of `page` and of the pages after it, with all their comments, and whether
@@ -554,10 +561,10 @@ impl<C: CredentialProvider + Sync> GitHubClient<C> {
                 "{owner}/{name}#{number} was not found on {host}, or the token cannot see it"
             ))
         })?;
-        let (threads, complete) = self
+        let (threads, threads_complete) = self
             .all_threads(host, &clients, node.review_threads, (owner, name, number))
             .await?;
-        let comments = self
+        let (comments, comments_complete) = self
             .all_backwards(
                 host,
                 &clients,
@@ -567,7 +574,7 @@ impl<C: CredentialProvider + Sync> GitHubClient<C> {
                 node.comments,
             )
             .await?;
-        let reviews = self
+        let (reviews, reviews_complete) = self
             .all_backwards(host, &clients, (owner, name, number), "reviews", REVIEW, node.reviews)
             .await?;
         let (author, author_name, author_avatar) = match node.author {
@@ -591,7 +598,7 @@ impl<C: CredentialProvider + Sync> GitHubClient<C> {
             ci: latest_ci(node.commits),
             conversation: conversation(comments, reviews)?,
             threads,
-            complete,
+            complete: threads_complete && comments_complete && reviews_complete,
         })
     }
 
