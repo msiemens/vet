@@ -1,6 +1,7 @@
 // How result sets are kept and kept current, purely: which tab a new result goes to, what a rerun
 // found new, and which files changed since a set ran.
 
+import type { SearchScope } from "../generated/SearchScope.ts";
 import type { Place } from "./foundPlace.ts";
 
 export type Slot = { kind: "rerun"; index: number } | { kind: "replace"; index: number } | { kind: "open" };
@@ -30,6 +31,14 @@ export function diffRuns(
     fresh: new Set(after.filter((p) => !had.has(sameThing(p))).map((p) => p.id)),
     gone: before.filter((p) => !has.has(sameThing(p))).length,
   };
+}
+
+/**
+ * The version whose target text the places of a run have their lines in: the newer end of an
+ * interdiff that was searched, else the latest, which is what every other place searched shows.
+ */
+export function ranVersion(searched: SearchScope | undefined, latest: number | undefined): number | undefined {
+  return searched?.type === "view" && searched.view.type === "interdiff" ? searched.view.to : latest;
 }
 
 /** The files that versions after `since` changed: what a set run on version `since` may be wrong about. */

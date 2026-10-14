@@ -12,7 +12,7 @@ import type { SearchQuery, SearchResults } from "./backend";
 import { changeset } from "./changeset.svelte";
 import { type ChangedFile, type Place, placesFromRows, placesFromSearch } from "./foundPlace";
 import { type Filters, NO_FILTERS } from "./findRows";
-import { changedSince, diffRuns, isStale, linesToLocate, slotFor } from "./findRuns";
+import { changedSince, diffRuns, isStale, linesToLocate, ranVersion, slotFor } from "./findRuns";
 import { session } from "./session.svelte";
 import { versions } from "./versions.svelte";
 
@@ -128,9 +128,9 @@ class FindSets {
     return changeset.layout?.shown.revision;
   }
 
-  /** The versions' latest, which a set records and the stale banner names files since. */
-  private get version(): number | undefined {
-    return versions.items.at(-1)?.n;
+  /** The version a run of `spec` is of, which the set records and the stale banner names files since. */
+  private versionOf(spec: SetSpec): number | undefined {
+    return ranVersion(spec.type === "search" ? spec.request.scope : undefined, versions.items.at(-1)?.n);
   }
 
   /** The files versions after the one `set` ran on changed. */
@@ -226,7 +226,7 @@ class FindSets {
     set.phase = "done";
     set.message = undefined;
     set.hasRun = true;
-    set.ran = { revision: this.revision, version: this.version };
+    set.ran = { revision: this.revision, version: this.versionOf(set.spec) };
     const { fresh, gone } = before ? diffRuns(before, set.places) : { fresh: new SvelteSet<string>(), gone: 0 };
     set.fresh = fresh;
     set.moves = new SvelteMap();

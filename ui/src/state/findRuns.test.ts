@@ -1,7 +1,9 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
+import type { SearchScope } from "../generated/SearchScope.ts";
+import type { View } from "../generated/View.ts";
 import type { Place } from "./foundPlace.ts";
-import { changedSince, diffRuns, isStale, linesToLocate, relocated, slotFor } from "./findRuns.ts";
+import { changedSince, diffRuns, isStale, linesToLocate, ranVersion, relocated, slotFor } from "./findRuns.ts";
 
 void test("a result replaces the first tab that is not pinned, opens a new one when all are pinned, and reruns the same query", () => {
   const sets = [
@@ -56,6 +58,16 @@ void test("the files changed since a set ran are those of the versions after it"
   assert.deepEqual([...changedSince(versions, 1)].sort(), ["b.rs", "c.rs"]);
   assert.deepEqual([...changedSince(versions, 3)], []);
   assert.deepEqual([...changedSince(versions, undefined)], []);
+});
+
+void test("a run is of the latest version, but a search of an interdiff is of its newer end", () => {
+  const view = (v: View): SearchScope => ({ type: "view", view: v });
+  assert.equal(ranVersion(view({ type: "interdiff", from: 1, to: 2 }), 3), 2);
+  assert.equal(ranVersion(view({ type: "changeset" }), 3), 3);
+  assert.equal(ranVersion(view({ type: "commit", index: 0 }), 3), 3);
+  assert.equal(ranVersion({ type: "repository" }, 3), 3);
+  assert.equal(ranVersion(undefined, 3), 3);
+  assert.equal(ranVersion(undefined, undefined), undefined);
 });
 
 void test("a finished set of the changeset is stale on another revision; a commit's set, a running one and an unknown revision are not", () => {
