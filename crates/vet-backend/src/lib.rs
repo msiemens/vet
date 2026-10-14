@@ -146,7 +146,14 @@ pub struct Orchestrator {
     /// The connections that asked for `Accounts` or `RecentProjects`, which is where the events
     /// that belong to the process go.
     process_subscribers: Subscribers<Connection>,
+    /// For tests: what the symbols analysis of a file fails with before it runs for real, in order,
+    /// so the retry can be exercised. A debug build only, and empty except in the tests' own builds.
+    #[cfg(debug_assertions)]
+    analysis_failures: Arc<analysis::Failures>,
 }
+
+#[cfg(debug_assertions)]
+pub use analysis::Injected;
 
 fn recent_projects(list: std::result::Result<Vec<RecentProject>, StoreError>) -> Result<Response> {
     let projects = list?;
@@ -200,6 +207,8 @@ impl Orchestrator {
             store,
             config,
             projects: Projects::default(),
+            #[cfg(debug_assertions)]
+            analysis_failures: Arc::default(),
         }
     }
 
@@ -218,6 +227,18 @@ impl Orchestrator {
             Arc::new(AzureDevOpsClient::with_endpoints(self.accounts.clone(), azure_devops)),
             self.process_subscribers.clone(),
         ));
+        self
+    }
+
+    /// The same orchestrator, the symbols analysis of the file at `path` failing as `failures` says
+    /// before it runs for real, one failure per try in order: for the tests of the retry. Only a
+    /// debug build has it.
+    #[cfg(debug_assertions)]
+    pub fn with_analysis_failing(self, path: &str, failures: Vec<Injected>) -> Self {
+        self.analysis_failures
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .insert(path.to_owned(), failures.into());
         self
     }
 

@@ -10,7 +10,7 @@ use vet_core::content::RepoPath;
 use vet_protocol::{Event, Response, Unavailable, UnavailableKind};
 
 use crate::Open;
-use crate::analysis::changed_files;
+use crate::analysis::{changed_files, retrying};
 use crate::open::Booted;
 
 /// Files whose target side is read at once, as the window did.
@@ -64,7 +64,12 @@ async fn run(open: Arc<Open>) {
 /// Asks the backend for one file's diagnostics and pushes them; `compared` asks for the comparison
 /// with the base side.
 async fn push(open: &Open, booted: &Booted, revision: u32, path: &str, compared: bool) {
-    let event = match booted.diagnostics(revision, path, compared).await {
+    let event = match retrying(|| {
+        let (booted, path) = (booted, path.to_owned());
+        async move { booted.diagnostics(revision, &path, compared).await }
+    })
+    .await
+    {
         Ok(Response::Diagnostics {
             revision,
             path,

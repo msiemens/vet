@@ -155,6 +155,10 @@ pub(crate) struct Wired {
     trees: Arc<KeptTrees>,
     /// The answers of the language servers kept between launches.
     answers: Arc<PersistentAnswers>,
+    /// For tests: what the symbols analysis of a file fails with before it runs for real, in order.
+    /// A debug build only.
+    #[cfg(debug_assertions)]
+    pub(crate) analysis_failures: Arc<crate::analysis::Failures>,
 }
 
 impl Wired {
@@ -567,6 +571,8 @@ impl Orchestrator {
             closed: AtomicBool::new(false),
             trees: self.trees.clone(),
             answers: self.answers.clone(),
+            #[cfg(debug_assertions)]
+            analysis_failures: self.analysis_failures.clone(),
         })
     }
 }

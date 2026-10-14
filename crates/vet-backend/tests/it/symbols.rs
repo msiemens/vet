@@ -9,6 +9,8 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use tokio::sync::mpsc::UnboundedReceiver;
+#[cfg(debug_assertions)]
+use vet_backend::Injected;
 use vet_backend::{Orchestrator, open_store};
 use vet_protocol::{ChangesetKey, Event, FileSymbols, ProjectId, Request, ServerMessage, SymbolChange};
 
@@ -100,16 +102,58 @@ async fn next_symbols(
     }
 }
 
+/// The next `FileSymbols` event of `project` for `path`, waiting up to `within`.
+#[cfg(debug_assertions)]
+async fn next_symbols_for(
+    inbox: &mut UnboundedReceiver<ServerMessage>,
+    project: ProjectId,
+    path: &str,
+    within: Duration,
+) -> Option<FileSymbols> {
+    let deadline = tokio::time::Instant::now() + within;
+    loop {
+        let left = deadline.saturating_duration_since(tokio::time::Instant::now());
+        if left.is_zero() {
+            return None;
+        }
+        let Ok(message) = tokio::time::timeout(left, inbox.recv()).await else {
+            return None;
+        };
+        if let Some(ServerMessage::Event {
+            event: Event::FileSymbols {
+                project: at, symbols, ..
+            },
+        }) = message
+            && at == project
+            && symbols.path == path
+        {
+            return Some(symbols);
+        }
+    }
+}
+
 /// A backend on a crate with both files changed in the working tree, the review screen shown, and
 /// `open` remembered as the files the window has open. The directory the store lives in is
 /// returned too, and must be kept: its reader pool opens connections as they are needed, and one
 /// opened after the directory was dropped fails ("unable to open database file").
 async fn reviewing(open: &[&str]) -> (Client, ProjectId, tempfile::TempDir, tempfile::TempDir) {
+    reviewing_with(open, |handler| handler).await
+}
+
+/// As `reviewing`, with the orchestrator `wire` hands back; the tests of the retry use it to make
+/// the first analyses of a file fail before they run for real.
+async fn reviewing_with(
+    open: &[&str],
+    wire: impl FnOnce(Orchestrator) -> Orchestrator,
+) -> (Client, ProjectId, tempfile::TempDir, tempfile::TempDir) {
     let repo = rust_repo();
     write(repo.path(), "src/lib.rs", DIRTY_LIB);
     write(repo.path(), "src/other.rs", DIRTY_OTHER);
     let data = tempfile::tempdir().unwrap();
-    let handler = Arc::new(Orchestrator::new(open_store(data.path()).await.unwrap(), config()));
+    let handler = Arc::new(wire(Orchestrator::new(
+        open_store(data.path()).await.unwrap(),
+        config(),
+    )));
     let client = Client::new(&handler);
     let project = client.open(repo.path()).await;
     client
@@ -193,5 +237,52 @@ async fn nothing_more_is_analysed_once_the_review_screen_goes_away() {
             .await
             .is_none(),
         "the other file is not analysed once the screen is away"
+    );
+}
+
+#[cfg(debug_assertions)]
+#[tokio::test]
+#[ignore = "needs rust-analyzer"]
+async fn a_failure_that_can_pass_is_asked_again_and_only_the_success_is_pushed() {
+    // The store fails the file's first analysis; the backend asks again, the second try succeeds,
+    // and the client hears the success alone.
+    let (mut client, project, _repo, _data) = reviewing_with(&["src/lib.rs"], |handler| {
+        handler.with_analysis_failing("src/lib.rs", vec![Injected::Store])
+    })
+    .await;
+
+    let symbols = next_symbols(&mut client.inbox, project, Duration::from_secs(180))
+        .await
+        .expect("an answer");
+    assert_eq!(symbols.path, "src/lib.rs");
+    assert!(symbols.gap.is_none(), "no failure was pushed: {:?}", symbols.gap);
+    let found: Vec<(String, SymbolChange)> = symbols
+        .symbols
+        .iter()
+        .map(|c| (c.symbol.id.name.join("::"), c.change))
+        .collect();
+    assert!(found.contains(&("fresh".to_owned(), SymbolChange::Added)), "{found:?}");
+}
+
+#[cfg(debug_assertions)]
+#[tokio::test]
+#[ignore = "needs rust-analyzer"]
+async fn a_lasting_unavailability_is_pushed_at_once() {
+    // The file is not there to analyse; that cannot pass, so the failure is pushed and the file is
+    // not asked again.
+    let (mut client, project, _repo, _data) = reviewing_with(&["src/lib.rs"], |handler| {
+        handler.with_analysis_failing("src/lib.rs", vec![Injected::Gone])
+    })
+    .await;
+
+    let first = next_symbols_for(&mut client.inbox, project, "src/lib.rs", Duration::from_secs(180))
+        .await
+        .expect("an answer");
+    assert!(first.gap.is_some(), "the lasting reason is pushed: {first:?}");
+    assert!(
+        next_symbols_for(&mut client.inbox, project, "src/lib.rs", Duration::from_secs(10))
+            .await
+            .is_none(),
+        "a lasting reason is not asked again"
     );
 }

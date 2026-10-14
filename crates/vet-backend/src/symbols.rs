@@ -10,7 +10,7 @@ use vet_core::content::RepoPath;
 use vet_protocol::{DerivedInputs, Event, FileSymbols, Response, Unavailable, UnavailableKind};
 
 use crate::Open;
-use crate::analysis::changed_files;
+use crate::analysis::{changed_files, injected, retrying};
 use crate::error::Error;
 use crate::open::Booted;
 
@@ -45,7 +45,17 @@ async fn run(open: Arc<Open>) {
                     if !open.screens.shown() || booted.session.revision().await != revision {
                         return;
                     }
-                    let symbols = match booted.file_symbols(revision, &path).await {
+                    let symbols = match retrying(|| {
+                        let (open, booted, path) = (open.clone(), booted.clone(), path.clone());
+                        async move {
+                            match injected(&open, &path) {
+                                Some(injected) => Err(injected.error()),
+                                None => booted.file_symbols(revision, &path).await,
+                            }
+                        }
+                    })
+                    .await
+                    {
                         Ok(Response::FileSymbols(symbols)) => symbols,
                         Ok(_) => return,
                         Err(error) => {
