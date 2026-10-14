@@ -19,7 +19,15 @@ pub fn line_hunks(old: &[u8], new: &[u8]) -> Vec<Hunk> {
 /// 0-based line hunks of exactly the changed lines, not joined: what a merge or a question of
 /// which lines changed needs, where [`line_hunks`] answers what is reviewed together.
 pub fn changed_lines(old: &[u8], new: &[u8]) -> Vec<Hunk> {
-    let input = InternedInput::new(byte_lines(old), byte_lines(new));
+    changed_slices(byte_lines(old), byte_lines(new))
+}
+
+/// [`changed_lines`] of lines already split, which may be compared in another form than they are
+/// written (without their trailing whitespace, say).
+pub fn changed_slices<'a>(old: impl Iterator<Item = &'a [u8]>, new: impl Iterator<Item = &'a [u8]>) -> Vec<Hunk> {
+    let mut input = InternedInput::default();
+    input.update_before(old);
+    input.update_after(new);
     let mut diff = Diff::compute(Algorithm::Histogram, &input);
     diff.postprocess_lines(&input);
     let range = |r: std::ops::Range<u32>| LineRange {
@@ -32,40 +40,6 @@ pub fn changed_lines(old: &[u8], new: &[u8]) -> Vec<Hunk> {
             new: range(h.after),
         })
         .collect()
-}
-
-/// Where a line of an old text is in the new one.
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub struct MappedLine {
-    /// 0-based. For a line that is gone, the nearest line of the new text that took its place.
-    pub line: u32,
-    /// The line itself is still there; false when an edit replaced or deleted it.
-    pub kept: bool,
-}
-
-/// Where `line` (0-based) of the old text is in the new text, given the unjoined hunks between
-/// them ([`changed_lines`]) in order.
-pub fn map_line(hunks: &[Hunk], line: u32) -> MappedLine {
-    let mut shift: i64 = 0;
-    for h in hunks {
-        if line >= h.old.end {
-            shift += i64::from(h.new.len()) - i64::from(h.old.len());
-        } else if line >= h.old.start {
-            // Replaced lines map one to one as far as the replacement reaches; a deletion leaves
-            // the line that now stands where it was.
-            let within = (line - h.old.start).min(h.new.len().saturating_sub(1));
-            return MappedLine {
-                line: h.new.start + within,
-                kept: false,
-            };
-        } else {
-            break;
-        }
-    }
-    MappedLine {
-        line: u32::try_from(i64::from(line) + shift).unwrap_or(0),
-        kept: true,
-    }
 }
 
 /// Hunks with fewer than this many units of unchanged text between them are one hunk: changes
@@ -131,29 +105,6 @@ mod tests {
             [hunk((0, 4), (0, 4))]
         );
         assert_eq!(joined(&[hunk((2, 3), (2, 3)), hunk((4, 5), (4, 5))]).len(), 2);
-    }
-
-    fn mapped(old: &str, new: &str, line: u32) -> (u32, bool) {
-        let m = map_line(&changed_lines(old.as_bytes(), new.as_bytes()), line);
-        (m.line, m.kept)
-    }
-
-    #[test]
-    fn a_line_moves_by_what_was_added_or_removed_above_it() {
-        let old = "a\nb\nc\nd\ne\n";
-        assert_eq!(mapped(old, "x\ny\na\nb\nc\nd\ne\n", 3), (5, true));
-        assert_eq!(mapped(old, "a\nb\nd\ne\n", 3), (2, true));
-        assert_eq!(mapped(old, "a\nb\nc\nd\ne\nf\n", 1), (1, true));
-    }
-
-    #[test]
-    fn an_edited_or_deleted_line_is_gone_and_maps_to_what_stands_there() {
-        let old = "a\nb\nc\nd\ne\n";
-        assert_eq!(mapped(old, "a\nB\nc\nd\ne\n", 1), (1, false));
-        assert_eq!(mapped(old, "a\nB\nB2\nB3\nd\ne\n", 2), (2, false));
-        assert_eq!(mapped(old, "a\nB\nB2\nB3\nd\ne\n", 3), (4, true));
-        assert_eq!(mapped(old, "a\nb\nd\ne\n", 2), (2, false));
-        assert_eq!(mapped(old, "a\nb\nc\nd\n", 4), (4, false));
     }
 
     fn spans(old: &str, new: &str) -> Vec<((u32, u32), (u32, u32))> {

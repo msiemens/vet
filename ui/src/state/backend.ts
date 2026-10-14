@@ -789,10 +789,11 @@ export class Backend {
 
   /**
    * Where the lines (0-based) of the target text of `path` in version `from` of the open review are in
-   * the target text now; fails when the version or the file's text is not there.
+   * the target text as of `revision`, the manifest's (a stale one is rejected); fails when the version
+   * or the file's text is not there.
    */
-  async mapLines(from: number, path: string, lines: number[]): Promise<MappedLine[]> {
-    const request = { type: "mapLines", project: this.pid, from, path, lines } as const;
+  async mapLines(revision: number, from: number, path: string, lines: number[]): Promise<MappedLine[]> {
+    const request = { type: "mapLines", project: this.pid, revision, from, path, lines } as const;
     return expect(await this.conn.request(request), "mappedLines").lines;
   }
 

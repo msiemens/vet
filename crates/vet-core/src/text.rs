@@ -1,13 +1,9 @@
-//! Line splitting, range hashing and exact line mapping between two texts, and offsets in UTF-16
-//! units.
+//! Line splitting and range hashing, and offsets in UTF-16 units.
 //!
 //! A text's offsets are UTF-16 units with `\r\n` counted as one unit, which is how an editor
 //! counts its document, so a client applies offsets without looking at the text.
 
-use std::collections::HashMap;
 use std::sync::OnceLock;
-
-use similar::{Algorithm, DiffOp, capture_diff_slices};
 
 use crate::content::{Hash, LineRange, RepoPath, SnapshotId};
 use crate::review::{Anchor, Side};
@@ -186,104 +182,5 @@ impl Anchor {
     /// Anchors `range` of `text`; `None` if the range is empty or out of bounds.
     pub fn from_text(side: Side, snapshot: SnapshotId, file: RepoPath, text: &[u8], range: LineRange) -> Option<Self> {
         Text::new(text).anchor(side, snapshot, file, range)
-    }
-}
-
-/// Old line index to new line index for every line the diff leaves unchanged.
-pub(crate) fn diff_map(old: &[&[u8]], new: &[&[u8]]) -> Vec<Option<usize>> {
-    let mut map = vec![None; old.len()];
-    for op in capture_diff_slices(Algorithm::Myers, old, new) {
-        if let DiffOp::Equal {
-            old_index,
-            new_index,
-            len,
-        } = op
-        {
-            for k in 0..len {
-                map[old_index + k] = Some(new_index + k);
-            }
-        }
-    }
-    map
-}
-
-/// Like [`diff_map`], but drops mappings the diff chose between equal
-/// alternatives: a line stays mapped only if its content is unique in both texts
-/// or both its neighbours map to the new line's neighbours.
-pub(crate) fn unique_map(old: &[&[u8]], new: &[&[u8]]) -> Vec<Option<usize>> {
-    let map = diff_map(old, new);
-    fn count<'a>(lines: &[&'a [u8]]) -> HashMap<&'a [u8], u32> {
-        let mut c = HashMap::new();
-        for l in lines {
-            *c.entry(*l).or_default() += 1;
-        }
-        c
-    }
-    let (co, cn) = (count(old), count(new));
-    let stable = |i: usize, j: usize| {
-        let before = if i == 0 {
-            j == 0
-        } else {
-            j > 0 && map[i - 1] == Some(j - 1)
-        };
-        let after = if i + 1 == old.len() {
-            j + 1 == new.len()
-        } else {
-            map[i + 1] == Some(j + 1)
-        };
-        before && after
-    };
-    map.iter()
-        .enumerate()
-        .map(|(i, &j)| j.filter(|&j| (co[old[i]] == 1 && cn[new[j]] == 1) || stable(i, j)))
-        .collect()
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn lines(text: &str) -> Vec<&[u8]> {
-        text.split_inclusive('\n').map(str::as_bytes).collect()
-    }
-
-    fn mapped(old: &str, new: &str) -> Vec<Option<usize>> {
-        unique_map(&lines(old), &lines(new))
-    }
-
-    #[test]
-    fn unchanged_lines_follow_what_was_added_or_removed_around_them() {
-        assert_eq!(mapped("a\nb\nc\n", "x\na\nb\nc\n"), [Some(1), Some(2), Some(3)]);
-        assert_eq!(mapped("a\nb\nc\nd\n", "a\nd\n"), [Some(0), None, None, Some(1)]);
-        assert_eq!(
-            mapped("a\nb\nc\nd\n", "a\nB\nc\nd\n"),
-            [Some(0), None, Some(2), Some(3)]
-        );
-    }
-
-    #[test]
-    fn a_repeated_line_stays_mapped_only_where_its_neighbours_stay() {
-        // The new brace is one of three; the last brace, whose neighbour moved, is not trusted.
-        assert_eq!(
-            mapped("x\n}\n}\ny\n", "x\n}\n}\n}\ny\n"),
-            [Some(0), Some(1), None, Some(4)]
-        );
-        // Away from the change the braces keep their place.
-        assert_eq!(
-            mapped("}\n}\nx\ny\n", "}\n}\nx\nY\n"),
-            [Some(0), Some(1), Some(2), None]
-        );
-    }
-
-    #[test]
-    fn a_moved_block_maps_lines_to_equal_lines_in_order() {
-        let old = "a1\na2\na3\nb1\nb2\nb3\n";
-        let new = "b1\nb2\nb3\na1\na2\na3\n";
-        let (o, n) = (lines(old), lines(new));
-        let map = unique_map(&o, &n);
-        let kept: Vec<usize> = map.iter().flatten().copied().collect();
-        assert!(!kept.is_empty());
-        assert!(kept.windows(2).all(|w| w[0] < w[1]));
-        assert!(map.iter().enumerate().all(|(i, j)| j.is_none_or(|j| o[i] == n[j])));
     }
 }

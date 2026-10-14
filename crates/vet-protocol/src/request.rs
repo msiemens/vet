@@ -615,11 +615,13 @@ pub enum Request {
         line: u32,
     },
     /// Where the lines (0-based) of the target text of `path` in version `from` of the open
-    /// review are in the target text now, for rows found in an earlier text. Fails if no review
-    /// is open, there is no such version, or the file has no text in the version or now.
-    /// Answers with `Response::MappedLines`, one for each line, in order.
+    /// review are in the target text at `revision`, for rows found in an earlier text. Fails if
+    /// `revision` is no longer current, no review is open, there is no such version, or the file
+    /// has no text in the version or now. Answers with `Response::MappedLines`, one for each
+    /// line, in order.
     MapLines {
         project: ProjectId,
+        revision: u32,
         from: u32,
         path: String,
         lines: Vec<u32>,

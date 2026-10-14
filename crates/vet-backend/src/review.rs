@@ -294,9 +294,18 @@ impl Orchestrator {
         Ok(mapping::files(&listing))
     }
 
-    pub(crate) async fn map_lines(&self, project: ProjectId, from: u32, path: &str, lines: &[u32]) -> Result<Response> {
+    pub(crate) async fn map_lines(
+        &self,
+        project: ProjectId,
+        revision: u32,
+        from: u32,
+        path: &str,
+        lines: &[u32],
+    ) -> Result<Response> {
         let lines = self
-            .asking(project, async |session| session.map_lines(from, path, lines).await)
+            .asking(project, async |session| {
+                session.map_lines(revision, from, path, lines).await
+            })
             .await?;
         Ok(Response::MappedLines {
             lines: lines

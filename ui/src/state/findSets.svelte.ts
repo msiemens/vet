@@ -158,7 +158,7 @@ class FindSets {
       const lines = linesToLocate(set.places, path);
       if (!lines.length) continue;
       try {
-        const mapped = await backend.mapLines(from, path, lines);
+        const mapped = await backend.mapLines(revision, from, path, lines);
         if (set.located !== revision) return;
         for (const p of set.places) {
           const found = p.file.path === path && p.side === "target" ? mapped[lines.indexOf(p.line)] : undefined;

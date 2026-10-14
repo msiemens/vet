@@ -10,6 +10,7 @@ pub mod generated;
 pub mod hunks;
 pub mod inline;
 pub mod interdiff;
+pub mod linemap;
 pub mod marking;
 pub mod merge;
 pub mod merkle;

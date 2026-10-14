@@ -3,10 +3,11 @@
 use std::sync::OnceLock;
 
 use crate::content::BlobSource;
+use crate::linemap::unique_map;
 use crate::review::FileRemapInput;
-use crate::text::{Text, unique_map};
+use crate::text::Text;
 
-type LineMap = Vec<Option<usize>>;
+type KeptLines = Vec<Option<usize>>;
 
 /// The old and new text of a [`FileRemapInput`] with their line hashes and line
 /// maps, each computed on first use and shared by every anchor or span resolved
@@ -15,8 +16,8 @@ pub struct PreparedFile<'a> {
     pub(crate) input: &'a FileRemapInput,
     pub(crate) old: Option<Text<'a>>,
     pub(crate) new: Option<Text<'a>>,
-    raw_map: OnceLock<LineMap>,
-    norm_map: OnceLock<LineMap>,
+    raw_map: OnceLock<KeptLines>,
+    norm_map: OnceLock<KeptLines>,
 }
 
 impl<'a> PreparedFile<'a> {
@@ -43,7 +44,7 @@ impl<'a> PreparedFile<'a> {
 
     fn map<'s>(
         &'s self,
-        cell: &'s OnceLock<LineMap>,
+        cell: &'s OnceLock<KeptLines>,
         lines: impl for<'t> Fn(&'t Text<'a>) -> &'t [&'a [u8]],
     ) -> Option<&'s [Option<usize>]> {
         let (old, new) = (self.old.as_ref()?, self.new.as_ref()?);

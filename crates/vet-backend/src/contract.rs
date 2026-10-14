@@ -582,6 +582,7 @@ mod tests {
             },
             Request::MapLines {
                 project,
+                revision: 0,
                 from: 1,
                 path: path(),
                 lines: vec![0],

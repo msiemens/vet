@@ -5,8 +5,8 @@ use std::collections::BTreeMap;
 
 use vet_core::content::NonTextKind;
 use vet_core::content::{BlobId, EntryKind, RepoPath};
-use vet_core::hunks::{MappedLine, changed_lines, map_line};
 use vet_core::inline::TextChange;
+use vet_core::linemap::{LineMap, MappedLine};
 use vet_core::review::Side;
 
 use super::blobs::{NoText, image_media_type};
@@ -127,10 +127,11 @@ impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> L
     }
 
     /// Where the lines of the target text of `path` in version `from` of the open review are in the
-    /// target text now. Fails if no review is open, there is no such version, or the file has no
-    /// text in the version or now.
-    pub async fn map_lines(&self, from: u32, path: &str, lines: &[u32]) -> Result<Vec<MappedLine>> {
+    /// target text at `revision`. Fails if `revision` is no longer current, no review is open,
+    /// there is no such version, or the file has no text in the version or now.
+    pub async fn map_lines(&self, revision: u32, from: u32, path: &str, lines: &[u32]) -> Result<Vec<MappedLine>> {
         let st = self.published.read();
+        check_revision(&st, revision)?;
         let Some(changeset) = st.changeset.filter(|_| st.review.is_some()) else {
             return Err(SessionError::Invalid(
                 "versions are recorded once a review has started".into(),
@@ -154,8 +155,8 @@ impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> L
                 Err(_) => return Err(SessionError::NotText(path.to_owned())),
             }
         }
-        let hunks = changed_lines(texts[0].as_bytes(), texts[1].as_bytes());
-        Ok(lines.iter().map(|&line| map_line(&hunks, line)).collect())
+        let map = LineMap::between(texts[0].as_bytes(), texts[1].as_bytes());
+        Ok(lines.iter().map(|&line| map.map_line(line)).collect())
     }
 
     /// The bytes of one side of a non-text item's file at `revision`.

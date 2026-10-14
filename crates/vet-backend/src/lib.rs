@@ -476,10 +476,11 @@ impl Orchestrator {
             } => reply(async move { self.target_line(project, view, revision, side, &path, line).await }),
             Request::MapLines {
                 project,
+                revision,
                 from,
                 path,
                 lines,
-            } => reply(async move { self.map_lines(project, from, &path, &lines).await }),
+            } => reply(async move { self.map_lines(project, revision, from, &path, &lines).await }),
             Request::Threads { project, view } => reply(self.threads(project, view)),
             Request::CommentTarget {
                 project,

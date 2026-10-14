@@ -6,10 +6,11 @@
 
 use crate::content::{FileDiff, Hunk, LineRange, RepoPath, SnapshotId};
 use crate::hunks::{changed_lines, line_hunks};
+use crate::linemap::LineMap;
 use crate::marking::Region;
 use crate::merge::{LineOrigin, merge3};
 use crate::review::{Anchor, ReviewedSpan, Side, SpanState};
-use crate::text::{Text, diff_map};
+use crate::text::Text;
 
 #[derive(Clone, Copy, Default, PartialEq, Eq, Debug)]
 pub struct HunkFlags {
@@ -47,9 +48,7 @@ pub fn interdiff(base_a: &[u8], target_a: &[u8], base_b: &[u8], target_b: &[u8])
     let hunks = line_hunks(&merged.text, target_b);
 
     let squash = changed_lines(base_b, target_b);
-    let old_text = Text::new(&merged.text);
-    let base_text = Text::new(base_b);
-    let to_base = diff_map(&old_text.raw, &base_text.raw);
+    let to_base = LineMap::between(&merged.text, base_b).kept(Text::new(&merged.text).raw.len());
 
     let hunks = hunks
         .into_iter()

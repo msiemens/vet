@@ -4,10 +4,11 @@
 use std::collections::BTreeMap;
 
 use vet_core::content::{EntryKind, LineRange, RepoPath, Snapshot, is_binary};
+use vet_core::linemap::LineMap;
 use vet_core::resolve::Resolution;
 use vet_core::review::{
     Anchor, AnchorState, CommentTarget, Location, Message, PlatformThread, Side, StaleReason, Thread, ThreadId,
-    ThreadStatus, target_line,
+    ThreadStatus,
 };
 
 use super::derived::Diffed;
@@ -530,7 +531,7 @@ fn card_line(changes: &Diffed, side: Side, location: &Location) -> u32 {
     });
     let hunks = diff.map_or(&[][..], |d| &d.hunks[..]);
     let last = location.range.end.saturating_sub(1).max(location.range.start);
-    let line = target_line(hunks, side, last);
+    let line = LineMap::of(hunks).facing(side, last);
     // A deleted file has no target text; an unchanged one is not in the diff and cannot overrun.
     // The empty line after a final line break holds no text, so no card sits below it.
     let last = diff.map(|d| {

@@ -261,27 +261,6 @@ pub struct FileRemapInput {
     pub new_blob: Option<BlobId>,
 }
 
-/// The line of the target text that line `line` of `side` faces in a unified diff: itself on the
-/// target side; on the base side the last target line of the hunk that deleted or replaced it
-/// (where a comment on it is shown, below its replacement), else the line it shifted to. Lines
-/// deleted at the end of the file face one past the target's last line.
-pub fn target_line(hunks: &[Hunk], side: Side, line: u32) -> u32 {
-    if side == Side::Target {
-        return line;
-    }
-    let mut shift = 0i64;
-    for h in hunks {
-        if line < h.old.start {
-            break;
-        }
-        if line < h.old.end {
-            return h.new.start + h.new.len().max(1) - 1;
-        }
-        shift += i64::from(h.new.len()) - i64::from(h.old.len());
-    }
-    u32::try_from((i64::from(line) + shift).max(0)).unwrap_or(u32::MAX)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -322,56 +301,5 @@ mod tests {
             ..renamed
         };
         assert_eq!(sides(&added, &hunk)[0].1, None);
-    }
-
-    #[test]
-    fn the_target_side_faces_itself() {
-        assert_eq!(target_line(&[hunk((10, 12), (10, 11))], Side::Target, 7), 7);
-        assert_eq!(target_line(&[hunk((0, 5), (0, 0))], Side::Target, 3), 3);
-    }
-
-    #[test]
-    fn a_base_line_faces_the_hunk_it_was_changed_in_or_where_it_shifted_to() {
-        // Lines 10..12 of the base became one target line at 10; two lines were added at 17.
-        let hunks = [hunk((10, 12), (10, 11)), hunk((18, 18), (17, 19))];
-        assert_eq!(target_line(&hunks, Side::Base, 5), 5);
-        // Inside the replaced region: its last target line.
-        assert_eq!(target_line(&hunks, Side::Base, 10), 10);
-        assert_eq!(target_line(&hunks, Side::Base, 11), 10);
-        // One line fewer after the first hunk, and two more after the second.
-        assert_eq!(target_line(&hunks, Side::Base, 12), 11);
-        assert_eq!(target_line(&hunks, Side::Base, 14), 13);
-        assert_eq!(target_line(&hunks, Side::Base, 30), 31);
-    }
-
-    #[test]
-    fn a_replaced_region_faces_the_end_of_its_replacement() {
-        let hunks = [hunk((4, 6), (4, 9))];
-        assert_eq!(
-            (4..6).map(|l| target_line(&hunks, Side::Base, l)).collect::<Vec<_>>(),
-            [8, 8]
-        );
-        assert_eq!(target_line(&hunks, Side::Base, 6), 9);
-    }
-
-    #[test]
-    fn deleted_lines_face_the_line_that_took_their_place() {
-        let hunks = [hunk((5, 8), (5, 5))];
-        assert_eq!(target_line(&hunks, Side::Base, 6), 5);
-        assert_eq!(target_line(&hunks, Side::Base, 8), 5);
-        assert_eq!(target_line(&hunks, Side::Base, 0), 0);
-        assert_eq!(target_line(&[hunk((0, 2), (0, 0))], Side::Base, 1), 0);
-    }
-
-    #[test]
-    fn an_insertion_moves_the_lines_below_it_but_not_those_above() {
-        let hunks = [hunk((3, 3), (3, 5))];
-        assert_eq!(target_line(&hunks, Side::Base, 2), 2);
-        assert_eq!(target_line(&hunks, Side::Base, 3), 5);
-    }
-
-    #[test]
-    fn without_hunks_a_base_line_faces_itself() {
-        assert_eq!(target_line(&[], Side::Base, 9), 9);
     }
 }

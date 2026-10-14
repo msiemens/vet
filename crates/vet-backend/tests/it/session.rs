@@ -1285,8 +1285,19 @@ async fn lines_of_an_earlier_version_are_mapped_to_where_they_are_now() {
     let mut one = Client::new(&fx.handler);
     let project = open(&one, fx.repo.path()).await;
     async fn map(client: &Client, project: ProjectId, from: u32, lines: &[u32]) -> Result<Response, Failure> {
+        let revision = client.manifest(project).await.revision;
+        map_at(client, project, revision, from, lines).await
+    }
+    async fn map_at(
+        client: &Client,
+        project: ProjectId,
+        revision: u32,
+        from: u32,
+        lines: &[u32],
+    ) -> Result<Response, Failure> {
         let request = Request::MapLines {
             project,
+            revision,
             from,
             path: "a.txt".into(),
             lines: lines.to_vec(),
@@ -1321,6 +1332,9 @@ async fn lines_of_an_earlier_version_are_mapped_to_where_they_are_now() {
         [at(2, true), at(12, true), at(22, false), at(27, false), at(30, true)]
     );
     assert!(map(&one, project, 9, &[0]).await.is_err());
+    let current = one.manifest(project).await.revision;
+    let outdated = map_at(&one, project, current - 1, 1, &[0]).await.unwrap_err();
+    assert_eq!(outdated.kind, ErrorKind::Outdated);
 }
 
 #[tokio::test]
