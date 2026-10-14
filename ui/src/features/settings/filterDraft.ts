@@ -28,6 +28,11 @@ export function rootPath(text: string): string {
   return text.trim().replace(/^\/+|\/+$/g, "");
 }
 
+/** How many changed files lie below a root, as its row says it. */
+export function rootText(files: number): string {
+  return plural(files, "changed file");
+}
+
 /** What a pattern matches, as a cell says it. */
 export function matchText(match: Pick<PatternMatch, "files" | "lines">): string {
   return `${plural(match.files, "file")} · ${plural(match.lines, "line")}`;

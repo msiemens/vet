@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { draftPatterns, matchText, rootPath, withEdit } from "./filterDraft.ts";
+import { draftPatterns, matchText, rootPath, rootText, withEdit } from "./filterDraft.ts";
 
 void test("a draft is the list with the edits applied and the add field's text last", () => {
   assert.deepEqual(draftPatterns(["*.rs", "docs/**"], { edits: { 1: "docs/*" }, adding: "  *.md " }), [
@@ -19,6 +19,11 @@ void test("an edited row is replaced and an emptied one dropped", () => {
 void test("a typed root loses its slashes at both ends", () => {
   assert.equal(rootPath(" /crates/vet-app// "), "crates/vet-app");
   assert.equal(rootPath("/"), "");
+});
+
+void test("a root counts the changed files below it, singular for one", () => {
+  assert.equal(rootText(1), "1 changed file");
+  assert.equal(rootText(0), "0 changed files");
 });
 
 void test("what a pattern matches is counted in files and lines, singular for one", () => {

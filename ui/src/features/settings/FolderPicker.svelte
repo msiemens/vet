@@ -1,4 +1,4 @@
-<!-- The folders of the repository as a tree, to pick one. -->
+<!-- The folders of the repository as a tree, to pick one; the content of a popover. -->
 <script lang="ts">
   import { onMount } from "svelte";
   import { SvelteMap, SvelteSet } from "svelte/reactivity";
@@ -56,14 +56,15 @@
 
 <style>
   .picker {
-    border-top: 1px solid var(--line);
-    background: var(--bg-sheet);
+    width: 320px;
   }
   .tree {
     max-height: 230px;
     display: flex;
     flex-direction: column;
     background: var(--bg-editor);
+    border-radius: var(--radius-sheet) var(--radius-sheet) 0 0;
+    overflow: hidden;
   }
   .foot {
     display: flex;

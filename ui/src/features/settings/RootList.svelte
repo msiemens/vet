@@ -1,31 +1,37 @@
 <!-- The review roots: a list with a field to add a folder by its path, checked against the repository's
-     folders, or from a tree of them. -->
+     folders, or from a popover with a tree of them. -->
 <script lang="ts">
-  import IconButton from "../../lib/ui/IconButton.svelte";
-  import type { Column } from "../../lib/ui/columns";
+  import FileIcon from "../../lib/ui/FileIcon.svelte";
+  import Popover from "../../lib/ui/Popover.svelte";
   import { changeset } from "../../state/changeset.svelte";
+  import FilterList from "./FilterList.svelte";
   import FolderPicker from "./FolderPicker.svelte";
-  import SettingsTable from "./SettingsTable.svelte";
-  import { rootPath } from "./filterDraft";
+  import { rootPath, rootText } from "./filterDraft";
 
   let {
     roots,
+    counts,
     onchange,
   }: {
     roots: readonly string[];
+    /** The changed files below each root, as the backend counted them. */
+    counts: ReadonlyMap<string, number> | undefined;
     /** Saves the roots; resolves with the backend's message if it refused them. */
     onchange: (roots: string[]) => Promise<string | undefined>;
   } = $props();
-
-  const COLUMNS: Column<never>[] = [
-    { id: "folder", label: "Folder", flex: true, min: 80 },
-    { id: "actions", label: "", width: 150, fixed: true },
-  ];
 
   let text = $state("");
   let problem = $state<string>();
   let picking = $state(false);
   let asked = 0;
+
+  const path = $derived(rootPath(text));
+  const rows = $derived(
+    roots.map((root) => {
+      const files = counts?.get(root);
+      return { text: root, meta: files === undefined ? undefined : rootText(files) };
+    }),
+  );
 
   async function problemOf(path: string): Promise<string | undefined> {
     if (roots.includes(path)) return "Already a review root.";
@@ -34,7 +40,6 @@
 
   /** Checks the typed path as it is typed; an answer to an older text is dropped. */
   async function typed() {
-    const path = rootPath(text);
     const n = ++asked;
     const found = path ? await problemOf(path) : undefined;
     if (n === asked) problem = found;
@@ -49,68 +54,25 @@
   }
 </script>
 
-<SettingsTable name="roots" aria-label="Review roots" columns={COLUMNS}>
-  {#each roots as root, i (root)}
-    <div class="row">
-      <span class="path" title={root}>{root}</span>
-      <span class="end">
-        <IconButton
-          icon="close"
-          label="Remove {root}"
-          size="s"
-          iconSize={12}
-          onclick={() => void onchange(roots.filter((_, j) => j !== i))}
-        />
-      </span>
-    </div>
-  {/each}
-  {#snippet addRow()}
-    <div class="row">
-      <input
-        class="field mono"
-        aria-label="Add review root"
-        spellcheck="false"
-        bind:value={text}
-        oninput={() => void typed()}
-        onkeydown={(e) => {
-          if (e.key === "Enter" && rootPath(text)) void add(rootPath(text));
-        }}
-      />
-      <span class="end">
-        <button class="ctl" type="button" aria-expanded={picking} onclick={() => (picking = !picking)}>Browse…</button>
-        <button
-          class="ctl"
-          type="button"
-          disabled={!rootPath(text) || problem !== undefined}
-          onclick={() => void add(rootPath(text))}>Add</button
-        >
-      </span>
-    </div>
+<FilterList
+  label="Review roots"
+  {rows}
+  placeholder="Type a folder, e.g. crates/vet-app"
+  bind:adding={text}
+  addBad={problem !== undefined}
+  canAdd={path !== "" && problem === undefined}
+  {problem}
+  onaddinput={() => void typed()}
+  onremove={(i) => void onchange(roots.filter((_, j) => j !== i))}
+  onadd={() => void add(path)}
+>
+  {#snippet glyph(root)}<FileIcon name={root} folder />{/snippet}
+  {#snippet extra()}
+    <Popover bind:open={picking} align="right">
+      {#snippet trigger(toggle)}
+        <button class="ctl" type="button" aria-expanded={picking} onclick={toggle}>Browse…</button>
+      {/snippet}
+      <FolderPicker onpick={(picked) => void add(picked)} oncancel={() => (picking = false)} />
+    </Popover>
   {/snippet}
-  {#snippet below()}
-    {#if problem}<p class="err problem">{problem}</p>{/if}
-    {#if picking}<FolderPicker onpick={(path) => void add(path)} oncancel={() => (picking = false)} />{/if}
-  {/snippet}
-</SettingsTable>
-
-<style>
-  .path {
-    min-width: 0;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-    font-family: var(--font-mono);
-    font-size: var(--fs-mono);
-  }
-  .end {
-    display: flex;
-    justify-content: flex-end;
-    gap: 6px;
-  }
-  .problem {
-    margin: 0;
-    padding: 4px 10px;
-    border-top: 1px solid var(--line-soft);
-    font-size: var(--fs-mono);
-  }
-</style>
+</FilterList>

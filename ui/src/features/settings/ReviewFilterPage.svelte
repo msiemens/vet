@@ -25,7 +25,7 @@
   let error = $state<string>();
   let include = $state<PatternDraft>({ edits: {}, adding: "" });
   let exclude = $state<PatternDraft>({ edits: {}, adding: "" });
-  let matches = $state.raw<{ include: PatternMatch[]; exclude: PatternMatch[] }>();
+  let matches = $state.raw<{ roots: Map<string, number>; include: PatternMatch[]; exclude: PatternMatch[] }>();
   let asked = 0;
 
   // The backend counts what the filter as drafted matches; an answer to an older draft is dropped.
@@ -39,7 +39,10 @@
     };
     const n = ++asked;
     void changeset.patternMatches(draft).then((answer) => {
-      if (n === asked && answer) matches = answer;
+      if (n === asked && answer) {
+        const roots = new Map(draft.roots.map((root, i) => [root, answer.roots[i]]));
+        matches = { ...answer, roots };
+      }
     });
   });
 
@@ -52,12 +55,12 @@
 
 <div class="page">
   <SettingsSection title="Review roots">
-    <RootList roots={filter.roots} onchange={(roots) => save({ roots })} />
+    <RootList roots={filter.roots} counts={matches?.roots} onchange={(roots) => save({ roots })} />
   </SettingsSection>
   <SettingsSection title="Only review files matching">
     <PatternList
-      name="include"
-      label="Include"
+      label="Only review files matching"
+      placeholder="e.g. *.rs or ui/src/**"
       patterns={filter.include}
       bind:draft={include}
       matches={matches?.include}
@@ -66,8 +69,8 @@
   </SettingsSection>
   <SettingsSection title="Skip files matching">
     <PatternList
-      name="exclude"
-      label="Exclude"
+      label="Skip files matching"
+      placeholder="e.g. **/*.snap"
       patterns={filter.exclude}
       bind:draft={exclude}
       matches={matches?.exclude}

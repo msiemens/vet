@@ -330,13 +330,15 @@ export class Backend {
     return { revision, entries };
   }
 
-  /** What each include and exclude glob of the draft `filter` matches in the changeset on view, in the order the filter lists them. */
-  async patternMatches(filter: ReviewFilter): Promise<{ include: PatternMatch[]; exclude: PatternMatch[] }> {
-    const { include, exclude } = expect(
+  /** What each include and exclude glob of the draft `filter` matches in the changeset on view, and the changed files below each root, in the order the filter lists them. */
+  async patternMatches(
+    filter: ReviewFilter,
+  ): Promise<{ roots: number[]; include: PatternMatch[]; exclude: PatternMatch[] }> {
+    const { roots, include, exclude } = expect(
       await this.conn.request({ type: "patternMatches", project: this.pid, filter }),
       "patternMatches",
     );
-    return { include, exclude };
+    return { roots, include, exclude };
   }
 
   /** The path of every file of the target snapshot, as of `revision`. */
