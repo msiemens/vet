@@ -61,6 +61,7 @@ use vet_transport::{Events, Handler};
 use caches::PersistentAnswers;
 use error::{Error, Result};
 use events::Connection;
+use hosting::Platforms;
 use open::Wired;
 use references::StoreReferences;
 
@@ -128,10 +129,9 @@ pub struct Orchestrator {
     settings_changing: tokio::sync::Mutex<()>,
     /// Credentials for hosting platforms: per host and app-wide, not per project.
     accounts: Arc<PlatformAccounts>,
-    /// The client for GitHub, with the lists it has kept, for every project.
-    github: Arc<GitHub>,
-    /// The client for Azure DevOps, likewise.
-    azure_devops: Arc<AzureDevOps>,
+    /// The clients for GitHub and Azure DevOps, with what they have kept, and how they are doing,
+    /// for every project.
+    platforms: Arc<Platforms>,
     /// The connections that asked for `Accounts` or `RecentProjects`, which is where the events
     /// that belong to the process go.
     process_subscribers: Subscribers<Connection>,
@@ -171,8 +171,11 @@ impl Orchestrator {
             },
         ));
         Self {
-            github: Arc::new(GitHubClient::new(accounts.clone())),
-            azure_devops: Arc::new(AzureDevOpsClient::new(accounts.clone())),
+            platforms: Arc::new(Platforms::new(
+                Arc::new(GitHubClient::new(accounts.clone())),
+                Arc::new(AzureDevOpsClient::new(accounts.clone())),
+                process_subscribers.clone(),
+            )),
             accounts,
             process_subscribers,
             servers: Arc::new(Servers::new(resolver, store.clone(), languages)),

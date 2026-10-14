@@ -60,9 +60,16 @@ impl Orchestrator {
         };
         let on_view = on_view.as_ref().map(|(remote, number)| (remote, *number));
         let since = open.open.fetch.mark();
-        let list = pull_request::list_pull_requests(&*self.github, &github, on_view)
+        let list = pull_request::list_pull_requests(&self.platforms.hosting(PlatformKind::GitHub), &github, on_view)
             .await
-            .and(pull_request::list_pull_requests(&*self.azure_devops, &azure_devops, on_view).await);
+            .and(
+                pull_request::list_pull_requests(
+                    &self.platforms.hosting(PlatformKind::AzureDevOps),
+                    &azure_devops,
+                    on_view,
+                )
+                .await,
+            );
         if let Err(error) = prune_pull_request_refs(&open, &list, since).await {
             tracing::warn!(%error, "deleting the refs of pull requests no longer listed failed");
         }
@@ -75,7 +82,6 @@ impl Orchestrator {
                 } else {
                     tracing::warn!(repository = %source.remote, %error, "listing the pull requests failed");
                 }
-                self.refused(error, &source.remote.account());
             } else {
                 let listed = list.rows.iter().filter(|r| r.remote == source.remote).count();
                 tracing::debug!(repository = %source.remote, listed, truncated = source.truncated, "listed pull requests");
@@ -111,11 +117,8 @@ impl Orchestrator {
         let Some(remote) = self.hosted_pull_request(project).await? else {
             return Ok(mapping::checks(&[], None));
         };
-        let hosting = Hosting::of(remote.kind(), &self.github, &self.azure_devops);
+        let hosting = self.platforms.hosting(remote.kind());
         let (found, error) = commits_checks(&hosting, &remote, &commits).await;
-        if let Some(error) = &error {
-            self.refused(error, &remote.account());
-        }
         Ok(mapping::checks(&found, error.as_ref()))
     }
 
@@ -126,25 +129,19 @@ impl Orchestrator {
             .hosted_pull_request(project)
             .await?
             .ok_or_else(Error::not_a_pull_request)?;
-        let hosting = Hosting::of(remote.kind(), &self.github, &self.azure_devops);
+        let hosting = self.platforms.hosting(remote.kind());
         Ok((remote, hosting))
     }
 
     pub(crate) async fn check_log(&self, project: ProjectId, run: String) -> Result<Response> {
         let (remote, hosting) = self.hosted_pull_request_client(project).await?;
-        let log = hosting
-            .check_log(&remote, &run)
-            .await
-            .inspect_err(|error| self.refused(error, &remote.account()))?;
+        let log = hosting.check_log(&remote, &run).await?;
         Ok(mapping::check_log(&log))
     }
 
     pub(crate) async fn pipeline_steps(&self, project: ProjectId, check: String) -> Result<Response> {
         let (remote, hosting) = self.hosted_pull_request_client(project).await?;
-        let steps = hosting
-            .steps(&remote, &check)
-            .await
-            .inspect_err(|error| self.refused(error, &remote.account()))?;
+        let steps = hosting.steps(&remote, &check).await?;
         Ok(mapping::pipeline_steps(&steps))
     }
 
@@ -157,7 +154,7 @@ impl Orchestrator {
         let done = hosting
             .pipeline_action(&remote, &mapping::pipeline_action(action))
             .await;
-        Ok(mapping::pipeline_outcome(done).inspect_err(|error| self.refused(error, &remote.account()))?)
+        Ok(mapping::pipeline_outcome(done)?)
     }
 
     pub(crate) async fn open_changeset(&self, project: ProjectId, changeset: ChangesetKey) -> Result<Response> {
@@ -165,11 +162,9 @@ impl Orchestrator {
         let source = mapping::core_changeset_key(changeset).map_err(Error::Invalid)?;
         let mut renamed = false;
         if let Source::PullRequest { remote, number } = &source {
-            let brought = bring_in(&open.open, &open.session, remote, *number).await;
-            if let Err(FetchError::Platform(error)) = &brought {
-                self.refused(error, &remote.account());
-            }
-            renamed = brought.map_err(|e| Error::from(e).context(format!("cannot fetch pull request #{number}")))?;
+            renamed = bring_in(&open.open, &open.session, remote, *number)
+                .await
+                .map_err(|e| Error::from(e).context(format!("cannot fetch pull request #{number}")))?;
         }
         let moved = open.session.open_changeset(source.clone()).await?;
         if let Some(revision) = moved {
@@ -186,15 +181,6 @@ impl Orchestrator {
             sync_in_background(open.open.clone());
         }
         Ok(Response::Done)
-    }
-
-    /// Asks the shell for the credential of `host` again when the platform refused the one the
-    /// backend used (an expired token). A host with no credential at all is asked for already.
-    fn refused(&self, error: &PlatformError, host: &str) {
-        if matches!(error, PlatformError::Rejected(_)) {
-            self.process_subscribers
-                .broadcast(Event::CredentialsNeeded { host: host.to_owned() });
-        }
     }
 }
 
@@ -254,14 +240,8 @@ pub(crate) async fn bring_in(
     number: u64,
 ) -> std::result::Result<bool, FetchError> {
     let held = Held(&open.accounts);
-    let head = match remote.kind() {
-        PlatformKind::GitHub => {
-            pull_request::fetch_pull_request(&*open.github, &open.fetch, &held, remote, number).await?
-        }
-        PlatformKind::AzureDevOps => {
-            pull_request::fetch_pull_request(&*open.azure_devops, &open.fetch, &held, remote, number).await?
-        }
-    };
+    let head =
+        pull_request::fetch_pull_request(&open.hosting(remote.kind()), &open.fetch, &held, remote, number).await?;
     let source = Source::PullRequest {
         remote: remote.clone(),
         number,

@@ -4,12 +4,12 @@
 use std::sync::Arc;
 
 use vet_app::changeset::Source;
-use vet_app::platform::PlatformError;
-use vet_app::session::{Keep, SessionError, SyncReport, VoteSent};
+use vet_app::platform::{RemoteKey, Standing};
+use vet_app::session::{Keep, SyncReport, VoteSent};
 use vet_core::review::MessageId;
 use vet_infra::clock::unix_now;
 use vet_mapping as mapping;
-use vet_protocol::{EditChoice, Event, Notification, NotificationKind, PlatformConnection, ProjectId, Response};
+use vet_protocol::{EditChoice, Event, ProjectId, Response};
 
 use crate::announce::{thread_changed, threads_changed};
 use crate::error::{Error, Result};
@@ -145,7 +145,8 @@ impl Orchestrator {
             .ok_or_else(|| Error::Unavailable("the pull request was not synced yet".into()))?;
         let pending_vote = open.session.pending_vote().await?;
         let account = remote.account();
-        let connection = open.open.connection(&account).unwrap_or(PlatformConnection::Ok);
+        let standing = open.open.platforms.standing(&account);
+        let connection = mapping::platform_connection(standing.as_ref().and_then(Standing::error));
         let status = mapping::platform_status(&account, remote.kind(), connection);
         Ok(Response::PullRequestInfo(Box::new(mapping::pull_request_info(
             &view,
@@ -166,66 +167,31 @@ pub(crate) fn sync_in_background(open: Arc<Open>) {
 }
 
 /// Syncs the threads of the pull request on view, if one is, and tells every subscriber what
-/// came of it. A platform that cannot be asked is reported as its status and not as a failure.
-/// Answers whether the subscribers were told that threads changed.
+/// came of it. A platform that cannot be asked is reported as its status (`Hosting` notes it) and
+/// not as a failure. Answers whether the subscribers were told that threads changed.
 pub(crate) async fn sync_pull_request(open: &Arc<Open>, booted: &Booted) -> bool {
     let Source::PullRequest { remote, .. } = booted.session.source().await else {
         return false;
     };
     let hosting = open.hosting(remote.kind());
-    let (problem, report) = match booted.session.sync_threads(&hosting).await {
-        Ok(report) => (report.problem.clone(), Some(report)),
-        Err(SessionError::Platform(error)) => (Some(error), None),
-        // The changeset on view changed meanwhile.
-        Err(_) => return false,
-    };
-    announce(
-        open,
-        booted,
-        &remote.account(),
-        remote.kind(),
-        problem.as_ref(),
-        report.as_ref(),
-    )
-    .await
+    match booted.session.sync_threads(&hosting).await {
+        Ok(report) => announce(open, booted, &remote, &report).await,
+        // The platform could not be asked, or the changeset on view changed meanwhile.
+        Err(_) => false,
+    }
 }
 
-/// Answers whether the subscribers were told that threads changed.
-async fn announce(
-    open: &Open,
-    booted: &Booted,
-    host: &str,
-    kind: vet_app::platform::PlatformKind,
-    problem: Option<&PlatformError>,
-    report: Option<&SyncReport>,
-) -> bool {
-    let connection = mapping::platform_connection(problem);
-    let was = open.set_connection(host, connection.clone());
-    let stopped = matches!(
-        connection,
-        PlatformConnection::SignedOut | PlatformConnection::TokenExpired { .. }
-    );
-    if stopped && was.as_ref() != Some(&connection) {
-        open.subscribers.broadcast(Event::Notification {
-            project: open.id,
-            notification: Notification {
-                kind: NotificationKind::SyncStopped,
-                text: match connection {
-                    PlatformConnection::SignedOut => format!("Not signed in to {host}: comments are not synced."),
-                    _ => format!("The token for {host} is no longer accepted: comments are not synced."),
-                },
-                copy_text: None,
-                host: Some(host.to_owned()),
-            },
-        });
-    }
+/// Answers whether the subscribers were told that threads changed. A sync is also what the
+/// pull request's information is read after, so the platform's status is told with it.
+async fn announce(open: &Open, booted: &Booted, remote: &RemoteKey, report: &SyncReport) -> bool {
+    let kind = remote.kind();
+    let account = remote.account();
+    let standing = open.platforms.standing(&account);
+    let connection = mapping::platform_connection(standing.as_ref().and_then(Standing::error));
     open.subscribers.broadcast(Event::PlatformStatus {
         project: open.id,
-        status: mapping::platform_status(host, kind, connection),
+        status: mapping::platform_status(&account, kind, connection),
     });
-    let Some(report) = report else {
-        return false;
-    };
     if report.changed {
         open.subscribers.broadcast(Event::ThreadsChanged {
             project: open.id,

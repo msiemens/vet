@@ -5,7 +5,6 @@
 //! the first request that needs it, or by the task `open` spawns, whichever is
 //! first; the others wait for it. Meanwhile the scan reports as a task.
 
-use std::collections::HashMap;
 use std::ops::Deref;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -36,19 +35,16 @@ use vet_infra::restore::ToolRestorer;
 use vet_infra::store::SqliteStore;
 use vet_infra::watch::FsWatcher;
 use vet_mapping as mapping;
-use vet_protocol::{Event, PlatformConnection, ProjectId, Response};
+use vet_protocol::{Event, ProjectId, Response};
 use vet_semantic::pool::Supervision;
 use vet_semantic::ports::Backend;
 
 use crate::caches::PersistentAnswers;
 use crate::error::{Error, Result};
 use crate::events::{Connection, edits_pending, settled};
-use crate::hosting::Hosting;
+use crate::hosting::{Announcer, Hosting, Platforms};
 use crate::screens::ReviewScreens;
-use crate::{
-    AzureDevOps, GitHub, LanguageServers, Live, Open, Orchestrator, PlatformAccounts, Semantic,
-    start_servers_in_background,
-};
+use crate::{LanguageServers, Live, Open, Orchestrator, PlatformAccounts, Semantic, start_servers_in_background};
 
 /// The least time between two progress announcements of one task, so a step that
 /// reports per file reaches the UI a few times a second.
@@ -81,7 +77,7 @@ struct Plan {
 }
 
 /// The guard of `mutex`, whether or not a thread panicked while holding it: what these locks guard
-/// is a map of connection states or the handle of a task, never left half-written.
+/// is the handle of a task, never left half-written.
 fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
     mutex.lock().unwrap_or_else(PoisonError::into_inner)
 }
@@ -113,10 +109,9 @@ pub(crate) struct Wired {
     /// Where `fetch` finds the credentials of the hosting platforms.
     pub accounts: Arc<PlatformAccounts>,
     /// Where pull requests are asked for.
-    pub github: Arc<GitHub>,
-    pub azure_devops: Arc<AzureDevOps>,
-    /// How the last sync with each platform host went, to announce a stop once and not on every try.
-    connections: Mutex<HashMap<String, PlatformConnection>>,
+    pub platforms: Arc<Platforms>,
+    /// Keeps this project among those that hear how the platforms are doing.
+    _announcer: Arc<Announcer>,
     /// The connections that show the review screen, which the language servers run for.
     pub screens: ReviewScreens,
     plan: Plan,
@@ -157,17 +152,7 @@ impl Wired {
 
     /// The client of the platform `kind`.
     pub(crate) fn hosting(&self, kind: PlatformKind) -> Hosting {
-        Hosting::of(kind, &self.github, &self.azure_devops)
-    }
-
-    /// Records how syncing with `host` went and answers how it went before.
-    pub(crate) fn set_connection(&self, host: &str, now: PlatformConnection) -> Option<PlatformConnection> {
-        lock(&self.connections).insert(host.to_owned(), now)
-    }
-
-    /// How syncing with `host` went last, if it was tried.
-    pub(crate) fn connection(&self, host: &str) -> Option<PlatformConnection> {
-        lock(&self.connections).get(host).cloned()
+        self.platforms.hosting(kind)
     }
 
     /// Hands over the task that fetches periodically, which ends with the session.
@@ -429,15 +414,19 @@ impl Orchestrator {
             TASK_UPDATES,
             Box::new(move |task| announced.broadcast(Event::Task(mapping::progress::task(id, &task)))),
         );
+        let announcer = Arc::new(Announcer {
+            project: id,
+            subscribers: subscribers.clone(),
+        });
+        self.platforms.tell(&announcer);
         Ok(Wired {
             // A fetch holds its thread for as long as the network takes, so it has a budget of
             // its own: it must not take the review's threads, nor the semantic lane's.
             fetch: Fetch::new(GixRepo::new(&repo), tasks.clone()),
             accounts: self.accounts.clone(),
-            github: self.github.clone(),
-            azure_devops: self.azure_devops.clone(),
+            platforms: self.platforms.clone(),
+            _announcer: announcer,
             tasks,
-            connections: Mutex::default(),
             screens: ReviewScreens::default(),
             plan: Plan {
                 id,

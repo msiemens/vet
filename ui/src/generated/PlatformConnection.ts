@@ -3,4 +3,8 @@
 /**
  * How the backend gets on with a hosting platform.
  */
-export type PlatformConnection = { "type": "ok" } | { "type": "signedOut" } | { "type": "tokenExpired", message: string, } | { "type": "failed", message: string, };
+export type PlatformConnection = { "type": "ok" } | { "type": "signedOut" } | { "type": "tokenExpired", message: string, } | { "type": "failed", message: string, 
+/**
+ * Unix seconds when a rate limit ends, if that is what failed and the platform says when.
+ */
+retryAt: number | null, };

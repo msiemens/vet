@@ -1091,6 +1091,10 @@ pub fn platform_connection(result: Option<&PlatformError>) -> p::PlatformConnect
         },
         Some(other) => p::PlatformConnection::Failed {
             message: other.to_string(),
+            retry_at: match other {
+                PlatformError::RateLimited { retry_at, .. } => retry_at.map(unix_secs),
+                _ => None,
+            },
         },
     }
 }

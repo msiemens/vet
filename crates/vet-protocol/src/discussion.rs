@@ -154,6 +154,8 @@ pub enum PlatformConnection {
     /// The platform could not be asked or would not do it; fit to show.
     Failed {
         message: String,
+        /// Unix seconds when a rate limit ends, if that is what failed and the platform says when.
+        retry_at: Option<u32>,
     },
 }
 

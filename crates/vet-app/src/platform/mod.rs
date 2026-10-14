@@ -8,6 +8,7 @@ mod credentials;
 mod discussion;
 #[cfg(test)]
 mod fake;
+mod health;
 mod host;
 mod model;
 mod port;
@@ -28,6 +29,7 @@ pub use discussion::{
 };
 #[cfg(test)]
 pub(crate) use fake::FakeHosting;
+pub use health::{Health, Outcome, Standing};
 pub use host::{PlatformKind, normalize_host};
 pub use model::{
     BlockingSource, ChangesAsked, ChangesRequest, ChangesetThreads, CiState, ForcePush, PipelineWords, PlatformError,
