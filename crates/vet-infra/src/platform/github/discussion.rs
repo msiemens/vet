@@ -16,8 +16,8 @@ use vet_app::platform::{
 };
 
 use super::wire::{
-    Author, CommitNode, Name, Nodes, Oid, Page, RepositoryData, RequestNode, latest_ci, requested, review_verdict,
-    unexpected,
+    Author, BackwardsPage, CommitNode, Name, Nodes, Oid, Page, RepositoryData, RequestNode, latest_ci, requested,
+    review_verdict, unexpected,
 };
 use super::{Clients, GitHubClient, repository};
 use crate::platform::time::parse_rfc3339;
@@ -28,6 +28,12 @@ const THREAD_PAGE: u32 = 50;
 /// The most threads read from one pull request; past it the listing is partial, so nothing is
 /// taken to be gone.
 const MAX_THREADS: usize = 2000;
+
+/// Conversation comments and reviews asked for per page; the newest come first and the pages
+/// before them are read until the oldest.
+const CONVERSATION_PAGE: u32 = 50;
+
+const REVIEW: &str = "id state body submittedAt viewerDidAuthor author { login avatarUrl ... on User { name } }";
 
 const REVIEW_COMMENT: &str = "id body createdAt lastEditedAt state viewerDidAuthor author { login avatarUrl ... on User { name } } originalCommit { oid }";
 
@@ -64,8 +70,8 @@ fn discussion_query() -> String {
       }}
       latestReviews(first: 30) {{ nodes {{ state author {{ login ... on User {{ name }} }} }} }}
       commits(last: 1) {{ nodes {{ commit {{ statusCheckRollup {{ state }} }} }} }}
-      comments(last: 50) {{ nodes {{ {ISSUE_COMMENT} }} }}
-      reviews(last: 50) {{ nodes {{ id state body submittedAt viewerDidAuthor author {{ login avatarUrl ... on User {{ name }} }} }} }}
+      comments(last: {CONVERSATION_PAGE}) {{ nodes {{ {ISSUE_COMMENT} }} pageInfo {{ hasPreviousPage startCursor }} }}
+      reviews(last: {CONVERSATION_PAGE}) {{ nodes {{ {REVIEW} }} pageInfo {{ hasPreviousPage startCursor }} }}
       reviewThreads(first: {THREAD_PAGE}, after: $after) {{
         nodes {{ ...ThreadFields }}
         pageInfo {{ hasNextPage endCursor }}
@@ -92,6 +98,19 @@ fn threads_query() -> String {
 }}
 {}",
         thread_fields()
+    )
+}
+
+/// The page of `connection` (`comments` or `reviews`) of a pull request that ends before `$before`.
+fn earlier_query(connection: &str, fields: &str) -> String {
+    format!(
+        "query($owner: String!, $name: String!, $number: Int!, $before: String) {{
+  repository(owner: $owner, name: $name) {{
+    pullRequest(number: $number) {{
+      {connection}(last: {CONVERSATION_PAGE}, before: $before) {{ nodes {{ {fields} }} pageInfo {{ hasPreviousPage startCursor }} }}
+    }}
+  }}
+}}"
     )
 }
 
@@ -218,8 +237,8 @@ struct DiscussionNode {
     review_requests: Nodes<RequestNode>,
     latest_reviews: Nodes<LatestReview>,
     commits: Nodes<CommitNode>,
-    comments: Nodes<CommentNode>,
-    reviews: Nodes<ReviewNode>,
+    comments: BackwardsPage<CommentNode>,
+    reviews: BackwardsPage<ReviewNode>,
     review_threads: Page<ThreadNode>,
 }
 
@@ -334,12 +353,9 @@ fn reviewers(latest: Nodes<LatestReview>, requests: Nodes<RequestNode>) -> Vec<R
     found
 }
 
-fn conversation(
-    comments: Nodes<CommentNode>,
-    reviews: Nodes<ReviewNode>,
-) -> Result<Vec<ConversationItem>, PlatformError> {
+fn conversation(comments: Vec<CommentNode>, reviews: Vec<ReviewNode>) -> Result<Vec<ConversationItem>, PlatformError> {
     let mut items = Vec::new();
-    for comment in comments.present() {
+    for comment in comments {
         let comment = comment.into_comment()?;
         items.push(ConversationItem {
             id: comment.id,
@@ -350,7 +366,7 @@ fn conversation(
             body: comment.body,
         });
     }
-    for review in reviews.present() {
+    for review in reviews {
         // A review that was not submitted is its author's and no one else's business.
         let Some(at) = review.submitted_at.as_deref().and_then(parse_rfc3339) else {
             continue;
@@ -450,6 +466,39 @@ impl<C: CredentialProvider + Sync> GitHubClient<C> {
         Ok(more)
     }
 
+    /// Every node of `connection` of the pull request: those of `newest`, its last page, and of
+    /// the pages before it.
+    async fn all_backwards<T: DeserializeOwned>(
+        &self,
+        host: &str,
+        clients: &Clients,
+        pull_request: (&str, &str, u64),
+        connection: &str,
+        fields: &str,
+        newest: BackwardsPage<T>,
+    ) -> Result<Vec<T>, PlatformError> {
+        let (owner, name, number) = pull_request;
+        let mut before = newest
+            .page_info
+            .start_cursor
+            .filter(|_| newest.page_info.has_previous_page);
+        let mut found: Vec<T> = newest.nodes.into_iter().flatten().collect();
+        while let Some(cursor) = before {
+            let data: Value = self
+                .graphql(
+                    host,
+                    clients,
+                    &earlier_query(connection, fields),
+                    json!({ "owner": owner, "name": name, "number": number, "before": cursor }),
+                )
+                .await?;
+            let page: BackwardsPage<T> = dig(&data, &format!("/repository/pullRequest/{connection}"))?;
+            before = page.page_info.start_cursor.filter(|_| page.page_info.has_previous_page);
+            found.extend(page.nodes.into_iter().flatten());
+        }
+        Ok(found)
+    }
+
     /// Every thread of `page` and of the pages after it, with all their comments, and whether
     /// that is every thread of the pull request.
     async fn all_threads(
@@ -508,6 +557,19 @@ impl<C: CredentialProvider + Sync> GitHubClient<C> {
         let (threads, complete) = self
             .all_threads(host, &clients, node.review_threads, (owner, name, number))
             .await?;
+        let comments = self
+            .all_backwards(
+                host,
+                &clients,
+                (owner, name, number),
+                "comments",
+                ISSUE_COMMENT,
+                node.comments,
+            )
+            .await?;
+        let reviews = self
+            .all_backwards(host, &clients, (owner, name, number), "reviews", REVIEW, node.reviews)
+            .await?;
         let (author, author_name, author_avatar) = match node.author {
             Some(a) => (a.login.clone(), a.display(), a.avatar_url),
             None => ("ghost".to_owned(), "ghost".to_owned(), None),
@@ -527,7 +589,7 @@ impl<C: CredentialProvider + Sync> GitHubClient<C> {
             viewer_verdict: None,
             labels: node.labels.present().map(|l| l.name).collect(),
             ci: latest_ci(node.commits),
-            conversation: conversation(node.comments, node.reviews)?,
+            conversation: conversation(comments, reviews)?,
             threads,
             complete,
         })

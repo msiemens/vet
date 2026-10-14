@@ -103,6 +103,23 @@ pub(super) struct Page<T> {
 }
 
 #[derive(Deserialize)]
+pub(super) struct BackwardsInfo {
+    #[serde(rename = "hasPreviousPage")]
+    pub has_previous_page: bool,
+    #[serde(rename = "startCursor")]
+    pub start_cursor: Option<String>,
+}
+
+/// A connection read from its end (`last`): one page of nodes, and where the page before it
+/// ends.
+#[derive(Deserialize)]
+pub(super) struct BackwardsPage<T> {
+    pub nodes: Vec<Option<T>>,
+    #[serde(rename = "pageInfo")]
+    pub page_info: BackwardsInfo,
+}
+
+#[derive(Deserialize)]
 pub(super) struct SearchData {
     pub search: Page<PullRequestNode>,
 }

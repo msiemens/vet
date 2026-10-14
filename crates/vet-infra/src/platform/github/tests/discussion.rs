@@ -57,7 +57,7 @@ fn first_page(threads: Value, next: Option<&str>) -> String {
         }, {
             "id": "IC2", "body": "Thanks!", "createdAt": "2024-05-01T12:00:00Z", "lastEditedAt": null,
             "viewerDidAuthor": true, "author": { "login": "ada", "name": "Ada Lovelace", "avatarUrl": null }
-        }] },
+        }], "pageInfo": { "hasPreviousPage": false, "startCursor": null } },
         "reviews": { "nodes": [
             { "id": "R1", "state": "APPROVED", "body": "", "submittedAt": "2024-05-01T11:00:00Z",
               "viewerDidAuthor": false, "author": { "login": "marco", "avatarUrl": null } },
@@ -69,7 +69,7 @@ fn first_page(threads: Value, next: Option<&str>) -> String {
               "author": null },
             { "id": "R5", "state": "COMMENTED", "body": "Answered inline.", "submittedAt": "2024-05-01T12:30:00Z",
               "viewerDidAuthor": true, "author": { "login": "ada", "avatarUrl": null } }
-        ] },
+        ], "pageInfo": { "hasPreviousPage": false, "startCursor": null } },
         "reviewThreads": { "nodes": threads, "pageInfo": { "hasNextPage": next.is_some(), "endCursor": next } }
     } } } })
     .to_string()
@@ -98,6 +98,7 @@ fn call_of(request: &Seen) -> String {
     {
         Some((head, call)) if head.starts_with("mutation") => call.to_owned(),
         _ if query.contains("node(id") => "node".to_owned(),
+        _ if query.contains("$before") => "earlier".to_owned(),
         _ if query.contains("title url") => "discussion".to_owned(),
         _ if query.contains("reviewThreads") => "threads".to_owned(),
         _ => "pullRequest".to_owned(),
@@ -309,6 +310,60 @@ async fn too_many_threads_make_a_partial_listing_that_says_so() {
 
     assert!(!found.complete, "{} threads", found.threads.len());
     assert!(found.threads.len() >= 2000);
+}
+
+/// The `from..to` entries of a long conversation connection, read from its end: the page that
+/// ends at `from` can be asked for with the cursor `from`.
+fn backwards_page(entry: impl Fn(u32) -> Value, from: u32, to: u32) -> Value {
+    json!({
+        "nodes": (from..to).map(entry).collect::<Vec<_>>(),
+        "pageInfo": { "hasPreviousPage": from > 0, "startCursor": (from > 0).then(|| from.to_string()) }
+    })
+}
+
+fn issue_comment(n: u32) -> Value {
+    json!({
+        "id": format!("IC{n}"), "body": "x", "createdAt": format!("2024-05-02T00:{:02}:{:02}Z", n / 60, n % 60),
+        "lastEditedAt": null, "viewerDidAuthor": false, "author": { "login": "jonas", "avatarUrl": null }
+    })
+}
+
+fn submitted_review(n: u32) -> Value {
+    json!({
+        "id": format!("R{n}"), "state": "COMMENTED", "body": "x",
+        "submittedAt": format!("2024-05-03T00:{:02}:{:02}Z", n / 60, n % 60),
+        "viewerDidAuthor": false, "author": { "login": "jonas", "avatarUrl": null }
+    })
+}
+
+#[tokio::test]
+async fn a_long_conversation_is_read_to_its_oldest_comment_and_review() {
+    set_now(NOW);
+    let fake = Fake::start(|request, _| match call_of(request).as_str() {
+        "discussion" => {
+            let mut page: Value = serde_json::from_str(&first_page(json!([]), None)).unwrap();
+            let pull_request = &mut page["data"]["repository"]["pullRequest"];
+            pull_request["comments"] = backwards_page(issue_comment, 70, 120);
+            pull_request["reviews"] = backwards_page(submitted_review, 30, 80);
+            Canned::json(&page.to_string())
+        }
+        "earlier" => {
+            let before: u32 = request.variables()["before"].as_str().unwrap().parse().unwrap();
+            let from = before.saturating_sub(50);
+            let (name, page) = if query_of(request).contains("comments(") {
+                ("comments", backwards_page(issue_comment, from, before))
+            } else {
+                ("reviews", backwards_page(submitted_review, from, before))
+            };
+            data(json!({ "repository": { "pullRequest": { name: page } } }))
+        }
+        other => panic!("unexpected {other}"),
+    });
+
+    let found = client(&fake).discussion(&remote(), 482).await.unwrap();
+
+    let ids = |prefix: &str| found.conversation.iter().filter(|i| i.id.starts_with(prefix)).count();
+    assert_eq!((ids("IC"), ids("R")), (120, 80));
 }
 
 #[tokio::test]
