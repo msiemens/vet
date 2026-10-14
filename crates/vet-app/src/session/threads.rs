@@ -20,7 +20,7 @@ use super::views::{FileStatus, Outcome};
 use super::{LiveSession, Result, SessionError};
 use crate::changeset::Source;
 use crate::editor::last_text_line;
-use crate::platform::{ChangesetThreads, PlatformTraits};
+use crate::platform::{ChangesetThreads, PlatformKind, PlatformTraits};
 use crate::ports::{GitRepo, LiveStore, ReviewWrites};
 
 const NEW_SIDE_ONLY: &str = "a comment on an interdiff goes on its new side; the old side is the older version rebased \
@@ -264,7 +264,8 @@ impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> L
         let platform = match &st.source {
             Source::PullRequest { remote, .. } => Some(PlatformThread::draft(
                 target != CommentTarget::Changeset
-                    || PlatformTraits::of(remote.kind()).changeset_threads != ChangesetThreads::Flat,
+                    || PlatformTraits::of(PlatformKind::of_account(&remote.host)).changeset_threads
+                        != ChangesetThreads::Flat,
             )),
             _ => None,
         };

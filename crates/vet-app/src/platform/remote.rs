@@ -33,7 +33,9 @@ pub struct RemoteKey {
 }
 
 impl RemoteKey {
-    pub fn kind(&self) -> PlatformKind {
+    /// The platform Vet knows this host to be by name, if any. A GitHub Enterprise installation is
+    /// not one: it is GitHub only through the viewer's account (see [`Platforms`]).
+    pub fn kind(&self) -> Option<PlatformKind> {
         PlatformKind::of_host(&self.host)
     }
 
@@ -42,7 +44,7 @@ impl RemoteKey {
     /// whichever of its hosts the remote names).
     pub fn account(&self) -> String {
         match (self.kind(), self.segments().next()) {
-            (PlatformKind::AzureDevOps, Some(organization)) => azure_devops_account(organization),
+            (Some(PlatformKind::AzureDevOps), Some(organization)) => azure_devops_account(organization),
             _ => self.host.clone(),
         }
     }
@@ -114,8 +116,10 @@ pub fn parse_remote(url: &str) -> Option<RemoteKey> {
         return Some(key);
     }
     match PlatformKind::of_host(&host) {
-        PlatformKind::AzureDevOps => azure_devops(&host, &segments),
-        PlatformKind::GitHub => github(&host, &segments),
+        Some(PlatformKind::AzureDevOps) => azure_devops(&host, &segments),
+        // github.com and any host whose shape is GitHub's. Whether the host is a platform Vet talks
+        // to is the registry's to say; this only tells the shape of the path.
+        _ => github(&host, &segments),
     }
 }
 
@@ -257,7 +261,11 @@ mod tests {
             "ssh://git@ssh.dev.azure.com/v3/contoso/Shop/api",
         ] {
             assert_eq!(parse_remote(url), key("dev.azure.com", "contoso/Shop/api"), "{url}");
-            assert_eq!(parse_remote(url).unwrap().kind(), PlatformKind::AzureDevOps, "{url}");
+            assert_eq!(
+                parse_remote(url).unwrap().kind(),
+                Some(PlatformKind::AzureDevOps),
+                "{url}"
+            );
         }
         assert_eq!(
             parse_remote("https://dev.azure.com/contoso/_git/api"),

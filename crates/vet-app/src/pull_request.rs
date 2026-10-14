@@ -4,8 +4,8 @@
 
 use crate::fetch::{Credentials, Fetch, FetchMark};
 use crate::platform::{
-    Platform, PlatformError, PlatformKind, PullRequest, PullRequestHead, PullRequestQuery, PullRequestRow, Push,
-    QueueTab, RemoteKey, list_rows, parse_remote, rows,
+    Platform, PlatformError, PlatformKind, Platforms, PullRequest, PullRequestHead, PullRequestQuery, PullRequestRow,
+    Push, QueueTab, RemoteKey, list_rows, parse_remote, rows,
 };
 use crate::ports::{Fetcher, GitError, RefUpdate, RemoteInfo};
 
@@ -142,11 +142,12 @@ pub struct HostedRepository {
 }
 
 /// The repositories on `kind` that `remotes` name, each once, in the order of the remotes (a
-/// second remote for the same repository is the same repository).
-pub fn hosted_repositories(remotes: &[RemoteInfo], kind: PlatformKind) -> Vec<HostedRepository> {
+/// second remote for the same repository is the same repository). A host Vet does not know (and the
+/// viewer has no account for) is not one of any kind.
+pub fn hosted_repositories(remotes: &[RemoteInfo], platforms: &Platforms, kind: PlatformKind) -> Vec<HostedRepository> {
     let mut found: Vec<HostedRepository> = Vec::new();
     for remote in remotes {
-        let Some(key) = parse_remote(&remote.url).filter(|k| k.kind() == kind) else {
+        let Some(key) = parse_remote(&remote.url).filter(|k| platforms.of(&k.host) == Some(kind)) else {
             continue;
         };
         if !found.iter().any(|h| h.key == key) {
@@ -159,29 +160,18 @@ pub fn hosted_repositories(remotes: &[RemoteInfo], kind: PlatformKind) -> Vec<Ho
     found
 }
 
-/// The hosts `repositories` are on that are not github.com: the ones whose account decides whether
-/// a repository there is GitHub's (a host that is neither GitHub nor Azure DevOps has none).
-pub fn hosts_to_ask_about(repositories: &[HostedRepository]) -> Vec<String> {
+/// The names of the hosts of `remotes` that Vet does not know by name, whose account decides
+/// whether a repository there is a platform's at all.
+pub fn hosts_to_ask_about(remotes: &[RemoteInfo]) -> Vec<String> {
     let mut hosts: Vec<String> = Vec::new();
-    for host in repositories.iter().map(|h| &h.key.host).filter(|h| *h != GITHUB_COM) {
-        if !hosts.contains(host) {
-            hosts.push(host.clone());
+    for remote in remotes {
+        let Some(key) = parse_remote(&remote.url) else { continue };
+        if key.kind().is_none() && !hosts.contains(&key.host) {
+            hosts.push(key.host);
         }
     }
     hosts
 }
-
-/// The repositories of `candidates` (those [`hosted_repositories`] answers for GitHub) that are
-/// on GitHub: on github.com, or on a host with an account, which is how a GitHub Enterprise host
-/// is told from any other git host.
-pub fn on_github(candidates: Vec<HostedRepository>, hosts_with_account: &[String]) -> Vec<HostedRepository> {
-    candidates
-        .into_iter()
-        .filter(|h| h.key.host == GITHUB_COM || hosts_with_account.contains(&h.key.host))
-        .collect()
-}
-
-const GITHUB_COM: &str = "github.com";
 
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub struct ListedPullRequest {
@@ -324,14 +314,16 @@ pub async fn fetch_pull_request<P: Platform, G: Fetcher>(
         .await
         .map_err(FetchError::Platform)?;
     let remotes = fetch.remotes().await.map_err(FetchError::Git)?;
-    let hosted = hosted_repositories(&remotes, remote.kind());
-    let git_remote = hosted
+    let git_remote = remotes
         .iter()
-        .find(|h| h.key == *remote)
-        .and_then(|h| remotes.iter().find(|r| r.name == h.remote))
+        .find(|r| parse_remote(&r.url).as_ref() == Some(remote))
         .ok_or_else(|| FetchError::NoRemote(format!("none of the remotes of this repository is {remote}")))?;
     let refs = PullRequestRefs::of(remote, number);
-    let updates = refs.updates(remote.kind(), number, (&detail.pull_request).into());
+    let updates = refs.updates(
+        PlatformKind::of_account(&remote.host),
+        number,
+        (&detail.pull_request).into(),
+    );
     fetch
         .refs(credentials, git_remote, updates, format!("Fetching #{number}"))
         .await
@@ -452,10 +444,9 @@ pub async fn fetch_listed_heads<G: Fetcher>(
     let mut brought = false;
     for source in list.sources.iter().filter(|s| s.error.is_none()) {
         let repository = &source.remote;
-        let Some(git_remote) = hosted_repositories(&remotes, repository.kind())
-            .into_iter()
-            .find(|h| h.key == *repository)
-            .and_then(|h| remotes.iter().find(|r| r.name == h.remote))
+        let Some(git_remote) = remotes
+            .iter()
+            .find(|r| parse_remote(&r.url).as_ref() == Some(repository))
         else {
             continue;
         };
@@ -470,7 +461,11 @@ pub async fn fetch_listed_heads<G: Fetcher>(
             })
             .map(|listed| {
                 let number = listed.row.number;
-                PullRequestRefs::of(repository, number).updates(repository.kind(), number, (&listed.row).into())
+                PullRequestRefs::of(repository, number).updates(
+                    PlatformKind::of_account(&repository.host),
+                    number,
+                    (&listed.row).into(),
+                )
             })
             .collect();
         for batch in missing.chunks(HEADS_PER_FETCH) {
@@ -574,7 +569,7 @@ mod tests {
     }
 
     #[test]
-    fn only_github_com_and_hosts_with_an_account_are_github() {
+    fn only_github_com_and_hosts_with_an_account_are_repositories_and_an_unknown_host_is_refused() {
         let remotes = [
             info("origin", "https://github.com/acme/app"),
             info("ghe", "git@ghe.corp.example:team/svc.git"),
@@ -582,13 +577,25 @@ mod tests {
             info("lab2", "git@gitlab.com:acme/other.git"),
             info("work", "https://dev.azure.com/contoso/Shop/_git/api"),
         ];
-        let candidates = hosted_repositories(&remotes, PlatformKind::GitHub);
-        let to_ask = hosts_to_ask_about(&candidates);
-        assert_eq!(to_ask, ["ghe.corp.example", "gitlab.com"]);
+        assert_eq!(
+            hosts_to_ask_about(&remotes),
+            ["ghe.corp.example", "gitlab.com"],
+            "the hosts Vet does not know by name"
+        );
 
-        let github = on_github(candidates, &["ghe.corp.example".to_owned()]);
-        let found: Vec<_> = github.iter().map(|h| h.key.to_string()).collect();
-        assert_eq!(found, ["github.com/acme/app", "ghe.corp.example/team/svc"]);
+        // Only the host the viewer signed in to is a platform: gitlab.com is refused, never taken
+        // for GitHub.
+        let platforms = Platforms::new().with_account("ghe.corp.example");
+        let github: Vec<_> = hosted_repositories(&remotes, &platforms, PlatformKind::GitHub)
+            .iter()
+            .map(|h| h.key.to_string())
+            .collect();
+        assert_eq!(github, ["github.com/acme/app", "ghe.corp.example/team/svc"]);
+        let azure: Vec<_> = hosted_repositories(&remotes, &platforms, PlatformKind::AzureDevOps)
+            .iter()
+            .map(|h| h.key.to_string())
+            .collect();
+        assert_eq!(azure, ["dev.azure.com/contoso/Shop/api"]);
     }
 
     #[test]
@@ -600,7 +607,7 @@ mod tests {
             info("local", "/srv/git/app"),
             info("work", "https://dev.azure.com/contoso/Shop/_git/api"),
         ];
-        let found = hosted_repositories(&remotes, PlatformKind::GitHub);
+        let found = hosted_repositories(&remotes, &Platforms::new(), PlatformKind::GitHub);
         let names: Vec<_> = found.iter().map(|h| (h.remote.as_str(), h.key.path.as_str())).collect();
         assert_eq!(names, [("origin", "acme/app"), ("fork", "ada/app")]);
     }

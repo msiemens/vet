@@ -688,11 +688,13 @@ impl<C: CredentialProvider + Sync> Platform for AzureDevOpsClient<C> {
 fn repository(remote: &RemoteKey) -> Result<Repository<'_>, PlatformError> {
     let segments: Vec<&str> = remote.segments().collect();
     match segments[..] {
-        [organization, project, name] if remote.kind() == PlatformKind::AzureDevOps => Ok(Repository {
-            organization,
-            project,
-            name,
-        }),
+        [organization, project, name] if PlatformKind::of_account(&remote.host) == PlatformKind::AzureDevOps => {
+            Ok(Repository {
+                organization,
+                project,
+                name,
+            })
+        }
         _ => Err(PlatformError::Unexpected(format!(
             "{remote} is not an Azure DevOps repository"
         ))),

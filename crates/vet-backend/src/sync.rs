@@ -20,7 +20,7 @@ impl Orchestrator {
     pub(crate) async fn edit_message(&self, project: ProjectId, id: u32, body: String) -> Result<Response> {
         let open = self.ready(project).await?;
         let thread = (open.session)
-            .edit_message(&open.hosting().await, MessageId(id.into()), body, unix_now())
+            .edit_message(&open.hosting().await?, MessageId(id.into()), body, unix_now())
             .await?;
         Ok(thread_changed(&open, &thread).await)
     }
@@ -28,7 +28,7 @@ impl Orchestrator {
     pub(crate) async fn remove_message(&self, project: ProjectId, id: u32) -> Result<Response> {
         let open = self.ready(project).await?;
         (open.session)
-            .remove_message(&open.hosting().await, MessageId(id.into()))
+            .remove_message(&open.hosting().await?, MessageId(id.into()))
             .await?;
         threads_changed(&open).await;
         Ok(Response::Done)
@@ -41,7 +41,7 @@ impl Orchestrator {
             EditChoice::Remote => Keep::Remote,
         };
         let thread = (open.session)
-            .keep_edit(&open.hosting().await, MessageId(id.into()), keep)
+            .keep_edit(&open.hosting().await?, MessageId(id.into()), keep)
             .await?;
         Ok(thread_changed(&open, &thread).await)
     }
@@ -54,7 +54,7 @@ impl Orchestrator {
     ) -> Result<Response> {
         let open = self.ready(project).await?;
         (open.session)
-            .edit_conversation_comment(&open.hosting().await, comment, body)
+            .edit_conversation_comment(&open.hosting().await?, comment, body)
             .await?;
         threads_changed(&open).await;
         Ok(Response::Done)
@@ -63,7 +63,7 @@ impl Orchestrator {
     pub(crate) async fn delete_conversation_comment(&self, project: ProjectId, comment: &str) -> Result<Response> {
         let open = self.ready(project).await?;
         (open.session)
-            .remove_conversation_comment(&open.hosting().await, comment)
+            .remove_conversation_comment(&open.hosting().await?, comment)
             .await?;
         threads_changed(&open).await;
         Ok(Response::Done)
@@ -86,14 +86,14 @@ impl Orchestrator {
     ) -> Result<Response> {
         let open = self.ready(project).await?;
         let report = (open.session)
-            .submit_review(&open.hosting().await, &verdict, body)
+            .submit_review(&open.hosting().await?, &verdict, body)
             .await?;
         self.after_posting(&open, project, &report).await
     }
 
     pub(crate) async fn post_drafts(&self, project: ProjectId) -> Result<Response> {
         let open = self.ready(project).await?;
-        let report = (open.session).post_drafts(&open.hosting().await).await?;
+        let report = (open.session).post_drafts(&open.hosting().await?).await?;
         self.after_posting(&open, project, &report).await
     }
 
@@ -124,7 +124,7 @@ impl Orchestrator {
 
     pub(crate) async fn stage_vote(&self, project: ProjectId, verdict: String) -> Result<Response> {
         let open = self.ready(project).await?;
-        (open.session).stage_vote(&open.hosting().await, &verdict).await?;
+        (open.session).stage_vote(&open.hosting().await?, &verdict).await?;
         threads_changed(&open).await;
         Ok(Response::Done)
     }
@@ -145,13 +145,14 @@ impl Orchestrator {
             .ok_or_else(|| Error::Unavailable("the pull request was not synced yet".into()))?;
         let pending_vote = open.session.pending_vote().await?;
         let account = remote.account();
+        let kind = open.open.kind_of(&remote).await?;
         let standing = open.open.platforms.standing(&account);
         let connection = mapping::platform_connection(standing.as_ref().and_then(Standing::error));
-        let status = mapping::platform_status(&account, remote.kind(), connection);
+        let status = mapping::platform_status(&account, kind, connection);
         Ok(Response::PullRequestInfo(Box::new(mapping::pull_request_info(
             &view,
             pending_vote.as_ref(),
-            remote.kind(),
+            kind,
             status,
         ))))
     }
@@ -173,7 +174,9 @@ pub(crate) async fn sync_pull_request(open: &Arc<Open>, booted: &Booted) -> bool
     let Source::PullRequest { remote, .. } = booted.session.source().await else {
         return false;
     };
-    let hosting = open.hosting(remote.kind());
+    let Ok(hosting) = open.hosting_for(&remote).await else {
+        return false;
+    };
     match booted.session.sync_threads(&hosting).await {
         Ok(report) => announce(open, booted, &remote, &report).await,
         // The platform could not be asked, or the changeset on view changed meanwhile.
@@ -184,7 +187,10 @@ pub(crate) async fn sync_pull_request(open: &Arc<Open>, booted: &Booted) -> bool
 /// Answers whether the subscribers were told that threads changed. A sync is also what the
 /// pull request's information is read after, so the platform's status is told with it.
 async fn announce(open: &Open, booted: &Booted, remote: &RemoteKey, report: &SyncReport) -> bool {
-    let kind = remote.kind();
+    let Ok(kind) = open.kind_of(remote).await else {
+        tracing::warn!(repository = %remote, "not announcing a pull request of a host Vet does not know");
+        return false;
+    };
     let account = remote.account();
     let standing = open.platforms.standing(&account);
     let connection = mapping::platform_connection(standing.as_ref().and_then(Standing::error));

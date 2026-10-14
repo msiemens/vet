@@ -81,7 +81,7 @@ impl Orchestrator {
     pub(crate) async fn delete_thread(&self, project: ProjectId, thread: u32) -> Result<Response> {
         let open = self.ready(project).await?;
         open.session
-            .delete_thread(&open.hosting().await, ThreadId(thread.into()))
+            .delete_thread(&open.hosting().await?, ThreadId(thread.into()))
             .await?;
         threads_changed(&open).await;
         Ok(Response::Done)

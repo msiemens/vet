@@ -5,9 +5,11 @@ use std::time::Duration;
 
 use vet_app::changeset::{RemoteKey, Source};
 use vet_app::fetch::FetchMark;
-use vet_app::platform::{Platform, PlatformError, PlatformKind, PullRequestCache, Standing, commits_checks};
+use vet_app::platform::{
+    Platform, PlatformError, PlatformKind, Platforms as KnownPlatforms, PullRequestCache, Standing, commits_checks,
+};
 use vet_app::ports::{ChangesetStore, LiveStore, ReviewWrites};
-use vet_app::pull_request::{self, FetchError, PullRequestList, hosted_repositories, hosts_to_ask_about, on_github};
+use vet_app::pull_request::{self, FetchError, PullRequestList, hosted_repositories, hosts_to_ask_about};
 use vet_app::session::RowReview;
 use vet_infra::clock::unix_now;
 use vet_infra::store::SqliteStore;
@@ -18,9 +20,9 @@ use crate::accounts::Held;
 use crate::checks::refresh_checks_after_action;
 use crate::error::{Error, Result};
 use crate::hosting::{Hosting, Platforms};
-use crate::open::Ready;
+use crate::open::{Ready, kind_of};
 use crate::sync::sync_in_background;
-use crate::{Live, Open, Orchestrator, start_servers_in_background};
+use crate::{Live, Open, Orchestrator, PlatformAccounts, start_servers_in_background};
 
 impl Orchestrator {
     pub(crate) async fn list_changesets(&self, project: ProjectId) -> Result<Response> {
@@ -31,23 +33,24 @@ impl Orchestrator {
     pub(crate) async fn list_pull_requests(&self, project: ProjectId) -> Result<Response> {
         let open = self.ready(project).await?;
         let remotes = open.open.fetch.remotes().await?;
-        let candidates = hosted_repositories(&remotes, PlatformKind::GitHub);
-        let mut hosts_with_account = Vec::new();
-        for host in hosts_to_ask_about(&candidates) {
+        // The platforms registry: the hosts Vet knows by name, and the hosts the viewer has an
+        // account for (a GitHub Enterprise installation). A host that is neither is not listed.
+        let mut platforms = KnownPlatforms::new();
+        for host in hosts_to_ask_about(&remotes) {
             if self.accounts.has_account(&host, unix_now()).await {
-                hosts_with_account.push(host);
+                platforms = platforms.with_account(&host);
+            } else {
+                tracing::warn!(
+                    host = %host,
+                    "not listing pull requests: the host is not one Vet knows and has no account, so it is not known to be a platform"
+                );
             }
         }
-        let on_github = on_github(candidates.clone(), &hosts_with_account);
-        for skipped in candidates.iter().filter(|c| !on_github.contains(c)) {
-            tracing::warn!(
-                remote = %skipped.remote,
-                host = %skipped.key.host,
-                "not listing pull requests: the host is not github.com and has no account, so it is not known to be GitHub"
-            );
-        }
-        let github: Vec<_> = on_github.into_iter().map(|h| h.key).collect();
-        let azure_devops: Vec<_> = hosted_repositories(&remotes, PlatformKind::AzureDevOps)
+        let github: Vec<_> = hosted_repositories(&remotes, &platforms, PlatformKind::GitHub)
+            .into_iter()
+            .map(|h| h.key)
+            .collect();
+        let azure_devops: Vec<_> = hosted_repositories(&remotes, &platforms, PlatformKind::AzureDevOps)
             .into_iter()
             .map(|h| h.key)
             .collect();
@@ -80,6 +83,7 @@ impl Orchestrator {
         fetch_heads_in_background(open.open.clone(), list.clone());
         let prefetching = prefetch_details(
             self.platforms.clone(),
+            self.accounts.clone(),
             self.store.clone(),
             self.platforms.known(),
             list.clone(),
@@ -129,7 +133,7 @@ impl Orchestrator {
         let Some(remote) = self.hosted_pull_request(project).await? else {
             return Ok(mapping::checks(&[], None));
         };
-        let hosting = self.platforms.hosting(remote.kind());
+        let hosting = self.platforms.hosting(self.kind_of(&remote).await?);
         let (found, error) = commits_checks(&hosting, &remote, &commits).await;
         Ok(mapping::checks(&found, error.as_ref()))
     }
@@ -141,7 +145,7 @@ impl Orchestrator {
             .hosted_pull_request(project)
             .await?
             .ok_or_else(Error::not_a_pull_request)?;
-        let hosting = self.platforms.hosting(remote.kind());
+        let hosting = self.platforms.hosting(self.kind_of(&remote).await?);
         Ok((remote, hosting))
     }
 
@@ -214,6 +218,7 @@ const PREFETCH_LIMIT: usize = 20;
 /// the next list's and stops it when the project closes.
 fn prefetch_details(
     platforms: Arc<Platforms>,
+    accounts: Arc<PlatformAccounts>,
     store: SqliteStore,
     known: Arc<PullRequestCache>,
     list: PullRequestList,
@@ -242,7 +247,13 @@ fn prefetch_details(
                 continue;
             }
             fetched += 1;
-            let hosting = platforms.hosting(listed.remote.kind());
+            let hosting = match kind_of(&listed.remote, &accounts).await {
+                Ok(kind) => platforms.hosting(kind),
+                Err(error) => {
+                    tracing::warn!(repository = %listed.remote, %error, "prefetching a pull request of an unknown host");
+                    continue;
+                }
+            };
             match hosting.discussion(&listed.remote, listed.row.number).await {
                 Ok(discussion) => {
                     let at = unix_now();
@@ -339,8 +350,11 @@ pub(crate) async fn bring_in(
     number: u64,
 ) -> std::result::Result<bool, FetchError> {
     let held = Held(&open.accounts);
-    let brought =
-        pull_request::fetch_pull_request(&open.hosting(remote.kind()), &open.fetch, &held, remote, number).await?;
+    let hosting = open
+        .hosting_for(remote)
+        .await
+        .map_err(|error| FetchError::NoRemote(error.to_string()))?;
+    let brought = pull_request::fetch_pull_request(&hosting, &open.fetch, &held, remote, number).await?;
     let source = Source::PullRequest {
         remote: remote.clone(),
         number,

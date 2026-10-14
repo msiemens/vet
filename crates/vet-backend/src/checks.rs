@@ -77,7 +77,9 @@ async fn run(open: Arc<Open>, pace: Duration, mut settle: Option<Duration>) {
         if commits.is_empty() {
             return;
         }
-        let hosting = open.hosting(remote.kind());
+        let Ok(hosting) = open.hosting_for(&remote).await else {
+            return;
+        };
         let (found, error) = commits_checks(&hosting, &remote, &commits).await;
         let (checks, error, limited_until) = mapping::checks_parts(&found, error.as_ref());
         open.subscribers.broadcast(Event::ChecksChanged {

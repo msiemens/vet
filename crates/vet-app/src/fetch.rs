@@ -216,14 +216,15 @@ pub struct Ran {
 /// one for.
 async fn authentication(credentials: &(impl Credentials + Sync), remote: &RemoteInfo) -> Option<FetchAuth> {
     let host = remote.https_host.as_ref()?;
-    // An Azure DevOps remote is reached by the account of its organization.
+    // An Azure DevOps remote is reached by the account of its organization; a credential for any
+    // other host is a GitHub Enterprise account's, so the kind is the account's.
     let account = match PlatformKind::of_host(host) {
-        PlatformKind::AzureDevOps => parse_remote(&remote.url)?.account(),
-        PlatformKind::GitHub => host.clone(),
+        Some(PlatformKind::AzureDevOps) => parse_remote(&remote.url)?.account(),
+        _ => host.clone(),
     };
     credentials.credential(&account).await.map(|credential| FetchAuth {
         host: host.clone(),
-        kind: PlatformKind::of_host(host),
+        kind: PlatformKind::of_account(host),
         credential,
     })
 }

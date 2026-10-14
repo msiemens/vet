@@ -217,7 +217,7 @@ where
             };
             identity = match self
                 .validator
-                .user(&host, PlatformKind::of_host(&host), &credential)
+                .user(&host, PlatformKind::of_account(&host), &credential)
                 .await
             {
                 Ok(user) => Identity::User(user),
@@ -284,7 +284,7 @@ where
             if let Some(why) = &slot.cli_unusable {
                 accounts.push(Account {
                     host: host.clone(),
-                    kind: PlatformKind::of_host(host),
+                    kind: PlatformKind::of_account(host),
                     source: CredentialSource::Cli,
                     user: None,
                     state: AccountState::Unusable(why.clone()),
@@ -302,7 +302,7 @@ where
                 };
                 accounts.push(Account {
                     host: host.clone(),
-                    kind: PlatformKind::of_host(host),
+                    kind: PlatformKind::of_account(host),
                     source,
                     user: owner.map(|o| o.user.clone()),
                     state,
@@ -338,7 +338,7 @@ where
             let credential = Credential { token, source };
             let answer = self
                 .validator
-                .user(&host, PlatformKind::of_host(&host), &credential)
+                .user(&host, PlatformKind::of_account(&host), &credential)
                 .await;
             let mut state = self.state();
             let Some(held) = state.hosts.get_mut(&host).and_then(|slot| slot.of(source).as_mut()) else {
@@ -386,7 +386,7 @@ where
     /// What the CLI prints. A `gh` that lists the host but cannot deliver its token is
     /// [`CliRead::Unusable`], with `gh`'s own words for why.
     async fn read_cli(&self, host: &str) -> CliRead {
-        let kind = PlatformKind::of_host(host);
+        let kind = PlatformKind::of_account(host);
         let Some(output) = self.run(&cli::command(kind, host, &self.cwd)).await else {
             return CliRead::Absent;
         };

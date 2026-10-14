@@ -32,7 +32,7 @@ pub use discussion::{
 #[cfg(test)]
 pub(crate) use fake::FakeHosting;
 pub use health::{Health, Outcome, Standing};
-pub use host::{PlatformKind, normalize_host};
+pub use host::{PlatformKind, Platforms, normalize_host};
 pub use known::PullRequestCache;
 pub use model::{
     BlockingSource, ChangesAsked, ChangesRequest, ChangesetThreads, CiState, ForcePush, PipelineWords, PlatformError,

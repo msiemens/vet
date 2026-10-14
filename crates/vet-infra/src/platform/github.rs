@@ -621,7 +621,7 @@ impl<C: CredentialProvider + Sync> Platform for GitHubClient<C> {
 }
 
 fn repository(remote: &RemoteKey) -> Result<(&str, &str), PlatformError> {
-    let github = remote.kind() == PlatformKind::GitHub;
+    let github = PlatformKind::of_account(&remote.host) == PlatformKind::GitHub;
     match remote.path.split_once('/') {
         Some((owner, name)) if github && !name.contains('/') => Ok((owner, name)),
         _ => Err(PlatformError::Unexpected(format!(

@@ -13,7 +13,7 @@ use std::time::{Duration, SystemTime};
 
 use tokio::sync::OnceCell;
 use tokio::task::AbortHandle;
-use vet_app::changeset::Source;
+use vet_app::changeset::{RemoteKey, Source};
 use vet_app::fetch::Fetch;
 use vet_app::ignore::IgnoringWatcher;
 use vet_app::platform::PlatformKind;
@@ -79,6 +79,19 @@ struct Plan {
 /// is the handle of a task, never left half-written.
 fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
     mutex.lock().unwrap_or_else(PoisonError::into_inner)
+}
+
+/// The platform of `remote`: the host Vet knows by name, or one the viewer has an account for (a
+/// GitHub Enterprise installation). A host that is neither is an error fit to show.
+pub(crate) async fn kind_of(remote: &RemoteKey, accounts: &PlatformAccounts) -> Result<PlatformKind> {
+    match remote.kind() {
+        Some(kind) => Ok(kind),
+        None if accounts.has_account(&remote.host, unix_now()).await => Ok(PlatformKind::GitHub),
+        None => Err(Error::Invalid(format!(
+            "{} is not a hosting platform Vet knows, and the viewer has no account for it",
+            remote.host
+        ))),
+    }
 }
 
 /// The latest background task of one kind that a project runs: a newer one replaces the older and
@@ -169,6 +182,17 @@ impl Wired {
     /// The client of the platform `kind`.
     pub(crate) fn hosting(&self, kind: PlatformKind) -> Hosting {
         self.platforms.hosting(kind)
+    }
+
+    /// The platform of `remote`: the host Vet knows by name, or one the viewer has an account for
+    /// (a GitHub Enterprise installation). A host that is neither is an error fit to show.
+    pub(crate) async fn kind_of(&self, remote: &RemoteKey) -> Result<PlatformKind> {
+        kind_of(remote, &self.accounts).await
+    }
+
+    /// The client of the platform `remote` is on.
+    pub(crate) async fn hosting_for(&self, remote: &RemoteKey) -> Result<Hosting> {
+        Ok(self.hosting(self.kind_of(remote).await?))
     }
 
     /// Hands over the task that fetches periodically, which ends with the session.
@@ -431,13 +455,13 @@ impl Deref for Ready {
 
 impl Ready {
     /// The client of the platform that hosts the pull request on view. For a changeset that is no
-    /// pull request, which nothing is asked of a platform about, GitHub's.
-    pub(crate) async fn hosting(&self) -> Hosting {
-        let kind = match self.session.source().await {
-            Source::PullRequest { remote, .. } => remote.kind(),
-            _ => PlatformKind::GitHub,
-        };
-        self.open.hosting(kind)
+    /// pull request, which nothing is asked of a platform about, GitHub's. Fails for a host that is
+    /// neither one Vet knows nor one the viewer has an account for.
+    pub(crate) async fn hosting(&self) -> Result<Hosting> {
+        match self.session.source().await {
+            Source::PullRequest { remote, .. } => self.open.hosting_for(&remote).await,
+            _ => Ok(self.open.hosting(PlatformKind::GitHub)),
+        }
     }
 }
 
@@ -452,6 +476,11 @@ impl Orchestrator {
             open,
             booted,
         })
+    }
+
+    /// The platform of `remote`, for a request about the whole process (which is not one project's).
+    pub(crate) async fn kind_of(&self, remote: &RemoteKey) -> Result<PlatformKind> {
+        kind_of(remote, &self.accounts).await
     }
 
     /// What `ask` makes of the live session of the project `id`, once its first scan is done; a
