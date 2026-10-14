@@ -1,6 +1,7 @@
 //! The open projects of a process: one per repository, the connections
 //! subscribed to each, and when a project without connections closes.
 
+use std::collections::HashMap;
 use std::fmt;
 use std::ops::Deref;
 use std::path::{Path, PathBuf};
@@ -8,6 +9,7 @@ use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use std::time::Duration;
 
+use crate::mutex::lock;
 use crate::ports::{Clock, Millis};
 
 /// A connection that wants a project's events.
@@ -111,36 +113,51 @@ impl fmt::Display for NoSuchProject {
     }
 }
 
-type Entries<S, T> = Arc<tokio::sync::Mutex<Vec<Arc<Entry<S, T>>>>>;
+/// Held while a repository's project is built or shut, so that one repository is never open
+/// twice and never opened while it closes. Other repositories do not wait for it.
+type Gate = Arc<tokio::sync::Mutex<()>>;
 
-pub struct Registry<S, T> {
-    entries: Entries<S, T>,
-    next_id: Arc<AtomicU32>,
+struct Shared<S, T> {
+    /// The open projects: only ever locked to look at or change the list, never across an await.
+    entries: Mutex<Vec<Arc<Entry<S, T>>>>,
+    /// The gates of the repositories in use. A gate nobody else holds is dropped on the next look.
+    gates: Mutex<HashMap<PathBuf, Gate>>,
+    next_id: AtomicU32,
 }
+
+pub struct Registry<S, T>(Arc<Shared<S, T>>);
 
 impl<S, T> Clone for Registry<S, T> {
     fn clone(&self) -> Self {
-        Self {
-            entries: self.entries.clone(),
-            next_id: self.next_id.clone(),
-        }
+        Self(self.0.clone())
     }
 }
 
 impl<S, T> Default for Registry<S, T> {
     fn default() -> Self {
-        Self {
-            entries: Arc::default(),
-            next_id: Arc::new(AtomicU32::new(1)),
-        }
+        Self(Arc::new(Shared {
+            entries: Mutex::default(),
+            gates: Mutex::default(),
+            next_id: AtomicU32::new(1),
+        }))
     }
 }
 
 impl<S: Subscriber, T: Resident> Registry<S, T> {
+    fn gate(&self, repo: &Path) -> Gate {
+        let mut gates = lock(&self.0.gates);
+        gates.retain(|_, gate| Arc::strong_count(gate) > 1);
+        gates.entry(repo.to_owned()).or_default().clone()
+    }
+
+    fn entry_of(&self, matches: impl Fn(&Entry<S, T>) -> bool) -> Option<Arc<Entry<S, T>>> {
+        lock(&self.0.entries).iter().find(|e| matches(e)).cloned()
+    }
+
     /// The project of `repo` with `subscriber` subscribed; `create` builds it
     /// from its new id and subscribers when the repository is not open yet.
-    /// Whether it did is the second value. Creation holds the registry, so a
-    /// repository is never opened twice.
+    /// Whether it did is the second value. Opening the same repository waits for
+    /// the one under way, so it is never opened twice; other projects go on meanwhile.
     pub async fn open<E, F>(
         &self,
         repo: &Path,
@@ -150,12 +167,13 @@ impl<S: Subscriber, T: Resident> Registry<S, T> {
     where
         F: Future<Output = Result<T, E>>,
     {
-        let mut entries = self.entries.lock().await;
-        if let Some(entry) = entries.iter().find(|e| e.repo == repo) {
+        let gate = self.gate(repo);
+        let _building = gate.lock().await;
+        if let Some(entry) = self.entry_of(|e| e.repo == repo) {
             entry.subscribers.subscribe(subscriber);
-            return Ok((entry.clone(), false));
+            return Ok((entry, false));
         }
-        let id = self.next_id.fetch_add(1, Ordering::Relaxed);
+        let id = self.0.next_id.fetch_add(1, Ordering::Relaxed);
         let subscribers = Subscribers::new(subscriber);
         let resident = create(id, subscribers.clone()).await?;
         let entry = Arc::new(Entry {
@@ -164,25 +182,43 @@ impl<S: Subscriber, T: Resident> Registry<S, T> {
             subscribers,
             resident,
         });
-        entries.push(entry.clone());
+        lock(&self.0.entries).push(entry.clone());
         Ok((entry, true))
     }
 
     pub async fn find(&self, id: u32) -> Result<Arc<Entry<S, T>>, NoSuchProject> {
-        let entries = self.entries.lock().await;
-        entries.iter().find(|e| e.id == id).cloned().ok_or(NoSuchProject)
+        self.entry_of(|e| e.id == id).ok_or(NoSuchProject)
     }
 
     pub async fn all(&self) -> Vec<Arc<Entry<S, T>>> {
-        self.entries.lock().await.clone()
+        lock(&self.0.entries).clone()
+    }
+
+    /// Takes `entry` out and shuts it, unless a connection subscribed meanwhile or it is gone.
+    /// Whether it did. Subscribing goes through the same gate, so none can attach while it shuts.
+    async fn retire(&self, entry: &Entry<S, T>) -> bool {
+        let gate = self.gate(&entry.repo);
+        let _closing = gate.lock().await;
+        if !entry.subscribers.is_empty() {
+            return false;
+        }
+        let removed = {
+            let mut entries = lock(&self.0.entries);
+            let at = entries.iter().position(|e| e.id == entry.id);
+            at.map(|at| entries.remove(at))
+        };
+        let Some(entry) = removed else {
+            return false;
+        };
+        entry.shut().await;
+        true
     }
 
     /// Unsubscribes the connection; the last one to leave closes the project.
     pub async fn close(&self, id: u32, subscriber: &S) -> Result<(), NoSuchProject> {
         let entry = self.find(id).await?;
         if entry.subscribers.unsubscribe(subscriber) {
-            self.entries.lock().await.retain(|e| e.id != id);
-            entry.shut().await;
+            self.retire(&entry).await;
         }
         Ok(())
     }
@@ -195,8 +231,7 @@ impl<S: Subscriber, T: Resident> Registry<S, T> {
         let mut orphaned_since: Option<Millis> = None;
         loop {
             clock.sleep_until(Millis(clock.now().0 + tick)).await;
-            let mut entries = self.entries.lock().await;
-            let Some(entry) = entries.iter().find(|e| e.id == id).cloned() else {
+            let Some(entry) = self.entry_of(|e| e.id == id) else {
                 return;
             };
             if !entry.subscribers.is_empty() {
@@ -206,10 +241,11 @@ impl<S: Subscriber, T: Resident> Registry<S, T> {
             let now = clock.now();
             let since = *orphaned_since.get_or_insert(now);
             if now.0 - since.0 >= grace {
-                // Holding the list lock, so a connection cannot attach meanwhile.
-                entries.retain(|e| e.id != id);
-                entry.shut().await;
-                return;
+                if self.retire(&entry).await {
+                    return;
+                }
+                // A connection attached after all, or the project closed meanwhile.
+                orphaned_since = None;
             }
         }
     }
@@ -218,6 +254,8 @@ impl<S: Subscriber, T: Resident> Registry<S, T> {
 #[cfg(test)]
 mod tests {
     use std::sync::atomic::{AtomicBool, AtomicU64};
+
+    use tokio::sync::Notify;
 
     use super::*;
 
@@ -265,13 +303,25 @@ mod tests {
     #[derive(Default)]
     struct Adapters {
         shut: AtomicBool,
+        /// Shutting waits for `release` when set.
+        slow_shut: AtomicBool,
+        release: Notify,
     }
 
     impl Resident for Arc<Adapters> {
         async fn shut(&self) {
+            if self.slow_shut.load(Ordering::SeqCst) {
+                self.release.notified().await;
+            }
             self.shut.store(true, Ordering::SeqCst);
         }
     }
+
+    /// Long enough to tell that something waits, short enough for a test.
+    const WAITING: Duration = Duration::from_millis(50);
+
+    /// Past this, a request that should not have waited for another project did.
+    const BLOCKED: Duration = Duration::from_secs(10);
 
     type TestRegistry = Registry<Connection, Arc<Adapters>>;
 
@@ -334,6 +384,90 @@ mod tests {
             (a.received(), b.received()),
             (vec!["settled".into()], vec!["settled".into()])
         );
+    }
+
+    #[tokio::test]
+    async fn opening_a_slow_project_does_not_hold_up_the_others() {
+        let registry = TestRegistry::default();
+        let (a, b) = (Connection::new("a"), Connection::new("b"));
+        let built = Notify::new();
+        let slow = registry.open(Path::new("/slow"), a.clone(), |_, _| async {
+            built.notified().await;
+            Ok::<_, ()>(Arc::default())
+        });
+        let meanwhile = async {
+            let (fast, created) = open(&registry, "/fast", &b, &Arc::default()).await;
+            assert!(created);
+            assert!(registry.find(fast.id).await.is_ok());
+            assert_eq!(registry.all().await.len(), 1);
+            built.notify_one();
+        };
+
+        let (slow, ()) = tokio::join!(slow, async {
+            tokio::time::timeout(BLOCKED, meanwhile)
+                .await
+                .expect("another project waited for the slow one")
+        });
+
+        assert!(slow.unwrap().1);
+        assert_eq!(registry.all().await.len(), 2);
+    }
+
+    #[tokio::test]
+    async fn a_repository_opened_twice_at_once_is_built_once() {
+        let registry = TestRegistry::default();
+        let (a, b) = (Connection::new("a"), Connection::new("b"));
+        let built = Notify::new();
+        let builds = AtomicU64::new(0);
+        let first = registry.open(Path::new("/repo"), a.clone(), |_, _| async {
+            builds.fetch_add(1, Ordering::SeqCst);
+            built.notified().await;
+            Ok::<_, ()>(Arc::<Adapters>::default())
+        });
+        let second = registry.open(Path::new("/repo"), b.clone(), |_, _| async {
+            builds.fetch_add(1, Ordering::SeqCst);
+            Ok::<_, ()>(Arc::<Adapters>::default())
+        });
+
+        let (first, second, ()) = tokio::join!(first, second, async {
+            tokio::time::sleep(WAITING).await;
+            built.notify_one();
+        });
+
+        let ((first, created), (second, created_again)) = (first.unwrap(), second.unwrap());
+        assert_eq!((created, created_again), (true, false));
+        assert_eq!(first.id, second.id);
+        assert_eq!(builds.load(Ordering::SeqCst), 1);
+        first.subscribers.broadcast("x".into());
+        assert_eq!((a.received(), b.received()), (vec!["x".into()], vec!["x".into()]));
+    }
+
+    #[tokio::test]
+    async fn shutting_a_project_does_not_hold_up_the_others_but_its_repository_waits() {
+        let registry = TestRegistry::default();
+        let a = Connection::new("a");
+        let slow = Arc::new(Adapters::default());
+        slow.slow_shut.store(true, Ordering::SeqCst);
+        let (leaving, _) = open(&registry, "/slow", &a, &slow).await;
+        let closing = registry.close(leaving.id, &a);
+        let meanwhile = async {
+            let (other, _) = open(&registry, "/other", &a, &Arc::default()).await;
+            assert!(registry.find(other.id).await.is_ok());
+            let reopened = tokio::time::timeout(WAITING, open(&registry, "/slow", &a, &Arc::default())).await;
+            assert!(reopened.is_err(), "the repository opened while it was shutting");
+            slow.release.notify_one();
+        };
+
+        let (closed, ()) = tokio::join!(closing, async {
+            tokio::time::timeout(BLOCKED, meanwhile)
+                .await
+                .expect("another project waited for the shutdown")
+        });
+
+        closed.unwrap();
+        assert!(slow.shut.load(Ordering::SeqCst));
+        let (again, created) = open(&registry, "/slow", &a, &Arc::default()).await;
+        assert!(created && again.id != leaving.id);
     }
 
     #[tokio::test]
