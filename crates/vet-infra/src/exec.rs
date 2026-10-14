@@ -33,12 +33,14 @@ pub fn dotnet_env() -> Vec<(String, String)> {
 }
 
 /// `program` as this host runs it, with `env` added, piped output and no input.
-/// The process dies with its handle.
+/// The process dies with its handle. A repository's `rust-toolchain.toml` must not make
+/// rustup download toolchains behind a probe, so auto-install is off for every process.
 #[allow(clippy::disallowed_methods, reason = "the one place that spawns processes")]
 pub fn command(program: &str, args: &[String], cwd: Option<&Path>, env: &[(String, String)]) -> TokioCommand {
     let mut command = TokioCommand::new(invocation(program));
     command
         .args(args)
+        .env("RUSTUP_AUTO_INSTALL", "0")
         .envs(env.iter().map(|(k, v)| (k, v)))
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
@@ -252,6 +254,13 @@ mod tests {
         assert_eq!(read_tail(&mut stream, 4).await.unwrap(), "tail");
         let mut short: &[u8] = b"abc";
         assert_eq!(read_tail(&mut short, 4).await.unwrap(), "abc");
+    }
+
+    #[tokio::test]
+    async fn rustup_may_not_install_toolchains_for_a_spawned_process() {
+        let p = TokioRunner.spawn(&sh("echo $RUSTUP_AUTO_INSTALL")).unwrap();
+        let (out, _, _) = drain(p).await;
+        assert_eq!(out, b"0\n");
     }
 
     #[tokio::test]
