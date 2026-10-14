@@ -1,6 +1,7 @@
 // The Keymap page's rows: every command with its key, grouped by area and narrowed by a search.
 
 import type { CommandListing } from "../../lib/commands.ts";
+import { compareText } from "../../lib/format.ts";
 import { canonicalSpec } from "../../lib/keymap.ts";
 import type { Overrides } from "../../lib/keymapEdit.ts";
 
@@ -67,10 +68,10 @@ export function keymapGroups(listing: CommandListing[], overrides: Overrides, qu
     return at < 0 ? AREAS.length : at;
   };
   return [...groups]
-    .sort(([a], [b]) => rank(a) - rank(b) || a.localeCompare(b))
+    .sort(([a], [b]) => rank(a) - rank(b) || compareText(a, b))
     .map(([area, rows]) => ({
       area,
       label: areaLabel(area),
-      rows: rows.sort((a, b) => a.label.localeCompare(b.label)),
+      rows: rows.sort((a, b) => compareText(a.label, b.label)),
     }));
 }

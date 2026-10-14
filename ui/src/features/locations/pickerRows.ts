@@ -4,7 +4,7 @@
 
 import type { LocationRow } from "../../generated/LocationRow.ts";
 import type { StatusLetter } from "../../lib/changeLetter.ts";
-import { count } from "../../lib/format.ts";
+import { compareText, count } from "../../lib/format.ts";
 import { match } from "../../lib/speedSearch.ts";
 import { placeLabel } from "../../lib/symbolLabel.ts";
 
@@ -30,7 +30,7 @@ export function visibleRows(rows: readonly LocationRow[], query: string, onlyCha
       if (!query) return true;
       return [symbolLabel(row), row.text, row.path].some((text) => match(query, text) !== undefined);
     })
-    .sort((a, b) => tier(a) - tier(b) || a.path.localeCompare(b.path) || a.line - b.line || a.col - b.col);
+    .sort((a, b) => tier(a) - tier(b) || compareText(a.path, b.path) || a.line - b.line || a.col - b.col);
 }
 
 /**
@@ -73,9 +73,9 @@ export function groupRows(rows: readonly LocationRow[], statusOf: (path: string)
       hunk: inFile.some((r) => r.change === "hunk"),
     });
   }
-  blocks.CHANGESET.sort((a, b) => Number(b.hunk) - Number(a.hunk) || a.path.localeCompare(b.path));
-  blocks["OTHER FILES"].sort((a, b) => a.path.localeCompare(b.path));
-  blocks.LIBRARIES.sort((a, b) => a.path.localeCompare(b.path));
+  blocks.CHANGESET.sort((a, b) => Number(b.hunk) - Number(a.hunk) || compareText(a.path, b.path));
+  blocks["OTHER FILES"].sort((a, b) => compareText(a.path, b.path));
+  blocks.LIBRARIES.sort((a, b) => compareText(a.path, b.path));
 
   // The changeset's label tells it from the other sections; with nothing to tell it from, it is left out.
   const lone = blocks.CHANGESET.length > 0 && !blocks["OTHER FILES"].length && !blocks.LIBRARIES.length;

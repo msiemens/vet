@@ -3,6 +3,7 @@
 
 import type { LineLocation } from "../../generated/LineLocation";
 import type { Thread } from "../../generated/Thread";
+import { compareText } from "../../lib/format.ts";
 import { lineRange } from "../../lib/lineRange.ts";
 
 /** A comment of the thread was edited here and on the platform, and waits for the viewer to choose. */
@@ -25,7 +26,7 @@ const start = (t: Thread) => (t.kind === "file" ? -1 : (t.location?.start ?? t.o
 
 /** The changeset's own threads first, then by file, a file's own thread before its lines in text order. */
 export const inOrder = (a: Thread, b: Thread) =>
-  (a.path ?? "").localeCompare(b.path ?? "") || start(a) - start(b) || a.id - b.id;
+  compareText(a.path ?? "", b.path ?? "") || start(a) - start(b) || a.id - b.id;
 
 /** Every thread is in exactly one group, each in the order of `inOrder`. */
 export function groupThreads(threads: readonly Thread[]): Groups {

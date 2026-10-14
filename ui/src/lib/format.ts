@@ -19,6 +19,9 @@ export const plural = (n: number, one: string, many?: string): string => `${coun
 /** A text collator; `localeCompare` creates one per call, so sorts hold one of these. */
 export const collator = (options?: Intl.CollatorOptions): Intl.Collator => new Intl.Collator(LOCALE, options);
 
+/** Orders two texts as people sort them; for sorts that need no options. */
+export const compareText: (a: string, b: string) => number = collator().compare;
+
 /** The time of day is always 24-hour, as the design writes it ("Mon 14:02", "09:40"). */
 export const TIME_OF_DAY = { hour: "2-digit", minute: "2-digit", hourCycle: "h23" } as const;
 

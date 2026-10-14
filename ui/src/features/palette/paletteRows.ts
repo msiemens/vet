@@ -6,7 +6,7 @@ import type { SymbolChange } from "../../generated/SymbolChange";
 import type { SymbolInfo } from "../../generated/SymbolInfo";
 import type { SymbolKind } from "../../generated/SymbolKind";
 import type { StatusLetter } from "../../lib/changeLetter.ts";
-import { collator } from "../../lib/format.ts";
+import { compareText } from "../../lib/format.ts";
 import { basename } from "../../lib/paths.ts";
 import { match, type Match, type Range } from "../../lib/speedSearch.ts";
 
@@ -163,8 +163,6 @@ const DISABLED = -100;
 /** Below every score a match can reach. */
 const UNMATCHED = -1000;
 
-const labels = collator();
-
 /** The id a result is remembered by. */
 export const recentId = (kind: Kind, key: string): string => `${kind}:${key}`;
 
@@ -266,7 +264,7 @@ export function rank(items: readonly Candidate[], query: string, recent: readonl
   }
   const byScore = (a: Row, b: Row) => b.score - a.score;
   if (typed.query || items[0]?.kind === "action") {
-    rows.sort((a, b) => byScore(a, b) || labels.compare(labelOf(a.item), labelOf(b.item)));
+    rows.sort((a, b) => byScore(a, b) || compareText(labelOf(a.item), labelOf(b.item)));
   } else {
     rows.sort(byScore);
   }

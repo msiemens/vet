@@ -5,7 +5,7 @@
 
 import type { ModeChange } from "../../generated/ModeChange";
 import { letterOfStatus, type StatusLetter } from "../../lib/changeLetter.ts";
-import { collator } from "../../lib/format.ts";
+import { compareText } from "../../lib/format.ts";
 import { basename, compactChain, dirname } from "../../lib/paths.ts";
 import { match, type Range } from "../../lib/speedSearch.ts";
 import type { FileLayout, ReviewedFile } from "../../state/reviewModel.ts";
@@ -61,8 +61,6 @@ export function modeChange(file: FileLayout): FileSummary["mode"] {
   return change ? MODE[change] : undefined;
 }
 
-const byName = collator().compare;
-
 /** Directories first, then files, each by name; single-directory chains merged. */
 export function buildTree(paths: readonly string[]): DirNode {
   const root: DirNode = { path: "", name: "", dirs: [], files: [], below: [] };
@@ -85,8 +83,8 @@ export function buildTree(paths: readonly string[]): DirNode {
   const finish = (node: DirNode): DirNode => {
     const { path, name } = node.path ? compactChain(node.path, node.name, onlyChild) : node;
     const last = dirs.get(path) ?? root;
-    const below = last.dirs.map(finish).sort((a, b) => byName(a.name, b.name));
-    const files = last.files.sort((a, b) => byName(basename(a), basename(b)));
+    const below = last.dirs.map(finish).sort((a, b) => compareText(a.name, b.name));
+    const files = last.files.sort((a, b) => compareText(basename(a), basename(b)));
     return { path, name, dirs: below, files, below: below.flatMap((d) => [d.path, ...d.below]) };
   };
   return finish(root);

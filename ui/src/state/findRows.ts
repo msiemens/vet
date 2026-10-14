@@ -1,6 +1,7 @@
 // What a result set lists: the places that pass the filters, grouped by file, as the flat list of
 // rows the panel draws.
 
+import { compareText } from "../lib/format.ts";
 import type { FoundFile, Place } from "./foundPlace.ts";
 
 export interface Filters {
@@ -40,7 +41,7 @@ export function itemsOf(places: readonly Place[], folded: ReadonlySet<string>): 
   const byFile = new Map<string, Place[]>();
   for (const p of places) byFile.set(p.file.path, [...(byFile.get(p.file.path) ?? []), p]);
   const tier = (inFile: Place[]) => (inFile[0].file.external ? 2 : inFile.some((p) => p.changed) ? 0 : 1);
-  const files = [...byFile.values()].sort((a, b) => tier(a) - tier(b) || a[0].file.path.localeCompare(b[0].file.path));
+  const files = [...byFile.values()].sort((a, b) => tier(a) - tier(b) || compareText(a[0].file.path, b[0].file.path));
   return files.flatMap((inFile) => {
     const { file } = inFile[0];
     const key = `f:${file.path}`;
