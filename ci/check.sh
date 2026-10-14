@@ -6,7 +6,7 @@ cd "$(dirname "$0")/.."
 : "${RUSTC_WRAPPER:=$PWD/ci/rustc-wrapper.sh}"
 export RUSTC_WRAPPER
 
-step() { printf '\n== %s\n' "$*"; }
+source ci/lib.sh
 
 step "cargo fmt"
 cargo fmt --all --check
@@ -14,18 +14,17 @@ cargo fmt --manifest-path ui/src-tauri/Cargo.toml --check
 step "cargo clippy"
 cargo clippy --workspace --all-targets -- -D warnings
 step "cargo clippy (ui/src-tauri)"
-tauri_clippy=(cargo clippy --manifest-path ui/src-tauri/Cargo.toml --all-targets -- -D warnings)
-if [[ $(uname) != Linux ]] || pkg-config --exists webkit2gtk-4.1 2>/dev/null; then
-    "${tauri_clippy[@]}"
-elif command -v nix-shell >/dev/null; then
-    nix-shell --run "${tauri_clippy[*]}"
-else
-    echo "SKIPPED: the GTK/webkit libraries are missing and nix-shell is not available"
-fi
+tauri_step "clippy (ui/src-tauri)" cargo clippy --manifest-path ui/src-tauri/Cargo.toml --all-targets -- -D warnings
 step "cargo nextest"
 cargo nextest run --workspace
+step "cargo nextest (ui/src-tauri)"
+tauri_step "tests (ui/src-tauri)" cargo nextest run --manifest-path ui/src-tauri/Cargo.toml
 step "tests that need tools"
-ci/tool-tests.sh
+tool_log=$(mktemp)
+ci/tool-tests.sh 2>&1 | tee "$tool_log"
+not_run=$(grep '^NOT RUN:' "$tool_log" || true)
+rm -f "$tool_log"
+[[ -z $not_run ]] || skip "tests that need tools: ${not_run#NOT RUN: }"
 step "check-deps"
 ci/check-deps.sh
 step "module cycles"
@@ -54,7 +53,7 @@ if command -v cargo-sweep >/dev/null; then
     cargo sweep --maxsize 10GB ui/src-tauri
     cargo sweep --maxsize 10GB tools/module-cycles
 else
-    echo "SKIPPED: cargo-sweep is not installed (cargo install cargo-sweep)"
+    skip "cargo sweep: cargo-sweep is not installed (cargo install cargo-sweep)"
 fi
 
-printf '\nall checks passed\n'
+finish "all checks passed"

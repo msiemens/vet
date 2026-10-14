@@ -2,7 +2,7 @@
 # Fast check scoped to what changed since BASE (default: the merge base with main),
 # including uncommitted and untracked files. Rust: format the changed files; clippy,
 # test and module cycles for the changed crates and the workspace crates depending on
-# them. ui/src-tauri: rustfmt and clippy when it changed. UI: svelte-check, lint and format for the changed files, unit tests,
+# them. ui/src-tauri: rustfmt, clippy and its tests when it changed. UI: svelte-check, lint and format for the changed files, unit tests,
 # and the invariant harness when ui/src/state, the harness or the backend's crates changed. Skips
 # `pnpm build`; ci/check.sh remains the full check before merging.
 #
@@ -17,7 +17,7 @@ base=$(git merge-base HEAD "${1:-main}")
 mapfile -t changed < <({ git diff --name-only "$base"; git ls-files --others --exclude-standard; } | sort -u)
 exists() { [[ -e $1 ]]; }
 
-step() { printf '\n== %s\n' "$*"; }
+source ci/lib.sh
 
 rust_files=() crates=() tauri=false protocol=false deps=false cycle_tool=false harness=false ui_files=()
 for f in "${changed[@]}"; do
@@ -64,7 +64,11 @@ if ((${#crates[@]})); then
     step "cargo nextest (${affected[*]})"
     cargo nextest run "${pkgs[@]}"
     step "tests that need tools (${affected[*]})"
-    ci/tool-tests.sh "${pkgs[@]}"
+    tool_log=$(mktemp)
+    ci/tool-tests.sh "${pkgs[@]}" 2>&1 | tee "$tool_log"
+    not_run=$(grep '^NOT RUN:' "$tool_log" || true)
+    rm -f "$tool_log"
+    [[ -z $not_run ]] || skip "tests that need tools: ${not_run#NOT RUN: }"
     step "module cycles (${crates[*]})"
     ci/check-module-cycles.sh "${crates[@]}"
 fi
@@ -85,14 +89,9 @@ if $tauri; then
     step "cargo fmt (ui/src-tauri)"
     cargo fmt --manifest-path ui/src-tauri/Cargo.toml --check
     step "cargo clippy (ui/src-tauri)"
-    tauri_clippy=(cargo clippy --manifest-path ui/src-tauri/Cargo.toml --all-targets -- -D warnings)
-    if [[ $(uname) != Linux ]] || pkg-config --exists webkit2gtk-4.1 2>/dev/null; then
-        "${tauri_clippy[@]}"
-    elif command -v nix-shell >/dev/null; then
-        nix-shell --run "${tauri_clippy[*]}"
-    else
-        echo "SKIPPED: the GTK/webkit libraries are missing and nix-shell is not available"
-    fi
+    tauri_step "clippy (ui/src-tauri)" cargo clippy --manifest-path ui/src-tauri/Cargo.toml --all-targets -- -D warnings
+    step "cargo nextest (ui/src-tauri)"
+    tauri_step "tests (ui/src-tauri)" cargo nextest run --manifest-path ui/src-tauri/Cargo.toml
 fi
 
 if ((${#ui_files[@]})) || $protocol; then
@@ -118,4 +117,4 @@ if $harness; then
     (cd ui && pnpm harness)
 fi
 
-printf '\nquick checks passed (run ci/check.sh before merging)\n'
+finish "quick checks passed (run ci/check.sh before merging)"

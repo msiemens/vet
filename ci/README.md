@@ -7,14 +7,15 @@
 ./ci/quick.sh [BASE]     # only what changed since BASE (default: the merge base with main)
 ```
 
-`check.sh` runs rustfmt (the workspace and `ui/src-tauri`), clippy (`-D warnings`), tests,
+`check.sh` runs rustfmt (the workspace and `ui/src-tauri`), clippy (`-D warnings`), tests (the
+workspace's and the host's),
 `check-deps.sh`, `check-module-cycles.sh`, then in `ui/` `pnpm check`, `lint`,
 `format:check`, `test`, `harness` and `build`. The module-cycle tool's own checks (rustfmt, clippy,
 self-test) run only in `quick.sh`, when the tool changed.
 
 `quick.sh` runs rustfmt on changed files, clippy, tests and module cycles for the
 changed crates and their dependents, rustfmt and clippy for `ui/src-tauri` when it
-changed, rustfmt, clippy and the module-cycle self-test when `tools/module-cycles`
+changed (with its tests), rustfmt, clippy and the module-cycle self-test when `tools/module-cycles`
 changed, and svelte-check, eslint, prettier and unit
 tests for changed UI files.
 
@@ -67,11 +68,19 @@ Tests that need a tool that may be missing (`python3`, `rust-analyzer`,
 `typescript-language-server`, `roslyn-language-server` with `dotnet`) are `#[ignore = "needs …"]`,
 so a plain run lists them as skipped instead of passed. `tool-tests.sh` (run by `check.sh` and
 `quick.sh` after nextest) runs the ignored tests of every tool that is installed, prints what it
-leaves out for the others, and fails if an ignored test belongs to no tool. Ignored tests that
-download packages or use the network (`servers`, `restore`, `python`, `github`, `first_mark`
-and the benchmark in `vet-core`) run on request:
-`cargo nextest run -p vet-infra --run-ignored ignored-only restore::`. `examples/platform_smoke.rs`
-of `vet-infra` reads the real GitHub and Azure DevOps with the `gh` and `az` tokens.
+leaves out for the others (and says so again in one `NOT RUN` line), and fails if an ignored test
+belongs to no tool. Ignored tests that download packages or use the network (`servers`, `restore`,
+`python`, `first_mark` and the benchmark in `vet-core`) are not part of any check; they run by hand
+with `ci/tool-tests.sh --on-request [-p CRATE]...`, before a change to restoring, the server installs
+or the python and first-mark paths is merged, and now and then besides, since registries and package
+versions move under them. There is no scheduler in the repository to run them unattended.
+`examples/platform_smoke.rs` of `vet-infra` reads the real GitHub and Azure DevOps with the `gh` and
+`az` tokens.
+
+A step that cannot run on the machine (the Tauri host without the webkit libraries and `nix-shell`,
+`cargo-sweep`, an uninstalled tool) is printed as `SKIPPED` where it happens and listed again at the
+end of `check.sh` and `quick.sh`; the scripts still pass, but the closing message counts what did not
+run. The host's own tests (`ui/src-tauri`) run in `check.sh`, and in `quick.sh` when the host changed.
 
 `check-deps.sh` fails if a crate depends on one outside its allowlist, or if a
 pure crate pulls in an async runtime, git or IO.
