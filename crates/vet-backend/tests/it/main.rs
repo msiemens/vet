@@ -19,4 +19,5 @@ mod review_screen;
 mod search;
 mod semantic;
 mod session;
+mod symbols;
 mod trust;

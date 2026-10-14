@@ -27,6 +27,7 @@ pub enum Kind {
     ReviewStarted,
     ThreadsChanged,
     ChecksChanged,
+    FileSymbols,
     ServerInstallOutput,
     ServersChanged,
     ServerRuntimes,
@@ -54,6 +55,7 @@ impl Kind {
             Event::ReviewStarted { .. } => Self::ReviewStarted,
             Event::ThreadsChanged { .. } => Self::ThreadsChanged,
             Event::ChecksChanged { .. } => Self::ChecksChanged,
+            Event::FileSymbols { .. } => Self::FileSymbols,
             Event::ServerInstallOutput { .. } => Self::ServerInstallOutput,
             Event::ServersChanged { .. } => Self::ServersChanged,
             Event::ServerRuntimes { .. } => Self::ServerRuntimes,
@@ -218,6 +220,9 @@ pub fn effect(request: &Request) -> Effect {
         Request::SetServerPath { .. } | Request::RestartServer { .. } => tested(&[ServersChanged]),
         Request::SetReviewShown { .. } => {
             Effect::Unannounced("decides when servers start; the connection that asked knows what it showed")
+        }
+        Request::SetOpenFiles { .. } => {
+            Effect::Unannounced("orders the background analysis of symbols and problems; nothing a client shows changes")
         }
     }
 }
@@ -526,6 +531,10 @@ mod tests {
                 language: "rust".into(),
             },
             Request::SetReviewShown { project, shown: true },
+            Request::SetOpenFiles {
+                project,
+                paths: Vec::new(),
+            },
             Request::Fetch { project },
             Request::SetProjectFilter {
                 project,

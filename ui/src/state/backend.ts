@@ -719,6 +719,14 @@ export class Backend {
   }
 
   /**
+   * The changed files this window has open, in the order it shows them: the backend's background
+   * analysis of symbols and problems reads those first.
+   */
+  async setOpenFiles(paths: string[]): Promise<void> {
+    expect(await this.conn.request({ type: "setOpenFiles", project: this.pid, paths }), "done");
+  }
+
+  /**
    * What the changeset did to the symbols of the changed file `path`, as of `revision` (the
    * manifest's; a stale one is rejected).
    */

@@ -11,8 +11,8 @@ import { structure } from "../../src/state/structure.svelte.ts";
 import { queue } from "../../src/state/queue.svelte.ts";
 import { reviewShown } from "../../src/state/reviewShown.svelte.ts";
 import { serverList } from "../../src/state/serverList.svelte.ts";
-// Asks for the changeset's symbols while it is shown.
-import "../../src/state/symbols.svelte.ts";
+// Holds the changeset's symbols, which the backend pushes while it is shown.
+import { symbols } from "../../src/state/symbols.svelte.ts";
 import { threads } from "../../src/state/threads.svelte.ts";
 import { defaultRange } from "../../src/state/timelineRange.ts";
 import { versions } from "../../src/state/versions.svelte.ts";
@@ -300,7 +300,9 @@ export const sessions: Record<string, (h: Harness) => Promise<void>> = {
     await h.step("review screen shown", async () => {
       reviewShown.set(true);
       await h.until(() => told(true) === 1, "the backend to be told");
-      await h.until(() => h.sent.some((r) => r.type === "fileSymbols"), "the symbols");
+      // The backend analyses the file itself and pushes the answer; the store applies it.
+      const answered = () => symbols.files.get("d.rs")?.state;
+      await h.until(() => answered() === "done" || answered() === "failed", "the symbols");
     });
     await h.step("back on the queue", async () => {
       reviewShown.set(false);

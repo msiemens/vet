@@ -1,14 +1,16 @@
 // The Symbol tool's state: the changed symbols of each changed file, which the Changes tree shows
 // under their files, and the symbol on show, with the answers about it. The backend derives them
-// (SPEC §7.3, I5); this loads and holds them. The symbols belong to a revision of the open
-// repository, and each file's arrive as its analysis ends. The symbol on show is the one the
-// reviewer chose last: a row of the tree, or the symbol the cursor of an editor is in.
+// (SPEC §7.3, I5) and analyses the files itself while the review screen shows the changeset, the
+// files with an open tab first, pushing each file's answer as it comes (A13); this only applies
+// what it hears. The selected symbol is the one the reviewer chose last: a row of the tree, or the
+// symbol the cursor of an editor is in.
 
 import { untrack } from "svelte";
 import { SvelteMap } from "svelte/reactivity";
 import type { Calls } from "../generated/Calls";
 import type { ChangedSymbol } from "../generated/ChangedSymbol";
 import type { ErrorKind } from "../generated/ErrorKind";
+import type { FileSymbols } from "../generated/FileSymbols";
 import type { Reachability } from "../generated/Reachability";
 import type { RemovalImpact } from "../generated/RemovalImpact";
 import type { Side } from "../generated/Side";
@@ -17,8 +19,8 @@ import type { SymbolInfo } from "../generated/SymbolInfo";
 import type { SymbolSignature } from "../generated/SymbolSignature";
 import type { Unavailable } from "../generated/Unavailable";
 import type { Usages } from "../generated/Usages";
-import { isAbort } from "../lib/abort";
 import { errorText } from "../lib/errorText";
+import { isAbort } from "../lib/abort";
 import { kindOf } from "../lib/requestError";
 import type { Backend } from "./backend";
 import { changeset } from "./changeset.svelte";
@@ -27,7 +29,7 @@ import { type IsLatest, Latest } from "./resource";
 import { reviewShown } from "./reviewShown.svelte";
 import { session } from "./session.svelte";
 import { keyOf } from "./symbolKey";
-import { analyseFiles, planLoad, reconcile, type Shown } from "./symbolLoad";
+import { reconcile, type Shown } from "./symbolLoad";
 
 export type Load<T> =
   { state: "loading" } | { state: "done"; value: T } | { state: "failed"; message: string; kind?: ErrorKind };
@@ -44,8 +46,6 @@ export type FileLoad =
   | { state: "done"; symbols: ChangedSymbol[]; context: SymbolInfo[] }
   | { state: "failed"; message: string };
 
-/** Files analysed at once. */
-const FILES_AT_ONCE = 4;
 /** How long the cursor rests before the symbol it is in is looked up. */
 const CURSOR_MS = 150;
 
@@ -61,9 +61,9 @@ interface CursorPlace {
 class SymbolsState {
   /** The analysis of each changed file with text hunks, as of the revision loaded. */
   files = new SvelteMap<string, FileLoad>();
-  /** The files of the revision whose analysis ended, of those it asks for. */
+  /** The files of the revision whose analysis ended, of those it is for. */
   progress = $state.raw({ done: 0, total: 0 });
-  /** The file the review shows; its analysis comes first. */
+  /** The file the review shows. */
   file = $state<string>();
   selected = $state.raw<Shown>();
   /** Why the cursor's symbol is unknown, when the language has no usable server. */
@@ -80,13 +80,8 @@ class SymbolsState {
 
   /** Where the cursor moved while the review screen was away; followed when it comes up. */
   private held?: CursorPlace;
-  /** The analysis has to be asked again when the review screen comes up: the servers changed while it was away. */
-  private reloadDue = false;
   private backend?: Backend;
   private revision?: number;
-  private paths: readonly string[] = [];
-  // Aborts the analysis of the files of an older load.
-  private loading?: AbortController;
   // The requests about the selected symbol; aborted when the selection moves.
   private asking?: AbortController;
   private details = new Latest();
@@ -109,6 +104,14 @@ class SymbolsState {
   });
 
   constructor() {
+    session.onConnect((backend) =>
+      backend.onEvent((event) => {
+        if (event.project !== backend.project) return;
+        if (event.type === "fileSymbols") this.apply(backend, event.symbols, event.done, event.total);
+        // A server installed or reconfigured may answer again for the selected symbol.
+        if (event.type === "serversChanged" && this.backend === backend) this.refresh();
+      }),
+    );
     $effect.root(() => {
       $effect(() => {
         const { backend, repo } = session;
@@ -117,11 +120,11 @@ class SymbolsState {
         const analysable = changeset.shownCommit === undefined && layout?.interdiff === undefined;
         const revision = layout?.shown.revision;
         const paths = layout?.files.filter((f) => f.hunks.length > 0).map((f) => f.path);
-        // The analysis is for the review screen: the files wait until it is shown.
+        // The analysis is for the review screen: the backend starts it when it is shown.
         const shown = reviewShown.on;
         untrack(() => {
           if (repo === undefined || revision === undefined || !analysable || !paths) this.reset();
-          else if (backend && shown) this.load(backend, revision, paths, this.reloadDue);
+          else if (backend && shown) this.begin(backend, revision, paths);
         });
       });
     });
@@ -130,17 +133,6 @@ class SymbolsState {
       this.held = undefined;
       if (place) this.cursor.move(place);
     });
-    // What was asked while the connection was down may have failed.
-    session.onResync((backend) => {
-      if (this.backend === backend) this.reload();
-    });
-    // A server installed or reconfigured may answer for files it had no answer for.
-    session.onConnect((backend) =>
-      backend.onEvent((event) => {
-        if (event.type !== "serversChanged" || event.project !== backend.project) return;
-        if (this.backend === backend) this.reload();
-      }),
-    );
   }
 
   private requireBackend(): Backend {
@@ -150,9 +142,7 @@ class SymbolsState {
 
   /** Back to nothing: no repository is open, or no changeset to analyse is on view. */
   private reset() {
-    this.loading?.abort();
     this.backend = this.revision = undefined;
-    this.paths = [];
     this.files.clear();
     this.progress = { done: 0, total: 0 };
     this.cursor.reset();
@@ -160,55 +150,34 @@ class SymbolsState {
     this.clearSelection();
   }
 
-  private reload() {
-    if (!this.backend || this.revision === undefined) return;
-    if (reviewShown.on) this.load(this.backend, this.revision, this.paths, true);
-    else this.reloadDue = true;
-  }
-
   /**
-   * Analyses the files of `revision`, a few at a time, the file the review shows first. The files of
-   * an earlier load stay as they were until their new analysis arrives; the symbol on show is asked
-   * about again, and follows what its file's analysis finds. A revision already loaded is left alone
-   * unless `force`.
+   * The review screen shows the changeset at `revision`: the files wait for the backend's answers.
+   * The files of the revision are marked loading so the tree's count moves; an answer replaces its
+   * file's mark. A revision already followed is left alone: the backend pushes its answers once.
    */
-  private load(backend: Backend, revision: number, paths: readonly string[], force: boolean) {
-    const had =
-      this.backend && this.revision !== undefined ? { backend: this.backend, revision: this.revision } : undefined;
-    const plan = planLoad(had, { backend, revision }, force);
-    if (plan === "skip") return;
-    this.reloadDue = false;
+  private begin(backend: Backend, revision: number, paths: readonly string[]) {
+    if (this.backend === backend && this.revision === revision) return;
     this.backend = backend;
     this.revision = revision;
-    this.paths = paths;
-    this.loading?.abort();
-    const { signal } = (this.loading = new AbortController());
-    const wanted = new Set(paths);
-    for (const path of [...this.files.keys()]) if (!wanted.has(path)) this.files.delete(path);
-    for (const path of paths) if (!this.files.has(path)) this.files.set(path, { state: "loading" });
+    this.files.clear();
+    for (const path of paths) this.files.set(path, { state: "loading" });
     this.progress = { done: 0, total: paths.length };
-    if (plan === "new") this.cursor.reset();
-    this.refresh();
+    this.cursor.reset();
+    this.clearSelection();
+  }
 
-    analyseFiles({
-      paths,
-      current: () => this.file,
-      atOnce: FILES_AT_ONCE,
-      signal,
-      ask: (path, s) => backend.fileSymbols(revision, path, s),
-      done: (path, outcome) => {
-        let loaded: FileLoad;
-        if (!outcome.ok) loaded = { state: "failed", message: errorText(outcome.error) };
-        else if (outcome.value.gap) loaded = { state: "failed", message: outcome.value.gap.message };
-        else loaded = { state: "done", symbols: outcome.value.symbols, context: outcome.value.context };
-        this.files.set(path, loaded);
-        this.progress = { done: this.progress.done + 1, total: this.progress.total };
-        if (loaded.state === "done" && this.selected) {
-          const now = reconcile(this.selected, { path, symbols: loaded.symbols });
-          if (now !== this.selected) this.select(now);
-        }
-      },
-    });
+  /** The backend analysed one file: apply what it found. */
+  private apply(backend: Backend, symbols: FileSymbols, done: number, total: number) {
+    if (backend !== this.backend || symbols.revision !== this.revision) return;
+    const loaded: FileLoad = symbols.gap
+      ? { state: "failed", message: symbols.gap.message }
+      : { state: "done", symbols: symbols.symbols, context: symbols.context };
+    this.files.set(symbols.path, loaded);
+    this.progress = { done, total };
+    if (loaded.state === "done" && this.selected) {
+      const now = reconcile(this.selected, { path: symbols.path, symbols: loaded.symbols });
+      if (now !== this.selected) this.select(now);
+    }
   }
 
   /** The symbol the review is to show was chosen: a row of the tree, or with `reveal` a symbol listed elsewhere. */

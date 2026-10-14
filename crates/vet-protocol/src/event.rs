@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
 use crate::{
-    ChangesetKey, CommitChecks, Lens, Notification, PlatformStatus, ProjectId, RestoreFailure, ReviewInfo,
+    ChangesetKey, CommitChecks, FileSymbols, Lens, Notification, PlatformStatus, ProjectId, RestoreFailure, ReviewInfo,
     ReviewUpdate, ServerRuntimes, Task,
 };
 
@@ -82,6 +82,17 @@ pub enum Event {
     /// sent for a settled snapshot, which is `SnapshotSettled`: that also
     /// invalidates the threads.
     ThreadsChanged { project: ProjectId, revision: u32 },
+    /// The changed symbols of one file of the changeset on view, as the backend analysed them. The
+    /// backend analyses the changeset's files itself, while the review screen shows it, the files
+    /// with an open tab first, and pushes each answer as it comes (SPEC §7.3, A13). `done` are the
+    /// files analysed so far of `total`; a file whose symbols are unknown says so in
+    /// `symbols.gap`, and one whose analysis failed outright carries the reason there too.
+    FileSymbols {
+        project: ProjectId,
+        symbols: FileSymbols,
+        done: u32,
+        total: u32,
+    },
     /// The checks (CI runs and statuses) of the commits the review view shows, as the backend last
     /// read them. The backend refreshes them itself while the review screen shows the changeset, so
     /// the client shows them without asking. `checks` are the commits answered for, in the order

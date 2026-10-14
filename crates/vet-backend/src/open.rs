@@ -130,6 +130,11 @@ pub(crate) struct Wired {
     checks_pace: Duration,
     /// How long after an action on a run the checks are read once more.
     checks_settle: Duration,
+    /// The changed symbols of the changeset on view, analysed in the background while the review
+    /// screen shows it; a newer run replaces the older, and the project closing stops it.
+    symbols: TaskSlot,
+    /// The changed files the viewer has open, which the background analysis reads first.
+    open_files: Arc<Mutex<Vec<String>>>,
     closed: AtomicBool,
     trees: Arc<KeptTrees>,
     /// The answers of the language servers kept between launches.
@@ -188,6 +193,27 @@ impl Wired {
     /// How long after an action on a run the checks are read once more.
     pub(crate) fn checks_settle(&self) -> Duration {
         self.checks_settle
+    }
+
+    /// Hands over the task that analyses the changeset's changed symbols; a newer run replaces it,
+    /// and it ends with the session.
+    pub(crate) fn keep_symbols(&self, task: AbortHandle) {
+        self.symbols.keep(task);
+    }
+
+    /// Stops analysing the changeset's changed symbols: the review screen is no longer shown.
+    pub(crate) fn stop_symbols(&self) {
+        self.symbols.stop();
+    }
+
+    /// The changed files the viewer has open, which the background analysis reads first.
+    pub(crate) fn open_files(&self) -> Vec<String> {
+        lock(&self.open_files).clone()
+    }
+
+    /// Remembers the changed files the viewer has open.
+    pub(crate) fn set_open_files(&self, paths: Vec<String>) {
+        *lock(&self.open_files) = paths;
     }
 
     /// Copies the working tree's content into the store in the background, so the first mark
@@ -362,6 +388,7 @@ impl Resident for Wired {
         self.copying.stop();
         self.prefetching.stop();
         self.checking.stop();
+        self.symbols.stop();
         if let Some(Ok(booted)) = self.booted.get() {
             booted.semantics.shutdown().await;
         }
@@ -490,6 +517,8 @@ impl Orchestrator {
             checking: TaskSlot::default(),
             checks_pace: self.config.checks_pace,
             checks_settle: self.config.checks_settle,
+            symbols: TaskSlot::default(),
+            open_files: Arc::default(),
             closed: AtomicBool::new(false),
             trees: self.trees.clone(),
             answers: self.answers.clone(),

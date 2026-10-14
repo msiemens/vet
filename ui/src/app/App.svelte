@@ -281,6 +281,12 @@
     return queue.watch();
   });
   $effect(() => reviewShown.set(screen === "review"));
+  // The changed files the window has open, so the backend's background analysis reads them first.
+  $effect(() => {
+    const backend = session.backend;
+    const paths = reviewShown.on ? [...(controller?.openPaths ?? [])] : [];
+    if (backend) untrack(() => void backend.setOpenFiles(paths).catch(() => undefined));
+  });
 
   const openLocation: OpenLocation = (path, line, side) => void controller?.openLocation(ON_SCREEN, path, line, side);
 

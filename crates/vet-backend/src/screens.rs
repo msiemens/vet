@@ -50,7 +50,18 @@ impl Orchestrator {
         open.screens.set(from, shown);
         if shown {
             start_servers_in_background(open);
+        } else {
+            // The changed symbols are analysed for the review screen only. The checks stay: the
+            // queue shows the selected pull request's checks too.
+            open.stop_symbols();
         }
+        Ok(Response::Done)
+    }
+
+    /// Remembers the changed files the window has open, which the background analysis reads first.
+    pub(crate) async fn set_open_files(&self, project: ProjectId, paths: Vec<String>) -> Result<Response> {
+        let open: Arc<Open> = self.find(project).await?;
+        open.set_open_files(paths);
         Ok(Response::Done)
     }
 }

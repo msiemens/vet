@@ -487,6 +487,13 @@ pub enum Request {
         project: ProjectId,
         shown: bool,
     },
+    /// The changed files of the changeset on view the viewer has open, in the order the window
+    /// shows them: the background analysis of symbols and problems reads those first. Empty for a
+    /// window with nothing open. Answers with `Response::Done`.
+    SetOpenFiles {
+        project: ProjectId,
+        paths: Vec<String>,
+    },
     /// Fetches the repository's remotes now, as a `Fetch` task, and answers with
     /// `Response::Done` when it ended. A remote that fails (offline, refused) fails the
     /// task with its name, not this request, and the others are still fetched. If any

@@ -7,7 +7,7 @@ use vet_semantic::policy::AnalysisPolicy;
 use vet_semantic::ports::BackendId;
 
 use crate::error::Result;
-use crate::{Open, Orchestrator};
+use crate::{Open, Orchestrator, start_servers_in_background};
 
 impl Orchestrator {
     pub(crate) async fn list_servers(&self, project: ProjectId) -> Result<Response> {
@@ -63,6 +63,7 @@ impl Orchestrator {
         let ready = self.ready(project).await?;
         let started = ready.restart_server(language).await;
         ready.subscribers.broadcast(Event::ServersChanged { project });
+        start_servers_in_background(ready.open.clone());
         started?;
         self.servers_of(&ready.open).await
     }
@@ -103,6 +104,7 @@ impl Orchestrator {
         }
         for open in self.projects.all().await {
             open.subscribers.broadcast(Event::ServersChanged { project: open.id });
+            start_servers_in_background(open);
         }
     }
 }

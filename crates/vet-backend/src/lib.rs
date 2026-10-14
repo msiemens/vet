@@ -24,6 +24,7 @@ mod review;
 mod screens;
 mod semantic;
 mod servers;
+mod symbols;
 mod sync;
 mod threads;
 mod trust;
@@ -676,6 +677,7 @@ impl Orchestrator {
             } => reply(self.set_server_path(project, language, path)),
             Request::RestartServer { project, language } => reply(self.restart_server(project, language)),
             Request::SetReviewShown { project, shown } => reply(self.set_review_shown(project, shown, from)),
+            Request::SetOpenFiles { project, paths } => reply(self.set_open_files(project, paths)),
         }
     }
 }
@@ -691,6 +693,7 @@ fn start_servers_in_background(open: Arc<Open>) {
     if !open.screens.shown() {
         return;
     }
+    symbols::refresh_symbols_in_background(open.clone());
     tokio::spawn(async move {
         if let Ok(booted) = open.booted().await {
             booted.start_servers().await;
