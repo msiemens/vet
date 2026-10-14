@@ -1,7 +1,12 @@
 <script module lang="ts">
+  import Icon from "./Icon.svelte";
+  import type { IconName } from "./icons";
+
   /** An action under the rows. */
   export interface SwitcherAction {
     label: string;
+    /** Drawn before the label. */
+    icon?: IconName;
     /** The shortcut it shows at its end. */
     key?: string;
     title?: string;
@@ -130,7 +135,10 @@
             disabled={action.disabled}
             onclick={(e) => nav.click(e, items.length + i)}
           >
-            {action.label}
+            <span class="name">
+              {#if action.icon}<Icon name={action.icon} size={14} />{/if}
+              {action.label}
+            </span>
             {#if action.key}<span class="key">{action.key}</span>{/if}
           </button>
         {/each}
@@ -173,6 +181,14 @@
     padding: 0 8px;
     border-radius: var(--radius-sheet);
     font-size: var(--fs-ctl);
+  }
+  .name {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+  .name :global(svg) {
+    color: var(--text-2);
   }
   .key {
     color: var(--text-3);

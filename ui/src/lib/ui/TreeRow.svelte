@@ -31,6 +31,7 @@
     status,
     statusTitle,
     count,
+    countBesideName = false,
     tabindex,
     disabled = false,
     onclick,
@@ -76,6 +77,8 @@
     statusTitle?: string;
     /** How many rows the row holds or stands for, after what trails the name. */
     count?: number | string;
+    /** The count follows the name instead of sitting at the row's end. */
+    countBesideName?: boolean;
     tabindex?: number;
     disabled?: boolean;
     onclick?: (e: MouseEvent) => void;
@@ -92,9 +95,10 @@
 {#snippet content()}
   {#if chevron}<Chevron {open} />{/if}
   {@render glyph?.()}
-  <span class="name" class:mono>{@render children()}</span>
+  <span class="name" class:mono class:beside={countBesideName}>{@render children()}</span>
   {@render trailing?.()}
   {#if count !== undefined}<span class="n" class:hot>{count}</span>{/if}
+  {#if countBesideName}<span class="fill"></span>{/if}
   {#if letters}<ChangeLetter letter={status} title={statusTitle} />{/if}
 {/snippet}
 
@@ -159,6 +163,12 @@
     min-width: 0;
     overflow: hidden;
     text-overflow: ellipsis;
+  }
+  .name.beside {
+    flex: 0 1 auto;
+  }
+  .fill {
+    flex: 1;
   }
   .wrap .name {
     overflow: visible;

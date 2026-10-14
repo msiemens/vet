@@ -18,6 +18,12 @@ export interface KeymapGroup {
   rows: KeymapRow[];
 }
 
+/** Command names closing a sentence: comma-joined, with a period unless the last name ends in an ellipsis. */
+export function namesText(names: readonly string[]): string {
+  const text = names.join(", ");
+  return text.endsWith("…") ? text : `${text}.`;
+}
+
 /** A line of the Keymap table: an area's own line, or one of its commands. */
 export type KeymapEntry =
   { kind: "group"; area: string; label: string; count: number; open: boolean } | { kind: "row"; row: KeymapRow };

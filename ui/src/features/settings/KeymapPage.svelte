@@ -21,7 +21,7 @@
   import { isMac } from "../../state/host";
   import { keymap } from "../../state/keymap.svelte";
   import SettingsTable from "./SettingsTable.svelte";
-  import { type KeymapEntry, type KeymapRow, keymapEntries, keymapGroups } from "./keymapRows";
+  import { type KeymapEntry, type KeymapRow, keymapEntries, keymapGroups, namesText } from "./keymapRows";
 
   const COLUMNS: Column<never>[] = [
     { id: "command", label: "Command", flex: true, min: 120 },
@@ -164,6 +164,7 @@
             heading
             letters={false}
             count={entry.count}
+            countBesideName
             cur={index === highlighted}
             tabindex={-1}
             onclick={(e) => nav.click(e, index)}
@@ -204,11 +205,11 @@
             <!-- svelte-ignore a11y_no_static_element_interactions -->
             <div class="sub" onclick={(e) => e.stopPropagation()} ondblclick={(e) => e.stopPropagation()}>
               {#if row.sharedWith.length}
-                <span class="settings-problem">Also used by {row.sharedWith.join(", ")}.</span>
+                <span class="settings-problem">Also used by {namesText(row.sharedWith)}</span>
               {/if}
               {#if clash?.id === row.id}
                 <span class="settings-problem">
-                  <Kbd keys={clash.key} /> is already used by {clash.others.join(", ")}.
+                  <Kbd keys={clash.key} /> is already used by {namesText(clash.others)}
                 </span>
                 <button
                   class="ctl small"

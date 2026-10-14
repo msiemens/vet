@@ -55,6 +55,7 @@
       : []),
     {
       label: "Project Settings…",
+      icon: "settings",
       title: commands.hint("app.projectSettings"),
       disabled: !commands.isEnabled("app.projectSettings"),
       run: () => commands.run("app.projectSettings"),

@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { CommandRegistry } from "../../lib/commands.ts";
-import { keymapEntries, keymapGroups } from "./keymapRows.ts";
+import { keymapEntries, keymapGroups, namesText } from "./keymapRows.ts";
 
 const run = () => undefined;
 
@@ -60,6 +60,11 @@ void test("a folded group shows its line and count but not its commands, and a s
     "Zeta 1 open",
     "A thing",
   ]);
+});
+
+void test("names close a sentence with a period, except after a name that ends in an ellipsis", () => {
+  assert.equal(namesText(["Add comment", "Next hunk"]), "Add comment, Next hunk.");
+  assert.equal(namesText(["Next hunk", "Settings…"]), "Next hunk, Settings…");
 });
 
 void test("a row says whether its key was changed and which commands share it", () => {
