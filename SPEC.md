@@ -2,7 +2,7 @@
 
 ## 1. Product definition
 
-Vet is a **review-first IDE** for the agentic coding age. The unit of work is the *changeset*, not the file. The human's role is *verifier*, not author. Agents run elsewhere; Vet is the checkpoint between agent output and merged code.
+Vet is a **review-first IDE** for the agentic coding age. The unit of work is the _changeset_, not the file. The human's role is _verifier_, not author. Agents run elsewhere; Vet is the checkpoint between agent output and merged code.
 
 **Primary activities, in priority order:**
 
@@ -17,7 +17,7 @@ Vet is a **review-first IDE** for the agentic coding age. The unit of work is th
 - Being a general-purpose authoring IDE
 - Multi-user/team collaboration (personal tool)
 
-**Threat model:** agents are non-adversarial but fallible. Vet guards against *accidents*, not against attacks. The one exception is what does not come from your own project: pull requests from a fork, and, in a project you have not marked trusted, pull requests at all. Vet does not analyze them with code-executing backends until you choose to trust them (§7.5).
+**Threat model:** agents are non-adversarial but fallible. Vet guards against _accidents_, not against attacks. The one exception is what does not come from your own project: pull requests from a fork, and, in a project you have not marked trusted, pull requests at all. Vet does not analyze them with code-executing backends until you choose to trust them (§7.5).
 
 **Platforms:** macOS, Windows, and WSL2, including the split where the shell runs on Windows and the backend runs in WSL (§4.1).
 
@@ -25,14 +25,14 @@ Vet is a **review-first IDE** for the agentic coding age. The unit of work is th
 
 ## 2. Core invariants — frozen
 
-| # | Invariant | Test |
-|---|---|---|
-| **I1** | **The semantic layer never knows git.** Acquisition maps git state into immutable snapshots; provenance lives in the acquisition/review layer. | No semantic-layer API accepts commit hashes, ref names, or origin flags. |
+| #      | Invariant                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   | Test                                                                                                                                                                                                                                                                                                                                                                                                                   |
+| ------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **I1** | **The semantic layer never knows git.** Acquisition maps git state into immutable snapshots; provenance lives in the acquisition/review layer.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              | No semantic-layer API accepts commit hashes, ref names, or origin flags.                                                                                                                                                                                                                                                                                                                                               |
 | **I2** | **A semantic answer is reused only under a key that names everything it depends on.** Semantic answers come from language servers running against the live worktree or a complete, materialized snapshot. Every answer Vet keeps, in memory or on disk, is stored under a key built from the complete inputs of the query that produced it: the exact text it was asked about (by blob id) for answers that depend on one document; the side's snapshot, the analysis policy and the restore of its dependencies for answers that resolve across files; and always the identity of the server (binary, version, settings, toolchain, and the user-level configuration outside the repository it reads). An answer is reused if and only if a recomputed key is equal; validity is never judged by time, events or heuristics. Answers from the live worktree are reused only when they depend on the exact text Vet sent. Every cache can be deleted at any time without changing anything but speed. The server identity and the standing of a restore are observed once per generation (a launch, a settings change, an install, a server restart or clearing the caches starts a new one), as a running server already is, and are part of every key observed within it. | For every cached query kind, changing any one key input makes a fresh server query, and keeping all of them answers from the cache without one. The same scenario run with every cache disabled and with caching on gives identical results. An answer the server gave while it was not ready is never stored. Deleting the cache file and the materialized directories leaves review state and all results unchanged. |
-| **I3** | **Annotations and review state are content-anchored, never line-anchored. Outcomes distinguish `Exact` / `Inferred` / `Stale` / `Ambiguous`. `Seen` applies only to content identical to the content that was reviewed — new or modified content is never silently marked seen.** | Annotations survive amend, rebase, force-push, renames, moves, agent edits — repositioned with recorded confidence, never silently orphaned. A seen region split by new edits yields seen parts for identical content and unseen parts for the rest. |
-| **I4** | **All writers are opaque.** Everything is learned from observing the git object graph and filesystem. Never detect, parse, or infer harness behavior. | Identical behavior whether the writer is Claude Code, Aider, a human, or `sed`. |
-| **I5** | **The shell is a thin client.** All product logic sits behind the orchestrator's IPC boundary. | A shell port touches rendering only. No backend, store, or acquisition decision may reference the shell. |
-| **I6** | **Semantic *primitives* — types, references, diagnostics, call edges — come exclusively from authoritative language backends; there is no heuristic tier. Vet may build *derived analyses* over those primitives, but derived results are labeled as such and their derivation is inspectable.** | Every primitive traceable to a vendor backend. Derived claims display their inputs. An operation a server does not offer is shown as not offered by that language's server, never as an empty answer; a server that cannot take documents is refused loudly. |
+| **I3** | **Annotations and review state are content-anchored, never line-anchored. Outcomes distinguish `Exact` / `Inferred` / `Stale` / `Ambiguous`. `Seen` applies only to content identical to the content that was reviewed — new or modified content is never silently marked seen.**                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           | Annotations survive amend, rebase, force-push, renames, moves, agent edits — repositioned with recorded confidence, never silently orphaned. A seen region split by new edits yields seen parts for identical content and unseen parts for the rest.                                                                                                                                                                   |
+| **I4** | **All writers are opaque.** Everything is learned from observing the git object graph and filesystem. Never detect, parse, or infer harness behavior.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       | Identical behavior whether the writer is Claude Code, Aider, a human, or `sed`.                                                                                                                                                                                                                                                                                                                                        |
+| **I5** | **The shell is a thin client.** All product logic sits behind the orchestrator's IPC boundary.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              | A shell port touches rendering only. No backend, store, or acquisition decision may reference the shell.                                                                                                                                                                                                                                                                                                               |
+| **I6** | **Semantic _primitives_ — types, references, diagnostics, call edges — come exclusively from authoritative language backends; there is no heuristic tier. Vet may build _derived analyses_ over those primitives, but derived results are labeled as such and their derivation is inspectable.**                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            | Every primitive traceable to a vendor backend. Derived claims display their inputs. An operation a server does not offer is shown as not offered by that language's server, never as an empty answer; a server that cannot take documents is refused loudly.                                                                                                                                                           |
 
 ---
 
@@ -91,14 +91,14 @@ Session           a working tree on view against a base: browsing until a review
 
 ### 4.1 Topologies and IPC
 
-The orchestrator, language servers, stores, and **the worktree under review** always live on the same side, the *backend side*. Only the shell may be elsewhere.
+The orchestrator, language servers, stores, and **the worktree under review** always live on the same side, the _backend side_. Only the shell may be elsewhere.
 
-| Topology | Shell | Backend side | Status |
-|---|---|---|---|
-| macOS native | Tauri | macOS | supported |
-| Windows native | Tauri | Windows | supported |
-| WSL split | Tauri on Windows | WSL2, worktree on the Linux filesystem (ext4) | supported |
-| WSL, worktree on `/mnt/*` | Tauri on Windows | WSL2 | **degraded**: watcher unreliable across 9P, polling reconciliation, performance targets void, visible banner |
+| Topology                  | Shell            | Backend side                                  | Status                                                                                                       |
+| ------------------------- | ---------------- | --------------------------------------------- | ------------------------------------------------------------------------------------------------------------ |
+| macOS native              | Tauri            | macOS                                         | supported                                                                                                    |
+| Windows native            | Tauri            | Windows                                       | supported                                                                                                    |
+| WSL split                 | Tauri on Windows | WSL2, worktree on the Linux filesystem (ext4) | supported                                                                                                    |
+| WSL, worktree on `/mnt/*` | Tauri on Windows | WSL2                                          | **degraded**: watcher unreliable across 9P, polling reconciliation, performance targets void, visible banner |
 
 **Transport:** one protocol over one transport, a WebSocket bound to loopback, in every topology. The shell spawns the backend (directly, or via `wsl.exe` in the split) and reads a per-launch random token from its stdout. Every connection must present the token. There is no unauthenticated endpoint. In the WSL split, Windows reaches the socket through WSL2 localhost forwarding.
 
@@ -205,18 +205,18 @@ This catches base changes **within the reviewed region only**. Semantic changes 
 ### 6.1 Snapshots and scope
 
 - **Snapshot contents:** a file is in a snapshot iff it is under the repository root **and** (tracked by git **or** untracked and not git-ignored). Files over the capture size cap (default 50 MB) are still hashed in full, so snapshot identity stays exact, but their content is not retained and they appear as `content unavailable`. Ignored paths can be opted in explicitly. The untracked contents of folders a tool owns by name (`.pnpm-store/`) are never part of a snapshot; this list is explicit and fixed. No relevance inference of any kind (I4). Executable-bit and symlink changes are first-class `(mode, kind)` entries. Submodules are recorded as pinned commits; descent is opt-in.
-- **Review filter:** review roots, binary hiding, and user patterns are a `ReviewFilter` applied when *displaying* a changeset. It is a project setting, stored per repository and applied to every changeset of it. Changing it never changes snapshot identity, so it never disturbs anchors or review state.
+- **Review filter:** review roots, binary hiding, and user patterns are a `ReviewFilter` applied when _displaying_ a changeset. It is a project setting, stored per repository and applied to every changeset of it. Changing it never changes snapshot identity, so it never disturbs anchors or review state.
   - **Generated files** are excluded like a matching exclude pattern, unless the filter's "review generated files" setting is on: lockfiles and tool output by file name (`Cargo.lock`, `yarn.lock`, `*.pb.go`, `*.min.js`, …, at any depth), files with `linguist-generated` set in `.gitattributes` (those of the side the file is on; `-linguist-generated` keeps a file in), and files whose first five lines (within the first KiB) contain `<auto-generated`, `@generated` or Go's `// Code generated … DO NOT EDIT.`.
 - **Pin at review start (§5.3):** record `{head, tree_hash}` of version 1 and copy its dirty and untracked content into Vet's content store. Dirty content is **never** written into the git object database, so untracked secrets never become pushable objects. The changeset is the base to the latest settled snapshot; version 1 is the one current when the review started.
 - **Content retention:** when a snapshot settles while a review is open, every blob of it that git cannot reconstruct (dirty and untracked content) is copied into the content store, so every snapshot on the session's timeline stays reconstructible. In addition, every blob that appears on either side of a displayed diff, or under an anchor or span, is copied when first displayed, so review state and anchors never depend on git keeping old objects alive.
 - **Session refs:** while a review is open, it holds `refs/vet/sessions/<session-id>/{base,target}` on the commits its snapshots are built from, so they stay materializable. The refs are deleted when the review is finished.
-- **Availability:** a snapshot is *materializable* only while every one of its blobs is available (from git or the content store). After that, semantic queries on it are disabled with a visible reason. Vet never starts a server on a partial tree.
+- **Availability:** a snapshot is _materializable_ only while every one of its blobs is available (from git or the content store). After that, semantic queries on it are disabled with a visible reason. Vet never starts a server on a partial tree.
 
 ### 6.2 Watcher, settling, and reconciliation
 
 - **Watcher = latency optimization, never authority.** Filesystem events drive incremental re-hashing.
-- **Settling:** after a write burst, a snapshot is *settled* once the touched files' size and mtime stay stable across a debounce window (about 1–2 s). Each settled snapshot is appended to its `LogicalTip`; this sequence is the edit timeline. Same-file concurrent edits within one window are unresolvable by design.
-- **Authoritative reconciliation** runs at open, on watcher overflow or rescan signals (§6.4), on resume or restart, and before declaring a snapshot settled. It must *establish correct snapshot identity*, metadata-first (filesystem stat, git index, cached hashes), hashing only uncertain entries. Dropped or coalesced events can never corrupt review state, only delay it.
+- **Settling:** after a write burst, a snapshot is _settled_ once the touched files' size and mtime stay stable across a debounce window (about 1–2 s). Each settled snapshot is appended to its `LogicalTip`; this sequence is the edit timeline. Same-file concurrent edits within one window are unresolvable by design.
+- **Authoritative reconciliation** runs at open, on watcher overflow or rescan signals (§6.4), on resume or restart, and before declaring a snapshot settled. It must _establish correct snapshot identity_, metadata-first (filesystem stat, git index, cached hashes), hashing only uncertain entries. Dropped or coalesced events can never corrupt review state, only delay it.
 
 ### 6.3 Platform-faithful entries
 
@@ -227,12 +227,12 @@ This catches base changes **within the reviewed region only**. Semantic changes 
 
 ### 6.4 Watcher backends
 
-| Platform | Mechanism | Forces reconciliation |
-|---|---|---|
-| macOS | FSEvents | `MustScanSubDirs`, `UserDropped`/`KernelDropped`, `RootChanged` |
-| Windows | `ReadDirectoryChangesW` | buffer overflow (zero-byte result), handle invalidation |
-| Linux / WSL (ext4) | inotify | `IN_Q_OVERFLOW`, watch-limit exhaustion (falls back to polling, with a visible notice) |
-| WSL, worktree on `/mnt/*` | polling only | every poll interval (degraded topology) |
+| Platform                  | Mechanism               | Forces reconciliation                                                                  |
+| ------------------------- | ----------------------- | -------------------------------------------------------------------------------------- |
+| macOS                     | FSEvents                | `MustScanSubDirs`, `UserDropped`/`KernelDropped`, `RootChanged`                        |
+| Windows                   | `ReadDirectoryChangesW` | buffer overflow (zero-byte result), handle invalidation                                |
+| Linux / WSL (ext4)        | inotify                 | `IN_Q_OVERFLOW`, watch-limit exhaustion (falls back to polling, with a visible notice) |
+| WSL, worktree on `/mnt/*` | polling only            | every poll interval (degraded topology)                                                |
 
 ### 6.5 History and base resolution
 
@@ -246,18 +246,18 @@ This catches base changes **within the reviewed region only**. Semantic changes 
 
 ### 7.1 Backends — LSP, uniformly (I6)
 
-| Language | Backend | 3rd-party hover docs |
-|---|---|---|
-| Rust | rust-analyzer (pinned) | cargo registry sources |
-| TypeScript | `typescript-language-server` (LSP adapter over tsserver) → TS7 native server (speaks LSP) | JSDoc from `.d.ts` |
-| Svelte | svelte-language-server (→ tsserver; loads the project's `svelte.config.js`) | as TS + component docs |
-| Angular | Angular Language Server (`.html` templates only, and only below an `angular.json`: the nearest one up from the file, else no server serves the HTML; TypeScript files, inline templates included, stay with the TypeScript server) | as TS + template symbols |
-| Python | Pyright (→ `ty` if/when stable) | docstrings + typeshed |
-| C# | `roslyn-language-server` (pinned) | XML docs in NuGet packages |
-| YAML | yaml-language-server | schema descriptions (§7.5) |
-| JSON | vscode-json-languageserver (`vscode-langservers-extracted`) | schema descriptions (§7.5) |
-| Shell | bash-language-server (with ShellCheck when installed) | none |
-| Dockerfile | dockerfile-language-server-nodejs (offline, unlike Docker's own server, which needs Buildx and asks Docker Scout) | instruction docs |
+| Language   | Backend                                                                                                                                                                                                                            | 3rd-party hover docs       |
+| ---------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------- |
+| Rust       | rust-analyzer (pinned)                                                                                                                                                                                                             | cargo registry sources     |
+| TypeScript | `typescript-language-server` (LSP adapter over tsserver) → TS7 native server (speaks LSP)                                                                                                                                          | JSDoc from `.d.ts`         |
+| Svelte     | svelte-language-server (→ tsserver; loads the project's `svelte.config.js`)                                                                                                                                                        | as TS + component docs     |
+| Angular    | Angular Language Server (`.html` templates only, and only below an `angular.json`: the nearest one up from the file, else no server serves the HTML; TypeScript files, inline templates included, stay with the TypeScript server) | as TS + template symbols   |
+| Python     | Pyright (→ `ty` if/when stable)                                                                                                                                                                                                    | docstrings + typeshed      |
+| C#         | `roslyn-language-server` (pinned)                                                                                                                                                                                                  | XML docs in NuGet packages |
+| YAML       | yaml-language-server                                                                                                                                                                                                               | schema descriptions (§7.5) |
+| JSON       | vscode-json-languageserver (`vscode-langservers-extracted`)                                                                                                                                                                        | schema descriptions (§7.5) |
+| Shell      | bash-language-server (with ShellCheck when installed)                                                                                                                                                                              | none                       |
+| Dockerfile | dockerfile-language-server-nodejs (offline, unlike Docker's own server, which needs Buildx and asks Docker Scout)                                                                                                                  | instruction docs           |
 
 A file is served by the language whose extension it has, or, for files like `Dockerfile`, whose file name it has; no two languages claim the same one.
 
@@ -279,7 +279,7 @@ Adding a language means adding a config entry plus a one-time manual check of wh
 
 **Required:** text document synchronization, since Vet feeds the server the documents it asks about; a server without it is refused loudly.
 
-**Optional, per feature:** `documentSymbol`, `definition`, `references`, `implementation`, `hover`, `callHierarchy` (incoming and outgoing), `workspace/symbol`. Diagnostics (push or pull) are always asked for: servers publish them without announcing it. A request for an operation the server did not advertise is not sent; it is answered as *not offered by this language's server* (I6) and every consumer says so where it would have shown the answer: go-to-definition says it (a hover popup stays silent, as it does for a symbol the server knows nothing about), the Symbol panel's callers and callees say that call hierarchy is not available, a workspace symbol search reports the languages whose servers cannot be searched. A server that offers only some operations (a diagnostics-only server, a YAML server without references) still serves the rest.
+**Optional, per feature:** `documentSymbol`, `definition`, `references`, `implementation`, `hover`, `callHierarchy` (incoming and outgoing), `workspace/symbol`. Diagnostics (push or pull) are always asked for: servers publish them without announcing it. A request for an operation the server did not advertise is not sent; it is answered as _not offered by this language's server_ (I6) and every consumer says so where it would have shown the answer: go-to-definition says it (a hover popup stays silent, as it does for a symbol the server knows nothing about), the Symbol panel's callers and callees say that call hierarchy is not available, a workspace symbol search reports the languages whose servers cannot be searched. A server that offers only some operations (a diagnostics-only server, a YAML server without references) still serves the rest.
 
 ### 7.2 Server pool and reuse (I2)
 
@@ -293,17 +293,17 @@ Adding a language means adding a config entry plus a one-time manual check of wh
 
 Primitive rows pass backend answers through. Derived rows combine primitives with the diff; per I6 they are labeled derived in the UI and show their inputs. A place a server names outside the repository (a dependency, the toolchain's sources) shows its line only if the file is of the language of the server that named it (§7.1: by extension or name; the Svelte and Angular servers may also name TypeScript files): a Rust server cannot show a YAML file, a TypeScript server no Rust file. Any other file is listed without text.
 
-| Question | Kind | How |
-|---|---|---|
-| Hover, go-to-definition, references, diagnostics | primitive | the server for the side being viewed |
-| Base-side navigation, side by side with target | primitive | base server and target server queried in parallel |
-| Search Everywhere (double-shift) | primitive | `workspace/symbol` on the target server |
-| Which symbols changed | derived | per changed file, `documentSymbol` of both sides' texts; symbols whose ranges intersect diff hunks |
-| Usages of a symbol | derived | `references` of the symbol shown, each with the symbol it is in, on the target server, async |
-| Impact of a removal | derived | `references` for each removed symbol on the base server; each call site is then classified in the target as **gone**, **modified**, **likely broken** (identical and unresolved), **binding changed** (identical but resolves elsewhere), or **unknown** |
-| Semantic-graph diff | derived | outgoing calls and references of each changed symbol on both sides, compared by container-qualified name. A renamed symbol appears as removed + added next to the textual diff; Vet does not infer renames or moves. |
-| Is a diagnostic new or pre-existing | derived | diagnostics of each changed file on both sides. A target diagnostic is pre-existing if the base has one with equal severity, source, code and message (whitespace-collapsed) on a line that maps to it; otherwise it is new. It is *unknown*, never new, while the base side's diagnostics are unavailable; the target's diagnostics show at once as origin pending. |
-| Changed callers and callees of a changed symbol | derived | incoming and outgoing calls on the target, followed through changed symbols only. Unchanged direct callers are listed as possibly affected. |
+| Question                                         | Kind      | How                                                                                                                                                                                                                                                                                                                                                                  |
+| ------------------------------------------------ | --------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Hover, go-to-definition, references, diagnostics | primitive | the server for the side being viewed                                                                                                                                                                                                                                                                                                                                 |
+| Base-side navigation, side by side with target   | primitive | base server and target server queried in parallel                                                                                                                                                                                                                                                                                                                    |
+| Search Everywhere (double-shift)                 | primitive | `workspace/symbol` on the target server                                                                                                                                                                                                                                                                                                                              |
+| Which symbols changed                            | derived   | per changed file, `documentSymbol` of both sides' texts; symbols whose ranges intersect diff hunks                                                                                                                                                                                                                                                                   |
+| Usages of a symbol                               | derived   | `references` of the symbol shown, each with the symbol it is in, on the target server, async                                                                                                                                                                                                                                                                         |
+| Impact of a removal                              | derived   | `references` for each removed symbol on the base server; each call site is then classified in the target as **gone**, **modified**, **likely broken** (identical and unresolved), **binding changed** (identical but resolves elsewhere), or **unknown**                                                                                                             |
+| Semantic-graph diff                              | derived   | outgoing calls and references of each changed symbol on both sides, compared by container-qualified name. A renamed symbol appears as removed + added next to the textual diff; Vet does not infer renames or moves.                                                                                                                                                 |
+| Is a diagnostic new or pre-existing              | derived   | diagnostics of each changed file on both sides. A target diagnostic is pre-existing if the base has one with equal severity, source, code and message (whitespace-collapsed) on a line that maps to it; otherwise it is new. It is _unknown_, never new, while the base side's diagnostics are unavailable; the target's diagnostics show at once as origin pending. |
+| Changed callers and callees of a changed symbol  | derived   | incoming and outgoing calls on the target, followed through changed symbols only. Unchanged direct callers are listed as possibly affected.                                                                                                                                                                                                                          |
 
 ### 7.4 Reachability — a derived analysis (I6)
 
@@ -333,13 +333,13 @@ The analysis policy has two parts: whether language servers may execute project 
 
 ### 7.6 Reuse of answers (I2)
 
-| Query | Depends on | Key | Kept |
-|---|---|---|---|
-| Document symbols (either side, any tree) | the document text, the language, the server | `(server identity, file extension, BlobId of the text sent)` | memory and disk |
-| Hover, definition, references, call hierarchy, diagnostics on a materialized snapshot | the whole snapshot, its restored dependencies, the server, the policy | `(server identity, SnapshotId, policy, restore fingerprint, query)` | memory and disk |
-| Workspace symbols on a materialized snapshot | as above | as above | memory |
-| Any project-wide query on the live worktree | the live tree, which changes under the server | — | never reused |
-| Derived analyses | their primitives and the diff | recomputed from (cached) primitives; changed symbols per file pair `(old BlobId, new BlobId, server identity)` | memory |
+| Query                                                                                 | Depends on                                                            | Key                                                                                                            | Kept            |
+| ------------------------------------------------------------------------------------- | --------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------- | --------------- |
+| Document symbols (either side, any tree)                                              | the document text, the language, the server                           | `(server identity, file extension, BlobId of the text sent)`                                                   | memory and disk |
+| Hover, definition, references, call hierarchy, diagnostics on a materialized snapshot | the whole snapshot, its restored dependencies, the server, the policy | `(server identity, SnapshotId, policy, restore fingerprint, query)`                                            | memory and disk |
+| Workspace symbols on a materialized snapshot                                          | as above                                                              | as above                                                                                                       | memory          |
+| Any project-wide query on the live worktree                                           | the live tree, which changes under the server                         | —                                                                                                              | never reused    |
+| Derived analyses                                                                      | their primitives and the diff                                         | recomputed from (cached) primitives; changed symbols per file pair `(old BlobId, new BlobId, server identity)` | memory          |
 
 An answer the server gave while it reported work in progress or had not finished starting is never stored. A cached primitive keeps the identity of the server that produced it, and a derived result shows it among its inputs (I6). A new revision cancels the semantic work still running for the old one.
 
@@ -395,15 +395,15 @@ struct PlatformTraits {
 }
 ```
 
-| | GitHub | Azure DevOps | GitLab | Bitbucket | Gerrit |
-|---|---|---|---|---|---|
-| `changeset_threads` | Flat | Resolvable | Either | Resolvable | Resolvable |
-| `conversation_feed` | yes | no | yes | no | no |
-| `posting` | BatchedReview | PerComment | BatchedReview | PerComment | BatchedReview |
-| `verdicts` | comment, approve, request changes | approve, approve with suggestions, wait for author, reject | approve | approve, request changes | label votes (e.g. Code-Review −2…+2) |
-| `verdict_separate` | no | yes | yes | yes | no |
-| `blocking` | UnresolvedThreads (if required) | UnresolvedThreads (if policy) | UnresolvedThreads (if setting) | OpenTasks | Labels, UnresolvedThreads |
-| `revision_scoped` | no | no | no | no | yes |
+|                     | GitHub                            | Azure DevOps                                               | GitLab                         | Bitbucket                | Gerrit                               |
+| ------------------- | --------------------------------- | ---------------------------------------------------------- | ------------------------------ | ------------------------ | ------------------------------------ |
+| `changeset_threads` | Flat                              | Resolvable                                                 | Either                         | Resolvable               | Resolvable                           |
+| `conversation_feed` | yes                               | no                                                         | yes                            | no                       | no                                   |
+| `posting`           | BatchedReview                     | PerComment                                                 | BatchedReview                  | PerComment               | BatchedReview                        |
+| `verdicts`          | comment, approve, request changes | approve, approve with suggestions, wait for author, reject | approve                        | approve, request changes | label votes (e.g. Code-Review −2…+2) |
+| `verdict_separate`  | no                                | yes                                                        | yes                            | yes                      | no                                   |
+| `blocking`          | UnresolvedThreads (if required)   | UnresolvedThreads (if policy)                              | UnresolvedThreads (if setting) | OpenTasks                | Labels, UnresolvedThreads            |
+| `revision_scoped`   | no                                | no                                                         | no                             | no                       | yes                                  |
 
 GitHub and ADO ship in M1; the other columns show the model covers them, and are adapter work only. Platform details (especially merge checks) are verified against each platform's API when its adapter is built.
 
@@ -432,15 +432,15 @@ Historical: the spike's benchmark and mock backend were removed on 2026-10-09.
 
 **Pass criteria** (p95 on each webview):
 
-| Metric | Threshold |
-|---|---|
-| Open changeset → first hunk painted | < 300 ms |
-| Keystroke → paint | < 16 ms |
-| Hunk-to-hunk navigation → painted | < 50 ms |
-| Sustained scroll through the full changeset | ≤ 5 % dropped frames |
-| Toggle `Seen` on a 1,000-line file | < 50 ms |
-| Hover round-trip over the WSL-split transport | < 100 ms |
-| Renderer memory, full changeset open | < 1 GB |
+| Metric                                        | Threshold            |
+| --------------------------------------------- | -------------------- |
+| Open changeset → first hunk painted           | < 300 ms             |
+| Keystroke → paint                             | < 16 ms              |
+| Hunk-to-hunk navigation → painted             | < 50 ms              |
+| Sustained scroll through the full changeset   | ≤ 5 % dropped frames |
+| Toggle `Seen` on a 1,000-line file            | < 50 ms              |
+| Hover round-trip over the WSL-split transport | < 100 ms             |
+| Renderer memory, full changeset open          | < 1 GB               |
 
 **Input correctness** (pass/fail): German layout on Windows and macOS. Dead keys compose correctly. AltGr characters (`{ [ ] } \ @ ~ |`) type correctly and do not trigger Ctrl+Alt bindings. IME composition doesn't corrupt decorations.
 
@@ -463,8 +463,8 @@ Historical: the spike's benchmark and mock backend were removed on 2026-10-09.
    - **mode only:** a changeset whose only change is `100644 → 100755` is not complete until that change is acknowledged;
    - **Windows filesystem:** with `core.filemode=false` / `core.symlinks=false`, mode and kind come from the index (§6.3); paths differing only in case are flagged `PathCollision` and not materialized.
 2. **Semantics:** after an agent edit settles, hover, references and diagnostics reflect it. Base-side go-to-definition works side by side with target for a dirty-tree session. Callers, usages and reachability are shown for a symbol; a removed function's remaining call sites are found and classified. An older timeline snapshot from an open session can be materialized and queried.
-4. **Reconciliation:** simulate dropped watcher events (kill, inotify overflow, FSEvents `MustScanSubDirs`, `ReadDirectoryChangesW` buffer overflow) → the rescan produces the correct snapshot, and review state is never silently wrong. A Windows-side write into the WSL worktree is observed or reconciled.
-5. **Shell and topology:** the POC meets the spike's thresholds with real orchestrator data on every POC platform; the WSL split works end to end over the authenticated transport.
+3. **Reconciliation:** simulate dropped watcher events (kill, inotify overflow, FSEvents `MustScanSubDirs`, `ReadDirectoryChangesW` buffer overflow) → the rescan produces the correct snapshot, and review state is never silently wrong. A Windows-side write into the WSL worktree is observed or reconciled.
+4. **Shell and topology:** the POC meets the spike's thresholds with real orchestrator data on every POC platform; the WSL split works end to end over the authenticated transport.
 
 Also included: fetch-only restore with shared caches.
 
@@ -567,15 +567,15 @@ Spec/test-diff-centric views; more languages via config; `ty` adoption when stab
 
 Targets apply to supported topologies; the `/mnt/*` WSL topology is exempt.
 
-| Milestone | Target |
-|---|---|
-| Open changeset → UI interactive | < 300 ms |
-| Diff available | < 1 s |
-| Live target server: hover/definition | backend-bound; Vet adds < 20 ms |
-| Materialize a snapshot (worktree + overlay) | < 2 s for a 10k-file repo; server start is async with visible progress |
-| Usages and call queries (`references` + incoming calls) of a symbol | < 10 s p50, async; slow symbols shown as pending |
-| Reconciliation establishes correct snapshot identity | < 1 s, excluding time to hash changed bytes |
-| Hashing changed bytes (read + hash, files in OS cache) | ≥ 1 GB/s |
+| Milestone                                                                 | Target                                                                                      |
+| ------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------- |
+| Open changeset → UI interactive                                           | < 300 ms                                                                                    |
+| Diff available                                                            | < 1 s                                                                                       |
+| Live target server: hover/definition                                      | backend-bound; Vet adds < 20 ms                                                             |
+| Materialize a snapshot (worktree + overlay)                               | < 2 s for a 10k-file repo; server start is async with visible progress                      |
+| Usages and call queries (`references` + incoming calls) of a symbol       | < 10 s p50, async; slow symbols shown as pending                                            |
+| Reconciliation establishes correct snapshot identity                      | < 1 s, excluding time to hash changed bytes                                                 |
+| Hashing changed bytes (read + hash, files in OS cache)                    | ≥ 1 GB/s                                                                                    |
 | A review action (mark, comment) or a manifest, whatever the semantic load | < 100 ms; the load test holds every semantic resource stuck and requires them all to answer |
 
 **Benchmark corpus:** your own repos, your own hardware, on each POC topology.
