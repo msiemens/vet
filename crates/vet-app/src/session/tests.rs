@@ -2654,6 +2654,48 @@ async fn a_thread_whose_anchor_cannot_be_placed_is_not_created() {
 }
 
 #[tokio::test]
+async fn threads_read_back_from_the_store_that_cannot_be_placed_leave_the_threads_as_they_were() {
+    let text = numbered(10, &[]);
+    let fx = Fixture::open(
+        &[("a.txt", "one\n"), ("b.txt", &text)],
+        &[("a.txt", "two\n"), ("b.txt", &text)],
+    )
+    .await;
+    let kept = fx.thread(on("a.txt", 0, 1)).await;
+    // A thread arrives in the store, anchored in a file whose text is only in git.
+    let target = fx.session.target_snapshot().await;
+    let anchor = Anchor::from_text(
+        Side::Target,
+        target.id,
+        path("b.txt"),
+        text.as_bytes(),
+        LineRange { start: 2, end: 4 },
+    )
+    .unwrap();
+    fx.store
+        .writes()
+        .add_thread(
+            ChangesetId(1),
+            None,
+            CommentTarget::Range(anchor),
+            Message::written("lena".into(), "hi".into(), 1),
+            None,
+            ThreadStatus::Open,
+        )
+        .await
+        .unwrap();
+
+    fx.git.reads_fail.store(true, Ordering::Relaxed);
+    let mut st = fx.session.hold().await;
+    let reloaded = fx.session.reload_threads(&mut st, ChangesetId(1)).await;
+    drop(st);
+    fx.git.reads_fail.store(false, Ordering::Relaxed);
+
+    assert!(reloaded.is_err());
+    assert_eq!(thread_ids(&fx.session).await, [kept]);
+}
+
+#[tokio::test]
 async fn a_range_thread_that_has_no_place_yet_is_an_error_not_a_panic() {
     let fx = Fixture::open(&[("a.txt", &numbered(10, &[]))], &[("a.txt", &numbered(10, &[3]))]).await;
     fx.thread(on("a.txt", 2, 4)).await;

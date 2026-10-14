@@ -317,8 +317,7 @@ impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> L
             }
             if platform.remote_id.is_some() {
                 platform.status_pending = true;
-                st.writes().set_thread_platform(thread, platform.clone()).await?;
-                edit_thread(&mut st, thread, |t| t.platform = Some(platform));
+                put_platform(&mut st, thread, platform).await?;
             }
         }
         st.writes().set_thread_status(thread, status).await?;
@@ -424,6 +423,34 @@ fn place(st: &mut State, id: ThreadId, resolution: Option<Resolution>) {
         Some(resolution) => resolutions.insert(id, resolution),
         None => resolutions.remove(&id),
     };
+}
+
+/// Each of these writes to the store and then shows what was written, with nothing awaited in
+/// between: the state a command publishes never differs from the store by a step of its own.
+pub(super) async fn put_message<W: ReviewWrites + Clone>(
+    st: &mut Held<'_, W>,
+    thread: ThreadId,
+    message: &Message,
+) -> Result<()> {
+    st.writes().replace_message(message.clone()).await?;
+    edit_thread(st, thread, |t| replace(t, message));
+    Ok(())
+}
+
+pub(super) async fn put_platform<W: ReviewWrites + Clone>(
+    st: &mut Held<'_, W>,
+    thread: ThreadId,
+    platform: PlatformThread,
+) -> Result<()> {
+    st.writes().set_thread_platform(thread, platform.clone()).await?;
+    edit_thread(st, thread, |t| t.platform = Some(platform));
+    Ok(())
+}
+
+pub(super) fn replace(thread: &mut Thread, message: &Message) {
+    if let Some(m) = thread.messages.iter_mut().find(|m| m.id == message.id) {
+        *m = message.clone();
+    }
 }
 
 pub(super) fn edit_thread(st: &mut State, id: ThreadId, edit: impl FnOnce(&mut Thread)) {

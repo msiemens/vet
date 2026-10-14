@@ -15,7 +15,9 @@ use vet_core::review::{
 
 use super::hold::Held;
 use super::state::{State, View};
-use super::threads::{ThreadView, edit_thread, find_thread, side_snapshot, thread_by_id, thread_view};
+use super::threads::{
+    ThreadView, edit_thread, find_thread, put_message, put_platform, side_snapshot, thread_by_id, thread_view,
+};
 use super::{LiveSession, Result, SessionError};
 use crate::changeset::{CommitId, Source};
 use crate::platform::{
@@ -362,7 +364,7 @@ impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> L
 
     /// Reads the threads from the store again, as they are after something changed them there.
     /// If their anchors cannot be placed, the threads stay as they were.
-    async fn reload_threads(&self, st: &mut State, changeset: crate::changeset::ChangesetId) -> Result<()> {
+    pub(super) async fn reload_threads(&self, st: &mut State, changeset: crate::changeset::ChangesetId) -> Result<()> {
         let open = st.review.as_ref().map(|r| r.id);
         let threads = visible_threads(self.acquisition.store.threads(changeset).await?, open);
         let previous = std::mem::replace(&mut st.threads, threads);
@@ -473,8 +475,7 @@ impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> L
             edited.body = body;
             edited.edited_at = Some(now);
             let comment = comment_ref(thread, old);
-            st.writes().replace_message(edited.clone()).await?;
-            edit_thread(&mut st, id, |t| replace(t, &edited));
+            put_message(&mut st, id, &edited).await?;
             let remote = comment.as_ref().map(|_| pull_request(&st)).transpose()?;
             (id, edited, remote, comment)
         };
@@ -906,9 +907,7 @@ impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> L
             outgoing,
             ..old.clone()
         };
-        st.writes().replace_message(changed.clone()).await?;
-        edit_thread(st, thread, |t| replace(t, &changed));
-        Ok(())
+        put_message(st, thread, &changed).await
     }
 
     /// Settles the drafts a post left posting, because Vet stopped or lost the platform's answer
@@ -997,8 +996,7 @@ impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> L
                 threads_known.insert(id.clone());
                 let mut platform = t.platform.clone().expect("a draft thread");
                 platform.remote_id = Some(id);
-                st.writes().set_thread_platform(thread, platform.clone()).await?;
-                edit_thread(st, thread, |t| t.platform = Some(platform));
+                put_platform(st, thread, platform).await?;
             }
             self.record_comment(st, thread, message, comment).await?;
         }
@@ -1006,7 +1004,6 @@ impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> L
     }
 
     async fn record_posted(&self, st: &mut Held<'_, S::Writes>, posted: &Submitted) -> Result<u32> {
-        let store = st.writes();
         let mut count = 0;
         for new in &posted.threads {
             let Some(thread) = st
@@ -1019,8 +1016,7 @@ impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> L
             let mut platform = thread.platform.clone().expect("a draft thread");
             platform.remote_id = Some(new.thread.clone());
             let id = thread.id;
-            store.set_thread_platform(id, platform.clone()).await?;
-            edit_thread(st, id, |t| t.platform = Some(platform));
+            put_platform(st, id, platform).await?;
             self.record_comment(st, id, MessageId(new.key), &new.comment).await?;
             for reply in &new.replies {
                 self.record_comment(st, id, MessageId(reply.key), &reply.comment)
@@ -1062,8 +1058,7 @@ impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> L
             if !thread.is_posted() {
                 let mut platform = thread.platform.clone().expect("a draft thread");
                 platform.remote_id = Some(comment.comment.id.clone());
-                store.set_thread_platform(id, platform.clone()).await?;
-                edit_thread(st, id, |t| t.platform = Some(platform));
+                put_platform(st, id, platform).await?;
             }
             count += 1;
         }
@@ -1094,9 +1089,7 @@ impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> L
             synced: comment.body.clone(),
             conflict: None,
         });
-        st.writes().replace_message(posted.clone()).await?;
-        edit_thread(st, thread, |t| replace(t, &posted));
-        Ok(())
+        put_message(st, thread, &posted).await
     }
 
     /// Removes `message` from `thread`, and the thread with its last message.
@@ -1161,9 +1154,7 @@ impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> L
 
     async fn store_message(&self, thread: ThreadId, message: Message) -> Result<()> {
         let mut st = self.hold().await;
-        st.writes().replace_message(message.clone()).await?;
-        edit_thread(&mut st, thread, |t| replace(t, &message));
-        Ok(())
+        put_message(&mut st, thread, &message).await
     }
 
     async fn view_of(&self, thread: ThreadId) -> Result<ThreadView> {
@@ -1261,12 +1252,6 @@ fn own_conversation_comment(st: &State, comment: &str) -> Result<()> {
         _ => Err(SessionError::Invalid(
             "only your own comments on the pull request can be changed".into(),
         )),
-    }
-}
-
-fn replace(thread: &mut Thread, message: &Message) {
-    if let Some(m) = thread.messages.iter_mut().find(|m| m.id == message.id) {
-        *m = message.clone();
     }
 }
 
