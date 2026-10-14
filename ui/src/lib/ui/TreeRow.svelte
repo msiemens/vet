@@ -25,6 +25,7 @@
     interactive = true,
     letters = true,
     chevron = true,
+    inset = "var(--pad-tree)",
     class: extra,
     title,
     status,
@@ -65,6 +66,8 @@
     letters?: boolean;
     /** The row begins with the chevron column; a row among rows that never fold has none. */
     chevron?: boolean;
+    /** Where the row starts, for a list whose other lines begin elsewhere than a tree's. */
+    inset?: string;
     /** Classes of the row's element, for what the list around it marks. */
     class?: ClassValue;
     title?: string;
@@ -82,6 +85,8 @@
     children: Snippet;
     trailing?: Snippet;
   } = $props();
+
+  const start = $derived(`calc(${inset} + ${depth} * var(--w-indent))`);
 </script>
 
 {#snippet content()}
@@ -107,7 +112,7 @@
     {title}
     {disabled}
     aria-expanded={open}
-    style:padding-left="calc(var(--pad-tree) + {depth} * var(--w-indent))"
+    style:padding-left={start}
     {onclick}
     {onmousemove}
     {oncontextmenu}
@@ -115,12 +120,7 @@
     {@render content()}
   </button>
 {:else}
-  <div
-    class={["pick tw", tone, extra]}
-    class:cur
-    {title}
-    style:padding-left="calc(var(--pad-tree) + {depth} * var(--w-indent))"
-  >
+  <div class={["pick tw", tone, extra]} class:cur {title} style:padding-left={start}>
     {@render content()}
   </div>
 {/if}
