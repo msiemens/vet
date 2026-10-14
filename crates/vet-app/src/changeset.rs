@@ -103,14 +103,19 @@ pub enum VersionOrigin {
 }
 
 impl Version {
+    /// The base commit and the tip the version is built on.
+    pub fn commits(&self) -> (&CommitId, &CommitId) {
+        (&self.base_commit, &self.tip)
+    }
+
     /// The commits this version needs a ref for to stay materializable: its own,
-    /// unless `previous` holds them already.
-    pub fn commits_to_keep(&self, previous: Option<&Version>) -> Vec<(&'static str, &CommitId)> {
+    /// unless the version before it, whose `commits` are `previous`, holds them already.
+    pub fn commits_to_keep(&self, previous: Option<(&CommitId, &CommitId)>) -> Vec<(&'static str, &CommitId)> {
         let mut keep = Vec::new();
-        if previous.is_none_or(|p| p.base_commit != self.base_commit) {
+        if previous.is_none_or(|(base, _)| *base != self.base_commit) {
             keep.push(("base", &self.base_commit));
         }
-        if previous.is_none_or(|p| p.tip != self.tip) {
+        if previous.is_none_or(|(_, tip)| *tip != self.tip) {
             keep.push(("tip", &self.tip));
         }
         keep
@@ -139,8 +144,8 @@ mod tests {
     #[test]
     fn a_version_keeps_the_commits_an_earlier_one_does_not_hold() {
         let first = version(1, "b1", "h1");
-        let names = |v: &Version, previous| -> Vec<(&str, String)> {
-            v.commits_to_keep(previous)
+        let names = |v: &Version, previous: Option<&Version>| -> Vec<(&str, String)> {
+            v.commits_to_keep(previous.map(Version::commits))
                 .into_iter()
                 .map(|(n, c)| (n, c.0.clone()))
                 .collect()

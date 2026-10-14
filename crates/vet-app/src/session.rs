@@ -424,7 +424,7 @@ impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> L
         for (i, version) in versions.iter().enumerate() {
             acquisition.record_commit(version.target, version.tip.clone());
             acquisition.record_commit(version.base, version.base_commit.clone());
-            let previous = i.checked_sub(1).map(|p| &versions[p]);
+            let previous = i.checked_sub(1).map(|p| versions[p].commits());
             Self::keep_commits(acquisition, changeset, version, previous).await?;
         }
         let threads = visible_threads(store.threads(changeset).await?, Some(id));
@@ -472,12 +472,12 @@ impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> L
     }
 
     /// Takes the refs that keep the commits of `version` alive in git, except those
-    /// the `previous` version already holds.
+    /// the version before it already holds, whose base commit and tip are `previous`.
     async fn keep_commits(
         acquisition: &Acquisition<G, S>,
         changeset: ChangesetId,
         version: &Version,
-        previous: Option<&Version>,
+        previous: Option<(&CommitId, &CommitId)>,
     ) -> Result<()> {
         for (name, commit) in version.commits_to_keep(previous) {
             acquisition
@@ -486,6 +486,28 @@ impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> L
                 .await?;
         }
         Ok(())
+    }
+
+    /// Makes `version` of the review of `changeset` durable: the content it needs in the store
+    /// (`snapshots`), the refs that keep its commits, and last `write`, the store's record of it.
+    /// A failure before the record leaves the review as it was, so the same version can be tried
+    /// again; callers publish the version in memory right after, with nothing awaited between.
+    async fn record_version<T>(
+        &self,
+        store: &S::Writes,
+        changeset: ChangesetId,
+        version: &Version,
+        previous: Option<(&CommitId, &CommitId)>,
+        snapshots: &[(&Snapshot, &SnapshotStatus)],
+        write: impl Future<Output = std::result::Result<T, StoreError>> + Send,
+    ) -> Result<T> {
+        for (snapshot, status) in snapshots {
+            store
+                .put_snapshot(Snapshot::clone(snapshot), SnapshotStatus::clone(status), version.at)
+                .await?;
+        }
+        Self::keep_commits(&self.acquisition, changeset, version, previous).await?;
+        Ok(write.await?)
     }
 
     /// The write token, with the state as the last command left it.
@@ -532,12 +554,6 @@ impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> L
             _ => st.head.clone(),
         };
         let now = (self.clock)();
-        store
-            .put_snapshot(Snapshot::clone(&st.base), SnapshotStatus::of(&st.base), now)
-            .await?;
-        store
-            .put_snapshot(Snapshot::clone(&st.target), st.target_status.clone(), now)
-            .await?;
         let first = Version {
             n: 1,
             base: st.base.id,
@@ -548,18 +564,21 @@ impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> L
             origin: VersionOrigin::Settled,
             change: first_change(&st.changes().diffed),
         };
-        let (changeset, id) = store
-            .start_review(
-                self.repo.clone(),
-                st.source.clone(),
-                st.base_choice.clone(),
-                first.clone(),
-                now,
-            )
-            .await?;
+        let changeset = store.ensure_changeset(self.repo.clone(), st.source.clone()).await?;
         // Refs of an earlier review that was never finished would hold commits for nothing.
         git.delete_changeset_refs(changeset).await?;
-        Self::keep_commits(acquisition, changeset, &first, None).await?;
+        let start = store.start_review(
+            self.repo.clone(),
+            st.source.clone(),
+            st.base_choice.clone(),
+            first.clone(),
+            now,
+        );
+        let base_status = SnapshotStatus::of(&st.base);
+        let snapshots = [(&*st.base, &base_status), (&*st.target, &st.target_status)];
+        let (_, id) = self
+            .record_version(&store, changeset, &first, None, &snapshots, start)
+            .await?;
         acquisition.record_commit(st.target.id, head.clone());
         st.head = head;
         st.changeset = Some(changeset);
@@ -956,36 +975,29 @@ impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> L
         settlement: Settlement,
     ) -> Result<(u32, Option<BlobError>)> {
         // The agent commits on top of the base: the snapshot is built on the `HEAD` of now.
-        let previous_head = st.head.clone();
+        let mut head = st.head.clone();
         if st.source == Source::WorkingTree
-            && let Ok(head) = self.acquisition.git.head().await
+            && let Ok(now) = self.acquisition.git.head().await
         {
-            st.head = head;
+            head = now;
         }
         if let (Some(review), Some(changeset)) = (&st.review, st.changeset) {
-            let now = (self.clock)();
-            store
-                .put_snapshot(Snapshot::clone(&snapshot), status.clone(), now)
-                .await?;
             let version = Version {
                 n: review.version + 1,
                 base: st.base.id,
                 base_commit: st.base_commit.clone(),
                 target: snapshot.id,
-                tip: st.head.clone(),
-                at: now,
+                tip: head.clone(),
+                at: (self.clock)(),
                 origin: VersionOrigin::Settled,
                 change: settlement.change.expect("worked out while the review was open"),
             };
-            let n = version.n;
-            store.append_version(changeset, version).await?;
-            if st.head != previous_head {
-                self.acquisition
-                    .git
-                    .set_changeset_ref(changeset, n, "tip", &st.head)
-                    .await?;
-            }
+            let previous = Some((&st.base_commit, &st.head));
+            let write = store.append_version(changeset, version.clone());
+            self.record_version(store, changeset, &version, previous, &[(&snapshot, &status)], write)
+                .await?;
         }
+        st.head = head;
         // Older versions stay materializable (§7.2).
         self.acquisition.record_commit(snapshot.id, st.head.clone());
         let old = std::mem::replace(&mut st.target, snapshot);

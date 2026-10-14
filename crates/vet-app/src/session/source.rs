@@ -4,7 +4,6 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use vet_core::content::Snapshot;
 use vet_core::filter::ReviewFilter;
 use vet_core::review::Thread;
 
@@ -191,12 +190,6 @@ impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> L
         if let (Some(review), Some(changeset)) = (&st.review, st.changeset) {
             // The old base's content is kept apart from git, which may drop its objects.
             self.retain_anchored(st, st.anchors()).await?;
-            store
-                .put_snapshot(Snapshot::clone(&target), SnapshotStatus::of(&target), now)
-                .await?;
-            store
-                .put_snapshot(Snapshot::clone(&base), SnapshotStatus::of(&base), now)
-                .await?;
             let version = Version {
                 n: review.version + 1,
                 base: base.id,
@@ -207,9 +200,12 @@ impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> L
                 origin: VersionOrigin::Observed,
                 change: self.change_of((&st.base, &st.target), &base, &target).await?,
             };
-            let previous = self.acquisition.store.versions(changeset).await?.pop();
-            store.append_version(changeset, version.clone()).await?;
-            Self::keep_commits(&self.acquisition, changeset, &version, previous.as_ref()).await?;
+            let (base_status, target_status) = (SnapshotStatus::of(&base), SnapshotStatus::of(&target));
+            let snapshots = [(&*target, &target_status), (&*base, &base_status)];
+            let previous = Some((&st.base_commit, &st.head));
+            let write = store.append_version(changeset, version.clone());
+            self.record_version(store, changeset, &version, previous, &snapshots, write)
+                .await?;
             if let Some(review) = &mut st.review {
                 review.version = version.n;
                 review.updated_at = now;
