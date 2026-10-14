@@ -8,7 +8,6 @@ import {
   detachedReason,
   draftCount,
   groupThreads,
-  openedBy,
   placeLabel,
   preview,
   threadPlace,
@@ -72,17 +71,15 @@ void test("a thread is placed in its file with the line after the name, the file
   assert.equal(threadPlace(thread(1, { kind: "changeset", path: null, location: null, original: null })), undefined);
 });
 
-void test("on a platform a thread counts the messages that wait for the review and names who else opened it", () => {
+void test("on a platform a thread counts the messages that wait for the review", () => {
   const platform = { posted: true, resolvable: true, resolvedBy: null };
   const theirs = thread(1, {
     platform,
     messages: [message({ author: "lena", mine: false, state: { type: "posted" } }), message({ id: 2 })],
   });
   assert.equal(draftCount(theirs), 1);
-  assert.equal(openedBy(theirs), "lena");
   // Without a platform every message is only Vet's, which is not a draft of anything.
   assert.equal(draftCount(thread(2)), 0);
-  assert.equal(openedBy(thread(2, { platform })), undefined);
 });
 
 void test("a group is in file order: the changeset's own first, a file's own thread before its lines in text order", () => {

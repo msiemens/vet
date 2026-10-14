@@ -116,10 +116,6 @@ const compare = (a: FindPos, b: FindPos) => a.section - b.section || a.order - b
 /** The matches of each section; a section not searched yet is `undefined`. */
 export type SectionMatches = readonly (readonly FindMatch[] | undefined)[];
 
-export function totalOf(sets: SectionMatches): number {
-  return sets.reduce((sum, set) => sum + (set?.length ?? 0), 0);
-}
-
 /** How many matches lie before `pos`, counting the sections searched so far. */
 export function indexOf(sets: SectionMatches, pos: FindPos): number {
   let n = 0;

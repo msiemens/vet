@@ -1,7 +1,6 @@
-// The `.path-text` markup of a path or qualified name, for code that builds DOM by hand.
+// The `.path-text` markup of a path, for code that builds DOM by hand.
 
 import { splitPath } from "./paths.ts";
-import { splitQualified } from "./qualified.ts";
 
 function build(lead: string, last: string, full: string, className: string): HTMLElement {
   const root = document.createElement("span");
@@ -21,10 +20,4 @@ function build(lead: string, last: string, full: string, className: string): HTM
 export function pathText(path: string, className = "", suffix = ""): HTMLElement {
   const { dir, name } = splitPath(path);
   return build(dir, name + suffix, path, className);
-}
-
-/** A qualified name with its qualifier dimmed and its last segment whole. */
-export function qualifiedText(name: string, className = ""): HTMLElement {
-  const parts = splitQualified(name);
-  return build(parts.qualifier, parts.name, name, className);
 }
