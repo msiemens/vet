@@ -118,7 +118,12 @@ impl Restorer for NoRestore {
 pub struct BinaryLocator;
 
 impl ServerLocator for BinaryLocator {
-    async fn locate(&self, config: &ServerConfig, _project: &Path) -> Result<ServerCommand, String> {
+    async fn locate(
+        &self,
+        config: &ServerConfig,
+        _project: &Path,
+        _policy: AnalysisPolicy,
+    ) -> Result<ServerCommand, String> {
         Ok(ServerCommand {
             program: config.binary.clone(),
             compiler: None,
@@ -186,7 +191,7 @@ impl<L: ServerLocator + Sync, R: Restorer + Sync> LspLauncher<L, R> {
             Tree::Live => Restored::default(),
         };
         let command = phases
-            .run("locate binary", self.locator.locate(config, root))
+            .run("locate binary", self.locator.locate(config, root, policy))
             .await
             .map_err(LaunchError::NotInstalled)?;
         let folders = phases
@@ -404,7 +409,8 @@ impl<L: ServerLocator + Send + Sync + 'static, R: Restorer + Send + Sync + 'stat
         policy: AnalysisPolicy,
     ) -> Result<ServerIdentity, LaunchError> {
         let root = self.canonical(root).await.unwrap_or_else(|_| root.to_owned());
-        let command = (self.locator.locate(backend.config(), &root).await).map_err(LaunchError::NotInstalled)?;
+        let command =
+            (self.locator.locate(backend.config(), &root, policy).await).map_err(LaunchError::NotInstalled)?;
         self.identities.of(&root, backend, &command, policy).await
     }
 

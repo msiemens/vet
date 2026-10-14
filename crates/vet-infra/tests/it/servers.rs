@@ -51,7 +51,7 @@ async fn install(setup: &Setup, project: &Path, language: &str) -> Vec<String> {
     let lines = Mutex::new(Vec::new());
     let progress = |line: &str| lines.lock().unwrap().push(line.to_owned());
     resolver.install(&id, &progress).await.expect("installs");
-    let ServerState::Found(found) = resolver.resolve(&id, project, None).await else {
+    let ServerState::Found(found) = resolver.resolve(&id, project, None, AnalysisPolicy::EXECUTING).await else {
         panic!("not found after the install");
     };
     assert_eq!(found.origin, ServerOrigin::Installed);
@@ -85,7 +85,12 @@ async fn typescript_installs_and_uses_the_project_typescript() {
     // The latest `typescript` is TypeScript 7, which has no tsserver.js: the fallback serves.
     let resolver = ToolResolver::new(setup.data.path().to_owned());
     let ServerState::Found(found) = resolver
-        .resolve(&BackendId("typescript".into()), project.path(), None)
+        .resolve(
+            &BackendId("typescript".into()),
+            project.path(),
+            None,
+            AnalysisPolicy::EXECUTING,
+        )
         .await
     else {
         panic!("not found");
@@ -121,6 +126,53 @@ async fn typescript_installs_and_uses_the_project_typescript() {
     assert_eq!(implementations.len(), 1, "{implementations:?}");
     assert_eq!(implementations[0].span.start.line, 8);
     server.shutdown().await;
+}
+
+/// The server hands `tsserver.js` to node, so a project that commits one decides what runs.
+#[tokio::test]
+#[ignore = "needs typescript-language-server"]
+async fn the_projects_tsserver_runs_only_where_analysis_may_execute_project_code() {
+    let setup = setup().await;
+    let project = tempfile::tempdir().unwrap();
+    let marker = project.path().join("marker");
+    let tsserver = project.path().join("node_modules/typescript/lib/tsserver.js");
+    std::fs::create_dir_all(tsserver.parent().unwrap()).unwrap();
+    std::fs::write(
+        &tsserver,
+        format!("require('fs').writeFileSync({:?}, 'ran');\n", marker.to_string_lossy()),
+    )
+    .unwrap();
+    std::fs::write(
+        tsserver.parent().unwrap().join("../package.json"),
+        r#"{"name":"typescript","version":"5.9.2"}"#,
+    )
+    .unwrap();
+    std::fs::write(project.path().join("tsconfig.json"), "{}").unwrap();
+    std::fs::write(project.path().join("a.ts"), "export const x = 1;\n").unwrap();
+
+    let launcher = LspLauncher::new(servers(&setup), NoRestore);
+    let started = launcher
+        .start(
+            project.path(),
+            Tree::Immutable,
+            &config::typescript(),
+            AnalysisPolicy::LIMITED,
+        )
+        .await;
+    assert!(started.is_err(), "no typescript of Vet's own is installed here");
+    assert!(!marker.exists(), "the project's tsserver ran without trust");
+
+    // Trusted, the project's own typescript is the one the server answers through.
+    // The script is no tsserver, so the start fails after it ran.
+    let _ = launcher
+        .start(
+            project.path(),
+            Tree::Immutable,
+            &config::typescript(),
+            AnalysisPolicy::EXECUTING,
+        )
+        .await;
+    assert!(marker.exists(), "the project's tsserver did not run when trusted");
 }
 
 #[tokio::test]

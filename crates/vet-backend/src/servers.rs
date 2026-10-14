@@ -2,6 +2,7 @@
 
 use vet_mapping as mapping;
 use vet_protocol::{Event, ProjectId, Response};
+use vet_semantic::policy::AnalysisPolicy;
 use vet_semantic::ports::BackendId;
 
 use crate::{Open, Orchestrator, message};
@@ -50,7 +51,17 @@ impl Orchestrator {
     }
 
     async fn servers_of(&self, open: &Open) -> Result<Response, String> {
-        let all = self.servers.status(&open.repo).await.map_err(message)?;
+        // The servers are shown as they would run for the changeset on view; before its
+        // first scan nothing is known of it, and nothing executes.
+        let policy = match open.booted_now() {
+            Some(booted) => booted
+                .session
+                .trust()
+                .await
+                .map_or(AnalysisPolicy::LIMITED, |(trust, head)| trust.policy(&head)),
+            None => AnalysisPolicy::LIMITED,
+        };
+        let all = self.servers.status(&open.repo, policy).await.map_err(message)?;
         // What a server offers is known from the project's own server; where none ran, from another's.
         let booted = self.projects.all().await;
         let features = |language: &BackendId| {

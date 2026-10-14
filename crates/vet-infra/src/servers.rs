@@ -13,6 +13,7 @@ use vet_app::ports::{
     Command, FoundServer, ProcessEvent, ProcessRunner, RunningProcess, ServerCommand, ServerOrigin, ServerResolver,
     ServerState, Tsserver,
 };
+use vet_semantic::policy::AnalysisPolicy;
 use vet_semantic::ports::BackendId;
 
 use crate::budget::{Budget, PROBES};
@@ -117,19 +118,23 @@ impl ToolResolver {
 
     /// The `tsserver` the language server must use: the project's own
     /// `typescript`, so its answers match what the project compiles with, else
-    /// the fallback Vet installed beside the server.
-    fn tsserver(&self, spec: &Language, project: &Path) -> Option<(PathBuf, String)> {
+    /// the fallback Vet installed beside the server. The project's is a program node
+    /// runs, so it is used only where the policy lets analysis execute project code.
+    fn tsserver(&self, spec: &Language, project: &Path, policy: AnalysisPolicy) -> Option<(PathBuf, String)> {
         let project_package = project.join("node_modules").join("typescript");
         let fallback = self.install_dir(spec).join("node_modules").join("typescript");
-        [(project_package, "the project's"), (fallback, "Vet's fallback")]
-            .into_iter()
-            .find_map(|(package, whose)| {
-                let tsserver = package.join("lib").join("tsserver.js");
-                tsserver.is_file().then(|| {
-                    let version = package_version(&package).map_or(String::new(), |v| format!(" {v}"));
-                    (tsserver, format!("{whose} typescript{version}"))
-                })
+        let mut candidates = Vec::new();
+        if policy.allow_executing {
+            candidates.push((project_package, "the project's"));
+        }
+        candidates.push((fallback, "Vet's fallback"));
+        candidates.into_iter().find_map(|(package, whose)| {
+            let tsserver = package.join("lib").join("tsserver.js");
+            tsserver.is_file().then(|| {
+                let version = package_version(&package).map_or(String::new(), |v| format!(" {v}"));
+                (tsserver, format!("{whose} typescript{version}"))
             })
+        })
     }
 
     fn missing_reason(&self, spec: &Language, looked: &[String]) -> String {
@@ -180,7 +185,13 @@ pub(crate) async fn capture(
 }
 
 impl ServerResolver for ToolResolver {
-    async fn resolve(&self, language: &BackendId, project: &Path, custom: Option<&str>) -> ServerState {
+    async fn resolve(
+        &self,
+        language: &BackendId,
+        project: &Path,
+        custom: Option<&str>,
+        policy: AnalysisPolicy,
+    ) -> ServerState {
         let Some(spec) = Self::spec(language) else {
             return ServerState::Missing {
                 reason: format!("there is no language server for {}", language.0),
@@ -229,10 +240,18 @@ impl ServerResolver for ToolResolver {
         let mut tsserver = None;
         let mut compiler = None;
         if spec.compiler == Compiler::TypeScript {
-            tsserver = Some(match self.tsserver(spec, project) {
+            tsserver = Some(match self.tsserver(spec, project, policy) {
                 Some((path, whose)) => {
                     compiler = Some(path.clone());
                     Tsserver::Using { whose, path }
+                }
+                // Left to itself the server would look for the project's typescript.
+                None if !policy.allow_executing => {
+                    return ServerState::Missing {
+                        reason: "the project's typescript is not run for what is not trusted, and Vet's own \
+                                 typescript is not installed. Install it from the language servers settings."
+                            .into(),
+                    };
                 }
                 None => Tsserver::Missing {
                     reason: "the project has no typescript with lib/tsserver.js (TypeScript 7 ships none) \
@@ -375,6 +394,8 @@ mod tests {
     use super::*;
     use crate::exec::parse_pathext;
 
+    const TRUSTED: AnalysisPolicy = AnalysisPolicy::EXECUTING;
+
     fn host(windows: bool, path: Vec<PathBuf>) -> Host {
         Host {
             windows,
@@ -414,7 +435,11 @@ mod tests {
 
         let resolver = ToolResolver::with_host(data.path().to_owned(), host(false, vec![]));
         let project = tempfile::tempdir().unwrap();
-        let server = found(resolver.resolve(&language("typescript"), project.path(), None).await);
+        let server = found(
+            resolver
+                .resolve(&language("typescript"), project.path(), None, TRUSTED)
+                .await,
+        );
         assert_eq!(server.origin, ServerOrigin::Installed);
         assert_eq!(server.command.program, bin.to_string_lossy());
         assert_eq!(server.version, None);
@@ -447,7 +472,11 @@ mod tests {
         touch(&shim);
         let resolver = ToolResolver::with_host(data.path().to_owned(), host(true, vec![]));
         let project = tempfile::tempdir().unwrap();
-        let server = found(resolver.resolve(&language("python"), project.path(), None).await);
+        let server = found(
+            resolver
+                .resolve(&language("python"), project.path(), None, TRUSTED)
+                .await,
+        );
         assert_eq!(server.command.program, shim.to_string_lossy());
     }
 
@@ -465,7 +494,11 @@ mod tests {
         .unwrap();
 
         let resolver = ToolResolver::with_host(data.path().to_owned(), host(false, vec![path_dir.path().to_owned()]));
-        let server = found(resolver.resolve(&language("typescript"), project.path(), None).await);
+        let server = found(
+            resolver
+                .resolve(&language("typescript"), project.path(), None, TRUSTED)
+                .await,
+        );
         assert_eq!(server.origin, ServerOrigin::Path);
         let tsserver = project.path().join("node_modules/typescript/lib/tsserver.js");
         assert_eq!(server.command.compiler.as_deref(), Some(tsserver.as_path()));
@@ -479,7 +512,11 @@ mod tests {
 
         // A project without a usable typescript (none, or TypeScript 7, which has no tsserver.js).
         let bare = tempfile::tempdir().unwrap();
-        let server = found(resolver.resolve(&language("typescript"), bare.path(), None).await);
+        let server = found(
+            resolver
+                .resolve(&language("typescript"), bare.path(), None, TRUSTED)
+                .await,
+        );
         assert!(server.command.compiler.is_none());
         assert!(
             matches!(server.tsserver, Some(Tsserver::Missing { .. })),
@@ -489,7 +526,11 @@ mod tests {
 
         let fallback = data.path().join("servers/typescript/node_modules/typescript");
         touch(&fallback.join("lib/tsserver.js"));
-        let server = found(resolver.resolve(&language("typescript"), bare.path(), None).await);
+        let server = found(
+            resolver
+                .resolve(&language("typescript"), bare.path(), None, TRUSTED)
+                .await,
+        );
         assert_eq!(
             server.command.compiler.as_deref(),
             Some(fallback.join("lib/tsserver.js").as_path())
@@ -500,9 +541,50 @@ mod tests {
             server.tsserver
         );
         // The project's own still wins over the fallback.
-        let server = found(resolver.resolve(&language("typescript"), project.path(), None).await);
+        let server = found(
+            resolver
+                .resolve(&language("typescript"), project.path(), None, TRUSTED)
+                .await,
+        );
         assert!(
             matches!(&server.tsserver, Some(Tsserver::Using { whose, .. }) if whose.contains("the project's typescript 5.9.2")),
+            "{:?}",
+            server.tsserver
+        );
+    }
+
+    #[tokio::test]
+    async fn without_trust_only_vets_own_typescript_serves() {
+        let data = tempfile::tempdir().unwrap();
+        let path_dir = tempfile::tempdir().unwrap();
+        touch(&path_dir.path().join("typescript-language-server"));
+        let project = tempfile::tempdir().unwrap();
+        touch(&project.path().join("node_modules/typescript/lib/tsserver.js"));
+        let resolver = ToolResolver::with_host(data.path().to_owned(), host(false, vec![path_dir.path().to_owned()]));
+        let typescript = language("typescript");
+
+        // With no typescript of Vet's own, the server would look for the project's itself.
+        let state = resolver
+            .resolve(&typescript, project.path(), None, AnalysisPolicy::LIMITED)
+            .await;
+        let ServerState::Missing { reason } = state else {
+            panic!("{state:?}")
+        };
+        assert!(reason.contains("not run"), "{reason}");
+
+        let fallback = data.path().join("servers/typescript/node_modules/typescript");
+        touch(&fallback.join("lib/tsserver.js"));
+        let server = found(
+            resolver
+                .resolve(&typescript, project.path(), None, AnalysisPolicy::LIMITED)
+                .await,
+        );
+        assert_eq!(
+            server.command.compiler.as_deref(),
+            Some(fallback.join("lib/tsserver.js").as_path())
+        );
+        assert!(
+            matches!(&server.tsserver, Some(Tsserver::Using { whose, .. }) if whose.contains("Vet's fallback")),
             "{:?}",
             server.tsserver
         );
@@ -519,12 +601,16 @@ mod tests {
         let project = tempfile::tempdir().unwrap();
 
         let custom = tool.to_string_lossy().into_owned();
-        let server = found(resolver.resolve(&language("rust"), project.path(), Some(&custom)).await);
+        let server = found(
+            resolver
+                .resolve(&language("rust"), project.path(), Some(&custom), TRUSTED)
+                .await,
+        );
         assert_eq!(server.origin, ServerOrigin::Custom);
         assert_eq!(server.command.program, custom);
 
         let state = resolver
-            .resolve(&language("rust"), project.path(), Some("/no/such/ra"))
+            .resolve(&language("rust"), project.path(), Some("/no/such/ra"), TRUSTED)
             .await;
         let ServerState::Missing { reason } = state else {
             panic!("{state:?}")
@@ -537,7 +623,10 @@ mod tests {
         let data = tempfile::tempdir().unwrap();
         let resolver = ToolResolver::with_host(data.path().to_owned(), host(false, vec![]));
         let project = tempfile::tempdir().unwrap();
-        let ServerState::Missing { reason } = resolver.resolve(&language("python"), project.path(), None).await else {
+        let ServerState::Missing { reason } = resolver
+            .resolve(&language("python"), project.path(), None, TRUSTED)
+            .await
+        else {
             panic!("found");
         };
         assert!(
@@ -582,13 +671,13 @@ mod tests {
         let resolver = ToolResolver::with_host(data.path().to_owned(), host(false, vec![bin.path().to_owned()]));
         let project = tempfile::tempdir().unwrap();
 
-        let server = found(resolver.resolve(&language("rust"), project.path(), None).await);
+        let server = found(resolver.resolve(&language("rust"), project.path(), None, TRUSTED).await);
         assert_eq!(server.origin, ServerOrigin::Project);
         assert_eq!(server.command.program, project_ra.to_string_lossy());
 
         // A toolchain without the component leaves PATH to answer.
         stub_rustup(bin.path(), None);
-        let server = found(resolver.resolve(&language("rust"), project.path(), None).await);
+        let server = found(resolver.resolve(&language("rust"), project.path(), None, TRUSTED).await);
         assert_eq!(server.origin, ServerOrigin::Path);
     }
 }

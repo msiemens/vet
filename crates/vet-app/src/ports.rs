@@ -11,6 +11,7 @@ use vet_core::filter::ReviewFilter;
 use vet_core::review::{
     CommentTarget, Message, MessageId, PendingVote, PlatformThread, ReviewedSpan, ThreadId, ThreadStatus,
 };
+use vet_semantic::policy::AnalysisPolicy;
 use vet_semantic::ports::{BackendId, ServerConfig};
 
 use crate::changeset::{BaseChoice, ChangesetId, CommitId, Lens, Source, Version};
@@ -758,12 +759,15 @@ pub enum ServerState {
 /// Finds and installs language servers (§7.1). Implemented by `vet-infra`.
 pub trait ServerResolver {
     /// The server of `language` for the project at `project`; `custom` is the
-    /// user's path for it, which wins over everything else.
+    /// user's path for it, which wins over everything else. Without `policy.allow_executing`
+    /// nothing the project ships is run to serve it (a TypeScript server answers through
+    /// Vet's own `typescript`, never the project's).
     fn resolve(
         &self,
         language: &BackendId,
         project: &Path,
         custom: Option<&str>,
+        policy: AnalysisPolicy,
     ) -> impl Future<Output = ServerState> + Send;
     /// The version of a server `resolve` found. Separate because learning it
     /// can start a process, which a server start does not wait for.
@@ -792,11 +796,12 @@ pub trait ServerResolver {
 
 /// What the language server launcher asks for on every start.
 pub trait ServerLocator {
-    /// The server for `config`'s language; the error is the reason to show.
+    /// The server for `config`'s language under `policy`; the error is the reason to show.
     fn locate(
         &self,
         config: &ServerConfig,
         project: &Path,
+        policy: AnalysisPolicy,
     ) -> impl Future<Output = Result<ServerCommand, String>> + Send;
 }
 

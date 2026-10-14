@@ -6,6 +6,7 @@ use std::fmt;
 use std::path::Path;
 
 use tokio::sync::Mutex;
+use vet_semantic::policy::AnalysisPolicy;
 use vet_semantic::ports::{BackendId, ServerConfig};
 
 use crate::ports::{ServerCommand, ServerLocator, ServerResolver, ServerSettings, ServerState, StoreError};
@@ -102,12 +103,15 @@ impl<R: ServerResolver + Sync, S: ServerSettings + Sync> Servers<R, S> {
             .ok_or_else(|| ServersError::UnknownLanguage(language.to_owned()))
     }
 
-    /// Every language, as it resolves for the project at `project`.
-    pub async fn status(&self, project: &Path) -> Result<Vec<ServerStatus>, ServersError> {
+    /// Every language, as it resolves for the project at `project` under `policy`.
+    pub async fn status(&self, project: &Path, policy: AnalysisPolicy) -> Result<Vec<ServerStatus>, ServersError> {
         let mut all = Vec::new();
         for language in &self.languages {
             let custom_path = self.custom_path(language).await?;
-            let mut state = self.resolver.resolve(language, project, custom_path.as_deref()).await;
+            let mut state = self
+                .resolver
+                .resolve(language, project, custom_path.as_deref(), policy)
+                .await;
             if let ServerState::Found(found) = &mut state {
                 found.version = self.resolver.version(language, found).await;
             }
@@ -154,13 +158,22 @@ impl<R: ServerResolver + Sync, S: ServerSettings + Sync> Servers<R, S> {
 }
 
 impl<R: ServerResolver + Sync, S: ServerSettings + Sync> ServerLocator for Servers<R, S> {
-    async fn locate(&self, config: &ServerConfig, project: &Path) -> Result<ServerCommand, String> {
+    async fn locate(
+        &self,
+        config: &ServerConfig,
+        project: &Path,
+        policy: AnalysisPolicy,
+    ) -> Result<ServerCommand, String> {
         let language = &config.backend;
         let custom = self
             .custom_path(language)
             .await
             .map_err(|e| format!("cannot read the language server settings: {}", e.0))?;
-        match self.resolver.resolve(language, project, custom.as_deref()).await {
+        match self
+            .resolver
+            .resolve(language, project, custom.as_deref(), policy)
+            .await
+        {
             ServerState::Found(found) => Ok(found.command),
             ServerState::Missing { reason } => Err(reason),
         }
@@ -172,8 +185,9 @@ impl<T: ServerLocator + Send + Sync> ServerLocator for std::sync::Arc<T> {
         &self,
         config: &ServerConfig,
         project: &Path,
+        policy: AnalysisPolicy,
     ) -> impl Future<Output = Result<ServerCommand, String>> + Send {
-        T::locate(self, config, project)
+        T::locate(self, config, project, policy)
     }
 }
 
@@ -184,6 +198,8 @@ mod tests {
 
     use super::*;
     use crate::ports::{FoundServer, ServerOrigin};
+
+    const POLICY: AnalysisPolicy = AnalysisPolicy::EXECUTING;
 
     /// The stored paths, and how often they were read.
     #[derive(Default)]
@@ -210,7 +226,13 @@ mod tests {
     struct Resolver(std::sync::atomic::AtomicUsize);
 
     impl ServerResolver for Resolver {
-        async fn resolve(&self, language: &BackendId, _project: &Path, custom: Option<&str>) -> ServerState {
+        async fn resolve(
+            &self,
+            language: &BackendId,
+            _project: &Path,
+            custom: Option<&str>,
+            _policy: AnalysisPolicy,
+        ) -> ServerState {
             match custom {
                 Some(path) => ServerState::Found(FoundServer {
                     command: ServerCommand {
@@ -271,10 +293,10 @@ mod tests {
     async fn the_version_is_learned_for_the_status_but_not_when_locating_for_a_start() {
         let servers = servers();
         servers.set_custom_path("rust", Some("/opt/ra".into())).await.unwrap();
-        servers.locate(&config("rust"), Path::new("/p")).await.unwrap();
+        servers.locate(&config("rust"), Path::new("/p"), POLICY).await.unwrap();
         assert_eq!(servers.resolver.0.load(std::sync::atomic::Ordering::SeqCst), 0);
 
-        let status = servers.status(Path::new("/p")).await.unwrap();
+        let status = servers.status(Path::new("/p"), POLICY).await.unwrap();
         let ServerState::Found(found) = &status[0].state else {
             panic!("{:?}", status[0].state)
         };
@@ -302,7 +324,7 @@ mod tests {
         let project = Path::new("/p");
         assert!(
             servers
-                .locate(&config("rust"), project)
+                .locate(&config("rust"), project, POLICY)
                 .await
                 .unwrap_err()
                 .contains("no rust")
@@ -312,14 +334,14 @@ mod tests {
             .set_custom_path("rust", Some("  /opt/ra  ".into()))
             .await
             .unwrap();
-        let located = servers.locate(&config("rust"), project).await.unwrap();
+        let located = servers.locate(&config("rust"), project, POLICY).await.unwrap();
         assert_eq!(located.program, "/opt/ra");
-        let status = servers.status(project).await.unwrap();
+        let status = servers.status(project, POLICY).await.unwrap();
         assert_eq!(status[0].custom_path.as_deref(), Some("/opt/ra"));
         assert!(matches!(status[1].state, ServerState::Missing { .. }));
 
         servers.set_custom_path("rust", Some("   ".into())).await.unwrap();
-        assert!(servers.locate(&config("rust"), project).await.is_err());
+        assert!(servers.locate(&config("rust"), project, POLICY).await.is_err());
     }
 
     #[tokio::test]
@@ -327,24 +349,24 @@ mod tests {
         let servers = servers();
         let project = Path::new("/p");
         for _ in 0..5 {
-            assert!(servers.locate(&config("rust"), project).await.is_err());
+            assert!(servers.locate(&config("rust"), project, POLICY).await.is_err());
         }
         assert_eq!(servers.settings.1.load(std::sync::atomic::Ordering::SeqCst), 1);
 
         servers.set_custom_path("rust", Some("/opt/ra".into())).await.unwrap();
         for _ in 0..5 {
             assert_eq!(
-                servers.locate(&config("rust"), project).await.unwrap().program,
+                servers.locate(&config("rust"), project, POLICY).await.unwrap().program,
                 "/opt/ra"
             );
         }
-        servers.status(project).await.unwrap();
+        servers.status(project, POLICY).await.unwrap();
         assert_eq!(servers.settings.1.load(std::sync::atomic::Ordering::SeqCst), 3);
     }
 
     #[tokio::test]
     async fn only_a_pinned_server_without_a_blocker_can_be_installed() {
-        let status = servers().status(Path::new("/p")).await.unwrap();
+        let status = servers().status(Path::new("/p"), POLICY).await.unwrap();
         // Rust has no pin; Python has one but npm is missing; TypeScript has one and nothing in the way.
         let can_install: Vec<_> = status.iter().map(ServerStatus::can_install).collect();
         assert_eq!(can_install, [false, true, false]);
