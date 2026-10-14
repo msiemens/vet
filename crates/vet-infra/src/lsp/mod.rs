@@ -34,7 +34,6 @@ use crate::git::list_files;
 use crate::language;
 use crate::paths;
 use crate::restore::discover;
-use crate::schemas::SchemaSource;
 use capabilities::Offered;
 use rpc::{Connection, Replies};
 use setup::Setup;
@@ -270,7 +269,7 @@ impl<L: ServerLocator + Sync, R: Restorer + Sync> LspLauncher<L, R> {
         let identity = phases
             .run("identity", self.identities.of(&root, backend, &command, policy))
             .await?;
-        let setup = setup::setup(config, &command, &root, SchemaSource::of(policy));
+        let setup = setup::setup(config, &command, &root, policy);
         let replies = Replies {
             workspace_folders: serde_json::to_value(&folders).map_err(|e| LaunchError::Protocol(e.to_string()))?,
             settings: setup.settings.clone().unwrap_or(Value::Null),

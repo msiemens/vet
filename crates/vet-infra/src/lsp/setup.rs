@@ -6,6 +6,7 @@ use std::path::{Path, PathBuf};
 
 use serde_json::{Value, json};
 use vet_app::ports::ServerCommand;
+use vet_semantic::policy::AnalysisPolicy;
 use vet_semantic::ports::ServerConfig;
 
 use crate::exec::{Host, is_file};
@@ -44,9 +45,11 @@ fn modules_of(program: &str) -> Option<PathBuf> {
         .map(Path::to_owned)
 }
 
-/// The directories to look for `typescript` and `@angular/language-service` in: the project's
-/// own packages first, then the server's.
-fn angular_probes(root: &Path, command: &ServerCommand) -> (String, String) {
+/// The directories to look for `typescript` and `@angular/language-service` in. Where the policy
+/// lets analysis execute project code the project's own packages come first, then the server's;
+/// elsewhere the server loads only packages that are not the project's, and the compiler is the
+/// one it was given.
+fn angular_probes(root: &Path, command: &ServerCommand, policy: AnalysisPolicy) -> (String, String) {
     let join = |dirs: Vec<PathBuf>| {
         dirs.iter()
             .map(|d| d.to_string_lossy().into_owned())
@@ -62,11 +65,13 @@ fn angular_probes(root: &Path, command: &ServerCommand) -> (String, String) {
         .and_then(|c| c.ancestors().nth(3))
         .map(Path::to_owned);
     let typescript = join(compiler.into_iter().chain(own.clone()).collect());
-    let angular = join(std::iter::once(project).chain(own).collect());
+    let project = policy.allow_executing.then_some(project);
+    let angular = join(project.into_iter().chain(own).collect());
     (typescript, angular)
 }
 
-pub(super) fn setup(config: &ServerConfig, command: &ServerCommand, root: &Path, source: SchemaSource) -> Setup {
+pub(super) fn setup(config: &ServerConfig, command: &ServerCommand, root: &Path, policy: AnalysisPolicy) -> Setup {
+    let source = SchemaSource::of(policy);
     let mut setup = Setup {
         args: config.args.clone(),
         options: None,
@@ -88,7 +93,7 @@ pub(super) fn setup(config: &ServerConfig, command: &ServerCommand, root: &Path,
                     .map(|compiler| json!({"tsserver": {"path": compiler.to_string_lossy()}}));
             }
             "angular" => {
-                let (typescript, angular) = angular_probes(root, command);
+                let (typescript, angular) = angular_probes(root, command, policy);
                 setup.args.extend([
                     "--tsProbeLocations".to_owned(),
                     typescript,
@@ -135,8 +140,8 @@ mod tests {
         }
     }
 
-    fn setup_of(language: &language::Language, command: &ServerCommand, source: SchemaSource) -> Setup {
-        setup(language.backend().config(), command, Path::new("/project"), source)
+    fn setup_of(language: &language::Language, command: &ServerCommand, policy: AnalysisPolicy) -> Setup {
+        setup(language.backend().config(), command, Path::new("/project"), policy)
     }
 
     #[test]
@@ -144,7 +149,7 @@ mod tests {
         let options = setup_of(
             &language::TYPESCRIPT,
             &command(Some("/p/typescript/lib/tsserver.js")),
-            SchemaSource::Bundled,
+            AnalysisPolicy::LIMITED,
         )
         .options;
         assert_eq!(
@@ -152,17 +157,17 @@ mod tests {
             Some(json!({"tsserver": {"path": "/p/typescript/lib/tsserver.js"}}))
         );
         assert_eq!(
-            setup_of(&language::TYPESCRIPT, &command(None), SchemaSource::Bundled).options,
+            setup_of(&language::TYPESCRIPT, &command(None), AnalysisPolicy::LIMITED).options,
             None
         );
-        let rust = setup_of(&language::RUST, &command(Some("/x")), SchemaSource::Online);
+        let rust = setup_of(&language::RUST, &command(Some("/x")), AnalysisPolicy::EXECUTING);
         assert_eq!((rust.options, rust.settings, rust.bundled), (None, None, false));
     }
 
     #[test]
     fn angular_looks_for_typescript_and_its_language_service_in_the_project_first() {
         let tsserver = "/project/node_modules/typescript/lib/tsserver.js";
-        let args = setup_of(&language::ANGULAR, &command(Some(tsserver)), SchemaSource::Bundled).args;
+        let args = setup_of(&language::ANGULAR, &command(Some(tsserver)), AnalysisPolicy::EXECUTING).args;
         assert_eq!(args[0], "--stdio");
         assert_eq!(args[1], "--tsProbeLocations");
         assert!(args[2].starts_with("/project/node_modules"), "{args:?}");
@@ -171,8 +176,16 @@ mod tests {
     }
 
     #[test]
+    fn without_trust_angular_never_looks_in_the_projects_packages() {
+        let tsserver = "/vet/servers/angular/node_modules/typescript/lib/tsserver.js";
+        let args = setup_of(&language::ANGULAR, &command(Some(tsserver)), AnalysisPolicy::LIMITED).args;
+        assert!(!args.iter().any(|a| a.contains("/project/")), "{args:?}");
+        assert_eq!(args[3], "--ngProbeLocations");
+    }
+
+    #[test]
     fn a_closed_network_has_the_servers_ask_vet_for_every_schema() {
-        let yaml = setup_of(&language::YAML, &command(None), SchemaSource::Bundled);
+        let yaml = setup_of(&language::YAML, &command(None), AnalysisPolicy::LIMITED);
         assert!(yaml.bundled);
         assert!(
             yaml.notifications
@@ -181,14 +194,14 @@ mod tests {
         );
         assert_eq!(yaml.settings.unwrap()["yaml"]["schemaStore"]["enable"], json!(false));
 
-        let json_server = setup_of(&language::JSON, &command(None), SchemaSource::Bundled);
+        let json_server = setup_of(&language::JSON, &command(None), AnalysisPolicy::LIMITED);
         assert!(json_server.bundled);
         assert_eq!(json_server.options, Some(json!({"handledSchemaProtocols": ["file"]})));
     }
 
     #[test]
     fn an_open_network_leaves_the_loading_to_the_servers() {
-        let yaml = setup_of(&language::YAML, &command(None), SchemaSource::Online);
+        let yaml = setup_of(&language::YAML, &command(None), AnalysisPolicy::EXECUTING);
         assert!(!yaml.bundled);
         assert!(
             !yaml
@@ -198,7 +211,7 @@ mod tests {
         );
         assert_eq!(yaml.settings.unwrap()["yaml"]["schemaStore"]["enable"], json!(true));
 
-        let json_server = setup_of(&language::JSON, &command(None), SchemaSource::Online);
+        let json_server = setup_of(&language::JSON, &command(None), AnalysisPolicy::EXECUTING);
         assert!(!json_server.bundled);
         assert_eq!(json_server.options, None);
     }
@@ -206,7 +219,7 @@ mod tests {
     #[test]
     fn languages_without_schemas_never_have_them_bundled() {
         for language in [&language::BASH, &language::DOCKERFILE, &language::SVELTE] {
-            let setup = setup_of(language, &command(None), SchemaSource::Bundled);
+            let setup = setup_of(language, &command(None), AnalysisPolicy::LIMITED);
             assert!(!setup.bundled && setup.settings.is_none(), "{}", language.id);
         }
     }

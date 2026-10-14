@@ -431,9 +431,9 @@ pub const SVELTE: Language = Language {
 
 /// Serves `.html`: the templates of Angular components. TypeScript files stay with the TypeScript
 /// server, so templates written inline in a component are not analysed. The server loads
-/// `typescript` and `@angular/language-service` from the project's packages, then from its own
-/// install, and runs no file of the project itself: what it loads is what the restore installed,
-/// as for the TypeScript server and the plugins a `tsconfig.json` names.
+/// `typescript` and `@angular/language-service` as programs: from the project's packages first,
+/// then from its own install, where the policy lets analysis execute project code, and from its
+/// own install alone elsewhere.
 pub const ANGULAR: Language = Language {
     id: "angular",
     title: "Angular templates",

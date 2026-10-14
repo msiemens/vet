@@ -33,7 +33,7 @@ use crate::exec::{Host, is_file};
 use crate::language::{self, Install, Language, SchemaClient, UserFile};
 use crate::paths::hash_of_file;
 use crate::restore::record::Digest;
-use crate::schemas::{self, SchemaSource};
+use crate::schemas;
 use crate::servers::{capture, probe_version};
 
 /// Bumped when what the fingerprint is made of changes, so no old fingerprint equals a new one.
@@ -226,7 +226,7 @@ impl Identities {
                     .field(&self.companion_manifest(&program, package).await);
             }
         }
-        let setup = setup::setup(config, command, root, SchemaSource::of(policy));
+        let setup = setup::setup(config, command, root, policy);
         digest.field("args").field(&setup.args.len().to_string());
         setup.args.iter().for_each(|arg| {
             digest.field(arg);

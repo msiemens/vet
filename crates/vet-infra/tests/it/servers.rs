@@ -175,6 +175,48 @@ async fn the_projects_tsserver_runs_only_where_analysis_may_execute_project_code
     assert!(marker.exists(), "the project's tsserver did not run when trusted");
 }
 
+/// The Angular server loads `@angular/language-service` from the probe locations it is given.
+#[tokio::test]
+#[ignore = "downloads packages"]
+async fn the_projects_angular_language_service_runs_only_where_analysis_may_execute_project_code() {
+    let setup = setup().await;
+    let project = tempfile::tempdir().unwrap();
+    let marker = project.path().join("marker");
+    let service = project.path().join("node_modules/@angular/language-service");
+    std::fs::create_dir_all(&service).unwrap();
+    std::fs::write(
+        service.join("index.js"),
+        format!("require('fs').writeFileSync({:?}, 'ran');\n", marker.to_string_lossy()),
+    )
+    .unwrap();
+    std::fs::write(
+        service.join("package.json"),
+        r#"{"name":"@angular/language-service","version":"22.2.2","main":"index.js"}"#,
+    )
+    .unwrap();
+    std::fs::write(project.path().join("angular.json"), "{}").unwrap();
+    std::fs::write(project.path().join("tsconfig.json"), "{}").unwrap();
+    std::fs::write(project.path().join("a.html"), "<p>{{ x }}</p>\n").unwrap();
+    ToolResolver::new(setup.data.path().to_owned())
+        .install(&BackendId("angular".into()), &|_| {})
+        .await
+        .expect("installs");
+
+    let launcher = LspLauncher::new(servers(&setup), NoRestore);
+    // The service is loaded when a template is asked about; the project's one is no service, so
+    // the answers do not matter.
+    for (policy, runs) in [(AnalysisPolicy::LIMITED, false), (AnalysisPolicy::EXECUTING, true)] {
+        let started = launcher
+            .start(project.path(), Tree::Immutable, &config::angular(), policy)
+            .await;
+        if let Ok(started) = started {
+            let _ = started.server.document_symbols(&path("a.html")).await;
+            started.server.shutdown().await;
+        }
+        assert_eq!(marker.exists(), runs, "the project's language service under {policy:?}");
+    }
+}
+
 #[tokio::test]
 #[ignore = "downloads packages"]
 async fn csharp_installs_and_starts() {

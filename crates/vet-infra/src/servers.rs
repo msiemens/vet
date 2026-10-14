@@ -22,6 +22,9 @@ use crate::exec::{
 };
 use crate::language::{self, Compiler, Install, Language};
 
+/// Where the Angular server finds its language service, below a `node_modules`.
+pub(crate) const ANGULAR_SERVICE: &str = "@angular/language-service";
+
 /// How long a `--version` probe may take.
 const PROBE_TIMEOUT: Duration = Duration::from_secs(5);
 
@@ -145,6 +148,15 @@ impl ToolResolver {
                 (tsserver, format!("{whose} typescript{version}"))
             })
         })
+    }
+
+    /// Whether the Angular server `program` has an `@angular/language-service` of its own to load:
+    /// the one Vet installed, or one beside the server.
+    fn has_angular_service(&self, spec: &Language, program: &Path) -> bool {
+        let install = self.install_dir(spec).join("node_modules");
+        std::iter::once(install)
+            .chain(modules_above(program))
+            .any(|dir| dir.join(ANGULAR_SERVICE).is_dir())
     }
 
     fn missing_reason(&self, spec: &Language, looked: &[String]) -> String {
@@ -282,6 +294,13 @@ impl ServerResolver for ToolResolver {
                         .into(),
                 },
             });
+        }
+        if spec.id == language::ANGULAR.id && !policy.allow_executing && !self.has_angular_service(spec, &path) {
+            return ServerState::Missing {
+                reason: "the project's @angular/language-service is not run for what is not trusted, and \
+                         Vet's own is not installed. Install it from the language servers settings."
+                    .into(),
+            };
         }
         ServerState::Found(FoundServer {
             command: ServerCommand {
@@ -610,6 +629,42 @@ mod tests {
             matches!(&server.tsserver, Some(Tsserver::Using { whose, .. }) if whose.contains("Vet's fallback")),
             "{:?}",
             server.tsserver
+        );
+    }
+
+    #[tokio::test]
+    async fn without_trust_angular_needs_a_language_service_that_is_not_the_projects() {
+        let data = tempfile::tempdir().unwrap();
+        let path_dir = tempfile::tempdir().unwrap();
+        touch(&path_dir.path().join("ngserver"));
+        let project = tempfile::tempdir().unwrap();
+        touch(&project.path().join("node_modules/typescript/lib/tsserver.js"));
+        touch(&project.path().join("node_modules/@angular/language-service/index.js"));
+        let resolver = ToolResolver::with_host(data.path().to_owned(), host(false, vec![path_dir.path().to_owned()]));
+        let angular = language("angular");
+        let own = data.path().join("servers/angular/node_modules");
+        touch(&own.join("typescript/lib/tsserver.js"));
+
+        let state = resolver
+            .resolve(&angular, project.path(), None, AnalysisPolicy::LIMITED)
+            .await;
+        let ServerState::Missing { reason } = state else {
+            panic!("{state:?}")
+        };
+        assert!(reason.contains("language-service"), "{reason}");
+
+        touch(&own.join(ANGULAR_SERVICE).join("index.js"));
+        found(
+            resolver
+                .resolve(&angular, project.path(), None, AnalysisPolicy::LIMITED)
+                .await,
+        );
+        // Trusted, the project's own serves and Vet's is not needed.
+        std::fs::remove_dir_all(own.join("@angular")).unwrap();
+        found(
+            resolver
+                .resolve(&angular, project.path(), None, AnalysisPolicy::EXECUTING)
+                .await,
         );
     }
 
