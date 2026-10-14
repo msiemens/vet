@@ -899,6 +899,34 @@ impl<M: Materializer, L: ServerLauncher> Pool<M, L> {
         Inner::<M, L>::stop(stop).await;
     }
 
+    /// Drops every server that may execute project code under a policy other than `allowed`:
+    /// trust was withdrawn, and a server started under the old policy must not go on serving.
+    /// Those leased right now are stopped when their last lease ends, and a start of one in
+    /// flight lands retired.
+    pub async fn retire_executing_except(&self, allowed: &[AnalysisPolicy]) {
+        let stop = {
+            let mut state = self.inner.lock();
+            let keys: Vec<_> = state
+                .slots
+                .keys()
+                .filter(|k| k.policy.allow_executing && !allowed.contains(&k.policy))
+                .cloned()
+                .collect();
+            let mut stop = Vec::new();
+            for key in keys {
+                *state.generations.entry(key.backend.clone()).or_default() += 1;
+                if let Some(entry) = state.slots.remove(&key) {
+                    entry.retired.store(true, Ordering::SeqCst);
+                    if entry.leases.load(Ordering::SeqCst) == 0 {
+                        stop.push(entry);
+                    }
+                }
+            }
+            stop
+        };
+        Inner::<M, L>::stop(stop).await;
+    }
+
     /// Takes the servers of `backend` out of the pool, for a new generation to replace; returns
     /// the ones nobody leases, to stop now, and the leased ones, which stop with their last lease.
     fn retire(&self, backend: &BackendId) -> (Entries<M, L>, Entries<M, L>) {
@@ -2214,6 +2242,30 @@ mod tests {
             assert_eq!(pool.keys().len(), 1);
             pool.restart(&BackendId("rust".into())).await;
             assert!(pool.keys().is_empty());
+            assert_eq!(counters.guards_dropped.load(Ordering::SeqCst), 1);
+        });
+    }
+
+    #[test]
+    fn withdrawn_trust_stops_the_executing_servers_that_policy_no_longer_allows() {
+        let (pool, counters) = pool(4);
+        let limited = PoolKey {
+            policy: AnalysisPolicy::LIMITED,
+            ..snapshot_key(2)
+        };
+        let servers = PoolKey {
+            policy: AnalysisPolicy::SERVERS,
+            ..snapshot_key(3)
+        };
+        block_on(async {
+            for key in [&snapshot_key(1), &limited, &servers] {
+                pool.lease(key, &backend(false)).await.unwrap().release().await;
+            }
+            pool.retire_executing_except(&[AnalysisPolicy::SERVERS, AnalysisPolicy::LIMITED])
+                .await;
+            let kept: Vec<_> = pool.keys().into_iter().map(|k| k.policy).collect();
+            assert_eq!(kept.len(), 2);
+            assert!(!kept.contains(&AnalysisPolicy::EXECUTING), "{kept:?}");
             assert_eq!(counters.guards_dropped.load(Ordering::SeqCst), 1);
         });
     }

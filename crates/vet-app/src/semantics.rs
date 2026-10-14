@@ -579,6 +579,18 @@ where
         Ok(())
     }
 
+    /// Stops the servers that may execute project code under a policy the revision no longer
+    /// has: trust was withdrawn (§7.5).
+    pub async fn retire_disallowed(&self, view: &RevisionView<G, S>, revision: u32) -> Fallible<()> {
+        let sides = view.semantic_sides(revision).await?;
+        let (base, target) = served(&view.trust(&sides.source).await?, &sides);
+        self.semantic
+            .pool()
+            .retire_executing_except(&[base.policy, target.policy])
+            .await;
+        Ok(())
+    }
+
     /// Stops the servers of `language` at once, whatever they are doing, and starts the ones
     /// the revision needs anew. The requests that were in flight on the old servers fail.
     /// The error is the reason a new server did not start.

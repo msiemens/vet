@@ -66,6 +66,12 @@ impl Booted {
         let _ = self.semantics.start_servers(&self.view, revision).await;
     }
 
+    /// Stops the servers that run under a policy the current revision no longer has.
+    pub(crate) async fn retire_disallowed_servers(&self) {
+        let revision = self.session.revision().await;
+        let _ = self.semantics.retire_disallowed(&self.view, revision).await;
+    }
+
     /// Replaces the servers of `language` and waits until the ones the revision needs run.
     pub(crate) async fn restart_server(&self, language: &BackendId) -> Result<(), String> {
         let revision = self.session.revision().await;
