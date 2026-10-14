@@ -1,6 +1,6 @@
 use std::collections::{BTreeMap, HashMap};
 use std::path::Path;
-use std::sync::atomic::{AtomicI64, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicI64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 
 use vet_core::classify::{changes, classify, text_blobs};
@@ -111,6 +111,8 @@ pub(crate) struct FakeGit {
     scans: Arc<Mutex<Vec<Snapshot>>>,
     /// `<version>/<name>` of each held `refs/vet/changesets/<id>/<version>/<name>` and the commit.
     refs: Arc<Mutex<Vec<(String, CommitId)>>>,
+    /// When set, deleting the changeset refs fails.
+    refs_stuck: Arc<AtomicBool>,
     /// What revisions (`merge-base <ref>` for merge bases) resolve to, with the commit's tree.
     commits: Arc<Mutex<HashMap<String, (CommitId, Snapshot)>>>,
     /// Largest blob `read_blob_capped` returns.
@@ -438,6 +440,9 @@ impl ChangesetRefs for FakeGit {
         Ok(())
     }
     async fn delete_changeset_refs(&self, _: ChangesetId) -> std::result::Result<(), GitError> {
+        if self.refs_stuck.load(Ordering::Relaxed) {
+            return Err(GitError("the refs cannot be deleted".into()));
+        }
         self.refs.lock().unwrap().clear();
         Ok(())
     }
@@ -1360,6 +1365,18 @@ async fn finishing_returns_to_browsing_and_a_later_action_starts_a_new_review() 
     ));
     let mem = fx.store.0.lock().unwrap();
     assert_eq!((mem.closed, mem.versions.len(), mem.spans.len()), (false, 1, 1));
+}
+
+#[tokio::test]
+async fn a_review_closed_in_the_store_is_closed_in_the_session_even_if_its_refs_stay() {
+    let fx = Fixture::reviewing(&[("a.txt", "one\n")], &[("a.txt", "two\n")]).await;
+    fx.git.refs_stuck.store(true, Ordering::Relaxed);
+
+    fx.session.finish_review().await.unwrap();
+
+    assert!(fx.store.0.lock().unwrap().closed);
+    assert_eq!(fx.session.lifecycle().await, Lifecycle::Browsing);
+    assert_eq!(fx.session.revision().await, 1);
 }
 
 #[tokio::test]

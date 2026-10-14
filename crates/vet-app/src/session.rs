@@ -597,7 +597,7 @@ impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> L
         lifecycle_of(&self.published.read())
     }
 
-    /// Ends the review: releases its refs, records whether it was complete, and
+    /// Ends the review: records whether it was complete, releases its refs, and
     /// goes back to browsing with no review state. The threads that are still
     /// open stay on view, since they belong to the changeset; the resolved ones
     /// remain in the finished review. Returns whether it was complete. Fails if
@@ -615,14 +615,14 @@ impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> L
             _ => None,
         });
         self.retain_anchored(&st, anchors).await?;
-        self.acquisition.git.delete_changeset_refs(changeset).await?;
-        st.writes().close_review(id, (self.clock)(), complete).await?;
         if st.source == Source::WorkingTree {
             // The next session of the workspace pins the `HEAD` it finds.
             st.writes()
                 .set_pinned_base(self.repo.clone(), Source::WorkingTree, None)
                 .await?;
         }
+        st.writes().close_review(id, (self.clock)(), complete).await?;
+        // The review is closed in the store: the state follows with nothing awaited between.
         st.review = None;
         st.recorded.clear();
         st.acks.clear();
@@ -632,6 +632,10 @@ impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> L
         st.changes = None;
         st.publish();
         self.revisions.advance(st.revision);
+        // Refs left behind by a failure here are taken again with the next review's first version.
+        if let Err(e) = self.acquisition.git.delete_changeset_refs(changeset).await {
+            tracing::warn!(error = %e.0, "could not release the refs of the finished review");
+        }
         Ok(complete)
     }
 
