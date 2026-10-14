@@ -291,7 +291,7 @@ Adding a language means adding a config entry plus a one-time manual check of wh
 
 ### 7.3 Queries
 
-Primitive rows pass backend answers through. Derived rows combine primitives with the diff; per I6 they are labeled derived in the UI and show their inputs.
+Primitive rows pass backend answers through. Derived rows combine primitives with the diff; per I6 they are labeled derived in the UI and show their inputs. A place a server names outside the repository (a dependency, the toolchain's sources) shows its line only if the file is of a kind Vet serves (§7.1: by extension or name); any other file is listed without text.
 
 | Question | Kind | How |
 |---|---|---|

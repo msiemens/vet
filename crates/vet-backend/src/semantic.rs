@@ -8,6 +8,7 @@ use vet_app::semantics::Answer;
 use vet_app::session::{SessionError, View};
 use vet_core::content::RepoPath;
 use vet_core::text::Lines;
+use vet_infra::language;
 use vet_protocol::{Response, Side};
 use vet_semantic::derived::Reference;
 use vet_semantic::ports::{At, BackendId, Location};
@@ -24,8 +25,13 @@ use super::{highlight, message};
 const MAX_OUTSIDE_FILE: u64 = 8 * 1024 * 1024;
 
 /// The text of a file outside the repository (a dependency or toolchain source), which is
-/// named by its absolute path; `None` if it cannot be read.
+/// named by its absolute path; `None` if it cannot be read. A language server names the place,
+/// and a repository can steer it, so only a file of a kind Vet serves is read: library and
+/// toolchain sources have the extension of their language, a key or a dotfile has none.
 async fn read_outside(file: &RepoPath) -> Option<String> {
+    if language::language_id(file) == "plaintext" {
+        return None;
+    }
     let path = std::path::PathBuf::from(file.to_string_lossy());
     if tokio::fs::metadata(&path).await.ok()?.len() > MAX_OUTSIDE_FILE {
         return None;
@@ -417,5 +423,26 @@ impl Booted {
             .await
             .map_err(message)?;
         Ok(Response::Reachability(map::reachability(revision, &info, &reach)))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn only_files_of_a_served_kind_are_read_from_outside_the_repository() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = |name: &str| {
+            let path = dir.path().join(name);
+            std::fs::write(&path, "secret = 1\n").unwrap();
+            RepoPath::from(path.to_string_lossy().as_ref())
+        };
+        for source in ["lib.rs", "index.d.ts", "typing.pyi", "Dockerfile"] {
+            assert!(read_outside(&file(source)).await.is_some(), "{source}");
+        }
+        for other in ["config", "id_rsa", ".env", "notes.txt"] {
+            assert!(read_outside(&file(other)).await.is_none(), "{other}");
+        }
     }
 }
