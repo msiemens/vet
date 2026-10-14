@@ -9,8 +9,8 @@ use futures::future::try_join3;
 use octocrab::map_github_error;
 use serde::Deserialize;
 use vet_app::platform::{
-    Check, CheckLog, CiState, CommitChecks, CredentialProvider, LogFailure, Phase, PipelineAction, PlatformError,
-    RemoteKey, Run, Step,
+    Check, CheckLog, CiState, CommitChecks, CredentialProvider, LogFailure, Phase, PipelineAction, Platform,
+    PlatformError, RemoteKey, Run, Step,
 };
 
 use super::{Bucket, GitHubClient, repository};
@@ -344,7 +344,7 @@ impl<C: CredentialProvider + Sync> GitHubClient<C> {
             .await;
         let answer = self.settle(host, Bucket::Core, answer).await?;
         self.settle(host, Bucket::Core, map_github_error(answer).await).await?;
-        self.state().checks.retain(|(kept, _), _| kept != remote);
+        self.forget_checks(remote);
         Ok(())
     }
 

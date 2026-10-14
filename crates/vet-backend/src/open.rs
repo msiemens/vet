@@ -128,6 +128,8 @@ pub(crate) struct Wired {
     checking: TaskSlot,
     /// How long the checks task waits between two rounds while some checks still run.
     checks_pace: Duration,
+    /// How long after an action on a run the checks are read once more.
+    checks_settle: Duration,
     closed: AtomicBool,
     trees: Arc<KeptTrees>,
     /// The answers of the language servers kept between launches.
@@ -178,14 +180,14 @@ impl Wired {
         self.checking.keep(task);
     }
 
-    /// Stops refreshing the changeset's checks: the review screen is no longer shown.
-    pub(crate) fn stop_checking(&self) {
-        self.checking.stop();
-    }
-
     /// How long the checks task waits between two rounds while some checks still run.
     pub(crate) fn checks_pace(&self) -> Duration {
         self.checks_pace
+    }
+
+    /// How long after an action on a run the checks are read once more.
+    pub(crate) fn checks_settle(&self) -> Duration {
+        self.checks_settle
     }
 
     /// Copies the working tree's content into the store in the background, so the first mark
@@ -487,6 +489,7 @@ impl Orchestrator {
             prefetching: TaskSlot::default(),
             checking: TaskSlot::default(),
             checks_pace: self.config.checks_pace,
+            checks_settle: self.config.checks_settle,
             closed: AtomicBool::new(false),
             trees: self.trees.clone(),
             answers: self.answers.clone(),

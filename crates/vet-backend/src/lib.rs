@@ -84,6 +84,9 @@ pub struct Config {
     /// How long the backend waits before asking the platform about the checks of the commits on
     /// view again, while some of them are still running.
     pub checks_pace: Duration,
+    /// How long after an action on a run the checks are read once more: the platform shows what it
+    /// made of the action a moment later, so one read may still see the old state.
+    pub checks_settle: Duration,
 }
 
 impl Default for Config {
@@ -96,6 +99,7 @@ impl Default for Config {
             fetch_interval: vet_app::fetch::DEFAULT_INTERVAL,
             prefetch_pace: Duration::from_millis(400),
             checks_pace: Duration::from_secs(30),
+            checks_settle: Duration::from_secs(3),
         }
     }
 }
@@ -678,14 +682,15 @@ impl Orchestrator {
 
 /// Language servers take long to start; a new revision's first query should
 /// find them running. Starting never delays the reply of the request that
-/// changed the revision. Servers and the checks of the changeset on view are for
-/// the review screen: while no connection shows it (`SetReviewShown`), nothing
-/// starts, and coming up starts them.
+/// changed the revision. Servers are for the review screen: while no connection
+/// shows it (`SetReviewShown`), nothing starts, and coming up starts them. The
+/// checks of the changeset on view are for both screens — the queue shows the
+/// selected pull request's checks too — so they start whatever screen shows it.
 fn start_servers_in_background(open: Arc<Open>) {
+    checks::refresh_checks_in_background(open.clone());
     if !open.screens.shown() {
         return;
     }
-    checks::refresh_checks_in_background(open.clone());
     tokio::spawn(async move {
         if let Ok(booted) = open.booted().await {
             booted.start_servers().await;

@@ -38,6 +38,13 @@ pub trait Platform {
         commit: &str,
     ) -> impl Future<Output = Result<CommitChecks, PlatformError>> + Send;
 
+    /// Forgets what it learnt of the checks of `remote`'s commits, so the next [`Platform::checks`]
+    /// asks the platform again. For after an action on a run, whose result the platform shows late,
+    /// where what was learnt of a finished commit would otherwise be the answer once more.
+    fn forget_checks(&self, remote: &RemoteKey) {
+        let _ = remote;
+    }
+
     /// The log of the check `check` (a [`Check::id`] of `remote`), with where it failed.
     fn check_log(
         &self,

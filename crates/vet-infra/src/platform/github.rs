@@ -569,6 +569,10 @@ impl<C: CredentialProvider + Sync> Platform for GitHubClient<C> {
         self.commit_checks(remote, commit).await
     }
 
+    fn forget_checks(&self, remote: &RemoteKey) {
+        self.state().checks.retain(|(kept, _), _| kept != remote);
+    }
+
     async fn check_log(&self, remote: &RemoteKey, check: &str) -> Result<CheckLog, PlatformError> {
         self.job_log(remote, check).await
     }

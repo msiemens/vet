@@ -163,6 +163,13 @@ impl Platform for Client {
         on!(self, p => p.checks(remote, commit).await)
     }
 
+    fn forget_checks(&self, remote: &RemoteKey) {
+        match self {
+            Client::GitHub(platform) => platform.forget_checks(remote),
+            Client::AzureDevOps(platform) => platform.forget_checks(remote),
+        }
+    }
+
     async fn check_log(&self, remote: &RemoteKey, check: &str) -> Result<CheckLog, PlatformError> {
         on!(self, p => p.check_log(remote, check).await)
     }

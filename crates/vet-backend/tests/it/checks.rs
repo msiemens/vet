@@ -182,15 +182,12 @@ async fn the_checks_are_read_again_while_a_run_still_runs_and_stop_once_it_is_do
 }
 
 #[tokio::test]
-async fn nothing_is_read_while_the_review_screen_is_hidden() {
+async fn the_checks_are_kept_fresh_while_the_queue_shows_the_changeset() {
     let (mock, fake, repo, _scratch) = fixture();
-    {
-        let mut mock = mock.lock().unwrap();
-        mock.check_runs_pending = CHECKS_PENDING.to_owned();
-        mock.checks_pending_calls = usize::MAX;
-    }
+    mock.lock().unwrap().check_runs = CHECKS_SUCCESS.to_owned();
     let (_handler, mut client) = backend(repo.path(), &fake.base()).await;
     let project = client.open(repo.path()).await;
+    // The queue shows the selected pull request's checks; the review screen is not shown.
     client
         .call(Request::OpenChangeset {
             project,
@@ -199,37 +196,12 @@ async fn nothing_is_read_while_the_review_screen_is_hidden() {
         .await
         .unwrap();
 
-    tokio::time::sleep(Duration::from_millis(300)).await;
-    assert_eq!(checks_calls(&mock), 0, "nothing runs while the screen is hidden");
-    assert!(
-        next_checks(&mut client.inbox, project, Duration::from_millis(50))
-            .await
-            .is_none()
-    );
-}
-
-#[tokio::test]
-async fn the_checks_stop_when_the_review_screen_goes_away() {
-    let (mock, fake, repo, _scratch) = fixture();
-    {
-        let mut mock = mock.lock().unwrap();
-        mock.check_runs_pending = CHECKS_PENDING.to_owned();
-        mock.checks_pending_calls = usize::MAX;
-    }
-    let (_handler, mut client) = backend(repo.path(), &fake.base()).await;
-    let project = open_review(&client, repo.path()).await;
-    let _ = next_checks(&mut client.inbox, project, Duration::from_secs(5))
+    let (checks, ..) = next_checks(&mut client.inbox, project, Duration::from_secs(5))
         .await
-        .expect("a round while the screen is shown");
-
-    client
-        .call(Request::SetReviewShown { project, shown: false })
-        .await
-        .unwrap();
-    tokio::time::sleep(Duration::from_millis(50)).await;
-    let stopped = checks_calls(&mock);
-    tokio::time::sleep(Duration::from_millis(200)).await;
-    assert_eq!(checks_calls(&mock), stopped, "no more reads once the screen is away");
+        .expect("the queue's checks are pushed too");
+    assert_eq!(checks[0].commit, head(&mock));
+    assert_eq!(checks[0].state, Some(CiState::Success));
+    assert_eq!(checks_calls(&mock), 1);
 }
 
 #[tokio::test]
@@ -318,7 +290,47 @@ async fn changing_a_run_makes_the_checks_be_read_again() {
         .await
         .expect("the checks are read again after the action");
     assert_eq!(again[0].state, Some(CiState::Success));
-    assert_eq!(checks_calls(&mock), 2);
+    assert!(checks_calls(&mock) >= 2, "the action made the checks be read again");
+}
+
+#[tokio::test]
+async fn the_checks_are_read_again_shortly_after_an_action_that_the_platform_shows_late() {
+    let (mock, fake, repo, _scratch) = fixture();
+    {
+        let mut mock = mock.lock().unwrap();
+        mock.check_runs = CHECKS_SUCCESS.to_owned();
+        mock.check_runs_pending = CHECKS_PENDING.to_owned();
+        // The old, finished run shows on the read right after the action; the new run only on the
+        // read after that.
+        mock.checks_pending_from = Some(3);
+    }
+    let (_handler, mut client) = backend(repo.path(), &fake.base()).await;
+    let project = open_review(&client, repo.path()).await;
+    let _ = next_checks(&mut client.inbox, project, Duration::from_secs(5))
+        .await
+        .expect("the finished run first");
+    assert_eq!(checks_calls(&mock), 1);
+
+    client
+        .call(Request::ChangePipeline {
+            project,
+            action: PipelineAction::RerunAll { run: "5".to_owned() },
+        })
+        .await
+        .unwrap();
+
+    // The read right after the action still sees the finished run; the settle read sees the new
+    // one. Without the settle read the run would stop after the first and the new run would never
+    // show until the next push.
+    let (stale, ..) = next_checks(&mut client.inbox, project, Duration::from_secs(5))
+        .await
+        .expect("the read right after the action");
+    assert_eq!(stale[0].state, Some(CiState::Success), "the platform had not caught up");
+    let (fresh, ..) = next_checks(&mut client.inbox, project, Duration::from_secs(5))
+        .await
+        .expect("the settle read shows the new run");
+    assert_eq!(fresh[0].state, Some(CiState::Pending));
+    assert!(checks_calls(&mock) >= 3, "the settle read reached the new run");
 }
 
 #[tokio::test]

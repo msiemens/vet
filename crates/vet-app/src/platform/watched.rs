@@ -73,6 +73,10 @@ impl<P: Platform + Sync> Platform for Watched<P> {
         self.watched(remote, self.platform.checks(remote, commit)).await
     }
 
+    fn forget_checks(&self, remote: &RemoteKey) {
+        self.platform.forget_checks(remote);
+    }
+
     async fn check_log(&self, remote: &RemoteKey, check: &str) -> Result<CheckLog, PlatformError> {
         self.watched(remote, self.platform.check_log(remote, check)).await
     }

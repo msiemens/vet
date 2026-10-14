@@ -381,7 +381,7 @@ An answer the server gave while it reported work in progress or had not finished
 
 ## 11. Platform adapters
 
-GitHub + ADO: list PRs, fetch their heads and targets into Vet's own refs (read-only), read and post comments, read CI per commit. The backend keeps the checks of the changeset on view fresh itself, while the review screen shows it, and pushes them; a rate limit the account knows is waited out. Local review state (spans) is never synced. Threads are synced both ways: remote threads and replies are pulled in, local drafts are posted on request. Because anchored content is retained (§6.1), comment positions remap correctly across rebases where GitHub orphans them.
+GitHub + ADO: list PRs, fetch their heads and targets into Vet's own refs (read-only), read and post comments, read CI per commit. The backend keeps the checks of the changeset on view fresh itself, while the queue or the review screen shows it, and pushes them; a rate limit the account knows is waited out, and an action on a run is followed by a read shortly after because the platform shows its result late. Local review state (spans) is never synced. Threads are synced both ways: remote threads and replies are pulled in, local drafts are posted on request. Because anchored content is retained (§6.1), comment positions remap correctly across rebases where GitHub orphans them.
 
 Each adapter describes its platform with a fixed set of properties. Vet core and the UI branch on these properties, never on the platform's name:
 

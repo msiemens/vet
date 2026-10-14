@@ -5,7 +5,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use vet_app::changeset::Source;
-use vet_app::platform::{CiState, PlatformError, Standing, commits_checks};
+use vet_app::platform::{CiState, Platform, PlatformError, Standing, commits_checks};
 use vet_infra::clock::unix_now;
 use vet_mapping as mapping;
 use vet_protocol::Event;
@@ -15,14 +15,24 @@ use crate::{Live, Open};
 /// How many of the newest versions' tips have their checks asked for, as the review shows them.
 const MAX_CHECKED_VERSIONS: usize = 20;
 
-/// Starts (or restarts) the task that keeps the checks of the changeset on view fresh, if the
-/// review screen is shown. A newer run replaces the older; the project closing stops it.
+/// Starts (or restarts) the task that keeps the checks of the changeset on view fresh. It runs
+/// while a pull request is on view — in the queue or on the review screen, both of which show its
+/// checks — and stops when another changeset comes on view or the project closes. A newer run
+/// replaces the older.
 pub(crate) fn refresh_checks_in_background(open: Arc<Open>) {
-    if !open.screens.shown() {
-        return;
-    }
+    refresh(open, None);
+}
+
+/// The same, after an action on a run: the platform shows what it made of the action a moment
+/// later, so the checks are read once more `checks_settle` after the first read.
+pub(crate) fn refresh_checks_after_action(open: Arc<Open>) {
+    let settle = open.checks_settle();
+    refresh(open, Some(settle));
+}
+
+fn refresh(open: Arc<Open>, settle: Option<Duration>) {
     let pace = open.checks_pace();
-    let task = tokio::spawn(run(open.clone(), pace));
+    let task = tokio::spawn(run(open.clone(), pace, settle));
     open.keep_checking(task.abort_handle());
 }
 
@@ -52,8 +62,9 @@ async fn watched_commits(session: &Live) -> Vec<String> {
 
 /// The checks of the changeset on view, asked of the platform and pushed, again while some run. A
 /// rate limit the account's health knows is waited out and then resumed; another failure of the
-/// account stops the run; so does nothing being left to wait for.
-async fn run(open: Arc<Open>, pace: Duration) {
+/// account stops the run; so does nothing being left to wait for, once an after-action `settle`
+/// read has been made.
+async fn run(open: Arc<Open>, pace: Duration, mut settle: Option<Duration>) {
     let booted = match open.booted().await {
         Ok(booted) => booted.clone(),
         Err(_) => return,
@@ -85,8 +96,17 @@ async fn run(open: Arc<Open>, pace: Duration) {
             _ => {}
         }
         if !found.iter().any(|c| c.state() == Some(CiState::Pending)) {
+            // Nothing is running. After an action, the platform may not have shown its result yet:
+            // forget what it last gave of these checks and read once more, then stop if nothing runs.
+            if let Some(wait) = settle.take() {
+                hosting.forget_checks(&remote);
+                tokio::time::sleep(wait).await;
+                continue;
+            }
             return;
         }
+        // A run is going on; it keeps the round going, the settle read is not needed.
+        settle = None;
         tokio::time::sleep(pace).await;
     }
 }

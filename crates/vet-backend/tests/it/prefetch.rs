@@ -59,6 +59,9 @@ pub(crate) struct Mock {
     pub(crate) check_runs_pending: String,
     /// How many more check-run reads answer with `check_runs_pending` before `check_runs`.
     pub(crate) checks_pending_calls: usize,
+    /// From this read on (1-based), every check-run read answers with `check_runs_pending`: the
+    /// platform shows the new run only late.
+    pub(crate) checks_pending_from: Option<usize>,
     /// How many check-run reads are refused with a rate limit (429, `Retry-After: 1`) first.
     pub(crate) checks_refusals: usize,
     /// How many check-run reads were answered, refusals included.
@@ -181,8 +184,9 @@ fn github(mock: Arc<Mutex<Mock>>) -> Fake {
                 mock.checks_refusals -= 1;
                 return Canned::status(429, r#"{"message":"slow down"}"#).with("Retry-After", "1");
             }
-            let pending = mock.checks_pending_calls > 0;
-            if pending {
+            let pending =
+                mock.checks_pending_calls > 0 || mock.checks_pending_from.is_some_and(|from| mock.checks_calls >= from);
+            if mock.checks_pending_calls > 0 {
                 mock.checks_pending_calls -= 1;
             }
             let body = if pending {
@@ -352,6 +356,7 @@ pub(crate) fn config() -> Config {
         orphan_grace: Duration::from_secs(60),
         prefetch_pace: Duration::ZERO,
         checks_pace: Duration::from_millis(30),
+        checks_settle: Duration::from_millis(40),
         ..Config::default()
     }
 }
