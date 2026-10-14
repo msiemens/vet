@@ -44,6 +44,7 @@ use vet_semantic::ports::Backend;
 use crate::caches::PersistentAnswers;
 use crate::events::{Connection, edits_pending, settled};
 use crate::hosting::Hosting;
+use crate::screens::ReviewScreens;
 use crate::{
     AzureDevOps, GitHub, LanguageServers, Live, Open, Orchestrator, PlatformAccounts, Semantic, message,
     start_servers_in_background,
@@ -116,6 +117,8 @@ pub(crate) struct Wired {
     pub azure_devops: Arc<AzureDevOps>,
     /// How the last sync with each platform host went, to announce a stop once and not on every try.
     connections: Mutex<HashMap<String, PlatformConnection>>,
+    /// The connections that show the review screen, which the language servers run for.
+    pub screens: ReviewScreens,
     plan: Plan,
     booted: OnceCell<Result<Arc<Booted>, String>>,
     settling: TaskSlot,
@@ -408,6 +411,9 @@ impl Orchestrator {
 
     /// Unsubscribes the connection; the last one to leave closes the project.
     pub(crate) async fn close(&self, id: ProjectId, from: &Connection) -> Result<(), String> {
+        if let Ok(open) = self.projects.find(id).await {
+            open.screens.set(from, false);
+        }
         self.projects.close(id, from).await.map_err(message)
     }
 
@@ -433,6 +439,7 @@ impl Orchestrator {
             azure_devops: self.azure_devops.clone(),
             tasks,
             connections: Mutex::default(),
+            screens: ReviewScreens::default(),
             plan: Plan {
                 id,
                 repo,

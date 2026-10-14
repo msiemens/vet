@@ -207,6 +207,9 @@ pub fn effect(request: &Request) -> Effect {
             untested(&[ServersChanged], "downloads and runs the language's installer")
         }
         Request::SetServerPath { .. } | Request::RestartServer { .. } => tested(&[ServersChanged]),
+        Request::SetReviewShown { .. } => {
+            Effect::Unannounced("decides when servers start; the connection that asked knows what it showed")
+        }
     }
 }
 
@@ -503,6 +506,7 @@ mod tests {
                 project,
                 language: "rust".into(),
             },
+            Request::SetReviewShown { project, shown: true },
             Request::Fetch { project },
             Request::SetProjectFilter {
                 project,

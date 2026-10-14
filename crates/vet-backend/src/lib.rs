@@ -19,6 +19,7 @@ mod open;
 mod projects;
 mod references;
 mod review;
+mod screens;
 mod semantic;
 mod servers;
 mod sync;
@@ -624,19 +625,30 @@ impl Orchestrator {
                 path,
             } => reply(self.set_server_path(project, language, path)),
             Request::RestartServer { project, language } => reply(self.restart_server(project, language)),
+            Request::SetReviewShown { project, shown } => reply(self.set_review_shown(project, shown, from)),
         }
     }
 }
 
 /// Language servers take long to start; a new revision's first query should
 /// find them running. Starting never delays the reply of the request that
-/// changed the revision. For a project that has not scanned yet this is what
-/// scans it, so opening does not wait for the scan.
+/// changed the revision. Servers are for the review screen: while no connection
+/// shows it (`SetReviewShown`), nothing starts, and coming up starts them.
 fn start_servers_in_background(open: Arc<Open>) {
+    if !open.screens.shown() {
+        return;
+    }
     tokio::spawn(async move {
         if let Ok(booted) = open.booted().await {
             booted.start_servers().await;
         }
+    });
+}
+
+/// Scans a project that has not scanned yet, so opening does not wait for the scan.
+fn scan_in_background(open: Arc<Open>) {
+    tokio::spawn(async move {
+        let _ = open.booted().await;
     });
 }
 

@@ -451,6 +451,16 @@ pub enum Request {
         project: ProjectId,
         language: String,
     },
+    /// Says whether this connection shows the review screen of the project, which is what the
+    /// language servers of the changeset on view run for. While no connection does, a changeset
+    /// that comes on view, a revision that settles, a fetch or a change of trust starts no
+    /// server and no restore; showing the screen starts the servers the changeset on view
+    /// needs, and later changes of the revision start theirs. A connection that closes the
+    /// project or goes away has left the screen. Answers with `Response::Done`.
+    SetReviewShown {
+        project: ProjectId,
+        shown: bool,
+    },
     /// Fetches the repository's remotes now, as a `Fetch` task, and answers with
     /// `Response::Done` when it ended. A remote that fails (offline, refused) fails the
     /// task with its name, not this request, and the others are still fetched. If any

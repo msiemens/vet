@@ -9,7 +9,7 @@ use vet_protocol::{Event, ProjectId};
 
 use crate::events::Connection;
 use crate::fetch::fetch_periodically;
-use crate::{Open, Orchestrator, start_servers_in_background};
+use crate::{Open, Orchestrator, scan_in_background};
 
 impl Orchestrator {
     /// The project id and the root of the repository containing `repo`. The first
@@ -36,7 +36,7 @@ impl Orchestrator {
             let _ = entry.set(Arc::downgrade(&open));
             let (projects, id, grace) = (self.projects.clone(), open.id, self.config.orphan_grace);
             tokio::spawn(async move { projects.reap(id, grace, &TokioClock::new()).await });
-            start_servers_in_background(open.clone());
+            scan_in_background(open.clone());
             fetch_periodically(&open, self.config.fetch_interval);
         }
         Ok((open.id, root))
