@@ -47,6 +47,7 @@ export function threadActions(
     menu: listeners.menu,
     openLink: listeners.openLink,
     submitKey: listeners.submitKey,
+    draftScope: listeners.draftScope,
     ...own,
   };
 }

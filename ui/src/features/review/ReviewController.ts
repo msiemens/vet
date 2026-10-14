@@ -1050,6 +1050,7 @@ export class ReviewController {
           session.notice = `Could not open the browser: ${errorText(e)}`;
         }),
       submitKey: commands.keyLabel(SUBMIT_KEY),
+      draftScope: () => `${this.backend.project}/${this.key}`,
     };
   }
 

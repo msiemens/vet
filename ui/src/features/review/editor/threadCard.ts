@@ -47,6 +47,13 @@ export interface ThreadActions {
   openLink(url: string): void;
   /** The key that posts a form, as the viewer reads keys on this platform. */
   submitKey: string;
+  /** Names the project and changeset the cards are drawn for; an unsent new comment belongs to it. */
+  draftScope(): string;
+}
+
+/** The key under which the unsent text of the form for a new comment on `target` is kept. */
+export function newCommentKey(scope: string, target: ThreadTarget): string {
+  return `new:${scope}:${JSON.stringify(target)}`;
 }
 
 /** What a new comment is attached to, for the form's title. */
@@ -65,7 +72,7 @@ function button(label: string, className: string, onclick: () => void) {
 }
 
 /**
- * What the viewer has typed in cards and not sent, by form (`reply:3`, `edit:7`, `new:…`). A card is
+ * What the viewer has typed in cards and not sent, by form (`reply:3`, `edit:7`, `new:<project>/<changeset>:…`). A card is
  * drawn again when the threads change, which must not cost the text; a form that is open has an entry,
  * possibly empty.
  */
@@ -142,7 +149,7 @@ export function slot(card: HTMLElement): HTMLElement {
 function draftCard(target: ThreadTarget, actions: ThreadActions): HTMLElement {
   const card = el("div", "vet-thread-card");
   const form = el("div", "vet-thread-form");
-  const key = `new:${JSON.stringify(target)}`;
+  const key = newCommentKey(actions.draftScope(), target);
   const { field, send } = composer(3, "Comment…", "Comment", (body) => actions.create(target, body), key);
   const dismiss = () => {
     unsent.delete(key);
