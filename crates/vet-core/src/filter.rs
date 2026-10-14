@@ -3,7 +3,7 @@
 use std::cell::OnceCell;
 use std::collections::BTreeSet;
 
-use globset::{Glob, GlobBuilder, GlobSet, GlobSetBuilder};
+use globset::{ErrorKind, Glob, GlobBuilder, GlobSet, GlobSetBuilder};
 
 use crate::content::{NonTextChange, NonTextKind, RepoPath};
 use crate::generated::GENERATED_NAMES;
@@ -173,9 +173,9 @@ impl CompiledFilter<'_> {
 pub struct PatternMatcher(GlobList);
 
 impl PatternMatcher {
-    /// Fails with why the pattern is invalid, as a message fit to show.
+    /// Fails with why the pattern is invalid, as one short line fit to show beside the pattern.
     pub fn new(pattern: &str) -> Result<Self, String> {
-        glob(pattern)?;
+        build(pattern).map_err(|e| short_reason(e.kind()))?;
         Ok(Self(GlobList::new(std::iter::once(pattern))))
     }
 
@@ -229,10 +229,24 @@ fn anchored(pattern: &str) -> &str {
 
 /// The compiled glob, or why the pattern is invalid, as a message fit to show.
 fn glob(pattern: &str) -> Result<Glob, String> {
-    GlobBuilder::new(anchored(pattern))
-        .literal_separator(true)
-        .build()
-        .map_err(|e| format!("invalid pattern \"{pattern}\": {}", e.kind()))
+    build(pattern).map_err(|e| format!("invalid pattern \"{pattern}\": {}", e.kind()))
+}
+
+fn build(pattern: &str) -> Result<Glob, globset::Error> {
+    GlobBuilder::new(anchored(pattern)).literal_separator(true).build()
+}
+
+/// Why a glob is invalid, in one short line for the field it was typed into.
+fn short_reason(kind: &ErrorKind) -> String {
+    match kind {
+        ErrorKind::UnclosedClass => "Unclosed [ in the pattern.".into(),
+        ErrorKind::InvalidRange(from, to) => format!("Invalid range {from}-{to}."),
+        ErrorKind::UnopenedAlternates => "} without { in the pattern.".into(),
+        ErrorKind::UnclosedAlternates => "Unclosed { in the pattern.".into(),
+        ErrorKind::NestedAlternates => "Nested { } are not supported.".into(),
+        ErrorKind::DanglingEscape => "The pattern ends with a backslash.".into(),
+        _ => "Not a valid pattern.".into(),
+    }
 }
 
 /// Patterns with a `/` match the whole path, the others the file name.
@@ -281,6 +295,17 @@ mod tests {
             ..Default::default()
         };
         assert!(bad.validate().unwrap_err().starts_with("invalid pattern \"src/[a\""));
+    }
+
+    #[test]
+    fn a_pattern_matcher_says_in_one_line_why_a_glob_is_invalid() {
+        let reason = |pattern: &str| PatternMatcher::new(pattern).err();
+        assert_eq!(reason("src/[a").as_deref(), Some("Unclosed [ in the pattern."));
+        assert_eq!(reason("{a,b").as_deref(), Some("Unclosed { in the pattern."));
+        assert_eq!(reason("a}").as_deref(), Some("} without { in the pattern."));
+        assert_eq!(reason("[z-a]").as_deref(), Some("Invalid range z-a."));
+        assert_eq!(reason("a\\").as_deref(), Some("The pattern ends with a backslash."));
+        assert_eq!(reason("**/*.snap"), None);
     }
 
     #[test]

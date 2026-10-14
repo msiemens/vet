@@ -20,6 +20,7 @@
     glyph,
     placeholder,
     adding = $bindable(""),
+    previews = false,
     addMeta,
     addBad = false,
     canAdd,
@@ -39,6 +40,8 @@
     placeholder: string;
     /** The text of the add field. */
     adding?: string;
+    /** The add field has room beside it for what the backend counted for its text. */
+    previews?: boolean;
     /** What the backend counted for the text in the add field. */
     addMeta?: string;
     /** The add field holds an invalid entry. */
@@ -59,7 +62,7 @@
 </script>
 
 {#snippet meta(text: string | undefined, bad: boolean | undefined)}
-  <span class="meta clip" class:err={bad} title={bad ? text : undefined}>{text ?? ""}</span>
+  <span class="meta" class:err={bad}>{text ?? ""}</span>
 {/snippet}
 
 <div class="box" role="group" aria-label={label}>
@@ -99,7 +102,7 @@
         if (e.key === "Enter" && canAdd) onadd();
       }}
     />
-    {@render meta(addMeta, addBad)}
+    {#if previews}{@render meta(addMeta, addBad)}{/if}
     {@render extra?.()}
     <button class="ctl" type="button" disabled={!canAdd} onclick={onadd}>Add</button>
   </div>

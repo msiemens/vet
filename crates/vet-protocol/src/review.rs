@@ -38,7 +38,7 @@ pub struct PatternMatch {
     pub files: u32,
     /// The lines added and removed in them.
     pub lines: u32,
-    /// Why the glob is invalid, as a message fit to show; it then matches nothing.
+    /// Why the glob is invalid, in one short line; it then matches nothing.
     pub invalid: Option<String>,
 }
 

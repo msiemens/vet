@@ -63,6 +63,7 @@
   {rows}
   {placeholder}
   bind:adding={draft.adding}
+  previews
   addMeta={added ? counted(patterns.length) : undefined}
   {addBad}
   canAdd={added !== "" && invalid(patterns.length) === undefined && !patterns.includes(added)}

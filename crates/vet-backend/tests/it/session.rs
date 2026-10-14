@@ -1809,13 +1809,7 @@ async fn each_glob_of_a_draft_filter_counts_the_changed_files_and_lines_it_match
         counted(&exclude),
         [(2, 5, false), (1, 2, false), (0, 0, true), (0, 0, false)]
     );
-    assert!(
-        exclude[2]
-            .invalid
-            .as_deref()
-            .unwrap()
-            .starts_with("invalid pattern \"src/[\"")
-    );
+    assert_eq!(exclude[2].invalid.as_deref(), Some("Unclosed [ in the pattern."));
     assert_eq!(revision, 0);
     assert_eq!(
         client.manifest(project).await.filter,

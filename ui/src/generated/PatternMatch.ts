@@ -13,6 +13,6 @@ files: number,
  */
 lines: number, 
 /**
- * Why the glob is invalid, as a message fit to show; it then matches nothing.
+ * Why the glob is invalid, in one short line; it then matches nothing.
  */
 invalid: string | null, };
