@@ -82,6 +82,24 @@ export const sessions: Record<string, (h: Harness) => Promise<void>> = {
     await h.step("unseen in range", () => hunk(h, first(), 1), ONE);
     await h.step("back to the changeset", () => changeset.setRange(undefined));
     await h.step("seen in the new version", () => hunk(h, "b.txt", 2), ONE);
+    await h.step(
+      "a range of versions that are gone gives way to the changeset",
+      async () => {
+        await changeset.setRange({ from: 98, to: 99 });
+        if (changeset.range) throw new Error("the range stayed");
+      },
+      { notice: "no such version 98", rejected: 1 },
+    );
+    await h.step(
+      "a range the backend calls invalid is not replaced by the changeset",
+      async () => {
+        await changeset.setRange({ from: 1, to: 1 });
+        const stayed = changeset.range !== undefined;
+        await changeset.setRange(undefined);
+        if (!stayed) throw new Error("the range was dropped");
+      },
+      { notice: "an interdiff compares an earlier version with a later one", rejected: 1 },
+    );
   },
 
   /** The changeset reviewed by commit: marks, stepping, and the lens back. */

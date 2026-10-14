@@ -153,12 +153,13 @@ export interface Harness {
    * Runs `run`, waits until the window has settled, then compares the stores with the backend. The step
    * also fails unless the window sent `marks` review requests (default none), the backend answered every
    * request, and the window's notice is `notice` (default none). With `listings` it also fails unless the
-   * window asked for the pull requests that many times.
+   * window asked for the pull requests that many times, or unless the backend rejected `rejected`
+   * requests (default none).
    */
   step(
     name: string,
     run: () => unknown,
-    expected?: { marks?: number; notice?: string; listings?: number },
+    expected?: { marks?: number; notice?: string; listings?: number; rejected?: number },
   ): Promise<void>;
   /** Resolves when `condition` holds; fails after a while. */
   until(condition: () => boolean, what: string): Promise<void>;
@@ -278,7 +279,7 @@ export async function runSession(script: (h: Harness) => Promise<void>): Promise
         const listings = sent.filter((r) => r.type === "listPullRequests").length - listingsBefore;
         if (expected.listings !== undefined && listings !== expected.listings)
           step("the number of times the step asked for the pull requests", listings, expected.listings);
-        if (failed.length) step("requests the backend rejected", failed.slice(), []);
+        if (failed.length !== (expected.rejected ?? 0)) step("requests the backend rejected", failed.slice(), []);
         if (notices.text !== expected.notice) step("the notice after the step", notices.text, expected.notice);
         results.push({ name, violations });
         process.stderr.write(`  ${name}: ${violations.length ? `${violations.length} differences` : "ok"}\n`);

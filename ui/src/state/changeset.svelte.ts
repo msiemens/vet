@@ -17,6 +17,7 @@ import type { Lens } from "../generated/Lens";
 import { errorText } from "../lib/errorText";
 import { STALE_NOTICE } from "../lib/notice";
 import { pathsBelow } from "../lib/paths";
+import { isKind } from "../lib/requestError";
 import { commitToShow, neighbour } from "./commitLens";
 import { keyId } from "./changesetKey";
 import { notices } from "./notices.svelte";
@@ -256,7 +257,7 @@ class ChangesetStore implements ViewSource {
   /**
    * The manifest of the view. A range that covers every push becomes the changeset, which only the
    * manifest's latest version says, and the commit the lens asks for is shown instead of the changeset, as the
-   * manifest says too. A range or commit the backend refuses (its versions or commit are gone) gives
+   * manifest says too. A range or commit the backend does not find (its versions or commit are gone) gives
    * way to the changeset.
    */
   private async fetchManifest(): Promise<{ manifest: Manifest; commit: number | undefined }> {
@@ -268,7 +269,7 @@ class ChangesetStore implements ViewSource {
       try {
         manifest = await backend.manifest(this.view);
       } catch (error) {
-        if (!range && commit === undefined) throw error;
+        if ((!range && commit === undefined) || !isKind(error, "notFound")) throw error;
         if (range) this.range = undefined;
         else this.commitIndex = undefined;
         notices.report(error);

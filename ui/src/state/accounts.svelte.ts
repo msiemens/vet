@@ -7,6 +7,7 @@ import { errorText } from "../lib/errorText";
 import type { Backend } from "./backend";
 import { removeStoredCredential, storeCredential, storedCredential, storedCredentials } from "./host";
 import { notices } from "./notices.svelte";
+import { Resource } from "./resource";
 import { session } from "./session.svelte";
 
 export type AddResult = { ok: true; host: string; warning?: string } | { ok: false; error: string };
@@ -15,10 +16,14 @@ class AccountsStore {
   accounts = $state.raw<Account[]>([]);
   loading = $state(false);
   loadError = $state<string>();
-  /** The reading of the accounts underway. */
-  private reading?: Promise<void>;
-  /** Something changed since the reading underway started: it reads once more. */
-  private stale = false;
+  private reads = new Resource<Account[]>({
+    busy: (on) => (this.loading = on),
+    apply: (accounts) => {
+      this.accounts = accounts;
+      this.loadError = undefined;
+    },
+    failed: (e) => (this.loadError = errorText(e)),
+  });
 
   constructor() {
     session.onConnect((backend) => {
@@ -56,35 +61,12 @@ class AccountsStore {
   }
 
   /**
-   * Asks the backend for the accounts, which also has it look each one up at its platform. Asked again while a
-   * reading is underway, it reads once more after that one; it resolves when the accounts are current.
+   * Asks the backend for the accounts, which also has it look each one up at its platform. The latest
+   * reading counts; it resolves when the accounts are current.
    */
-  load(): Promise<void> {
-    this.stale = true;
-    this.reading ??= this.read().finally(() => (this.reading = undefined));
-    return this.reading;
-  }
-
-  private async read() {
-    while (this.stale) {
-      this.stale = false;
-      const backend = session.backend;
-      if (!backend) return;
-      this.loading = true;
-      try {
-        this.accounts = await backend.accounts();
-        this.loadError = undefined;
-      } catch (e) {
-        this.loadError = errorText(e);
-      } finally {
-        this.loading = false;
-      }
-    }
-  }
-
-  /** Waits for the reading a change of the accounts started, or reads them. */
-  private async current() {
-    await (this.reading ?? this.load());
+  async load(): Promise<void> {
+    const backend = session.backend;
+    if (backend) await this.reads.load(() => backend.accounts());
   }
 
   /**
@@ -106,7 +88,7 @@ class AccountsStore {
     } catch (e) {
       return { ok: false, error: errorText(e) };
     }
-    await this.current();
+    await this.load();
     return { ok: true, host: account.host, warning };
   }
 
@@ -133,7 +115,9 @@ class AccountsStore {
     const backend = session.backend;
     if (!backend) return "not connected to the backend";
     try {
-      this.accounts = await backend.removeCredentials(host);
+      const accounts = await backend.removeCredentials(host);
+      this.reads.cancel();
+      this.accounts = accounts;
       await removeStoredCredential(host);
       return undefined;
     } catch (e) {
