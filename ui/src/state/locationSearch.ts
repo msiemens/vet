@@ -5,6 +5,7 @@
 import type { LocationRow } from "../generated/LocationRow.ts";
 import type { LocationRows } from "../generated/LocationRows.ts";
 import type { Side } from "../generated/Side.ts";
+import { Debounced } from "../lib/debounced.ts";
 import type { CaretRect, PickerKind, PickerSink, PickerView } from "./pickerTypes.ts";
 
 /** How long a search runs before the popup shows "Searching…". */
@@ -94,14 +95,15 @@ export class LocationSearch {
       onretry: () => void this.start(search),
       onclose: () => this.cancel(),
     };
-    const timer = setTimeout(() => {
+    const timer = new Debounced();
+    timer.schedule(this.delayMs, () => {
       if (current()) picker.show({ ...shown, body: { phase: "searching" } });
-    }, this.delayMs);
+    });
     let answer: LocationRows;
     try {
       answer = await search.ask(mine.abort.signal);
     } catch (error) {
-      clearTimeout(timer);
+      timer.cancel();
       if (!current()) return;
       this.running = undefined;
       picker.close();
@@ -109,7 +111,7 @@ export class LocationSearch {
       else this.deps.fail(error, search.revision);
       return;
     }
-    clearTimeout(timer);
+    timer.cancel();
     if (!current()) return;
     const { unavailable, rows, total } = answer;
     if (unavailable?.kind === "serverMissing" || unavailable?.kind === "serverFailed") {

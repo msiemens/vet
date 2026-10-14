@@ -13,6 +13,7 @@ import type { View } from "../../generated/View";
 import type { SymbolInfo } from "../../generated/SymbolInfo";
 import type { TextSpan } from "../../generated/TextSpan";
 import { isAbort } from "../../lib/abort";
+import { Debounced } from "../../lib/debounced";
 import type { LocationRow } from "../../generated/LocationRow";
 import { nextPaint } from "../../lib/nextPaint";
 import { platformName } from "../../lib/platformName";
@@ -172,7 +173,7 @@ export class ReviewController {
   private restore?: { scroll: Map<TabId, number> };
   /** Where file tabs' panes are put when they are built: the positions of the changeset just brought back. */
   private pending = new Map<TabId, FilePositions>();
-  private saving?: ReturnType<typeof setTimeout>;
+  private saving = new Debounced();
   /** The Changes tab of the views built last going to its first hunk. */
   private arriving: Promise<void> = Promise.resolve();
 
@@ -415,7 +416,8 @@ export class ReviewController {
   /** Detaches the controller from the window and the store, and tears down the views. */
   destroy() {
     this.search.cancel();
-    clearTimeout(this.saving);
+    this.saving.cancel();
+    this.findTyping.cancel();
     this.saveView();
     this.unsubscribe();
     this.unsubscribeEvents();
@@ -733,7 +735,7 @@ export class ReviewController {
   closeFind() {
     const id = this.tabs.active;
     this.landing = undefined;
-    clearTimeout(this.findTyping);
+    this.findTyping.cancel();
     this.finder(id, this.findPane(id))?.selectFound();
     this.find.open.delete(id);
     this.finder(id, "diff")?.find(undefined);
@@ -751,13 +753,13 @@ export class ReviewController {
   }
 
   /** The query is searched this long after the last key, so typing does not search a long changeset for every letter. */
-  private findTyping?: ReturnType<typeof setTimeout>;
+  private findTyping = new Debounced();
 
   setFindOptions(patch: Partial<FindOptions>) {
     Object.assign(this.find.options, patch);
-    clearTimeout(this.findTyping);
+    this.findTyping.cancel();
     if (Object.keys(patch).length === 1 && "text" in patch) {
-      this.findTyping = setTimeout(() => this.applyFind(this.tabs.active), FIND_TYPING_MS);
+      this.findTyping.schedule(FIND_TYPING_MS, () => this.applyFind(this.tabs.active));
       return;
     }
     this.applyFind(this.tabs.active);
@@ -1269,8 +1271,7 @@ export class ReviewController {
 
   /** The tabs or a pane changed: the views are saved once the changes pause. */
   scheduleSave = () => {
-    clearTimeout(this.saving);
-    this.saving = setTimeout(() => this.saveView(), SAVE_AFTER_MS);
+    this.saving.schedule(SAVE_AFTER_MS, () => this.saveView());
   };
 
   /** A file tab's text pane has its scroll root; returns the function that detaches it. The text is built once the tab shows it. */
@@ -1533,7 +1534,7 @@ export class ReviewController {
 
   /** Remembers the changeset on view and brings back the tabs of `next`; answers what was remembered of it. */
   private switchTo(next: string): SavedView | undefined {
-    clearTimeout(this.saving);
+    this.saving.cancel();
     this.saveView();
     return this.bringBack(next);
   }

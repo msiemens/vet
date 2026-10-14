@@ -1,3 +1,5 @@
+import { Debounced } from "../debounced.ts";
+
 /** What a plain browser, which cannot tell the system's setting, takes for the double-click time. */
 export const FALLBACK_DOUBLE_CLICK_MS = 500;
 
@@ -18,7 +20,7 @@ export const doubleClickMs = () => systemMs;
  * 0) runs `single` at once. Clicks on different subjects share one gate: the latest click wins.
  */
 export class ClickGate<T> {
-  private timer?: ReturnType<typeof setTimeout>;
+  private timer = new Debounced();
   private single: (subject: T) => void;
   private double: (subject: T) => void;
   private ms: () => number;
@@ -33,8 +35,7 @@ export class ClickGate<T> {
     if (e.detail === 0) this.press("single", subject);
     else if (e.detail === 2) this.press("double", subject);
     else {
-      this.cancel();
-      this.timer = setTimeout(() => this.single(subject), this.ms());
+      this.timer.schedule(this.ms(), () => this.single(subject));
     }
   }
 
@@ -47,7 +48,6 @@ export class ClickGate<T> {
 
   /** Drops a single click that is still waiting. */
   cancel() {
-    clearTimeout(this.timer);
-    this.timer = undefined;
+    this.timer.cancel();
   }
 }

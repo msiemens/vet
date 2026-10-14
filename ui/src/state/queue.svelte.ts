@@ -10,6 +10,7 @@ import type { ChangesetRow } from "../generated/ChangesetRow";
 import type { LineDelta } from "../generated/LineDelta";
 import type { PullRequestRow } from "../generated/PullRequestRow";
 import type { PullRequestSource } from "../generated/PullRequestSource";
+import { Debounced } from "../lib/debounced";
 import { changeset } from "./changeset.svelte";
 import { keyId } from "./changesetKey";
 import type { Frame, Parts, ReviewedFile, ViewLayout } from "./reviewModel";
@@ -53,7 +54,7 @@ class QueueStore {
   private whole = $state.raw<Parts>();
   /** How many views of the list are shown. */
   private watchers = $state(0);
-  private following?: ReturnType<typeof setTimeout>;
+  private following = new Debounced();
   /** Which revision and view the review shows. */
   private screen = $derived(`${changeset.layout?.shown.revision}/${changeset.viewKey}`);
 
@@ -96,7 +97,7 @@ class QueueStore {
       this.lines.clear();
       this.seq.whole++;
       this.whole = undefined;
-      clearTimeout(this.following);
+      this.following.cancel();
     });
   }
 
@@ -113,11 +114,10 @@ class QueueStore {
   /** Lists the local changesets again once a burst of marks pauses, if the list is shown. */
   private follow() {
     if (this.watchers === 0) return;
-    clearTimeout(this.following);
-    this.following = setTimeout(() => {
+    this.following.schedule(FOLLOW_AFTER_MS, () => {
       void this.load(false);
       void this.loadWhole();
-    }, FOLLOW_AFTER_MS);
+    });
   }
 
   /** Reads the changeset's own layout and file states, which only a range or a commit on screen needs. Only the latest reading counts. */

@@ -3,6 +3,7 @@
 // is dropped, its request cancelled.
 
 import { isAbort } from "../lib/abort.ts";
+import { Debounced } from "../lib/debounced.ts";
 
 export interface FollowOptions<Q, A> {
   /** How long the cursor rests before it is asked about. */
@@ -17,7 +18,7 @@ export interface FollowOptions<Q, A> {
 }
 
 export class CursorFollow<Q, A> {
-  private timer?: ReturnType<typeof setTimeout>;
+  private timer = new Debounced();
   private asking?: AbortController;
   /** The place asked about last, while its answer is still the one wanted. */
   private requested?: string;
@@ -30,14 +31,14 @@ export class CursorFollow<Q, A> {
 
   /** The cursor is at `place` now. */
   move(place: Q) {
-    clearTimeout(this.timer);
+    this.timer.cancel();
     if (this.options.key(place) === this.requested) return;
-    this.timer = setTimeout(() => this.ask(place), this.options.ms);
+    this.timer.schedule(this.options.ms, () => this.ask(place));
   }
 
   /** Forgets where the cursor was, so the next place is asked about again, and cancels what is underway. */
   reset() {
-    clearTimeout(this.timer);
+    this.timer.cancel();
     this.asking?.abort();
     this.asking = this.requested = undefined;
   }

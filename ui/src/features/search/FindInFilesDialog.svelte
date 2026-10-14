@@ -5,6 +5,7 @@
   import type { SearchSide } from "../../generated/SearchSide";
   import type { View } from "../../generated/View";
   import { letterOfStatus } from "../../lib/changeLetter";
+  import { Debounced } from "../../lib/debounced";
   import { errorText } from "../../lib/errorText";
   import { toggleIn } from "../../lib/foldKeys";
   import { count, noun, plural } from "../../lib/format";
@@ -140,7 +141,8 @@
       return;
     }
     pending = true;
-    const timer = setTimeout(() => {
+    const pause = new Debounced();
+    pause.schedule(120, () => {
       void latest
         .run((signal) => backend.search(request, signal))
         .then((outcome) => {
@@ -154,8 +156,8 @@
             error = errorText(outcome.error);
           }
         });
-    }, 120);
-    return () => clearTimeout(timer);
+    });
+    return () => pause.cancel();
   });
 
   onDestroy(() => latest.cancel());

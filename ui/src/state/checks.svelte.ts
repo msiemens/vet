@@ -4,6 +4,7 @@
 
 import { SvelteMap } from "svelte/reactivity";
 import type { CommitChecks } from "../generated/CommitChecks";
+import { Debounced } from "../lib/debounced";
 import { errorText } from "../lib/errorText";
 import { refreshDelay } from "./checkRefresh";
 import { session } from "./session.svelte";
@@ -21,8 +22,8 @@ class CheckStore {
   private wanted: readonly string[] = [];
   /** Only the latest load counts. */
   private seq = 0;
-  private timer?: ReturnType<typeof setTimeout>;
-  private again?: ReturnType<typeof setTimeout>;
+  private timer = new Debounced();
+  private again = new Debounced();
   /** The reason last shown, so the same one does not come again with every load. */
   private lastError?: string;
 
@@ -56,13 +57,12 @@ class CheckStore {
    * which takes a moment to show it, so they are asked once more shortly after.
    */
   refresh(commits: readonly string[]) {
-    clearTimeout(this.again);
     void this.load(commits);
-    this.again = setTimeout(() => void this.load(commits), SETTLE_MS);
+    this.again.schedule(SETTLE_MS, () => void this.load(commits));
   }
 
   private async load(again: readonly string[] = []) {
-    clearTimeout(this.timer);
+    this.timer.cancel();
     const seq = ++this.seq;
     const open = this.wanted.filter((id) => {
       const state = this.items.get(id)?.state;
@@ -87,7 +87,7 @@ class CheckStore {
       this.lastError = text;
     }
     if (this.wanted.some((id) => this.items.get(id)?.state === "pending")) {
-      this.timer = setTimeout(() => void this.load(), refreshDelay(this.limitedUntil, Date.now()));
+      this.timer.schedule(refreshDelay(this.limitedUntil, Date.now()), () => void this.load());
     }
   }
 }

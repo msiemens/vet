@@ -3,6 +3,7 @@
 // follow on later frames. A frame has one such pass.
 
 import { closeHoverTooltips, showTooltip } from "@codemirror/view";
+import { Debounced } from "../../../lib/debounced.ts";
 import type { Section } from "./section.ts";
 import type { SectionHeights } from "./sectionHeights.ts";
 
@@ -41,7 +42,7 @@ export class Windowing {
   readonly mounted = new Set<number>();
   /** Sections whose cards show their image previews. */
   private previewing = new Set<number>();
-  private settle?: ReturnType<typeof setTimeout>;
+  private settle = new Debounced();
   /** Set from a scroll event until scrolling settles. */
   private scrolling = false;
   /** A scroll event ran this frame's pass. */
@@ -72,7 +73,7 @@ export class Windowing {
     if (this.later !== undefined) cancelAnimationFrame(this.later);
     if (this.endOfPass !== undefined) cancelAnimationFrame(this.endOfPass);
     this.later = this.endOfPass = undefined;
-    clearTimeout(this.settle);
+    this.settle.cancel();
     this.root.removeEventListener("scroll", this.onScroll);
     for (const fi of this.previewing) this.sections[fi].cards.forEach((c) => c.setPreview(false));
     this.previewing.clear();
@@ -95,11 +96,10 @@ export class Windowing {
       this.endOfPass = undefined;
       this.passed = false;
     });
-    clearTimeout(this.settle);
-    this.settle = setTimeout(() => {
+    this.settle.schedule(SETTLE_MS, () => {
       this.scrolling = false;
       this.sync();
-    }, SETTLE_MS);
+    });
   };
 
   /**

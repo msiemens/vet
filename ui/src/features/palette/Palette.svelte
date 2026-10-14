@@ -4,6 +4,7 @@
   // Shift+Enter shows a changed file or symbol in All changes, Escape closes.
   import { tick, untrack } from "svelte";
   import { letterOfChange, letterOfStatus } from "../../lib/changeLetter";
+  import { Debounced } from "../../lib/debounced";
   import { plural } from "../../lib/format";
   import { bindingOf, matches } from "../../lib/keymap";
   import { splitPath } from "../../lib/paths";
@@ -191,9 +192,10 @@
     }
     const query = typed;
     const at = revision;
-    const timer = setTimeout(() => palette.searchSymbols(query, at), SERVER_PAUSE_MS);
+    const pause = new Debounced();
+    pause.schedule(SERVER_PAUSE_MS, () => palette.searchSymbols(query, at));
     return () => {
-      clearTimeout(timer);
+      pause.cancel();
       palette.cancelSymbols();
     };
   });

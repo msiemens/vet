@@ -3,6 +3,7 @@
 // the running ones and hides a step that is over in a blink.
 
 import type { Task } from "../generated/Task";
+import { Debounced } from "../lib/debounced";
 import type { Backend } from "./backend";
 import { changeset } from "./changeset.svelte";
 import { session } from "./session.svelte";
@@ -15,7 +16,7 @@ class ProgressStore {
   /** The running tasks to show, oldest first. */
   tasks = $state.raw<Task[]>([]);
   private board = new TaskBoard();
-  private timer: ReturnType<typeof setTimeout> | undefined;
+  private timer = new Debounced();
 
   constructor() {
     session.onConnect((backend) =>
@@ -53,11 +54,11 @@ class ProgressStore {
   }
 
   private publish() {
-    clearTimeout(this.timer);
+    this.timer.cancel();
     const now = performance.now();
     this.tasks = this.board.shown(now);
     const wait = this.board.nextShown(now);
-    if (wait !== undefined) this.timer = setTimeout(() => this.publish(), wait);
+    if (wait !== undefined) this.timer.schedule(wait, () => this.publish());
   }
 }
 
