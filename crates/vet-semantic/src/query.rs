@@ -24,7 +24,7 @@ pub struct Served {
     pub policy: AnalysisPolicy,
 }
 
-#[derive(Debug)]
+#[derive(Clone, PartialEq, Eq, Debug)]
 pub enum SemanticError {
     /// No configured backend handles the file: the language is unsupported.
     NoBackend(RepoPath),

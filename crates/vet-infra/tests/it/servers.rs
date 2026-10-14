@@ -385,7 +385,7 @@ async fn python_installs_and_starts() {
     };
     // Pyright has no implementation request: the query fails and says so.
     let error = server.implementations(&base_method).await.unwrap_err();
-    assert!(error.0.contains("implementation"), "{error:?}");
+    assert!(error.to_string().contains("implementation"), "{error:?}");
 
     // Other text under the file's name, as for a base side.
     let names: Vec<String> = server

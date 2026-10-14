@@ -33,7 +33,7 @@ use vet_semantic::ports::{
 use vet_semantic::symbols::{self, Outline};
 
 use super::capabilities::{Diagnostics, Offered};
-use super::rpc::{Connection, State};
+use super::rpc::{Connection, Ending, RequestError, State};
 use super::uri::{file_uri, key, path_of};
 use crate::budget::Budget;
 use crate::language::language_id;
@@ -172,7 +172,15 @@ pub struct LspServer {
 }
 
 fn err(e: impl std::fmt::Display) -> QueryError {
-    QueryError(e.to_string())
+    QueryError::Failed(e.to_string())
+}
+
+fn request_failed(e: RequestError) -> QueryError {
+    match e.ending {
+        Ending::Exited => QueryError::Exited(e.message),
+        Ending::TimedOut => QueryError::TimedOut(e.message),
+        Ending::Rejected => QueryError::Failed(e.message),
+    }
 }
 
 fn pos(p: lsp::Position) -> Pos {
@@ -345,7 +353,7 @@ impl LspServer {
                     timed.started = started;
                     timed.retries = retries;
                     return Ok(Asked {
-                        response: response.map_err(err),
+                        response: response.map_err(request_failed),
                         timed,
                     });
                 }
@@ -1154,7 +1162,7 @@ mod tests {
     async fn an_error_that_is_not_transient_is_not_asked_again() {
         let (server, fake, _dir) = live_server(&[("a.rs", "x")], |_| Reply::Error(-32602));
         let error = server.document_symbols(&path("a.rs")).await.unwrap_err();
-        assert_eq!(error.0, "textDocument/documentSymbol: failed");
+        assert_eq!(error, QueryError::Failed("textDocument/documentSymbol: failed".into()));
         assert_eq!(requests(&fake), 1);
     }
 

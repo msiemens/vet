@@ -16,7 +16,7 @@ pub struct Materialized<G> {
     pub guard: G,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, PartialEq, Eq, Debug)]
 pub enum NotMaterializable {
     /// Blobs git no longer has and the content store never retained (§6.1).
     MissingBlobs(Vec<BlobId>),
@@ -232,7 +232,7 @@ impl Features {
     }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, PartialEq, Eq, Debug)]
 pub enum LaunchError {
     /// The server cannot work with Vet at all: it does not take documents (I6).
     MissingCapability(&'static str),
@@ -382,12 +382,25 @@ pub struct Diagnostic {
     pub code: Option<String>,
 }
 
+/// Why a query has no answer.
 #[derive(Clone, PartialEq, Eq, Debug)]
-pub struct QueryError(pub String);
+pub enum QueryError {
+    /// The language server was restarted by hand while the query ran.
+    Restarted,
+    /// The server's process ended before it answered; says what is known of why.
+    Exited(String),
+    /// The server did not answer in time.
+    TimedOut(String),
+    /// The server answered with an error, or with what cannot be used.
+    Failed(String),
+}
 
 impl fmt::Display for QueryError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(&self.0)
+        match self {
+            Self::Restarted => f.write_str("the language server was restarted"),
+            Self::Exited(why) | Self::TimedOut(why) | Self::Failed(why) => f.write_str(why),
+        }
     }
 }
 

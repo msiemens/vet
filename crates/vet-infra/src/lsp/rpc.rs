@@ -100,17 +100,29 @@ impl ResponseError {
     }
 }
 
+/// How a request ended without a result.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(super) enum Ending {
+    /// The server's output had ended, or it no longer reads.
+    Exited,
+    TimedOut,
+    /// The server answered with an error, or with what cannot be used.
+    Rejected,
+}
+
 /// Why a request has no result.
 #[derive(Debug)]
 pub(super) struct RequestError {
     pub message: String,
+    pub ending: Ending,
     transient: bool,
 }
 
 impl RequestError {
-    fn fatal(message: String) -> Self {
+    fn fatal(ending: Ending, message: String) -> Self {
         Self {
             message,
+            ending,
             transient: false,
         }
     }
@@ -261,7 +273,7 @@ impl Connection {
         params: R::Params,
         timeout: Duration,
     ) -> Result<R::Result, RequestError> {
-        let params = serde_json::to_value(params).map_err(|e| RequestError::fatal(e.to_string()))?;
+        let params = serde_json::to_value(params).map_err(|e| RequestError::fatal(Ending::Rejected, e.to_string()))?;
         let id = self.next_id.fetch_add(1, Ordering::Relaxed);
         let (tx, rx) = oneshot::channel();
         self.shared.pending.lock().expect("not poisoned").insert(id, tx);
@@ -272,23 +284,27 @@ impl Connection {
         };
         let message = json!({"jsonrpc": "2.0", "id": id, "method": R::METHOD, "params": params});
         if let Err(e) = self.outbox.send(&message) {
-            return Err(RequestError::fatal(self.describe(format!("{}: {e}", R::METHOD))));
+            return Err(RequestError::fatal(
+                Ending::Exited,
+                self.describe(format!("{}: {e}", R::METHOD)),
+            ));
         }
         match tokio::time::timeout(timeout, rx).await {
             Ok(Ok(Ok(value))) => serde_json::from_value(value)
-                .map_err(|e| RequestError::fatal(format!("{}: bad response: {e}", R::METHOD))),
+                .map_err(|e| RequestError::fatal(Ending::Rejected, format!("{}: bad response: {e}", R::METHOD))),
             Ok(Ok(Err(error))) => Err(RequestError {
                 transient: error.is_transient(),
+                ending: Ending::Rejected,
                 message: format!("{}: {}", R::METHOD, error.message),
             }),
             Ok(Err(_)) => Err(RequestError::fatal(
+                Ending::Exited,
                 self.describe(format!("{}: server exited", R::METHOD)),
             )),
-            Err(_) => Err(RequestError::fatal(format!(
-                "{}: timed out after {}s",
-                R::METHOD,
-                timeout.as_secs()
-            ))),
+            Err(_) => Err(RequestError::fatal(
+                Ending::TimedOut,
+                format!("{}: timed out after {}s", R::METHOD, timeout.as_secs()),
+            )),
         }
     }
 
@@ -743,6 +759,7 @@ mod tests {
             let (conn, _fake) = fake::start(move |_| Reply::Error(code));
             let error = conn.request::<Shutdown>(()).await.unwrap_err();
             assert_eq!(error.message, "shutdown: failed");
+            assert_eq!(error.ending, Ending::Rejected);
             assert_eq!(error.is_transient(), transient, "{code}");
         }
     }
@@ -777,6 +794,7 @@ mod tests {
             .await
             .unwrap_err();
         assert!(error.message.contains("timed out"), "{error}");
+        assert_eq!(error.ending, Ending::TimedOut);
         fake.until("the cancellation", |log| !cancels(log).is_empty()).await;
         assert_eq!(pending(&conn), 0);
     }

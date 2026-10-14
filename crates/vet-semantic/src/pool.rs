@@ -62,7 +62,7 @@ pub struct PoolKey {
     pub policy: AnalysisPolicy,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, PartialEq, Eq, Debug)]
 pub enum PoolError {
     NotMaterializable(NotMaterializable),
     Launch(LaunchError),
@@ -123,7 +123,7 @@ pub type Told = dyn Fn(&BackendId, Outcome) + Send + Sync;
 
 /// What the server of a key is doing. A key with no phase has no server: none was needed yet, or
 /// it was stopped to make room.
-#[derive(Clone, Debug)]
+#[derive(Clone, PartialEq, Eq, Debug)]
 pub enum Phase {
     /// Being started: its dependencies restored, its process launched.
     Starting,
@@ -136,26 +136,6 @@ pub enum Phase {
     Ready,
     /// There is none, and why.
     Failed(PoolError),
-}
-
-impl PartialEq for Phase {
-    fn eq(&self, other: &Self) -> bool {
-        match (self, other) {
-            (Self::Starting, Self::Starting) | (Self::Ready, Self::Ready) => true,
-            (
-                Self::Indexing {
-                    done_of_total: a,
-                    detail: x,
-                },
-                Self::Indexing {
-                    done_of_total: b,
-                    detail: y,
-                },
-            ) => (a, x) == (b, y),
-            (Self::Failed(a), Self::Failed(b)) => a.to_string() == b.to_string(),
-            _ => false,
-        }
-    }
 }
 
 /// What a server that answers with the readiness `now` is doing.
@@ -331,7 +311,7 @@ impl<S: LanguageServer + 'static, G: Send + Sync + 'static> Entry<S, G> {
             let value = match ask(entry.clone()).await {
                 Ok(value) => value,
                 Err(_) if entry.stopped.load(Ordering::SeqCst) => {
-                    return Err(QueryError("the language server was restarted".into()));
+                    return Err(QueryError::Restarted);
                 }
                 Err(e) => return Err(e),
             };
@@ -1627,14 +1607,14 @@ mod tests {
                     yield_once().await;
                 }
                 self.0.in_flight.fetch_sub(1, Ordering::SeqCst);
-                return Err(QueryError("server exited".into()));
+                return Err(QueryError::Exited("server exited".into()));
             }
             self.0.in_flight.fetch_sub(1, Ordering::SeqCst);
             if self.0.begins_work.load(Ordering::SeqCst) {
                 self.0.epoch.fetch_add(1, Ordering::SeqCst);
             }
             if self.0.failing.load(Ordering::SeqCst) {
-                return Err(QueryError("boom".into()));
+                return Err(QueryError::Failed("boom".into()));
             }
             Ok(self.0.version.load(Ordering::SeqCst))
         }
@@ -3003,7 +2983,7 @@ mod tests {
                 pool.restart_now(&BackendId("rust".into())).await;
             })
             .await;
-            assert_eq!(asked.unwrap_err().0, "the language server was restarted");
+            assert_eq!(asked.unwrap_err(), QueryError::Restarted);
             assert_eq!(counters.shut_down.load(Ordering::SeqCst), 1);
             assert!(pool.keys().is_empty());
 

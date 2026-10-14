@@ -130,7 +130,9 @@ impl Primitives for Fake {
     }
     async fn document_symbols(&self, side: Side, f: &RepoPath) -> Asked<Vec<SymbolInfo>> {
         if self.failing_symbols.contains(f) {
-            return Err(SemanticError::Query(crate::ports::QueryError("server crashed".into())));
+            return Err(SemanticError::Query(crate::ports::QueryError::Exited(
+                "server crashed".into(),
+            )));
         }
         let found =
             (self.symbols.get(&(side, f.clone())).cloned()).ok_or_else(|| SemanticError::NoBackend(f.clone()))?;
@@ -151,7 +153,7 @@ impl Primitives for Fake {
     async fn incoming_calls(&self, side: Side, a: &At) -> Asked<Vec<SymbolInfo>> {
         self.call_hierarchy()?;
         if self.failing_callers.contains(a) {
-            return Err(SemanticError::Query(crate::ports::QueryError(
+            return Err(SemanticError::Query(crate::ports::QueryError::Failed(
                 "no call hierarchy".into(),
             )));
         }
@@ -163,7 +165,9 @@ impl Primitives for Fake {
     }
     async fn diagnostics(&self, side: Side, f: &RepoPath) -> Asked<Vec<Diagnostic>> {
         if self.failing_problems.contains(&side) {
-            return Err(SemanticError::Query(crate::ports::QueryError("server crashed".into())));
+            return Err(SemanticError::Query(crate::ports::QueryError::Exited(
+                "server crashed".into(),
+            )));
         }
         let mut answered = self.answer(self.problems.get(&(side, f.clone())).cloned().unwrap_or_default())?;
         answered.complete = !self.working.contains(&side);

@@ -147,7 +147,7 @@ mod tests {
         async fn hover(&self, _: Side, _: &At) -> Asked<Option<String>> {
             match self.0 {
                 Ok(text) => answered(text.map(String::from)),
-                Err(e) => Err(SemanticError::Query(QueryError(e.into()))),
+                Err(e) => Err(SemanticError::Query(QueryError::Failed(e.into()))),
             }
         }
         async fn incoming_calls(&self, _: Side, _: &At) -> Asked<Vec<SymbolInfo>> {
