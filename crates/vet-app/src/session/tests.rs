@@ -258,7 +258,7 @@ impl FakeGit {
     }
 
     /// Git drops the object, as it may once no ref reaches its commit.
-    fn forget(&self, text: &str) {
+    pub(crate) fn forget(&self, text: &str) {
         self.blobs.lock().unwrap().remove(&BlobId::of(text.as_bytes()));
     }
 
@@ -1003,7 +1003,9 @@ fn numbered(n: usize, edited: &[usize]) -> String {
 pub(crate) struct Fixture {
     pub(crate) git: FakeGit,
     pub(crate) store: MemStore,
-    pub(crate) session: LiveSession<FakeGit, MemStore>,
+    /// The session, shared: the retainer of its content is wired into the `Semantics`
+    /// of the tests that ask it.
+    pub(crate) session: Arc<LiveSession<FakeGit, MemStore>>,
     /// What the semantic layer reads of `session`.
     pub(crate) view: RevisionView<FakeGit, MemStore>,
 }
@@ -1015,9 +1017,11 @@ impl Fixture {
         let first = git.snapshot(dirty);
         git.scans.lock().unwrap().push(first);
         let store = MemStore::default();
-        let session = LiveSession::open(git.clone(), store.clone(), REPO.into(), clock)
-            .await
-            .unwrap();
+        let session = Arc::new(
+            LiveSession::open(git.clone(), store.clone(), REPO.into(), clock)
+                .await
+                .unwrap(),
+        );
         let view = session.view();
         Self {
             git,

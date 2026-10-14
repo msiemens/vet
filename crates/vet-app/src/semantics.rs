@@ -30,7 +30,7 @@ use vet_semantic::symbols::enclosing;
 use vet_semantic::trace;
 
 use crate::acquisition::Acquisition;
-use crate::ports::{BlobRead, BlobReader, GitRepo, LiveStore, Store};
+use crate::ports::{BlobRead, BlobReader, GitRepo, LiveStore, Retainer, Store};
 use crate::revisions::Revisions;
 use crate::session::{RevisionView, SemanticSides, SessionError};
 use crate::trust::Trust;
@@ -178,6 +178,10 @@ pub struct Links {
     /// The session's, which announces every move of its revision. Work for an older
     /// one is dropped, and with it the requests it waits for.
     pub revisions: Arc<Revisions>,
+    /// Keeps the changed content of the tree on view in the store, which the texts
+    /// of its live server's queries are fed from (D97). None where no live tree is
+    /// served (every other changeset kind's text is reconstructible from git).
+    pub retainer: Option<Arc<dyn Retainer>>,
 }
 
 /// What the server of a language is doing for one side of the revision on view.
@@ -299,6 +303,9 @@ where
     /// semantic lane reads them on its own budget.
     texts: Option<Arc<Acquisition<G, S>>>,
     revisions: Arc<Revisions>,
+    /// Keeps the changed content of the tree on view in the store (D97): what its
+    /// live server's texts are read from. None where no live tree is served.
+    retainer: Option<Arc<dyn Retainer>>,
     /// The languages that have a file in the target of a revision, found once per revision: finding
     /// them walks every file of the snapshot.
     languages: Mutex<Option<(u32, Vec<BackendId>)>>,
@@ -476,12 +483,14 @@ where
         backends: Vec<Backend>,
         links: Links,
     ) -> Self {
+        let Links { revisions, retainer } = links;
         let pool = Pool::new(materializer, launcher, live_root, POOL_CAPACITY);
         Self {
             semantic: Arc::new(Semantic::new(pool, backends)),
             watched: Arc::default(),
             texts: None,
-            revisions: links.revisions,
+            revisions,
+            retainer,
             languages: Mutex::new(None),
         }
     }
@@ -583,6 +592,11 @@ where
     /// live tree's servers (D97), read through the handles this lane owns.
     async fn overlay(&self, view: &RevisionView<G, S>, revision: u32) -> Fallible<OverlayText> {
         let snapshot = view.target_snapshot(revision).await?;
+        // The texts are read from the store: what the revision kept of its working
+        // tree's content has to be there by then, whatever the worktree holds now.
+        if let Some(retainer) = &self.retainer {
+            retainer.retain().await;
+        }
         Ok(Arc::new(RevisionTexts {
             snapshot,
             acquisition: self.texts.clone().unwrap_or_else(|| view.acquisition()),
@@ -1284,6 +1298,8 @@ mod tests {
         live_symbol_requests: AtomicUsize,
         /// Symbol requests for a text under a file's name.
         text_symbol_requests: AtomicUsize,
+        /// The texts a live-tree server's overlay held for the file it was asked about, in order.
+        overlay_texts: Mutex<Vec<Option<String>>>,
         /// Hovers are asked and never answered.
         hang_hover: std::sync::atomic::AtomicBool,
         hovers_asked: AtomicUsize,
@@ -1459,7 +1475,14 @@ mod tests {
         async fn implementations(&self, _: &At, _: Option<OverlayText>) -> Result<Vec<Location>, QueryError> {
             Ok(vec![])
         }
-        async fn hover(&self, _: &At, _: Option<OverlayText>) -> Result<Option<String>, QueryError> {
+        async fn hover(&self, at: &At, overlay: Option<OverlayText>) -> Result<Option<String>, QueryError> {
+            if self.1 == Tree::Live {
+                let text = match &overlay {
+                    Some(overlay) => overlay.text(&at.file).await,
+                    None => None,
+                };
+                self.0.overlay_texts.lock().unwrap().push(text);
+            }
             if self.0.hang_hover.load(Ordering::SeqCst) {
                 self.0.hovers_asked.fetch_add(1, Ordering::SeqCst);
                 let _asked = HoverAsked(self.0.clone());
@@ -1531,6 +1554,43 @@ mod tests {
         })
     }
 
+    /// The live tree's edit is uncommitted, its lines moved again in the worktree before the
+    /// query: git holds no object of it (§6.1) and the store was written only when the
+    /// revision's content came to be kept. What the queries are fed stands or falls with that.
+    #[tokio::test]
+    async fn the_queries_of_a_live_tree_get_the_settled_edits_texts_kept_before_they_read_them() {
+        let fx = Fixture::open(&[("a.rs", "one\n")], &[("a.rs", "kept\n")]).await;
+        let revision = fx.settle(&[("a.rs", "kept\n")]).await;
+        fx.git.forget("kept\n");
+        let file = RepoPath(b"a.rs".to_vec());
+        let blob = fx.session.target_snapshot().await.entries.get(&file).unwrap().blob;
+        let read = fx.view.acquisition().blob(&file, blob, true).await.unwrap();
+        assert!(matches!(read, BlobRead::Missing), "{read:?}");
+
+        let counters = Arc::new(Counters::default());
+        let semantics = Semantics::new(
+            FakeMaterializer(counters.clone()),
+            FakeLauncher(counters.clone()),
+            "/live".into(),
+            vec![backend("rust", "rs")],
+            Links {
+                revisions: fx.session.revisions(),
+                retainer: Some(fx.session.clone()),
+            },
+        );
+        let at = At {
+            file: file.clone(),
+            pos: Pos { line: 0, col: 0 },
+        };
+        semantics.hover(&fx.view, revision, Side::Target, &at).await.unwrap();
+        let seen = counters.overlay_texts.lock().unwrap().clone();
+        assert_eq!(
+            seen,
+            [Some("kept\n".to_owned())],
+            "the settled text was kept and fed the server, not what the worktree now holds"
+        );
+    }
+
     type Harness = (
         Fixture,
         Semantics<FakeGit, MemStore, FakeLauncher, FakeMaterializer>,
@@ -1553,6 +1613,7 @@ mod tests {
             vec![backend("rust", "rs"), backend("python", "py"), backend("go", "go")],
             Links {
                 revisions: fx.session.revisions(),
+                retainer: None,
             },
         )
         .keeping(limit);
@@ -1639,6 +1700,7 @@ mod tests {
             languages.iter().map(|l| backend(l, l)).collect(),
             Links {
                 revisions: fx.session.revisions(),
+                retainer: None,
             },
         );
         // Five changed languages on two sides want ten servers, and the pool holds eight.
@@ -1667,6 +1729,7 @@ mod tests {
             vec![backend("l0", "l0"), backend("l1", "l1")],
             Links {
                 revisions: fx.session.revisions(),
+                retainer: None,
             },
         )
         .observing(
@@ -1712,6 +1775,7 @@ mod tests {
             vec![backend("l0", "l0")],
             Links {
                 revisions: fx.session.revisions(),
+                retainer: None,
             },
         )
         .observing(Arc::new(|_| {}), {
@@ -2251,6 +2315,7 @@ mod tests {
                 vec![backend("rust", "rs"), backend("python", "py"), backend("go", "go")],
                 Links {
                     revisions: fx.session.revisions(),
+                    retainer: None,
                 },
             )
             .persisting(store.clone());
@@ -2326,6 +2391,7 @@ mod tests {
                     vec![backend("rust", "rs")],
                     Links {
                         revisions: fx.session.revisions(),
+                        retainer: None,
                     },
                 )
                 .persisting(store.clone())

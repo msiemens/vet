@@ -5,6 +5,7 @@
 //! of `vet-engine`, so the first mark joins one under way instead of copying the same files.
 //! What is never referenced by a review is removed by the store's collection, after its grace.
 
+use std::pin::Pin;
 use std::sync::Arc;
 
 use vet_core::content::{Snapshot, SnapshotId, SnapshotStatus};
@@ -14,7 +15,7 @@ use super::derived::Diffed;
 use super::{LiveSession, Result, SessionError};
 use crate::acquisition::Acquisition;
 use crate::changeset::Source;
-use crate::ports::{GitRepo, LiveStore};
+use crate::ports::{GitRepo, LiveStore, Retainer};
 use crate::progress::{TaskKind, Tasks};
 
 /// The content `target` has that `base` does not, in the store.
@@ -89,5 +90,38 @@ where
         };
         let diffed = self.diff_of(&base, &target).await?;
         self.retained(&self.copying, (&base, &target, &status), diffed).await
+    }
+
+    /// The changed content of the working tree's snapshot on view is in the store (§6.1),
+    /// without the token: what settling with a review open kept, or what the quiet copy ahead
+    /// keeps, of which a copy under way is joined through. The diff is the kept one where
+    /// there is one, for it read the texts already. A step that cannot be copied fails as the
+    /// settle's does, and the queries of a file whose copy went missing answer from the disk.
+    pub async fn kept_content(&self) -> Result<()> {
+        let (base, target, status, kept) = {
+            let st = self.published.read();
+            if st.source != Source::WorkingTree {
+                return Ok(());
+            }
+            let kept = st.changes.as_ref().map(|c| Arc::clone(&c.diffed));
+            (st.base.clone(), st.target.clone(), st.target_status.clone(), kept)
+        };
+        let diffed = match kept {
+            Some(kept) => kept,
+            None => self.diff_of(&base, &target).await?,
+        };
+        self.retained(&self.copying, (&base, &target, &status), diffed).await
+    }
+}
+
+impl<G, S> Retainer for LiveSession<G, S>
+where
+    G: GitRepo + Send + Sync + 'static,
+    S: LiveStore + Send + Sync + 'static,
+{
+    fn retain(&self) -> Pin<Box<dyn Future<Output = ()> + Send + '_>> {
+        Box::pin(async move {
+            let _ = self.kept_content().await;
+        })
     }
 }

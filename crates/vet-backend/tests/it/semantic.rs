@@ -961,9 +961,12 @@ async fn servers_are_listed_and_custom_paths_persist_and_notify() {
 /// Answers keep the positions of the revision on view (D97): its text is what the
 /// worktree's server is fed, so a file whose lines have shifted on disk since the
 /// snapshot settled is still asked about where the revision has it. The settles
-/// that would follow the shift are held off for as long as the test runs, so no
-/// newer revision can intervene; the position the worktree has the file at answers
-/// differently, which is how the query tells the revision's text from the disk's.
+/// that would follow the shift are held off for as long as the test runs, and the
+/// tree is held quiet, so no newer revision can intervene and no other copy of
+/// the content can answer for the query: what the revision read is what the
+/// query keeps. The snapshot's text is an uncommitted edit, the case the worktree
+/// usually is; the position the worktree has the file at answers differently,
+/// which is how the query tells the revision's text from the disk's.
 #[tokio::test]
 #[ignore = "needs rust-analyzer"]
 async fn rust_analyzer_is_asked_about_the_revision_even_after_the_worktree_lines_shifted() {
@@ -996,7 +999,8 @@ pub fn main() -> u32 {
         .output()
         .unwrap();
     assert!(lock.status.success(), "{}", String::from_utf8_lossy(&lock.stderr));
-    git(repo.path(), &["add", "-A"]);
+    // The edit stays uncommitted: no git object holds its text (§6.1).
+    git(repo.path(), &["add", ".gitignore", "Cargo.toml", "Cargo.lock"]);
     git(repo.path(), &["commit", "-q", "-m", "base"]);
 
     let data = tempfile::tempdir().unwrap();
@@ -1004,6 +1008,7 @@ pub fn main() -> u32 {
         open_store(data.path()).await.unwrap(),
         Config {
             debounce: Duration::from_secs(60),
+            quiet: Duration::from_secs(3600),
             ..config()
         },
     ));

@@ -1,9 +1,14 @@
 //! Ports implemented by `vet-infra`. Only where there is a real second
 //! implementation or a test seam. `LanguageServer`, `ServerLauncher` and
 //! `Materializer` are owned by `vet-semantic`, which consumes them.
+//!
+//! Implemented in Vet itself: `BlobReader` and friends by the acquisition over
+//! git and the content store, and `Retainer` by the session, for the semantic
+//! layer's reads.
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
+use std::pin::Pin;
 use std::time::Duration;
 
 use vet_core::content::{BlobId, RepoPath, Snapshot, SnapshotDiff, SnapshotId, SnapshotStatus};
@@ -201,6 +206,22 @@ pub trait Differ {
         old: &Snapshot,
         new: &Snapshot,
     ) -> impl Future<Output = Result<TextDiff, GitError>> + Send;
+}
+
+/// Keeps the changed content of the tree on view in the content store (§6.1),
+/// from which the texts that the queries of a live tree are fed come (D97).
+/// Retention's usual bound applies: only content git cannot reconstruct that no
+/// kept copy has, read and written in batches. Fails nothing: content that
+/// cannot be copied leaves the queries of its file on the disk.
+pub trait Retainer: Send + Sync + 'static {
+    fn retain(&self) -> Pin<Box<dyn Future<Output = ()> + Send + '_>>;
+}
+
+/// A shared retainer is one.
+impl<T: Retainer + ?Sized> Retainer for std::sync::Arc<T> {
+    fn retain(&self) -> Pin<Box<dyn Future<Output = ()> + Send + '_>> {
+        self.as_ref().retain()
+    }
 }
 
 /// What a snapshot's `.gitattributes` files say.

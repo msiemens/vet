@@ -449,6 +449,9 @@ impl Wired {
             backends.to_vec(),
             Links {
                 revisions: session.revisions(),
+                // The queries of the live tree read its snapshot's texts from the store, so
+                // what the worktree holds no longer decides what they read (D97).
+                retainer: Some(session.clone()),
             },
         )
         .reading(reading)

@@ -25,9 +25,11 @@ pub(super) async fn announcing(base: &[(&str, &str)], dirty: &[(&str, &str)]) ->
         std::time::Duration::ZERO,
         Box::new(move |t| sink.lock().unwrap().push(t)),
     );
-    let session = LiveSession::open_reporting(git.clone(), store.clone(), REPO.into(), clock, tasks)
-        .await
-        .unwrap();
+    let session = Arc::new(
+        LiveSession::open_reporting(git.clone(), store.clone(), REPO.into(), clock, tasks)
+            .await
+            .unwrap(),
+    );
     let view = session.view();
     (
         Fixture {
