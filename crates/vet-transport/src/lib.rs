@@ -157,8 +157,10 @@ async fn connection<H: Handler>(
                 // handler adds the project once it knows it.
                 let span =
                     tracing::info_span!("request", id, kind = %log::kind(&request), project = tracing::field::Empty);
-                running.start(id, |finish| {
+                running.start(id, replies.clone(), |finish| {
                     async move {
+                        // Dropped when the task ends, however it ends.
+                        let _finish = finish;
                         let started = Instant::now();
                         let reply = match handler.handle(request, Events(replies.clone())).await {
                             Ok(response) => {
@@ -171,7 +173,6 @@ async fn connection<H: Handler>(
                             }
                         };
                         let _ = replies.send(reply);
-                        finish.done();
                     }
                     .instrument(span)
                 });
@@ -221,17 +222,29 @@ type Table = Arc<Mutex<HashMap<u32, AbortHandle>>>;
 struct Running(Table);
 
 impl Running {
-    /// Runs `handler`, which gets what removes its entry once it has answered, as the task of request `id`.
-    fn start<F: Future<Output = ()> + Send + 'static>(&self, id: u32, handler: impl FnOnce(Finish) -> F) {
+    /// Runs `handler`, which gets what removes its entry once it ends, as the task of request
+    /// `id`. A handler that panics is answered with an error on `replies`.
+    fn start<F: Future<Output = ()> + Send + 'static>(
+        &self,
+        id: u32,
+        replies: mpsc::UnboundedSender<ServerMessage>,
+        handler: impl FnOnce(Finish) -> F,
+    ) {
         // Held across the spawn, so a task that ends at once finds its entry.
         let mut table = self.0.lock().expect("not poisoned");
-        let task = tokio::spawn(handler(Finish(self.0.clone(), id)));
+        let task = tokio::spawn(handler(Finish {
+            table: self.0.clone(),
+            id,
+            replies,
+        }));
         table.insert(id, task.abort_handle());
     }
 
     /// Aborts the handler of `id`; whether it was still running.
     fn cancel(&self, id: u32) -> bool {
-        match self.0.lock().expect("not poisoned").remove(&id) {
+        // The lock is released before the abort: a handler's drop takes it too.
+        let handle = self.0.lock().expect("not poisoned").remove(&id);
+        match handle {
             Some(handle) => {
                 handle.abort();
                 true
@@ -243,17 +256,32 @@ impl Running {
 
 impl Drop for Running {
     fn drop(&mut self) {
-        for handle in self.0.lock().expect("not poisoned").values() {
+        let handles: Vec<_> = self.0.lock().expect("not poisoned").drain().map(|(_, h)| h).collect();
+        for handle in handles {
             handle.abort();
         }
     }
 }
 
-/// Takes a finished handler out of its connection's table.
-struct Finish(Table, u32);
+/// Takes a handler that ended out of its connection's table when it is dropped, with the handler's
+/// future: after an answer, a cancel, or a panic, which the viewer waiting for the answer is told of.
+struct Finish {
+    table: Table,
+    id: u32,
+    replies: mpsc::UnboundedSender<ServerMessage>,
+}
 
-impl Finish {
-    fn done(self) {
-        self.0.lock().expect("not poisoned").remove(&self.1);
+impl Drop for Finish {
+    fn drop(&mut self) {
+        if std::thread::panicking() {
+            tracing::error!(id = self.id, "a request panicked");
+            let _ = self.replies.send(ServerMessage::Error {
+                id: Some(self.id),
+                message: "the request failed unexpectedly".into(),
+            });
+        }
+        // A panic must not turn into an abort here.
+        let mut table = self.table.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        table.remove(&self.id);
     }
 }

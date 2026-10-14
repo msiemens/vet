@@ -34,6 +34,9 @@ impl Handler for Hanging {
         let Request::Ping { payload } = request else {
             return Err("unsupported".into());
         };
+        if payload == "panic" {
+            panic!("a handler that fails");
+        }
         if payload == "hang" {
             let _running = Running::new(&self.running);
             std::future::pending::<()>().await;
@@ -133,6 +136,24 @@ async fn cancelling_an_answered_request_is_ignored() {
     send(&mut socket, &ClientMessage::Cancel { id: 1 }).await;
     send(&mut socket, &ping(2, "next")).await;
     // No `Cancelled` for the answered request comes first.
+    assert!(matches!(
+        receive(&mut socket).await,
+        ServerMessage::Response { id: 2, .. }
+    ));
+}
+
+#[tokio::test]
+async fn a_handler_that_panics_is_answered_with_an_error_and_forgotten() {
+    let mut socket = connected(Hanging::default()).await;
+    send(&mut socket, &ping(1, "panic")).await;
+    let answer = tokio::time::timeout(Duration::from_secs(10), receive(&mut socket))
+        .await
+        .expect("the panicking request was never answered");
+    assert!(matches!(answer, ServerMessage::Error { id: Some(1), .. }));
+
+    // Nothing of request 1 is left to cancel, and the connection still serves.
+    send(&mut socket, &ClientMessage::Cancel { id: 1 }).await;
+    send(&mut socket, &ping(2, "next")).await;
     assert!(matches!(
         receive(&mut socket).await,
         ServerMessage::Response { id: 2, .. }
