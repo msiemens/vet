@@ -2,6 +2,7 @@
 import type { DerivedInputs } from "./DerivedInputs";
 import type { Reference } from "./Reference";
 import type { SymbolInfo } from "./SymbolInfo";
+import type { Unavailable } from "./Unavailable";
 
 /**
  * The references to a symbol of the target side, each with the symbol it is in.
@@ -10,4 +11,4 @@ export type Usages = { revision: number, symbol: SymbolInfo, references: Array<R
 /**
  * Set when the references could not be listed: they are unknown, not absent.
  */
-gap: string | null, inputs: DerivedInputs, };
+gap: Unavailable | null, inputs: DerivedInputs, };

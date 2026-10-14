@@ -2,9 +2,10 @@
 import type { CallSite } from "./CallSite";
 import type { DerivedInputs } from "./DerivedInputs";
 import type { SymbolInfo } from "./SymbolInfo";
+import type { Unavailable } from "./Unavailable";
 
 export type RemovalImpact = { revision: number, symbol: SymbolInfo, callSites: Array<CallSite>, 
 /**
  * Set when the references could not be listed: the call sites are unknown, not absent.
  */
-gap: string | null, inputs: DerivedInputs, };
+gap: Unavailable | null, inputs: DerivedInputs, };

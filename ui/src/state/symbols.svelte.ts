@@ -199,7 +199,7 @@ class SymbolsState {
       done: (path, outcome) => {
         let loaded: FileLoad;
         if (!outcome.ok) loaded = { state: "failed", message: errorText(outcome.error) };
-        else if (outcome.value.gap) loaded = { state: "failed", message: outcome.value.gap };
+        else if (outcome.value.gap) loaded = { state: "failed", message: outcome.value.gap.message };
         else loaded = { state: "done", symbols: outcome.value.symbols, context: outcome.value.context };
         this.files.set(path, loaded);
         this.progress = { done: this.progress.done + 1, total: this.progress.total };

@@ -45,6 +45,6 @@ export function describeFate(fate: CallFate): { label: string; tone: FateTone; d
         detail: fate.now.map((l) => place(l.path, l.span.start)).join(", ") || undefined,
       };
     case "unknown":
-      return { label: "unknown", tone: "mute", detail: fate.reason };
+      return { label: "unknown", tone: "mute", detail: fate.why.message };
   }
 }

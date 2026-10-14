@@ -2,6 +2,7 @@
 import type { ChangedSymbol } from "./ChangedSymbol";
 import type { DerivedInputs } from "./DerivedInputs";
 import type { SymbolInfo } from "./SymbolInfo";
+import type { Unavailable } from "./Unavailable";
 
 /**
  * What the changeset did to the symbols of one file (derived, §7.3).
@@ -19,4 +20,4 @@ context: Array<SymbolInfo>,
 /**
  * Set when the file's symbols could not be determined: they are unknown, not unchanged.
  */
-gap: string | null, inputs: DerivedInputs, };
+gap: Unavailable | null, inputs: DerivedInputs, };

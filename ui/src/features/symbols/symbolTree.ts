@@ -6,6 +6,7 @@ import type { CallSite } from "../../generated/CallSite";
 import type { Calls } from "../../generated/Calls";
 import type { ChangedCaller } from "../../generated/ChangedCaller";
 import type { ChangedSymbol } from "../../generated/ChangedSymbol";
+import type { Gap } from "../../generated/Gap";
 import type { Position } from "../../generated/Position";
 import type { Reach } from "../../generated/Reach";
 import type { Reference } from "../../generated/Reference";
@@ -18,6 +19,7 @@ import type { SymbolName } from "../../generated/SymbolName";
 import type { Usages } from "../../generated/Usages";
 import { plural } from "../../lib/format.ts";
 import { MODULE_LEVEL, containersOf, fileName, partsOf, shortLabel } from "../../lib/symbolLabel.ts";
+import { gapText } from "./gapText.ts";
 import { describeFate, type FateTone, rowTitle } from "./symbolDetail.ts";
 
 /** Top-level rows a root shows before "N more". */
@@ -185,9 +187,9 @@ export function callersBody(calls: Calls): Body {
 }
 
 /** What an empty list says when the analysis behind it has gaps: that it is incomplete, not that nothing is there. */
-const incomplete = (gaps: readonly string[]): string => `Incomplete: ${gaps.join("; ")}`;
+const incomplete = (gaps: readonly Gap[]): string => `Incomplete: ${gaps.map(gapText).join("; ")}`;
 
-export function calleesBody(callees: readonly ChangedSymbol[], gaps: readonly string[]): Body {
+export function calleesBody(callees: readonly ChangedSymbol[], gaps: readonly Gap[]): Body {
   const entries = arrange(
     callees.map((c, i) =>
       symbolEntry(`e${i}`, c.symbol, c.change, { type: "choose", symbol: c.symbol, change: c.change }),
@@ -311,7 +313,7 @@ function placesBody(places: readonly Place[], key: string): Pick<Body, "entries"
   return { entries, tail: [branch] };
 }
 
-export function affectedBody(affected: readonly SymbolInfo[], gaps: readonly string[]): Body {
+export function affectedBody(affected: readonly SymbolInfo[], gaps: readonly Gap[]): Body {
   const places = affected.map((s): Place => ({ path: s.id.path, at: s.at, within: s, external: false }));
   const empty = gaps.length ? incomplete(gaps) : "No unchanged callers to check";
   return {
@@ -323,7 +325,7 @@ export function affectedBody(affected: readonly SymbolInfo[], gaps: readonly str
 }
 
 export function usagesBody(usages: Usages): Body {
-  const notes = usages.gap ? [{ text: `References could not be listed: ${usages.gap}`, warn: true }] : [];
+  const notes = usages.gap ? [{ text: `References could not be listed: ${usages.gap.message}`, warn: true }] : [];
   return {
     count: usages.references.length,
     notes,
@@ -338,7 +340,7 @@ export function reachBody(reach: Reach): Body {
     return { notes: [], entries: [], tail: [], quiet: "Not reached from an entry point within the bounds" };
   }
   if (reach.type === "unknown") {
-    const why = reach.gaps.length ? reach.gaps.join("; ") : "the analysis has gaps";
+    const why = reach.gaps.length ? reach.gaps.map(gapText).join("; ") : "the analysis has gaps";
     return { notes: [], entries: [], tail: [], quiet: `Unknown: ${why}` };
   }
   // Each step wraps the ones before it, so the entry point ends up outermost.
@@ -407,7 +409,7 @@ export function removalBody(removal: RemovalImpact): Body {
       },
     ),
   ];
-  const notes = removal.gap ? [{ text: `References could not be listed: ${removal.gap}`, warn: true }] : [];
+  const notes = removal.gap ? [{ text: `References could not be listed: ${removal.gap.message}`, warn: true }] : [];
   return {
     count: removal.callSites.length,
     notes,

@@ -1,10 +1,15 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import type { ChangedCaller } from "../../generated/ChangedCaller.ts";
+import type { Gap } from "../../generated/Gap.ts";
 import type { Reference } from "../../generated/Reference.ts";
 import type { SymbolInfo } from "../../generated/SymbolInfo.ts";
 import type { SymbolKind } from "../../generated/SymbolKind.ts";
+import type { Unavailable } from "../../generated/Unavailable.ts";
+import { gapText } from "./gapText.ts";
 import { affectedBody, calleesBody, callerTree, isTest, reachBody, removalBody, usagesBody } from "./symbolTree.ts";
+
+const why = (message: string): Unavailable => ({ kind: "queryFailed", label: "Failed", message, language: null });
 
 const span = (line: number) => ({ start: { line, col: 0 }, end: { line, col: 1 } });
 
@@ -166,19 +171,26 @@ void test("tests sit in a branch after the production usages, not among them", (
 
 void test("nothing to list is a quiet line, but a gap in the answer is not nothing", () => {
   assert.equal(usagesBody({ references: [], gap: null } as never).quiet, "No usages");
-  assert.equal(usagesBody({ references: [], gap: "server died" } as never).quiet, undefined);
+  assert.equal(usagesBody({ references: [], gap: why("server died") } as never).quiet, undefined);
   assert.equal(affectedBody([], []).quiet, "No unchanged callers to check");
 });
 
 void test("an empty list of callees or affected callers says the analysis is incomplete when the server could not tell", () => {
-  const gaps = ["yaml-language-server 1.25.0 does not offer call hierarchy"];
+  const said = "yaml-language-server 1.25.0 does not offer call hierarchy";
+  const gaps: Gap[] = [{ type: "failed", what: null, why: why(said) }];
   for (const body of [calleesBody([], gaps), affectedBody([], gaps)]) {
-    assert.equal(body.quiet, `Incomplete: ${gaps[0]}`);
+    assert.equal(body.quiet, `Incomplete: ${said}`);
   }
   assert.equal(calleesBody([], []).quiet, "No changed callees");
   const listed = affectedBody([info("src/b.rs", ["B", "n"], 2)], gaps);
   assert.equal(listed.quiet, undefined);
-  assert.deepEqual(listed.notes, [{ text: `Incomplete: ${gaps[0]}`, warn: true }]);
+  assert.deepEqual(listed.notes, [{ text: `Incomplete: ${said}`, warn: true }]);
+});
+
+void test("a gap is worded by what failed, or by the bound that cut the walk", () => {
+  assert.equal(gapText({ type: "failed", what: "callees", why: why("it broke") }), "callees: it broke");
+  assert.equal(gapText({ type: "tooManyCallers", max: 50 }), "more than 50 callers");
+  assert.equal(gapText({ type: "tooDeep", maxDepth: 6 }), "callers more than 6 levels up were not followed");
 });
 
 void test("the way in is shown from the entry point down, each step under the one before", () => {
@@ -198,7 +210,7 @@ void test("remaining references split into what needs attention (open) and what 
     callSites: [
       site(1, { type: "gone" }),
       site(2, { type: "likelyBroken" }),
-      site(3, { type: "unknown", reason: "no server" }),
+      site(3, { type: "unknown", why: why("no server") }),
       site(4, { type: "modified" }),
     ],
     gap: null,

@@ -773,8 +773,8 @@ async fn a_language_without_a_server_degrades_and_never_fails_the_project() {
     assert!(
         failed
             .gap
-            .as_deref()
-            .is_some_and(|gap| gap.contains("/no/such/pyright-langserver")),
+            .as_ref()
+            .is_some_and(|gap| gap.message.contains("/no/such/pyright-langserver")),
         "{failed:?}"
     );
     let notes = file_symbols("notes.md").await;

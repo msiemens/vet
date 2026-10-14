@@ -5,13 +5,13 @@ use vet_core::review::Side;
 use super::reference::{Reference, within};
 use super::{Derived, Inputs};
 use crate::ports::SymbolInfo;
-use crate::query::Primitives;
+use crate::query::{Primitives, SemanticError};
 
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub struct Usages {
     pub references: Vec<Reference>,
     /// Set when the references could not be listed: they are unknown, not absent.
-    pub gap: Option<String>,
+    pub gap: Option<SemanticError>,
 }
 
 pub async fn usages(p: &impl Primitives, symbol: &SymbolInfo) -> Derived<Usages> {
@@ -25,7 +25,7 @@ pub async fn usages(p: &impl Primitives, symbol: &SymbolInfo) -> Derived<Usages>
         },
         Err(e) => Usages {
             references: Vec::new(),
-            gap: Some(e.to_string()),
+            gap: Some(e),
         },
     };
     Derived { value, inputs }

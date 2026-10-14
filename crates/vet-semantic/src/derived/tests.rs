@@ -6,7 +6,7 @@ use vet_core::content::{FileDiff, Hunk, LineRange, RepoPath};
 use vet_core::review::Side;
 
 use super::*;
-use crate::ports::{Diagnostic, Location, Pos, Severity, Span, Sym, SymbolInfo, SymbolKind};
+use crate::ports::{Diagnostic, Feature, Location, Pos, QueryError, Severity, Span, Sym, SymbolInfo, SymbolKind};
 use crate::query::{Asked, Primitives, SemanticError};
 use crate::testutil::{answered, block_on};
 
@@ -222,7 +222,7 @@ fn changed_fixture() -> (Fake, Vec<FileDiff>) {
 
 /// A file a backend failed on.
 #[derive(Clone, PartialEq, Eq, Debug)]
-struct Gap {
+struct FileGap {
     file: RepoPath,
     reason: String,
 }
@@ -231,7 +231,7 @@ struct Gap {
 struct Changes {
     symbols: Vec<ChangedSymbol>,
     /// Files no backend handles are none: they have no symbols to know.
-    gaps: Vec<Gap>,
+    gaps: Vec<FileGap>,
 }
 
 /// The changed symbols of the files with hunks, files in order.
@@ -245,7 +245,7 @@ async fn changed_symbols(p: &impl Primitives, texts: &impl Texts, files: &[FileD
         match answer.value {
             Ok(compared) => out.symbols.extend(compared.changes.symbols),
             Err(SemanticError::NoBackend(_)) => {}
-            Err(e) => out.gaps.push(Gap {
+            Err(e) => out.gaps.push(FileGap {
                 file: file.path().clone(),
                 reason: e.to_string(),
             }),
@@ -623,7 +623,11 @@ fn backend_errors_surface_as_unknown() {
     let leaf = node("leaf");
     fake.failing_callers.push(leaf.location());
     let result = block_on(reachability(&fake, &leaf, &EntryPoints::default(), BOUNDS));
-    assert!(matches!(result.value, Reach::Unknown { gaps } if gaps[0].contains("no call hierarchy")));
+    let failed = Gap::Failed {
+        what: Some(leaf.sym.to_string()),
+        error: SemanticError::Query(QueryError::Failed("no call hierarchy".into())),
+    };
+    assert_eq!(result.value, Reach::Unknown { gaps: vec![failed] });
 }
 
 #[test]
@@ -885,8 +889,7 @@ fn a_walk_cut_by_the_depth_bound_says_so() {
     let bounds = Bounds { max_depth: 1, ..BOUNDS };
     let found = block_on(calls(&fake, &NoTexts, &files, &x, Some(&x_on_base), true, bounds)).value;
     assert_eq!(named(found.callers.iter().map(|c| &c.symbol)), ["c1"]);
-    assert_eq!(found.gaps.len(), 1, "{:?}", found.gaps);
-    assert!(found.gaps[0].contains("levels"), "{:?}", found.gaps);
+    assert_eq!(found.gaps, [Gap::TooDeep { max_depth: 1 }]);
 }
 
 #[test]
@@ -937,11 +940,11 @@ fn a_failed_call_hierarchy_is_a_gap_not_an_empty_list() {
     fake.failing_callers.push(x.location());
     let found = block_on(calls(&fake, &NoTexts, &files, &x, None, true, BOUNDS)).value;
     assert!(found.callers.is_empty());
-    assert!(
-        found.gaps.iter().any(|g| g.contains("no call hierarchy")),
-        "{:?}",
-        found.gaps
-    );
+    let failed = Gap::Failed {
+        what: Some(format!("callers of {}", x.sym)),
+        error: SemanticError::Query(QueryError::Failed("no call hierarchy".into())),
+    };
+    assert_eq!(found.gaps, [failed]);
     assert_eq!(
         named(found.callees.iter().map(|c| &c.symbol)),
         ["n"],
@@ -955,7 +958,14 @@ fn a_server_without_call_hierarchy_is_named_once_as_the_gap_of_callers_and_calle
     fake.without_call_hierarchy = true;
     let found = block_on(calls(&fake, &NoTexts, &files, &x, None, true, BOUNDS)).value;
     assert!(found.callers.is_empty() && found.callees.is_empty());
-    assert_eq!(found.gaps, ["yaml-language-server 1.25 does not offer call hierarchy"]);
+    let lacking = Gap::Failed {
+        what: None,
+        error: SemanticError::NotOffered {
+            feature: Feature::CallHierarchy,
+            server: "yaml-language-server 1.25".into(),
+        },
+    };
+    assert_eq!(found.gaps, [lacking]);
 }
 
 #[test]

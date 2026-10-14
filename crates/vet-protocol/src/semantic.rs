@@ -301,7 +301,7 @@ pub struct FileSymbols {
     /// Unchanged symbols that hold changed ones, in source order: the containers to show them in.
     pub context: Vec<SymbolInfo>,
     /// Set when the file's symbols could not be determined: they are unknown, not unchanged.
-    pub gap: Option<String>,
+    pub gap: Option<Unavailable>,
     pub inputs: DerivedInputs,
 }
 
@@ -391,6 +391,20 @@ pub struct ChangedCaller {
     pub depth: u32,
 }
 
+/// What a derived result lacks.
+#[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize, TS)]
+#[serde(tag = "type", rename_all = "camelCase", rename_all_fields = "camelCase")]
+#[ts(export)]
+pub enum Gap {
+    /// A query failed, so what it was for is unknown. `what` names that; none when the server
+    /// lacks the operation altogether.
+    Failed { what: Option<String>, why: Unavailable },
+    /// There are more callers than the walk follows.
+    TooManyCallers { max: u32 },
+    /// Callers further up than the walk goes were not followed.
+    TooDeep { max_depth: u32 },
+}
+
 /// The calls around a symbol of the target side (derived, §7.3).
 #[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
@@ -405,7 +419,7 @@ pub struct Calls {
     /// Unchanged symbols that call it directly; empty unless the symbol itself changed.
     pub affected: Vec<SymbolInfo>,
     /// Queries that failed or bounds that cut the walk; the matching list is incomplete.
-    pub gaps: Vec<String>,
+    pub gaps: Vec<Gap>,
     pub inputs: DerivedInputs,
 }
 
@@ -418,7 +432,7 @@ pub struct Usages {
     pub symbol: SymbolInfo,
     pub references: Vec<Reference>,
     /// Set when the references could not be listed: they are unknown, not absent.
-    pub gap: Option<String>,
+    pub gap: Option<Unavailable>,
     pub inputs: DerivedInputs,
 }
 
@@ -438,7 +452,7 @@ pub enum CallFate {
         now: Vec<SemanticLocation>,
     },
     Unknown {
-        reason: String,
+        why: Unavailable,
     },
 }
 
@@ -459,7 +473,7 @@ pub struct RemovalImpact {
     pub symbol: SymbolInfo,
     pub call_sites: Vec<CallSite>,
     /// Set when the references could not be listed: the call sites are unknown, not absent.
-    pub gap: Option<String>,
+    pub gap: Option<Unavailable>,
     pub inputs: DerivedInputs,
 }
 
@@ -472,7 +486,7 @@ pub enum Reach {
     /// No entry point within the bounds and entry points in `inputs`.
     UnreachedWithinBound,
     /// Backend gaps (dependency injection, reflection, serialization).
-    Unknown { gaps: Vec<String> },
+    Unknown { gaps: Vec<Gap> },
 }
 
 #[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize, TS)]

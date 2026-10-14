@@ -9,7 +9,7 @@ use vet_core::num::sat_u32;
 use vet_core::review::Side;
 use vet_protocol as p;
 use vet_semantic::derived::{
-    Bounds, CallSite, Calls, Change, ChangedSymbol, Derived, Fate, FileChanges, Inputs, Judged, Located, Origin,
+    Bounds, CallSite, Calls, Change, ChangedSymbol, Derived, Fate, FileChanges, Gap, Inputs, Judged, Located, Origin,
     OutlineSymbol, Reach, Reference, RemovalImpact, Usages,
 };
 use vet_semantic::pool::{Outcome, Phase, PoolError};
@@ -374,13 +374,18 @@ pub fn workspace_symbols(found: &WorkspaceSymbols) -> p::WorkspaceSymbols {
 }
 
 /// `gap` is why the symbols of the file are unknown, if they are.
-pub fn file_symbols(revision: u32, path: &str, d: &Derived<FileChanges>, gap: Option<String>) -> p::FileSymbols {
+pub fn file_symbols(
+    revision: u32,
+    path: &str,
+    d: &Derived<FileChanges>,
+    gap: Option<&SemanticError>,
+) -> p::FileSymbols {
     p::FileSymbols {
         revision,
         path: path.to_owned(),
         symbols: d.value.symbols.iter().map(changed).collect(),
         context: d.value.context.iter().map(symbol).collect(),
-        gap,
+        gap: gap.map(|e| unavailable(e, None)),
         inputs: inputs(&d.inputs),
     }
 }
@@ -426,7 +431,7 @@ pub fn calls(revision: u32, info: &SymbolInfo, d: &Derived<Calls>) -> p::Calls {
             .collect(),
         callees: d.value.callees.iter().map(changed).collect(),
         affected: d.value.affected.iter().map(symbol).collect(),
-        gaps: d.value.gaps.clone(),
+        gaps: d.value.gaps.iter().map(gap).collect(),
         inputs: inputs(&d.inputs),
     }
 }
@@ -436,7 +441,7 @@ pub fn usages(revision: u32, info: &SymbolInfo, d: &Derived<Usages>) -> p::Usage
         revision,
         symbol: symbol(info),
         references: d.value.references.iter().map(reference).collect(),
-        gap: d.value.gap.clone(),
+        gap: d.value.gap.as_ref().map(|e| unavailable(e, None)),
         inputs: inputs(&d.inputs),
     }
 }
@@ -447,7 +452,20 @@ fn fate(f: &Fate) -> p::CallFate {
         Fate::Modified => p::CallFate::Modified,
         Fate::LikelyBroken => p::CallFate::LikelyBroken,
         Fate::BindingChanged { now } => p::CallFate::BindingChanged { now: locations(now) },
-        Fate::Unknown(reason) => p::CallFate::Unknown { reason: reason.clone() },
+        Fate::Unknown(error) => p::CallFate::Unknown {
+            why: unavailable(error, None),
+        },
+    }
+}
+
+fn gap(g: &Gap) -> p::Gap {
+    match g {
+        Gap::Failed { what, error } => p::Gap::Failed {
+            what: what.clone(),
+            why: unavailable(error, None),
+        },
+        Gap::TooManyCallers { max } => p::Gap::TooManyCallers { max: sat_u32(*max) },
+        Gap::TooDeep { max_depth } => p::Gap::TooDeep { max_depth: *max_depth },
     }
 }
 
@@ -463,7 +481,7 @@ pub fn removal_impact(revision: u32, d: &Derived<RemovalImpact>) -> p::RemovalIm
         revision,
         symbol: symbol(&d.value.symbol),
         call_sites: d.value.call_sites.iter().map(call_site).collect(),
-        gap: d.value.gap.clone(),
+        gap: d.value.gap.as_ref().map(|e| unavailable(e, None)),
         inputs: inputs(&d.inputs),
     }
 }
@@ -477,7 +495,9 @@ pub fn reachability(revision: u32, info: &SymbolInfo, d: &Derived<Reach>) -> p::
                 path: path.iter().map(symbol_name).collect(),
             },
             Reach::UnreachedWithinBound => p::Reach::UnreachedWithinBound,
-            Reach::Unknown { gaps } => p::Reach::Unknown { gaps: gaps.clone() },
+            Reach::Unknown { gaps } => p::Reach::Unknown {
+                gaps: gaps.iter().map(gap).collect(),
+            },
         },
         inputs: inputs(&d.inputs),
     }

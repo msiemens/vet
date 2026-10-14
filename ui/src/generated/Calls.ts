@@ -2,6 +2,7 @@
 import type { ChangedCaller } from "./ChangedCaller";
 import type { ChangedSymbol } from "./ChangedSymbol";
 import type { DerivedInputs } from "./DerivedInputs";
+import type { Gap } from "./Gap";
 import type { SymbolInfo } from "./SymbolInfo";
 
 /**
@@ -23,4 +24,4 @@ affected: Array<SymbolInfo>,
 /**
  * Queries that failed or bounds that cut the walk; the matching list is incomplete.
  */
-gaps: Array<string>, inputs: DerivedInputs, };
+gaps: Array<Gap>, inputs: DerivedInputs, };

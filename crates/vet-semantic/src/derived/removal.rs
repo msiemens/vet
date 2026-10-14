@@ -8,7 +8,7 @@ use super::changed::{Change, ChangedSymbol};
 use super::reference::{Reference, within};
 use super::{Derived, Inputs};
 use crate::ports::{At, Location, Pos, SymbolInfo};
-use crate::query::Primitives;
+use crate::query::{Primitives, SemanticError};
 
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub enum Fate {
@@ -19,10 +19,9 @@ pub enum Fate {
     /// Unchanged text that no longer resolves.
     LikelyBroken,
     /// Unchanged text that now resolves to something else.
-    BindingChanged {
-        now: Vec<Location>,
-    },
-    Unknown(String),
+    BindingChanged { now: Vec<Location> },
+    /// The query that would tell failed.
+    Unknown(SemanticError),
 }
 
 #[derive(Clone, PartialEq, Eq, Debug)]
@@ -37,7 +36,7 @@ pub struct RemovalImpact {
     pub symbol: SymbolInfo,
     pub call_sites: Vec<CallSite>,
     /// `Some` when the references could not be listed: the call sites are unknown, not absent.
-    pub gap: Option<String>,
+    pub gap: Option<SemanticError>,
 }
 
 pub async fn removal_impact(
@@ -56,7 +55,7 @@ pub async fn removal_impact(
                 out.push(RemovalImpact {
                     symbol: c.symbol.clone(),
                     call_sites: Vec::new(),
-                    gap: Some(e.to_string()),
+                    gap: Some(e),
                 });
                 continue;
             }
@@ -70,7 +69,7 @@ pub async fn removal_impact(
                     match inputs.asked_at("definition", Side::Target, &at, found) {
                         Ok(now) if now.is_empty() => Fate::LikelyBroken,
                         Ok(now) => Fate::BindingChanged { now },
-                        Err(e) => Fate::Unknown(e.to_string()),
+                        Err(e) => Fate::Unknown(e),
                     }
                 }
             };

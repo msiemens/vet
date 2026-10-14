@@ -9,7 +9,11 @@ void test("fates read as words, the broken one as the bad tone", () => {
     now: [{ path: "u.rs", span: { start: { line: 9, col: 0 }, end: { line: 9, col: 3 } }, external: false }],
   });
   assert.deepEqual([moved.label, moved.detail], ["binds elsewhere now", "u.rs:10"]);
-  assert.equal(describeFate({ type: "unknown", reason: "no server" }).detail, "no server");
+  assert.equal(
+    describeFate({ type: "unknown", why: { kind: "queryFailed", label: "", message: "no server", language: null } })
+      .detail,
+    "no server",
+  );
 });
 
 void test("the head names the types around a symbol and, apart, its namespaces", () => {

@@ -101,7 +101,7 @@ fn changed_file<'a>(files: &'a [FileDiff], path: &RepoPath) -> Option<&'a FileDi
 pub struct FileSymbols {
     pub changes: Derived<FileChanges>,
     /// Why the file's symbols are unknown, if they are.
-    pub gap: Option<String>,
+    pub gap: Option<SemanticError>,
 }
 
 /// What one language's server answered to a search of the project's symbols by name.
@@ -789,7 +789,7 @@ where
                     },
                     // A language no server handles has no symbols to know.
                     Err(SemanticError::NoBackend(_)) => none(None),
-                    Err(e) => none(Some(e.to_string())),
+                    Err(e) => none(Some(e)),
                 })
             }),
         )

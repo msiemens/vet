@@ -296,7 +296,7 @@ impl Booted {
             revision,
             path,
             &found.changes,
-            found.gap,
+            found.gap.as_ref(),
         )))
     }
 

@@ -7,7 +7,7 @@ use vet_core::content::{FileDiff, RepoPath};
 use vet_core::review::Side;
 
 use super::changed::{Change, ChangedSymbol, Compared, Texts, compared};
-use super::{Bounds, Derived, Inputs, note_gap};
+use super::{Bounds, Derived, Gap, Inputs, note_gap};
 use crate::ports::{Sym, SymbolInfo};
 use crate::query::Primitives;
 
@@ -30,7 +30,7 @@ pub struct Calls {
     /// Unchanged symbols that call it directly; empty unless the symbol itself changed.
     pub affected: Vec<SymbolInfo>,
     /// Queries that failed or bounds that cut the walk; the matching list is incomplete.
-    pub gaps: Vec<String>,
+    pub gaps: Vec<Gap>,
 }
 
 /// Which symbols of which changed files changed, asked of the texts once per file.
@@ -134,7 +134,7 @@ pub async fn calls(
             break;
         };
         if out.callers.len() >= bounds.max_nodes {
-            out.gaps.push(format!("more than {} callers", bounds.max_nodes));
+            out.gaps.push(Gap::TooManyCallers { max: bounds.max_nodes });
             break;
         }
         out.callers.push(Caller {
@@ -145,10 +145,9 @@ pub async fn calls(
         next = Some((caller, depth));
     }
     if too_deep {
-        out.gaps.push(format!(
-            "callers more than {} levels up were not followed",
-            bounds.max_depth
-        ));
+        out.gaps.push(Gap::TooDeep {
+            max_depth: bounds.max_depth,
+        });
     }
 
     let at = symbol.location();

@@ -29,7 +29,6 @@ pub use reach::{EntryPoint, EntryPoints, Reach, reachability};
 pub use reference::{Reference, located};
 pub use removal::{CallSite, Fate, RemovalImpact, removal_impact};
 pub use usages::{Usages, usages};
-
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub struct Bounds {
     pub max_depth: u32,
@@ -97,12 +96,23 @@ impl Inputs {
     }
 }
 
-/// Adds to `gaps` that `what` is unknown because the query failed with `error`. A server that lacks
-/// the operation lacks it for everything, which is said once and not per thing asked about.
-fn note_gap(gaps: &mut Vec<String>, what: &str, error: &SemanticError) {
-    let gap = match error {
-        SemanticError::NotOffered { .. } => error.to_string(),
-        _ => format!("{what}: {error}"),
+/// What a derived result lacks.
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub enum Gap {
+    /// A query failed, so what it was for is unknown. `what` names that; none when a server lacks
+    /// the operation, which it lacks for everything and which is said once.
+    Failed { what: Option<String>, error: SemanticError },
+    /// There are more callers than the bound follows.
+    TooManyCallers { max: usize },
+    /// Callers further up than the bound allows were not followed.
+    TooDeep { max_depth: u32 },
+}
+
+/// Adds to `gaps` that `what` is unknown because the query failed with `error`.
+fn note_gap(gaps: &mut Vec<Gap>, what: &str, error: &SemanticError) {
+    let gap = Gap::Failed {
+        what: (!matches!(error, SemanticError::NotOffered { .. })).then(|| what.to_owned()),
+        error: error.clone(),
     };
     if !gaps.contains(&gap) {
         gaps.push(gap);

@@ -5,7 +5,7 @@ use std::collections::{HashMap, VecDeque};
 
 use vet_core::review::Side;
 
-use super::{Bounds, Derived, Inputs, note_gap};
+use super::{Bounds, Derived, Gap, Inputs, note_gap};
 use crate::ports::{Sym, SymbolInfo};
 use crate::query::Primitives;
 
@@ -48,7 +48,7 @@ pub enum Reach {
     UnreachedWithinBound,
     /// Backend gaps (DI, reflection, serialization).
     Unknown {
-        gaps: Vec<String>,
+        gaps: Vec<Gap>,
     },
 }
 
