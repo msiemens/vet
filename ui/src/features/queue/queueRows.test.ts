@@ -174,12 +174,14 @@ void test("a pull request counts the platform's comments, a local changeset its 
   assert.equal(commentCount(tree), 0);
 });
 
-void test("the lines of a row come from the live manifest, else the platform, else the backend's count", () => {
+void test("the lines of a row come from the live manifest, else the backend's count of the base the view uses", () => {
   const own = { added: 230, removed: 40 };
   const counted = { added: 5, removed: 1 };
-  const lines = (lines: { added: number; removed: number }) => ({ kind: "lines", lines });
+  const lines = (of: { added: number; removed: number }) => ({ kind: "lines", lines: of });
   assert.deepEqual(changesOf(pullRequestRow(pr), own, counted), lines(own), "the changeset on view is live");
-  assert.deepEqual(changesOf(pullRequestRow(pr), undefined, counted), lines({ added: 236, removed: 41 }));
+  // The platform's own numbers (236/41 here) compare the head against the target branch; the
+  // backend counts against the merge base, as the review view does, so the queue agrees with it.
+  assert.deepEqual(changesOf(pullRequestRow(pr), undefined, counted), lines(counted), "not the platform's numbers");
   assert.deepEqual(changesOf(forked, undefined, counted), lines(counted));
   assert.deepEqual(changesOf(retry, undefined, counted), lines(counted));
 });

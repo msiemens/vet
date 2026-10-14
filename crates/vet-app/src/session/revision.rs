@@ -17,7 +17,7 @@ use super::state::check_revision;
 use super::views::SemanticSides;
 use super::{LiveSession, Result};
 use crate::acquisition::Acquisition;
-use crate::changeset::Source;
+use crate::changeset::{ChangesetKind, Source};
 use crate::ports::{GitRepo, LiveStore};
 use crate::trust::{Origin, PullRequestTrust, Trust};
 
@@ -69,14 +69,14 @@ impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> R
     pub async fn trust(&self, source: &Source) -> Result<Trust> {
         let store = &self.acquisition.store;
         let project = store.project_trusted(self.repo.clone()).await?;
-        let origin = match source {
-            Source::PullRequest { .. } => Origin::PullRequest(
+        let origin = match source.kind() {
+            ChangesetKind::PullRequest => Origin::PullRequest(
                 store
                     .pull_request_trust(self.repo.clone(), source.clone())
                     .await?
                     .unwrap_or_else(PullRequestTrust::unknown),
             ),
-            Source::WorkingTree | Source::Branch { .. } => Origin::Local,
+            ChangesetKind::WorkingTree | ChangesetKind::Branch => Origin::Local,
         };
         Ok(Trust { project, origin })
     }
@@ -97,7 +97,7 @@ impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> R
             base_commit: st.base_commit.clone(),
             target: st.target.id,
             head: st.head.clone(),
-            live_target: st.source == Source::WorkingTree,
+            live_target: st.source.kind() == ChangesetKind::WorkingTree,
             source: st.source.clone(),
         })
     }

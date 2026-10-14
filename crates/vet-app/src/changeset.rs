@@ -32,6 +32,18 @@ pub struct ChangesetId(pub u64);
 
 pub use crate::platform::RemoteKey;
 
+/// The kind of a changeset, which fixes its base rule and the target it is built on (§6.5). One
+/// place knows each kind; the rules themselves live in [`crate::base`].
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
+pub enum ChangesetKind {
+    /// The repository's live tree. Its base is pinned when it is opened, not resolved from a tip.
+    WorkingTree,
+    /// A local or remote-tracking branch.
+    Branch,
+    /// A pull request of a hosted repository.
+    PullRequest,
+}
+
 /// Where a changeset's target comes from. With the repository root it names the
 /// changeset: it is stable across versions, rebases and restarts.
 #[derive(Clone, PartialEq, Eq, Hash, Debug)]
@@ -43,6 +55,17 @@ pub enum Source {
     Branch { name: String },
     /// A pull request. Versions are the pushes the platform recorded.
     PullRequest { remote: RemoteKey, number: u64 },
+}
+
+impl Source {
+    /// Which kind of changeset this is.
+    pub fn kind(&self) -> ChangesetKind {
+        match self {
+            Source::WorkingTree => ChangesetKind::WorkingTree,
+            Source::Branch { .. } => ChangesetKind::Branch,
+            Source::PullRequest { .. } => ChangesetKind::PullRequest,
+        }
+    }
 }
 
 /// How a committed changeset is cut into units for review: the whole of it, or one unit per commit.

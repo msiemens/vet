@@ -237,15 +237,16 @@ class QueueStore {
   }
 
   /**
-   * Has the backend count the lines of every listed row that has none from the platform, a few at a time
-   * and top of the list first. The working tree is not counted: its manifest is live. A later listing
+   * Has the backend count the lines of every listed row, a few at a time and top of the list first.
+   * Every pull request too, so the queue and the review view use the same base rule; the platform's
+   * own numbers are not shown. The working tree is not counted: its manifest is live. A later listing
    * starts over; the numbers shown stay until the new ones arrive.
    */
   private async countLines(recount: boolean) {
     const isLatest = this.reads.lines.begin();
     const wanted = [
       ...this.local.filter((row) => row.key.type !== "workingTree").map((row) => row.key),
-      ...this.pullRequests.filter((row) => row.lines === undefined).map((row) => row.key),
+      ...this.pullRequests.map((row) => row.key),
     ].filter((key) => recount || !this.lines.has(keyId(key)));
     let next = 0;
     const count = async () => {

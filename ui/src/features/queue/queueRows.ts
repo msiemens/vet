@@ -132,13 +132,15 @@ export type Changes =
   | { kind: "lines"; lines: LineDelta };
 
 /**
- * The lines of a row, from the most current source: `own`, the live manifest, when the row is the changeset
- * on view; else what the platform lists of a pull request; else `counted`, what the backend counted between
- * the commits of the row's base and tip (`null`: there are none to count). The working tree has its manifest
+ * The lines of a row, from the most current source: `own`, the live manifest, when the row is the
+ * changeset on view; else `counted`, what the backend counted between the commits of the row's base
+ * and tip (`null`: there are none to count), the same rule the review view uses. The platform's own
+ * numbers for a pull request are not used: they compare the head against the target branch, not
+ * against the merge base, so they can differ from the diff on view. The working tree has its manifest
  * only.
  */
 export function changesOf(row: QueueRow, own: LineDelta | undefined, counted: LineDelta | null | undefined): Changes {
-  const known = own ?? row.pullRequest?.lines ?? counted;
+  const known = own ?? counted;
   if (known) return known.added + known.removed > 0 ? { kind: "lines", lines: known } : { kind: "none" };
   return row.key.type === "workingTree" || counted === null ? { kind: "none" } : { kind: "pending" };
 }

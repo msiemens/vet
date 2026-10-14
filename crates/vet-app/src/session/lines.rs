@@ -12,7 +12,6 @@ use crate::acquisition::Acquisition;
 use crate::base;
 use crate::changeset::{CommitId, Source};
 use crate::ports::{GitError, GitRepo, LiveStore};
-use crate::pull_request::PullRequestRefs;
 
 /// The lines between two commits. The key names both, and what git has of a commit never changes,
 /// so the value is kept for as long as the engine has room.
@@ -69,23 +68,23 @@ where
     }
 
     /// The commit the changeset of `source`, whose tip is `tip`, is compared against: the base its
-    /// latest review recorded, else the one for its kind. `None` if that does not resolve.
+    /// open review recorded, else the one for its kind. `None` if that does not resolve. The same
+    /// rule the review view uses, so the queue's line counts and the view agree.
     async fn base_of(&self, source: &Source, tip: &CommitId) -> super::Result<Option<CommitId>> {
         let (git, store) = (&self.acquisition.git, &self.acquisition.store);
         let mut chosen = None;
+        // Only an open review pins the base; a finished one left the changeset browsing, which the
+        // view reads against the kind's base again.
         if let Some(changeset) = store.changeset(self.repo.clone(), source.clone()).await?
-            && let Some(review) = store.latest_review(changeset).await?
+            && let Some(review) = store.open_review(changeset).await?
         {
             chosen = store.review(review).await?.map(|r| r.base);
         }
-        let resolved = match (chosen, source) {
-            (Some(choice), _) => base::resolve(git, choice, tip).await,
-            (None, Source::PullRequest { remote, number }) => {
-                base::for_pull_request(git, &PullRequestRefs::of(remote, *number), tip).await
-            }
-            (None, _) => base::for_branch(git, tip).await,
+        let base = match chosen {
+            Some(choice) => base::resolve(git, choice, tip).await.ok().map(|(_, commit)| commit),
+            None => self.base_for(source, tip).await.ok().map(|(_, commit)| commit),
         };
-        Ok(resolved.ok().map(|(_, commit)| commit))
+        Ok(base)
     }
 }
 
