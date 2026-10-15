@@ -3,6 +3,9 @@
 //!
 //! Ids and counts are `u32` so they map to plain TS `number`s.
 
+#[cfg(test)]
+mod bindings;
+
 mod account;
 mod changeset;
 mod checks;

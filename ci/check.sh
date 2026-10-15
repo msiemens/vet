@@ -17,6 +17,13 @@ step "cargo clippy (ui/src-tauri)"
 tauri_step "clippy (ui/src-tauri)" cargo clippy --manifest-path ui/src-tauri/Cargo.toml --all-targets -- -D warnings
 step "cargo nextest"
 cargo nextest run --workspace
+step "generated bindings are fresh"
+dirty=$(git status --porcelain -- ui/src/generated)
+if [[ -n $dirty ]]; then
+    printf '%s\n' "$dirty" >&2
+    echo "ui/src/generated does not match vet-protocol; commit the bindings the tests regenerated" >&2
+    exit 1
+fi
 step "cargo nextest (ui/src-tauri)"
 tauri_step "tests (ui/src-tauri)" cargo nextest run --manifest-path ui/src-tauri/Cargo.toml
 step "tests that need tools"

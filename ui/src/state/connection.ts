@@ -5,6 +5,7 @@
 import type { ClientMessage } from "../generated/ClientMessage";
 import type { Event as ServerEvent } from "../generated/Event";
 import type { LogLevel } from "../generated/LogLevel";
+import { PROTOCOL_VERSION } from "../generated/ProtocolVersion.ts";
 import type { Ready } from "../generated/Ready";
 import type { Request } from "../generated/Request";
 import type { Response } from "../generated/Response";
@@ -13,9 +14,6 @@ import { abortError } from "../lib/abort.ts";
 import { RequestError } from "../lib/requestError.ts";
 import { LogBudget, reportFailedRequest } from "./errorLog.ts";
 import { Pending } from "./pending.ts";
-
-// Must match PROTOCOL_VERSION in crates/vet-protocol.
-const PROTOCOL_VERSION = 3;
 
 /** `WebSocket.OPEN`. */
 const OPEN = 1;

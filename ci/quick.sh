@@ -63,6 +63,15 @@ if ((${#crates[@]})); then
     cargo clippy "${pkgs[@]}" --all-targets -- -D warnings
     step "cargo nextest (${affected[*]})"
     cargo nextest run "${pkgs[@]}"
+    if $protocol; then
+        step "generated bindings are fresh"
+        dirty=$(git status --porcelain -- ui/src/generated)
+        if [[ -n $dirty ]]; then
+            printf '%s\n' "$dirty" >&2
+            echo "ui/src/generated does not match vet-protocol; commit the bindings the tests regenerated" >&2
+            exit 1
+        fi
+    fi
     step "tests that need tools (${affected[*]})"
     tool_log=$(mktemp)
     ci/tool-tests.sh "${pkgs[@]}" 2>&1 | tee "$tool_log"

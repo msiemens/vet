@@ -85,3 +85,21 @@ pub enum ServerMessage {
         event: Event,
     },
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The shell reads the version from the generated module; it must be the one the backend
+    /// checks the handshake against, so it is generated from here with the bindings.
+    #[test]
+    fn export_bindings_protocol_version() {
+        let contents = format!(
+            "// This file was generated from `PROTOCOL_VERSION` in crates/vet-protocol. Do not edit it manually.\n\
+             \n\
+             /** The wire protocol version; the backend refuses a connection that presents another. */\n\
+             export const PROTOCOL_VERSION = {PROTOCOL_VERSION};\n"
+        );
+        crate::bindings::write("ProtocolVersion.ts", &contents);
+    }
+}
