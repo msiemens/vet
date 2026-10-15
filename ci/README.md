@@ -39,13 +39,17 @@ happen: fixing a bug means deleting its lines. A session with unlisted differenc
 run once more, because requests sent without waiting for each other can be answered out
 of order; only differences that stay fail.
 
-`pnpm harness:browser [session…]` is the second tier, for local runs: the real app in a headless
-Chrome (`VET_CHROME` names the binary) on a vite dev server, against a backend of its own. After each step
-of a session (`browser.ts`) it compares what the editor views drew, read through the dev build's
+`pnpm harness:browser` is the second tier, for local runs: the real app under
+[Playwright Test](https://playwright.dev) (`ui/playwright.config.ts`) on the vite dev server that
+Playwright starts, against a backend of its own. Each session (`browserSessions.ts`) is a test, run on
+Playwright's WebKit (closest to the Tauri webview on macOS and Linux) and on the installed Chrome
+(`channel: "chrome"`; WebKit needs `pnpm exec playwright install webkit`). After every step the
+harness (`browserHarness.ts`) compares what the editor views drew, read through the dev build's
 `window.__vet.rendered()` (header texts, cards, the editors' review fields, the scroll bar's marks, a
-file's text), with a fresh read of the backend. It starts its own backend, dev server and browser on free
-ports, with a scratch profile and no keychain access, and stops them at the end. It is not part of
-`check.sh` or `quick.sh`.
+file's text), with a fresh read of the backend. Each test starts its own backend and fixture; a
+failure names the session, the step and the difference, and keeps a trace. `pnpm exec playwright test
+-g <name>` runs some sessions and `--project=webkit|chrome` one engine. It is not part of `check.sh`
+or `quick.sh`.
 
 `check.sh` builds the backend and runs the harness after the UI unit tests (about 20 s);
 `quick.sh` runs it when `ui/src/state`, the harness, or the `vet-protocol`, `vet-backend`
@@ -114,21 +118,3 @@ their dependents, differ per checkout by their install name, which the wrapper f
 
 Formatting-only commits are listed in `.git-blame-ignore-revs`; enable them with
 `git config blame.ignoreRevsFile .git-blame-ignore-revs`.
-
-## Browser
-
-Screenshots use one shared headless browser (Windows Edge in WSL,
-else Chromium; `VET_BROWSER=linux` forces Chromium). `browser.sh` starts it if
-needed and prints its CDP port (`VET_BROWSER_PORT`, default 9222); a watchdog
-closes it after `VET_BROWSER_IDLE` seconds (default 600) without a page. Clients
-use `cdp.mjs`, which gives each run an isolated browser context:
-
-```sh
-node ci/cdp.mjs screenshot 'http://localhost:<port>/#port=…&token=…&repo=/path' out.png [--wait ms] [--theme light|dark]
-```
-
-Scripts import `withTab(fn)` (screenshots, `evaluate`, `mouse`, console capture).
-
-`chromium.sh [args…]` is for one-off use only: it runs its own headless Chromium,
-killed after `VET_CHROMIUM_TIMEOUT` seconds (default 600) or when the script
-exits, and deletes its profile.

@@ -13,7 +13,7 @@
     "format:check": "prettier --check .",
     "test": "node --test \"src/**/*.test.ts\"",
     "harness": "node --import ./test/harness/register.mjs test/harness/run.ts",
-    "harness:browser": "node --import ./test/harness/register.mjs test/harness/browser.ts",
+    "harness:browser": "playwright test",
     "backend": "node scripts/build-backend.mjs",
     "tauri": "tauri"
   },
@@ -30,6 +30,7 @@
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
+    "@playwright/test": "^1.64.1",
     "@sveltejs/vite-plugin-svelte": "^7.3.1",
     "@tauri-apps/cli": "^2.12.1",
     "@types/markdown-it": "^14.2.0",
