@@ -58,6 +58,7 @@ mod interdiff;
 mod lens;
 mod lines;
 mod listing;
+mod lru;
 mod manifest;
 mod marks;
 mod pushes;
@@ -92,6 +93,7 @@ use self::hold::{Held, Published, Writer};
 pub use self::lens::{CommitKind, CommitUnitView, CommitsView};
 use self::lines::LinesBetween;
 pub use self::listing::{ChangesetList, ChangesetRow, Divergence, RowReview};
+use self::lru::Lru;
 pub use self::revision::{ChangedFiles, RevisionView};
 pub use self::search::{MAX_HITS, SearchFile, SearchQuery, SearchResult, SearchScope};
 use self::source::Stored;
@@ -210,9 +212,9 @@ pub struct LiveSession<G, S: LiveStore> {
     /// The diffs, interdiffs and commits the review state is remapped onto.
     derived: Arc<Derived>,
     /// What git said of the commits the manifests name, which it does not change.
-    commit_infos: std::sync::Mutex<HashMap<CommitId, CommitInfo>>,
+    commit_infos: std::sync::Mutex<Lru<CommitId, CommitInfo>>,
     /// How a branch came to hold a tip, by the tip and the branch's commit, which git does not change.
-    merges: std::sync::Mutex<HashMap<(CommitId, CommitId), Option<MergedAs>>>,
+    merges: std::sync::Mutex<Lru<(CommitId, CommitId), Option<MergedAs>>>,
     /// The states of their source branch that the platforms list for pull requests, which are the
     /// versions the review of each has.
     pushes: std::sync::Mutex<HashMap<Source, Vec<Push>>>,
@@ -231,6 +233,12 @@ type MergedAs = (CommitInfo, Option<u32>, Option<u32>);
 
 /// How many line deltas the list of changesets keeps.
 const KEPT_LINE_DELTAS: usize = 4096;
+
+/// How many commit facts the session keeps; the one used longest ago goes first.
+const KEPT_COMMIT_INFOS: usize = 64;
+
+/// How many merge facts the session keeps; the one used longest ago goes first.
+const KEPT_MERGES: usize = 16;
 
 /// What settling a snapshot into a tree needs that takes a while, worked out for the tree as it
 /// was found, without the token.
@@ -371,8 +379,8 @@ impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> L
         Self {
             author: author_of(&acquisition.git).await,
             derived: Arc::new(Derived::new(&acquisition.tasks)),
-            commit_infos: std::sync::Mutex::default(),
-            merges: std::sync::Mutex::default(),
+            commit_infos: std::sync::Mutex::new(Lru::new(KEPT_COMMIT_INFOS)),
+            merges: std::sync::Mutex::new(Lru::new(KEPT_MERGES)),
             pushes: std::sync::Mutex::default(),
             known: Arc::default(),
             ahead: ahead::copies(&acquisition.tasks),
@@ -696,18 +704,12 @@ impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> L
 
     /// What git says of `commit`, asked once while the session lives.
     async fn commit_info(&self, commit: &CommitId) -> Result<CommitInfo> {
-        const KEPT: usize = 64;
-        let kept = |infos: &HashMap<CommitId, CommitInfo>| infos.get(commit).cloned();
-        let found = kept(&lock(&self.commit_infos));
+        let found = lock(&self.commit_infos).get(commit).cloned();
         if let Some(info) = found {
             return Ok(info);
         }
         let info = self.acquisition.git.commit_info(commit).await?;
-        let mut infos = lock(&self.commit_infos);
-        if infos.len() >= KEPT {
-            infos.clear();
-        }
-        infos.insert(commit.clone(), info.clone());
+        lock(&self.commit_infos).insert(commit.clone(), info.clone());
         Ok(info)
     }
 
@@ -799,11 +801,7 @@ impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> L
                 return None;
             }
         };
-        let mut merges = lock(&self.merges);
-        if merges.len() >= 16 {
-            merges.clear();
-        }
-        merges.insert(key, merged.clone());
+        lock(&self.merges).insert(key, merged.clone());
         merged
     }
 
