@@ -18,6 +18,7 @@ import { defaultRange } from "../../src/state/timelineRange.ts";
 import { versions } from "../../src/state/versions.svelte.ts";
 import { newScope } from "../../src/state/viewScope.svelte.ts";
 import type { Harness } from "./harness.ts";
+import { type SessionName } from "./sessionNames.ts";
 import { watchFromEffect } from "./watching.svelte.ts";
 
 const CHANGESET: View = { type: "changeset" };
@@ -55,7 +56,7 @@ async function settleVersion(h: Harness) {
   await h.until(() => versions.items.length >= 2 && changeset.facts?.review.state === "open", "the second version");
 }
 
-export const sessions: Record<string, (h: Harness) => Promise<void>> = {
+export const sessions: Record<SessionName, (h: Harness) => Promise<void>> = {
   /** Marks, flags and unmarks in the changeset view. */
   async changeset(h) {
     await h.step("opened", () => undefined);

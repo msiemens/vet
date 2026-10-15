@@ -31,13 +31,19 @@ repository of its own, and the backend is killed at the end. After every step, o
 window has been quiet, `invariants.ts` compares what the stores hold with fresh reads
 through a second connection: file review states, view and changeset completion, base,
 review info, the queue's on-view row, versions, commits, threads, and that every review
-or comment request names the view of the element that sent it. `pnpm harness <session>…` runs some sessions.
+or comment request names the view of the element that sent it.
+
+The runner is [Playwright Test](https://playwright.dev)
+(`ui/playwright.stores.config.ts`): each session is a test (`stores.spec.ts`) that spawns
+the session's own child process (`session-runner.ts`), so the stores never load in a
+worker and the sessions run in parallel with their isolation intact. `pnpm harness -g
+<session>` runs some sessions (Playwright selects tests by name); there is no browser and
+no dev server.
 
 `known.ts` lists the differences that are known bugs, by invariant and view, each with
-its bug id. A difference not listed fails the run, and so does a listed one that did not
-happen: fixing a bug means deleting its lines. A session with unlisted differences is
-run once more, because requests sent without waiting for each other can be answered out
-of order; only differences that stay fail.
+its bug id. A difference not listed fails the test with it, and a listed one that did not
+happen fails as stale: fixing a bug means deleting its lines. There are no retries, so a
+session runs once.
 
 `pnpm harness:browser` is the second tier, for local runs: the real app under
 [Playwright Test](https://playwright.dev) (`ui/playwright.config.ts`) on the vite dev server that

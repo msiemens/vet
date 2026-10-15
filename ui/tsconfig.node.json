@@ -25,6 +25,7 @@
     "test/harness/*.mjs",
     "*.js",
     "vite.config.ts",
-    "playwright.config.ts"
+    "playwright.config.ts",
+    "playwright.stores.config.ts"
   ]
 }
