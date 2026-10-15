@@ -36,10 +36,9 @@ export interface ViewSource extends ReviewSource {
   commentTarget(shown: Shown, path: string, at: CommentAt): ReturnType<Backend["commentTarget"]>;
 }
 
-/** The changeset as a whole, or the commit with the full id. */
-export type ScopeSpec = { type: "changeset" } | { type: "commit"; id: string };
-
-export const scopeKey = (spec: ScopeSpec): string => (spec.type === "changeset" ? "changeset" : spec.id);
+import type { ScopeSpec } from "./scopeSpec";
+export { scopeKey } from "./scopeSpec";
+export type { ScopeSpec };
 
 interface Loaded {
   parts: Parts;

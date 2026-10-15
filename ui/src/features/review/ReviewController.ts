@@ -42,7 +42,7 @@ import { type StructureTarget, structure } from "../../state/structure.svelte";
 import { symbols } from "../../state/symbols.svelte";
 import { threads } from "../../state/threads.svelte";
 import { rangeKey } from "../../state/timelineRange";
-import { type ScopeSpec, type ViewScope, type ViewSource, newScope, scopeKey } from "../../state/viewScope.svelte";
+import { type ViewScope, type ViewSource, newScope } from "../../state/viewScope.svelte";
 import type { Thread } from "../../generated/Thread";
 import { SUBMIT_KEY } from "../../lib/composer";
 import { STALE_NOTICE } from "../../lib/notice";
@@ -84,6 +84,7 @@ import {
   settleMode,
 } from "./tabModel";
 import { Tabs } from "./Tabs.svelte";
+import { ViewScopes } from "./ViewScopes";
 
 /** Space types in a field and presses a focused control; it marks the current item only when none of those has the focus. */
 const takesSpace = (el: Element | null) =>
@@ -158,10 +159,8 @@ export class ReviewController {
   private diffMode: Mode = "unified";
   /** Which files the views wrap the long lines of. */
   softWrap: SoftWrap = "prose";
-  /** The views that file tabs read while they are not the one on screen, by `scopeKey`. */
-  private scopes = new Map<string, { scope: ViewScope; off: () => void }>();
-  /** Another changeset is on its way: the open tabs are the old one's, and no scope may read for them. */
-  private frozen = false;
+  /** The scopes of the views the tabs read that are not the one on screen; the Changes tab reads the store. */
+  private readonly scopes: ViewScopes;
   /** Show Usages and Go to Implementation: goes to the one place found, or lists the places in the popup. */
   private search = new LocationSearch({
     picker: locationPicker,
@@ -195,21 +194,27 @@ export class ReviewController {
     private fileMenu: (path: string, x: number, y: number) => void,
   ) {
     semantic.reset(); // the controller belongs to one repository's screen
+    this.scopes = new ViewScopes(
+      changeset,
+      this.tabs,
+      (scope, paths) => this.scopeWritten(scope, paths),
+      (spec, marked) => newScope(backend, spec, marked),
+    );
     const offReview = changeset.subscribe((paths) => this.refreshReview(paths));
     const offThreads = threads.onChange(() => this.showThreads());
     const offCommands = provideActions(this.viewActions());
     const offContext = commands.provide(() => this.facts());
-    const offResync = session.onResync(() => this.reloadScopes());
+    const offResync = session.onResync(() => this.scopes.reload());
     const offOrigins = semantic.onOrigins((path) => this.refreshDiagnostics(path));
     const offShown = reviewShown.onShown(() => this.refreshDiagnostics());
     // The open tabs are the old changeset's until the new one's manifest has come and brought its tabs back.
     const offOpening = changeset.onOpening((opening) => {
       if (opening.type === "requested") {
-        this.dropScopes();
-        this.frozen = true;
+        this.scopes.drop();
+        this.scopes.setFrozen(true);
       } else if (opening.type === "unannounced") {
-        this.frozen = false;
-        this.reloadScopes();
+        this.scopes.setFrozen(false);
+        this.scopes.reload();
       }
     });
     this.unsubscribe = () => {
@@ -229,9 +234,9 @@ export class ReviewController {
         semantic.invalidate();
         this.refreshDiagnostics();
       } else if (event.type === "reviewChanged") {
-        for (const { scope } of this.scopes.values()) scope.heard(event.update, event.revision);
+        this.scopes.heard(event.update, event.revision);
       } else if (event.type === "snapshotSettled" || event.type === "targetChanged") {
-        this.reloadScopes();
+        this.scopes.reload();
       }
     });
   }
@@ -252,16 +257,18 @@ export class ReviewController {
   private hooksFor(id: TabId): ViewHooks {
     return {
       hover: (revision, side, path, line, col, signal) =>
-        this.analysable(id, side) ? semantic.hover(revision, side, path, line, col, signal) : Promise.resolve(NO_HOVER),
+        this.scopes.analysable(id, side)
+          ? semantic.hover(revision, side, path, line, col, signal)
+          : Promise.resolve(NO_HOVER),
       definition: (revision, side, path, line, col) => {
-        if (this.analysable(id, side)) void this.goToDefinition(id, revision, side, path, line, col);
+        if (this.scopes.analysable(id, side)) void this.goToDefinition(id, revision, side, path, line, col);
       },
       hasDefinition: (revision, side, path, line, col, signal) =>
-        this.analysable(id, side)
+        this.scopes.analysable(id, side)
           ? semantic.hasDefinition(revision, side, path, line, col, signal)
           : Promise.resolve(false),
       locations: (revision, kind, side, path, at, subject) => {
-        if (!this.analysable(id, side)) return;
+        if (!this.scopes.analysable(id, side)) return;
         const backend = this.backend;
         void this.search.start({
           kind,
@@ -281,96 +288,38 @@ export class ReviewController {
         });
       },
       findUsages: (_revision, side, path, at, subject) => {
-        if (this.analysable(id, side)) findSets.findUsages({ type: "usages", symbol: subject.name, side, path, ...at });
+        if (this.scopes.analysable(id, side))
+          findSets.findUsages({ type: "usages", symbol: subject.name, side, path, ...at });
       },
       // Asked again for the mounted editors when the review screen comes up.
       diagnostics: (revision, path) =>
-        reviewShown.on && this.analysable(id, "target") ? semantic.diagnostics(revision, path) : Promise.resolve([]),
+        reviewShown.on && this.scopes.analysable(id, "target")
+          ? semantic.diagnostics(revision, path)
+          : Promise.resolve([]),
       cursor: (revision, side, path, line, col) => {
-        if (this.analysable(id, side)) symbols.follow(revision, side, path, line, col);
+        if (this.scopes.analysable(id, side)) symbols.follow(revision, side, path, line, col);
       },
     };
   }
 
-  /** What the scope of a tab is, if it is not the view on screen: a tab at a commit stays there, and a file tab shows the changeset while a commit is on screen. */
-  private specOf(id: TabId): ScopeSpec | undefined {
-    const commit = commitOf(id);
-    if (commit !== undefined) return { type: "commit", id: commit };
-    return kindOf(id) === "file" && this.changeset.shownCommit !== undefined ? { type: "changeset" } : undefined;
-  }
-
-  /** What the tab reads its file and review state from. */
-  private sourceOf(id: TabId): ViewSource {
-    const spec = this.specOf(id);
-    return spec ? this.scope(spec) : this.changeset;
-  }
-
-  private scope(spec: ScopeSpec): ViewScope {
-    const key = scopeKey(spec);
-    const held = this.scopes.get(key);
-    if (held) return held.scope;
-    // What a mark in a tab got is the view on screen's own answer too, if it shows the same commit.
-    const scope = newScope(this.backend, spec, (shown, update) => this.changeset.adopt(shown, update));
-    const off = scope.subscribe((paths) => this.scopeWritten(scope, paths));
-    this.scopes.set(key, { scope, off });
-    if (!this.frozen) void scope.load();
-    return scope;
-  }
-
-  /** The scope of a tab at a commit; none for the tabs that read the view on screen. */
-  private commitScope(id: TabId): ViewScope | undefined {
-    const commit = commitOf(id);
-    return commit === undefined ? undefined : this.scope({ type: "commit", id: commit });
-  }
-
   /** The commit a file tab stays at, once it is read. */
   commitUnit(id: TabId): CommitUnit | undefined {
-    return this.commitScope(id)?.commit;
+    return this.scopes.commitUnit(id);
   }
 
   /** Whether the tab's file is changed in the view the tab reads. */
   fileChanged(id: TabId): boolean {
-    const path = pathOf(id);
-    return path !== undefined && this.sourceOf(id).layoutOf(path) !== undefined;
+    return this.scopes.fileChanged(id);
   }
 
   /** Whether the tab has a diff pane: the Changes tab, and a file's tab while its view changes the file or is not read yet, so the pane keeps its place across a switch of views. */
   hasDiffPane(id: TabId): boolean {
-    const path = pathOf(id);
-    return path === undefined || this.stillChanged(id, path);
-  }
-
-  /** Whether the view the tab reads still changes the file, or does not say yet. */
-  private stillChanged(id: TabId, path: string): boolean {
-    const source = this.sourceOf(id);
-    return source.currentLayout() === undefined || source.layoutOf(path) !== undefined;
+    return this.scopes.hasDiffPane(id);
   }
 
   /** Drops the scopes no open tab reads (a tab closed). */
   pruneScopes() {
-    const used = new Set(this.tabs.open.flatMap((id) => this.specOf(id) ?? []).map(scopeKey));
-    for (const [key, { off }] of this.scopes) {
-      if (used.has(key)) continue;
-      off();
-      this.scopes.delete(key);
-    }
-  }
-
-  /** Reads the scopes the open tabs need again, as the changeset moved on. */
-  private reloadScopes() {
-    this.pruneScopes();
-    if (this.frozen) return;
-    for (const { scope } of this.scopes.values()) void scope.load();
-  }
-
-  private dropScopes() {
-    for (const { off } of this.scopes.values()) off();
-    this.scopes.clear();
-  }
-
-  /** Starts reading the scopes the open tabs need. */
-  private ensureScopes() {
-    for (const id of this.tabs.open) this.sourceOf(id);
+    this.scopes.prune();
   }
 
   /**
@@ -380,11 +329,13 @@ export class ReviewController {
   structureTarget(): StructureTarget | undefined {
     const id = this.tabs.active;
     const path = pathOf(id) ?? (id === CHANGES ? this.tabs.changesFile : undefined);
-    const shown = path === undefined ? undefined : this.sourceOf(id).currentShown();
+    const shown = path === undefined ? undefined : this.scopes.sourceOf(id).currentShown();
     if (path === undefined || !shown) return undefined;
     // The Symbol panel works on the changeset's snapshots, which no commit on screen has.
     const panel =
-      shown.view.type === "changeset" && this.changeset.shownCommit === undefined && this.analysable(id, "target");
+      shown.view.type === "changeset" &&
+      this.changeset.shownCommit === undefined &&
+      this.scopes.analysable(id, "target");
     const caret = () =>
       this.tabs.modes.get(id) === "file" ? this.texts.get(id)?.caret() : this.views.get(id)?.caretIn(path);
     return { tab: id, path, commit: commitOf(id), shown, panel, caret };
@@ -403,22 +354,17 @@ export class ReviewController {
     await this.openLocation(this.tabs.active, symbol.id.path, symbol.at.line, removed ? "base" : "target");
   }
 
-  /** The tabs that read `scope`. */
-  private tabsOf(scope: ViewScope): TabId[] {
-    return this.tabs.open.filter((id) => this.specOf(id) !== undefined && this.sourceOf(id) === scope);
-  }
-
   /** A scope read its manifest or took review state: the views of its tabs follow. */
   private scopeWritten(scope: ViewScope, paths: ReadonlySet<string> | "all") {
     if (scope.gone) {
       // The commit is not among the changeset's any more (a rewritten branch): its tabs have nothing to show.
-      for (const id of this.tabsOf(scope)) this.tabs.close(id);
+      for (const id of this.scopes.tabsOf(scope)) this.tabs.close(id);
       return;
     }
     const layout = scope.currentLayout();
     if (!layout) return;
-    this.tabs.dropStale((id, path) => this.stillChanged(id, path));
-    for (const id of this.tabsOf(scope)) {
+    this.tabs.dropStale((id, path) => this.scopes.stillChanged(id, path));
+    for (const id of this.scopes.tabsOf(scope)) {
       const view = this.views.get(id);
       if (view && isCurrent(view.shown, layout.shown)) view.refreshReview(paths);
       else if (this.roots.has(id)) this.build(id, view);
@@ -437,7 +383,7 @@ export class ReviewController {
     this.saveView();
     this.unsubscribe();
     this.unsubscribeEvents();
-    this.dropScopes();
+    this.scopes.drop();
     for (const view of this.views.values()) view.destroy();
     this.views.clear();
     for (const text of this.texts.values()) text.destroy();
@@ -452,7 +398,7 @@ export class ReviewController {
    * directly: a tab may read another view than the one on screen.
    */
   private viewOf(origin: Origin): ViewSource {
-    return origin === ON_SCREEN ? this.changeset : this.sourceOf(origin);
+    return origin === ON_SCREEN ? this.changeset : this.scopes.sourceOf(origin);
   }
 
   /** The full id of the commit the view `origin` reads is of; none if it is of the changeset. */
@@ -466,23 +412,9 @@ export class ReviewController {
     return this.changeset.currentLayout()?.interdiff?.markable === false;
   }
 
-  /** The view the tab shows is of a commit, not of the changeset as a whole. */
-  private showsCommit(id: TabId): boolean {
-    const spec = this.specOf(id);
-    return spec ? spec.type === "commit" : this.changeset.shownCommit !== undefined;
-  }
-
-  /** Whether the semantic layer has `side` of what the tab shows: not in a commit, whose snapshots are not the changeset's. */
-  private analysable(id: TabId, side: Side): boolean {
-    if (this.showsCommit(id)) return false;
-    if (this.specOf(id)) return true;
-    const range = this.changeset.currentLayout()?.interdiff;
-    return !range || (range.markable && side === "target");
-  }
-
   /** The threads the tab shows: those of the changeset, and none in a commit, where they would sit in the wrong place. */
   private shownThreads(id: TabId): Thread[] {
-    return this.showsCommit(id) ? [] : threads.items;
+    return this.scopes.showsCommit(id) ? [] : threads.items;
   }
 
   /** Runs a request that marks or comments in `source`, unless the view on screen is read-only: then it says so and `refuse` answers. */
@@ -559,7 +491,7 @@ export class ReviewController {
       editor,
       noImplementations:
         editor && withoutFeature(servedBy.language(editor.path), serverList.servers, "implementations"),
-      noUsages: this.showsCommit(id),
+      noUsages: this.scopes.showsCommit(id),
       serverLanguage: file === undefined ? undefined : servedBy.language(file),
     };
   }
@@ -803,7 +735,7 @@ export class ReviewController {
 
   /** The hunk flagged after or before `from` over the files of the view, as they are flagged now. */
   private flaggedFrom(from: HunkPlace | undefined, delta: 1 | -1): HunkPlace | undefined {
-    const source = this.sourceOf(this.tabs.active);
+    const source = this.scopes.sourceOf(this.tabs.active);
     const paths = source.currentLayout()?.paths ?? [];
     return stepFlagged(paths, (path) => source.state(path)?.review.flagged, from, delta);
   }
@@ -841,7 +773,7 @@ export class ReviewController {
    */
   get semanticPath(): string | undefined {
     const id = this.tabs.active;
-    return this.analysable(id, "target") ? pathOf(id) : undefined;
+    return this.scopes.analysable(id, "target") ? pathOf(id) : undefined;
   }
 
   /** The files that have a tab open, each once. */
@@ -922,9 +854,9 @@ export class ReviewController {
       return undefined;
     }
     const id = fileTab(path, commit);
-    const source = this.sourceOf(id);
-    const spec = this.specOf(id);
-    const scope = spec && this.scope(spec);
+    const source = this.scopes.sourceOf(id);
+    const spec = this.scopes.specOf(id);
+    const scope = spec && this.scopes.scope(spec);
     await scope?.whenLoaded();
     if (scope?.gone) {
       notices.show("That commit is not in the changeset any more");
@@ -938,7 +870,7 @@ export class ReviewController {
       last: this.diffMode,
     });
     this.tabs.showFile(path, mode, commit);
-    this.ensureScopes();
+    this.scopes.ensure();
     await tick(); // a new tab's pane attaches and builds its view
     if (mode === "file") this.ensureText(id);
     else this.syncDiffMode(id);
@@ -1090,10 +1022,10 @@ export class ReviewController {
     const shown = this.changeset.currentShown();
     if (!shown) return;
     for (const [id, view] of this.views) {
-      if (this.sourceOf(id) === this.changeset && isCurrent(view.shown, shown)) view.refreshReview(paths);
+      if (this.scopes.sourceOf(id) === this.changeset && isCurrent(view.shown, shown)) view.refreshReview(paths);
     }
     for (const [id, text] of this.texts) {
-      if (this.sourceOf(id) === this.changeset && text.isFor(shown)) text.refreshReview(paths);
+      if (this.scopes.sourceOf(id) === this.changeset && text.isFor(shown)) text.refreshReview(paths);
     }
   }
 
@@ -1110,7 +1042,7 @@ export class ReviewController {
     const revision = threads.revision;
     if (revision === undefined) return;
     const fits = (id: TabId) => {
-      const layout = this.sourceOf(id).currentLayout();
+      const layout = this.scopes.sourceOf(id).currentLayout();
       return layout !== undefined && this.threadsFit(layout);
     };
     for (const [id, view] of this.views) if (fits(id)) view.setThreads(this.shownThreads(id), revision);
@@ -1145,7 +1077,7 @@ export class ReviewController {
   private buildText(id: TabId, root: HTMLElement, force = false) {
     const path = pathOf(id);
     if (path === undefined) return;
-    const source = this.sourceOf(id);
+    const source = this.scopes.sourceOf(id);
     const layout = source.currentLayout();
     const previous = this.texts.get(id);
     // A scope's views are rebuilt when its own manifest comes.
@@ -1180,7 +1112,7 @@ export class ReviewController {
   private build(id: TabId, previous?: ChangesetView, force = false) {
     const root = this.roots.get(id);
     if (!root || kindOf(id) === "log") return;
-    const source = this.sourceOf(id);
+    const source = this.scopes.sourceOf(id);
     const layout = source.currentLayout();
     // A scope's views are rebuilt when its own manifest comes.
     if (!force && previous && source !== this.changeset && layout && isCurrent(previous.shown, layout.shown)) return;
@@ -1259,7 +1191,7 @@ export class ReviewController {
     for (const id of this.tabs.open) {
       if (pathOf(id) === undefined) continue;
       const old = before?.panes.get(id);
-      const live = (plain || this.specOf(id) !== undefined) && {
+      const live = (plain || this.scopes.specOf(id) !== undefined) && {
         diff: this.views.get(id)?.lines() ?? this.pending.get(id)?.diff,
         text: this.texts.get(id)?.lines() ?? this.pending.get(id)?.text,
       };
@@ -1486,7 +1418,7 @@ export class ReviewController {
 
   /** Renders `layout` in every tab, keeping scroll positions and current hunks (a new revision replaces the views). */
   show(force = false) {
-    this.ensureScopes();
+    this.scopes.ensure();
     for (const id of this.roots.keys()) this.build(id, this.views.get(id), force);
     // A text view is built where the tab shows it or showed it.
     for (const [id, root] of this.textRoots) {
@@ -1502,12 +1434,12 @@ export class ReviewController {
   update({ layout, facts }: Frame) {
     const key = keyId(facts.target.changeset);
     const switching = this.key !== undefined && key !== this.key;
-    if (this.frozen) {
-      this.frozen = false;
-      if (!switching) this.reloadScopes(); // the scopes made meanwhile have read nothing
+    if (this.scopes.isFrozen) {
+      this.scopes.setFrozen(false);
+      if (!switching) this.scopes.reload(); // the scopes made meanwhile have read nothing
     }
     const brought = switching ? this.switchTo(key) : undefined;
-    if (!switching) this.tabs.dropStale((id, path) => this.stillChanged(id, path));
+    if (!switching) this.tabs.dropStale((id, path) => this.scopes.stillChanged(id, path));
     this.key = key;
     const commitChanged = this.commitChanged();
     const rangeChanged = this.rangeChanged(layout) || commitChanged;
@@ -1560,11 +1492,11 @@ export class ReviewController {
     const repo = session.repo;
     if (repo !== undefined) this.memory ??= new ViewMemory(projectViews);
     const saved = this.memory?.get(key);
-    this.dropScopes();
-    this.frozen = false;
+    this.scopes.drop();
+    this.scopes.setFrozen(false);
     const { open, active, modes } = restoredTabs(
       saved,
-      (tab, path) => this.stillChanged(tab, path),
+      (tab, path) => this.scopes.stillChanged(tab, path),
       this.diffMode,
       (tab) => this.tabs.logs.has(tab),
     );
