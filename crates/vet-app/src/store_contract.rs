@@ -32,7 +32,7 @@ use crate::changeset::{
     BaseChoice, ChangedFile, ChangesetId, CommitId, Lens, RemoteKey, Snapshots, Source, Version, VersionChange,
     VersionOrigin,
 };
-use crate::platform::{Discussion, PullRequestHead, PullRequestState};
+use crate::platform::{Discussion, PullRequestHead, PullRequestState, ReviewDecision};
 use crate::ports::{GcFacts, GcPlan, GcStore, LiveStore, ReviewRow, ReviewWrites, Settings, SettingsStore, Store};
 use crate::review::{NonTextAck, ReviewId, ReviewSummary, SpanOrigin};
 use crate::trust::PullRequestTrust;
@@ -261,6 +261,8 @@ fn discussion(name: &str) -> Discussion {
         viewer_verdict: Some(Verdict::Approve),
         labels: vec!["ui".into()],
         ci: None,
+        decision: ReviewDecision::Approved,
+        blocked: true,
         conversation: Vec::new(),
         threads: Vec::new(),
         complete: true,

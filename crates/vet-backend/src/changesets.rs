@@ -244,7 +244,9 @@ const PREFETCH_LIMIT: usize = 20;
 /// asked for. The platform is asked `pace` between two; an account that is limited or failing is
 /// left alone for the rest of the run, a pull request that is merely gone is passed over. Never
 /// delays the list the viewer asked for; the task is handed to the project, which replaces it with
-/// the next list's and stops it when the project closes.
+/// the next list's and stops it when the project closes. What the list shows of a pull request
+/// that its details add (`PullRequestCache::fill`) is announced once the run is through
+/// (`PullRequestsChanged`), also for a copy kept from an earlier run that the cache did not have.
 fn prefetch_details(
     open: &Arc<Open>,
     platforms: Arc<Platforms>,
@@ -254,9 +256,11 @@ fn prefetch_details(
     list: PullRequestList,
     pace: Duration,
 ) -> tokio::task::AbortHandle {
+    let announcer = open.clone();
     let prefetching = async move {
         let mut stopped: std::collections::HashSet<String> = std::collections::HashSet::new();
         let mut fetched = 0usize;
+        let mut listing_changed = false;
         for listed in &list.rows {
             if fetched >= PREFETCH_LIMIT {
                 break;
@@ -273,7 +277,16 @@ fn prefetch_details(
             if let Ok(Some(stored)) = &stored
                 && stored.updated_at == listed.row.updated_at
             {
-                // Nothing changed since the copy that is kept: no call is made.
+                // Nothing changed since the copy that is kept: no call is made, and the list shows
+                // what it says.
+                if known.discussion(&listed.remote, listed.row.number).is_none() {
+                    listing_changed |= known.record_discussion(
+                        &listed.remote,
+                        listed.row.number,
+                        stored.synced_at,
+                        stored.discussion.clone(),
+                    );
+                }
                 continue;
             }
             fetched += 1;
@@ -287,7 +300,8 @@ fn prefetch_details(
             match hosting.discussion(&listed.remote, listed.row.number).await {
                 Ok(discussion) => {
                     let at = unix_now();
-                    known.record_discussion(&listed.remote, listed.row.number, at, discussion.clone());
+                    listing_changed |=
+                        known.record_discussion(&listed.remote, listed.row.number, at, discussion.clone());
                     if let Err(error) = store
                         .writes()
                         .set_discussion(
@@ -318,6 +332,11 @@ fn prefetch_details(
                 }
             }
             tokio::time::sleep(pace).await;
+        }
+        if listing_changed {
+            announcer
+                .subscribers
+                .broadcast(Event::PullRequestsChanged { project: announcer.id });
         }
     };
     tokio::spawn(crate::open::tracked(open, "prefetch", prefetching)).abort_handle()

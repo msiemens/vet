@@ -244,6 +244,8 @@ mod tests {
             viewer_verdict: None,
             labels: Vec::new(),
             ci: None,
+            decision: crate::platform::ReviewDecision::Undecided,
+            blocked: false,
             conversation: Vec::new(),
             threads,
             complete,

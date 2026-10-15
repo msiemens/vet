@@ -20,7 +20,8 @@ use azure_devops_rust_api::git::models::{
 use futures::future::try_join3;
 use vet_app::platform::{
     CommentRef, CredentialProvider, DiffSide, Discussion, NewThread, PlatformComment, PlatformError,
-    PlatformThreadData, PostedComment, PostedThread, PullRequestState, Reviewer, ReviewerState, Submission, Submitted,
+    PlatformThreadData, PostedComment, PostedThread, PullRequestState, ReviewDecision, Reviewer, ReviewerState,
+    Submission, Submitted,
 };
 
 use super::wire::{self, Me};
@@ -377,6 +378,9 @@ impl<C: CredentialProvider + Sync> AzureDevOpsClient<C> {
             viewer_verdict: viewer_verdict(&pr, &call.me),
             labels: pr.labels.iter().filter_map(|l| l.name.clone()).collect(),
             ci,
+            // Azure DevOps lists what a row shows of these.
+            decision: ReviewDecision::Undecided,
+            blocked: false,
             conversation: Vec::new(),
             threads: threads
                 .iter()

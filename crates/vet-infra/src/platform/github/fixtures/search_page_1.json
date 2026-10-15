@@ -16,8 +16,6 @@
           "totalCommentsCount": 5,
           "isCrossRepository": true,
           "headRepository": { "nameWithOwner": "grace/app" },
-          "reviewDecision": "CHANGES_REQUESTED",
-          "mergeStateStatus": "BLOCKED",
           "author": { "login": "grace", "name": "Grace Hopper", "avatarUrl": "https://avatars.githubusercontent.com/u/2?v=4" },
           "labels": { "nodes": [{ "name": "performance" }, { "name": "needs-review" }] },
           "assignees": { "nodes": [{ "login": "ada" }] },
@@ -28,14 +26,6 @@
             ]
           },
           "viewerLatestReview": { "state": "COMMENTED", "commit": { "oid": "c1c1c1" } },
-          "latestOpinionatedReviews": {
-            "nodes": [
-              { "state": "APPROVED", "author": { "login": "ada", "name": "" } },
-              { "state": "CHANGES_REQUESTED", "author": { "login": "linus", "name": "Linus Torvalds" } },
-              { "state": "CHANGES_REQUESTED", "author": null }
-            ]
-          },
-          "reviewThreads": { "nodes": [{ "isResolved": true }, { "isResolved": false }, { "isResolved": false }] },
           "commits": { "nodes": [{ "commit": { "statusCheckRollup": { "state": "FAILURE" } } }] }
         },
         {
@@ -62,8 +52,6 @@
             ]
           },
           "viewerLatestReview": { "state": "PENDING", "commit": { "oid": "d4d4d4" } },
-          "latestOpinionatedReviews": { "nodes": [] },
-          "reviewThreads": { "nodes": [] },
           "commits": { "nodes": [{ "commit": { "statusCheckRollup": null } }] }
         }
       ],

@@ -55,10 +55,14 @@ impl<P: Platform + Sync> Platform for Watched<P> {
         remote: &RemoteKey,
         query: &PullRequestQuery,
     ) -> Result<PullRequestListing, PlatformError> {
-        let listing = self
+        let mut listing = self
             .watched(remote, self.platform.list_pull_requests(remote, query))
             .await?;
-        for pull_request in &listing.pull_requests {
+        let apart = self.platform.traits().details_apart;
+        for pull_request in &mut listing.pull_requests {
+            if apart {
+                self.known.fill(remote, pull_request);
+            }
             self.known.observe(remote, pull_request);
         }
         Ok(listing)
@@ -139,7 +143,7 @@ mod tests {
     use std::sync::Mutex;
 
     use super::*;
-    use crate::platform::known::tests::{remote, titled};
+    use crate::platform::known::tests::{remote, reviewed, titled};
     use crate::platform::{PullRequest, QueueTab, Standing};
 
     /// A platform with the pull requests the test gives it, which fails when the test says so.
@@ -218,6 +222,25 @@ mod tests {
 
         assert_eq!(known.head(&remote(), 7, None).unwrap().title, "Add idempotency keys");
         assert_eq!(known.head(&remote(), 8, None).unwrap().title, "Fix");
+    }
+
+    #[tokio::test]
+    async fn a_list_that_leaves_out_the_details_shows_what_the_discussion_said() {
+        let (watched, _, known) = watching();
+        *watched.platform.pull_requests.lock().unwrap() = vec![titled(7, "Add keys", 100), titled(8, "Fix", 100)];
+        known.record_discussion(&remote(), 7, 1_000, reviewed(2, 1, &["Linus"]));
+        let shown = watched
+            .list_pull_requests(&remote(), &PullRequestQuery::new(QueueTab::AllOpen))
+            .await
+            .unwrap()
+            .pull_requests;
+
+        assert_eq!((shown[0].unresolved_threads, shown[0].changes_requested.len()), (2, 1));
+        assert_eq!(
+            (shown[1].unresolved_threads, shown[1].changes_requested.len()),
+            (0, 0),
+            "nothing was read of the other"
+        );
     }
 
     #[tokio::test]

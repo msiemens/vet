@@ -16,8 +16,8 @@ use vet_app::platform::{
 };
 
 use super::wire::{
-    Author, BackwardsPage, CommitNode, Name, Nodes, Oid, Page, RepositoryData, RequestNode, latest_ci, requested,
-    review_verdict, unexpected,
+    Author, BackwardsPage, CommitNode, Name, Nodes, Oid, Page, RepositoryData, RequestNode, decision, is_blocked,
+    latest_ci, requested, review_verdict, unexpected,
 };
 use super::{Clients, GitHubClient, repository};
 use crate::platform::time::parse_rfc3339;
@@ -60,7 +60,7 @@ fn discussion_query() -> String {
         "query($owner: String!, $name: String!, $number: Int!, $after: String) {{
   repository(owner: $owner, name: $name) {{
     pullRequest(number: $number) {{
-      title url body isDraft state headRefName baseRefName
+      title url body isDraft state headRefName baseRefName reviewDecision mergeStateStatus
       author {{ login avatarUrl ... on User {{ name }} }}
       labels(first: 20) {{ nodes {{ name }} }}
       reviewRequests(first: 30) {{
@@ -237,6 +237,8 @@ struct DiscussionNode {
     state: String,
     head_ref_name: String,
     base_ref_name: String,
+    review_decision: Option<String>,
+    merge_state_status: Option<String>,
     author: Option<Author>,
     labels: Nodes<Name>,
     review_requests: Nodes<RequestNode>,
@@ -597,6 +599,8 @@ impl<C: CredentialProvider + Sync> GitHubClient<C> {
             viewer_verdict: None,
             labels: node.labels.present().map(|l| l.name).collect(),
             ci: latest_ci(node.commits),
+            decision: decision(node.review_decision.as_deref()),
+            blocked: is_blocked(node.merge_state_status.as_deref()),
             conversation: conversation(comments, reviews)?,
             threads,
             complete: threads_complete && comments_complete && reviews_complete,

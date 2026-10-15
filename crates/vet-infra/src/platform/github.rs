@@ -1,7 +1,9 @@
 //! `vet_app::platform::Platform` for GitHub.com and GitHub Enterprise Server, on `octocrab`.
 //!
-//! GraphQL gives a page of pull requests with everything a queue row shows in one
-//! request (the search costs about 3 points of the 5000 an hour per 50 pull requests).
+//! GraphQL gives a page of pull requests with what a queue row needs at once in one
+//! request (the search costs about 3 points of the 5000 an hour per 50 pull requests). What is
+//! expensive per pull request (its review threads, who asked for changes) is left to the request for
+//! the one pull request, so a page of a very large repository is answered in time.
 //! REST serves what is cheaper there: the viewer and their teams, and a one-item
 //! "anything changed in this repository?" probe. `octocrab`'s HTTP cache makes every
 //! REST request conditional (a 304 is free), and an unchanged repository is answered

@@ -50,6 +50,8 @@ pub struct SyncReport {
     pub notices: Vec<SyncNotice>,
     /// Threads were added, changed or removed.
     pub changed: bool,
+    /// What the queue shows of the pull request changed with what the platform said of it.
+    pub listing_changed: bool,
     /// The platform refused or could not take something Vet had to send; the rest was synced.
     pub problem: Option<PlatformError>,
 }
@@ -410,7 +412,7 @@ impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> L
         }
         stored?;
         let (remote, number) = pull_request(st)?;
-        self.known.record_discussion(&remote, number, now, discussion.clone());
+        report.listing_changed = self.known.record_discussion(&remote, number, now, discussion.clone());
         // Kept for the next run: a revisit shows them before the platform is asked again.
         if let Some((head, updated_at)) = self.known.revision(&remote, number) {
             store

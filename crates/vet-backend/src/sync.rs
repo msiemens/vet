@@ -209,6 +209,10 @@ async fn announce(open: &Open, booted: &Booted, remote: &RemoteKey, report: &Syn
             revision: booted.session.revision().await,
         });
     }
+    if report.listing_changed {
+        open.subscribers
+            .broadcast(Event::PullRequestsChanged { project: open.id });
+    }
     for notice in &report.notices {
         open.subscribers.broadcast(Event::Notification {
             project: open.id,

@@ -25,6 +25,10 @@ pub struct PlatformTraits {
     /// Removing the first comment of a thread removes the thread. Otherwise the thread stays with
     /// its other comments, and goes once none is left.
     pub first_comment_ends_thread: bool,
+    /// A list of pull requests leaves out what is expensive for the platform to work out for each:
+    /// their review decision, whether the merge is held back, their unresolved threads and who
+    /// asked for changes. The discussion of each has them once it is read.
+    pub details_apart: bool,
     pub pipelines: PipelineWords,
 }
 
@@ -84,6 +88,7 @@ impl PlatformTraits {
             blocking: vec![BlockingSource::UnresolvedThreads],
             revision_scoped: false,
             first_comment_ends_thread: true,
+            details_apart: true,
             pipelines: PipelineWords {
                 group: "job",
                 step: "step",
@@ -111,6 +116,7 @@ impl PlatformTraits {
             revision_scoped: false,
             // A removed comment is marked deleted; the thread is deleted with its last one.
             first_comment_ends_thread: false,
+            details_apart: false,
             pipelines: PipelineWords {
                 group: "stage",
                 step: "task",
@@ -170,7 +176,7 @@ pub struct ViewerReview {
 }
 
 /// What the reviewers of a pull request decided together, as the platform rolls their reviews up.
-#[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Default, Serialize, Deserialize)]
 pub enum ReviewDecision {
     #[default]
     Undecided,
@@ -237,17 +243,22 @@ pub struct PullRequest {
     pub assignees: Vec<String>,
     /// The rolled-up checks of `head`; none if it has none.
     pub ci: Option<CiState>,
-    /// Counted as far as the platform listed the threads.
+    /// Counted as far as the platform listed the threads. Zero in a list of a platform with
+    /// [`PlatformTraits::details_apart`] until the pull request's discussion was read.
     pub unresolved_threads: u32,
     /// Those whose review is asked for and not given yet.
     pub review_requests: Vec<ReviewRequest>,
     pub viewer_review: Option<ViewerReview>,
-    /// What the reviewers decided together.
+    /// What the reviewers decided together. Undecided in a list of a platform with
+    /// [`PlatformTraits::details_apart`] until the pull request's discussion was read.
     pub decision: ReviewDecision,
     /// Who holds it back from approval, in the platform's order: what a decision to ask for
-    /// changes is made of.
+    /// changes is made of. Empty in a list of a platform with
+    /// [`PlatformTraits::details_apart`] until the pull request's discussion was read.
     pub changes_requested: Vec<ChangesRequest>,
-    /// The platform holds the merge back: a blocking policy or branch protection is not met.
+    /// The platform holds the merge back: a blocking policy or branch protection is not met. False
+    /// in a list of a platform with [`PlatformTraits::details_apart`] until the pull request's
+    /// discussion was read.
     pub blocked: bool,
     /// Unix seconds.
     pub updated_at: i64,

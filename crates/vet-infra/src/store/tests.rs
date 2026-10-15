@@ -6,7 +6,7 @@ use std::collections::HashSet;
 use tempfile::TempDir;
 use vet_app::changeset::{BaseChoice, ChangedFile, CommitId, Lens, RemoteKey, Snapshots, VersionChange, VersionOrigin};
 use vet_app::gc::{Retention, collect, open_bases};
-use vet_app::platform::{Discussion, PullRequestState};
+use vet_app::platform::{Discussion, PullRequestState, ReviewDecision};
 use vet_app::ports::{GcReport, ReviewWrites, Store};
 use vet_app::review::{NonTextAck, SpanOrigin};
 use vet_core::content::{
@@ -1528,6 +1528,8 @@ fn discussion(description: &str) -> Discussion {
         viewer_verdict: None,
         labels: Vec::new(),
         ci: None,
+        decision: ReviewDecision::Undecided,
+        blocked: false,
         conversation: Vec::new(),
         threads: Vec::new(),
         complete: true,

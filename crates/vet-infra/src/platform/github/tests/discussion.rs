@@ -43,6 +43,7 @@ fn first_page(threads: Value, next: Option<&str>) -> String {
         "title": "Add idempotency keys", "url": "https://github.com/acme/app/pull/482", "isDraft": false,
         "body": "Retried jobs no longer run twice.\n\nSee `Job::key`.",
         "state": "OPEN", "headRefName": "lena/keys", "baseRefName": "main",
+        "reviewDecision": "APPROVED", "mergeStateStatus": "BLOCKED",
         "author": { "login": "lena", "name": "Lena Berg", "avatarUrl": "https://avatars.example/lena" },
         "labels": { "nodes": [{ "name": "sync" }, { "name": "database" }] },
         "reviewRequests": { "nodes": [
@@ -243,6 +244,11 @@ async fn the_pull_request_block_says_who_reviews_what_blocks_and_what_was_said()
         "Retried jobs no longer run twice.\n\nSee `Job::key`."
     );
     assert_eq!(found.ci, Some(CiState::Failure));
+    assert_eq!(
+        (found.decision, found.blocked),
+        (ReviewDecision::Approved, true),
+        "what a row of the list shows once the details were read"
+    );
     assert_eq!(
         found
             .reviewers

@@ -10,10 +10,14 @@ use vet_core::num::sat_u32;
 
 use crate::platform::time::parse_rfc3339;
 
-/// The fields of a pull request that the queue shows. One request per page asks for these
-/// for every pull request on it; each connection counts once per pull request against
-/// the rate limit (6 of them: labels, assignees, review requests, the reviewers' latest
-/// verdicts, review threads, commits).
+/// The fields of a pull request that a queue row needs at once: what its status, checks and
+/// review state say, and what the tabs and filters select by. One request per page asks for these
+/// for every pull request on it, and a large repository's page has to be answered within GitHub's
+/// ten seconds, so nothing that costs much per pull request is here: the review decision, the
+/// merge state (GitHub works it out for each pull request asked), the review threads and who
+/// asked for changes are read per pull request ([`detail_query`], and the discussion once it is
+/// read). Each connection counts once per pull request against the rate limit (4 of them:
+/// labels, assignees, review requests, commits).
 const PULL_REQUEST_FIELDS: &str = "
 fragment PullRequestFields on PullRequest {
   number
@@ -29,8 +33,6 @@ fragment PullRequestFields on PullRequest {
   totalCommentsCount
   isCrossRepository
   headRepository { nameWithOwner }
-  reviewDecision
-  mergeStateStatus
   author { login avatarUrl ... on User { name } }
   labels(first: 20) { nodes { name } }
   assignees(first: 10) { nodes { login } }
@@ -45,8 +47,6 @@ fragment PullRequestFields on PullRequest {
     }
   }
   viewerLatestReview { state commit { oid } }
-  latestOpinionatedReviews(first: 20, writersOnly: true) { nodes { state author { login ... on User { name } } } }
-  reviewThreads(first: 100) { nodes { isResolved } }
   commits(last: 1) { nodes { commit { statusCheckRollup { state } } } }
 }";
 
@@ -62,12 +62,18 @@ pub(super) fn search_query() -> String {
     )
 }
 
+/// One pull request with everything the listing leaves out: it is asked for alone, so it can afford
+/// the review threads and the reviewers' verdicts.
 pub(super) fn detail_query() -> String {
     format!(
         "query($owner: String!, $name: String!, $number: Int!, $after: String) {{
   repository(owner: $owner, name: $name) {{
     pullRequest(number: $number) {{
       ...PullRequestFields
+      reviewDecision
+      mergeStateStatus
+      latestOpinionatedReviews(first: 20, writersOnly: true) {{ nodes {{ state author {{ login ... on User {{ name }} }} }} }}
+      reviewThreads(first: 100) {{ nodes {{ isResolved }} }}
       baseRefOid
       timelineItems(itemTypes: [HEAD_REF_FORCE_PUSHED_EVENT], first: 100, after: $after) {{
         nodes {{
@@ -147,6 +153,11 @@ impl<T> RepositoryData<T> {
 pub(super) struct DetailNode {
     #[serde(flatten)]
     pub pull_request: PullRequestNode,
+    /// Null when no review is required or none was given.
+    review_decision: Option<String>,
+    merge_state_status: Option<String>,
+    latest_opinionated_reviews: Nodes<OpinionNode>,
+    review_threads: Nodes<ThreadNode>,
     pub base_ref_oid: String,
     pub timeline_items: Page<ForcePushNode>,
 }
@@ -293,17 +304,12 @@ pub(super) struct PullRequestNode {
     is_cross_repository: bool,
     /// Null when the fork was deleted.
     head_repository: Option<HeadRepository>,
-    /// Null when no review is required or none was given.
-    review_decision: Option<String>,
-    merge_state_status: Option<String>,
     /// Null for an account that was deleted.
     author: Option<Author>,
     labels: Nodes<Name>,
     assignees: Nodes<Login>,
     review_requests: Nodes<RequestNode>,
     viewer_latest_review: Option<ReviewNode>,
-    latest_opinionated_reviews: Nodes<OpinionNode>,
-    review_threads: Nodes<ThreadNode>,
     commits: Nodes<CommitNode>,
 }
 
@@ -369,10 +375,11 @@ pub(super) fn requested(node: RequestNode) -> Option<(ReviewRequest, String)> {
 }
 
 impl PullRequestNode {
+    /// The pull request as the listing has it: without its review decision, merge state,
+    /// unresolved threads and who asked for changes, which only [`DetailNode`] reads.
     pub(super) fn into_pull_request(self) -> Result<PullRequest, PlatformError> {
         let updated_at = parse_rfc3339(&self.updated_at).ok_or_else(|| unexpected("a time"))?;
         let ci = latest_ci(self.commits);
-        let unresolved_threads = self.review_threads.present().filter(|t| !t.is_resolved).count();
         Ok(PullRequest {
             number: self.number,
             title: self.title,
@@ -399,7 +406,7 @@ impl PullRequestNode {
             labels: self.labels.present().map(|l| l.name).collect(),
             assignees: self.assignees.present().map(|a| a.login).collect(),
             ci,
-            unresolved_threads: sat_u32(unresolved_threads),
+            unresolved_threads: 0,
             review_requests: self.review_requests.present().filter_map(review_request).collect(),
             viewer_review: self.viewer_latest_review.and_then(|r| {
                 Some(ViewerReview {
@@ -407,17 +414,9 @@ impl PullRequestNode {
                     commit: r.commit.map(|c| c.oid),
                 })
             }),
-            decision: decision(self.review_decision.as_deref()),
-            changes_requested: self
-                .latest_opinionated_reviews
-                .present()
-                .filter(|r| r.state == "CHANGES_REQUESTED")
-                .map(|r| ChangesRequest {
-                    reviewer: r.author.as_ref().map_or_else(|| "ghost".to_owned(), Author::display),
-                    how: ChangesAsked::Requested,
-                })
-                .collect(),
-            blocked: is_blocked(self.merge_state_status.as_deref()),
+            decision: ReviewDecision::Undecided,
+            changes_requested: Vec::new(),
+            blocked: false,
             updated_at,
         })
     }
@@ -428,7 +427,19 @@ impl DetailNode {
     /// needed for those.
     pub(super) fn into_detail(self) -> Result<(PullRequestDetail, Vec<ForcePush>), PlatformError> {
         let force_pushes = force_pushes(self.timeline_items.nodes)?;
-        let pull_request = self.pull_request.into_pull_request()?;
+        let mut pull_request = self.pull_request.into_pull_request()?;
+        pull_request.decision = decision(self.review_decision.as_deref());
+        pull_request.blocked = is_blocked(self.merge_state_status.as_deref());
+        pull_request.unresolved_threads = sat_u32(self.review_threads.present().filter(|t| !t.is_resolved).count());
+        pull_request.changes_requested = self
+            .latest_opinionated_reviews
+            .present()
+            .filter(|r| r.state == "CHANGES_REQUESTED")
+            .map(|r| ChangesRequest {
+                reviewer: r.author.as_ref().map_or_else(|| "ghost".to_owned(), Author::display),
+                how: ChangesAsked::Requested,
+            })
+            .collect();
         let detail = PullRequestDetail {
             pull_request,
             base: self.base_ref_oid,

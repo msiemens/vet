@@ -23,8 +23,6 @@
             "nodes": [{ "requestedReviewer": { "__typename": "Mannequin", "login": "former-ada" } }]
           },
           "viewerLatestReview": null,
-          "latestOpinionatedReviews": { "nodes": [] },
-          "reviewThreads": { "nodes": [] },
           "commits": { "nodes": [{ "commit": { "statusCheckRollup": { "state": "SUCCESS" } } }] }
         }
       ],

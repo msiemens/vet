@@ -10,7 +10,8 @@ use super::discussion::{
     PlatformThreadData, PostedComment, PostedThread, PullRequestState, Submission, Submitted,
 };
 use super::model::{
-    PlatformError, PlatformTraits, Posting, PullRequestDetail, PullRequestListing, PullRequestQuery, Viewer,
+    PlatformError, PlatformTraits, Posting, PullRequestDetail, PullRequestListing, PullRequestQuery, ReviewDecision,
+    Viewer,
 };
 use super::port::Platform;
 use super::remote::RemoteKey;
@@ -54,6 +55,8 @@ impl Default for FakeHosting {
                 viewer_verdict: None,
                 labels: Vec::new(),
                 ci: None,
+                decision: ReviewDecision::Undecided,
+                blocked: false,
                 conversation: Vec::new(),
                 threads: Vec::new(),
                 complete: true,

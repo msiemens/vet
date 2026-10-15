@@ -18,7 +18,10 @@ use vet_app::platform::RemoteKey;
 use vet_app::ports::ChangesetStore;
 use vet_backend::{Config, Orchestrator, open_store};
 use vet_infra::platform::fake::{Canned, Fake, Seen};
-use vet_protocol::{ChangesetKey, ProjectId, PullRequestInfo, Request, Response, Secret};
+use vet_protocol::{
+    ChangesetKey, Event, ProjectId, PullRequestInfo, PullRequestRow, QueueStatus, Request, Response, Secret,
+    ServerMessage,
+};
 
 #[cfg(debug_assertions)]
 use crate::common::background_ended;
@@ -71,6 +74,16 @@ pub(crate) struct Mock {
     pub(crate) checks_refusals: usize,
     /// How many check-run reads were answered, refusals included.
     pub(crate) checks_calls: usize,
+    /// How many unresolved review threads every pull request has; the search does not say.
+    pub(crate) unresolved_threads: usize,
+    /// Who asked for changes on every pull request, which holds the review decision at changes
+    /// requested; the search does not say.
+    pub(crate) asking_changes: Option<String>,
+    /// The pull request whose merge the platform holds back; the search does not say.
+    pub(crate) blocked: Option<u64>,
+    /// Whether the search was asked for what is expensive to work out for every pull request:
+    /// the review threads, the reviewers' verdicts, the review decision or the merge state.
+    pub(crate) search_asked_expensive_fields: bool,
 }
 
 fn user_json() -> String {
@@ -109,15 +122,11 @@ fn pr_node(pr: &Pr) -> Value {
         "totalCommentsCount": 0,
         "isCrossRepository": false,
         "headRepository": null,
-        "reviewDecision": null,
-        "mergeStateStatus": null,
         "author": { "login": "ada", "name": "Ada" },
         "labels": { "nodes": [] },
         "assignees": { "nodes": [] },
         "reviewRequests": { "nodes": [] },
         "viewerLatestReview": null,
-        "latestOpinionatedReviews": { "nodes": [] },
-        "reviewThreads": { "nodes": [] },
         "commits": { "nodes": [{ "commit": { "statusCheckRollup": null } }] }
     })
 }
@@ -133,12 +142,46 @@ fn search_json(mock: &Mock) -> String {
 fn detail_json(mock: &Mock, number: u64) -> Option<String> {
     let pr = mock.prs.iter().find(|p| p.number == number)?;
     let mut pull_request = pr_node(pr);
+    pull_request["reviewDecision"] = json!(mock.asking_changes.as_ref().map(|_| "CHANGES_REQUESTED"));
+    pull_request["mergeStateStatus"] = json!((mock.blocked == Some(number)).then_some("BLOCKED"));
+    pull_request["latestOpinionatedReviews"] = json!({ "nodes": mock.asking_changes.iter()
+        .map(|name| json!({ "state": "CHANGES_REQUESTED", "author": { "login": name, "name": name } }))
+        .collect::<Vec<_>>() });
+    pull_request["reviewThreads"] = json!({ "nodes": (0..mock.unresolved_threads)
+        .map(|_| json!({ "isResolved": false }))
+        .collect::<Vec<_>>() });
     pull_request["baseRefOid"] = json!(mock.base);
     pull_request["timelineItems"] = json!({ "nodes": [], "pageInfo": { "hasNextPage": false, "endCursor": null } });
     Some(json!({ "data": { "repository": { "pullRequest": pull_request } } }).to_string())
 }
 
-fn discussion_json(number: u64, description: &str) -> String {
+fn thread_json(id: usize) -> Value {
+    json!({
+        "id": format!("T{id}"),
+        "isResolved": false,
+        "isOutdated": false,
+        "path": "a.txt",
+        "diffSide": "RIGHT",
+        "line": 1,
+        "startLine": null,
+        "originalLine": 1,
+        "originalStartLine": null,
+        "subjectType": "LINE",
+        "resolvedBy": null,
+        "comments": { "nodes": [{
+            "id": format!("C{id}"),
+            "body": "why?",
+            "createdAt": NOW,
+            "lastEditedAt": null,
+            "state": "SUBMITTED",
+            "viewerDidAuthor": false,
+            "author": { "login": "ada", "name": "Ada" },
+            "originalCommit": null
+        }], "pageInfo": { "hasNextPage": false, "endCursor": null } }
+    })
+}
+
+fn discussion_json(mock: &Mock, number: u64, description: &str) -> String {
     json!({ "data": { "repository": { "pullRequest": {
         "title": format!("PR {number}"),
         "url": format!("https://github.com/acme/app/pull/{number}"),
@@ -147,14 +190,21 @@ fn discussion_json(number: u64, description: &str) -> String {
         "state": "OPEN",
         "headRefName": "feature",
         "baseRefName": "main",
+        "reviewDecision": mock.asking_changes.as_ref().map(|_| "CHANGES_REQUESTED"),
+        "mergeStateStatus": (mock.blocked == Some(number)).then_some("BLOCKED"),
         "author": { "login": "ada", "name": "Ada" },
         "labels": { "nodes": [] },
         "reviewRequests": { "nodes": [] },
-        "latestReviews": { "nodes": [] },
+        "latestReviews": { "nodes": mock.asking_changes.iter()
+            .map(|name| json!({ "state": "CHANGES_REQUESTED", "author": { "login": name, "name": name } }))
+            .collect::<Vec<_>>() },
         "commits": { "nodes": [{ "commit": { "statusCheckRollup": null } }] },
         "comments": { "nodes": [], "pageInfo": { "hasPreviousPage": false, "startCursor": null } },
         "reviews": { "nodes": [], "pageInfo": { "hasPreviousPage": false, "startCursor": null } },
-        "reviewThreads": { "nodes": [], "pageInfo": { "hasNextPage": false, "endCursor": null } }
+        "reviewThreads": {
+            "nodes": (0..mock.unresolved_threads).map(thread_json).collect::<Vec<_>>(),
+            "pageInfo": { "hasNextPage": false, "endCursor": null }
+        }
     } } } })
     .to_string()
 }
@@ -226,7 +276,16 @@ fn github(mock: Arc<Mutex<Mock>>) -> Fake {
         }
         let query = query_of(request);
         if query.contains("search(query:") {
-            return Canned::json(&search_json(&mock.lock().unwrap()));
+            let mut mock = mock.lock().unwrap();
+            mock.search_asked_expensive_fields |= [
+                "reviewThreads",
+                "latestOpinionatedReviews",
+                "reviewDecision",
+                "mergeStateStatus",
+            ]
+            .iter()
+            .any(|expensive| query.contains(expensive));
+            return Canned::json(&search_json(&mock));
         }
         if query.contains("baseRefOid") {
             let found = detail_json(&mock.lock().unwrap(), number_of(request));
@@ -254,10 +313,10 @@ fn github(mock: Arc<Mutex<Mock>>) -> Fake {
             if !delay.is_zero() {
                 std::thread::sleep(delay);
             }
-            let mut mock = mock.lock().unwrap();
-            let refused = mock.limit_after.is_some_and(|n| mock.discussions >= n);
-            mock.discussions += 1;
-            drop(mock);
+            let mut held = mock.lock().unwrap();
+            let refused = held.limit_after.is_some_and(|n| held.discussions >= n);
+            held.discussions += 1;
+            drop(held);
             if missing == Some(number) {
                 return Canned::status(404, r#"{"message":"not found"}"#);
             }
@@ -265,7 +324,7 @@ fn github(mock: Arc<Mutex<Mock>>) -> Fake {
                 let status = if refusal == 0 { 429 } else { refusal };
                 Canned::status(status, r#"{"message":"refused"}"#).with("Retry-After", "1")
             } else {
-                Canned::json(&discussion_json(number, &description))
+                Canned::json(&discussion_json(&mock.lock().unwrap(), number, &description))
             };
         }
         Canned::status(500, r#"{"message":"unexpected query"}"#)
@@ -393,6 +452,20 @@ async fn list(client: &Client, project: ProjectId) {
     assert!(matches!(answer, Response::PullRequests { .. }), "{answer:?}");
 }
 
+/// The rows the list answers with, by pull request number.
+async fn rows(client: &Client, project: ProjectId) -> Vec<(u64, PullRequestRow)> {
+    match client.call(Request::ListPullRequests { project }).await.unwrap() {
+        Response::PullRequests { rows, .. } => rows
+            .into_iter()
+            .map(|row| match &row.key {
+                ChangesetKey::PullRequest { number, .. } => (u64::from(*number), row),
+                other => panic!("{other:?}"),
+            })
+            .collect(),
+        other => panic!("{other:?}"),
+    }
+}
+
 /// The details of the pull request on view, as the Comments panel reads them.
 async fn info(client: &Client, project: ProjectId) -> PullRequestInfo {
     match client.call(Request::PullRequestInfo { project }).await.unwrap() {
@@ -468,6 +541,60 @@ async fn the_details_of_a_listed_pull_request_are_fetched_ahead_and_a_changed_on
     list(&client, project).await;
     assert_eq!(stored_description(repo.path(), 7).await.as_deref(), Some("third"));
     assert_eq!(answered(&mock), 3, "a changed pull request is fetched");
+}
+
+#[tokio::test]
+async fn a_row_is_listed_without_its_threads_and_has_them_once_its_details_are_fetched() {
+    let (mock, fake, repo, _scratch) = fixture();
+    {
+        let mut mock = mock.lock().unwrap();
+        mock.unresolved_threads = 2;
+        mock.asking_changes = Some("Linus".to_owned());
+        mock.blocked = Some(7);
+    }
+    let (_handler, mut client) = backend(repo.path(), &fake.base()).await;
+    let project = client.open(repo.path()).await;
+
+    let before = rows(&client, project).await;
+
+    assert!(
+        !mock.lock().unwrap().search_asked_expensive_fields,
+        "the search asks for what is expensive to work out for every pull request"
+    );
+    for (number, row) in &before {
+        assert_eq!(
+            (row.status, row.unresolved_threads, row.changes_requested.len()),
+            (None, 0, 0),
+            "#{number}: the search does not say"
+        );
+    }
+
+    // The prefetch reads the details, and says that the list shows more of them now.
+    tokio::time::timeout(Duration::from_secs(30), async {
+        loop {
+            if let Some(ServerMessage::Event {
+                event: Event::PullRequestsChanged { .. },
+            }) = client.inbox.recv().await
+            {
+                break;
+            }
+        }
+    })
+    .await
+    .expect("the list was not announced to have changed");
+
+    for (number, row) in rows(&client, project).await {
+        assert_eq!(row.unresolved_threads, 2, "#{number}");
+        if number == 7 {
+            assert_eq!(row.status, Some(QueueStatus::Blocked));
+        } else {
+            let asked: Vec<_> = row.changes_requested.iter().map(|c| c.reviewer.as_str()).collect();
+            assert_eq!(
+                (row.status, asked),
+                (Some(QueueStatus::ChangesRequested), vec!["Linus"])
+            );
+        }
+    }
 }
 
 #[tokio::test]

@@ -5,10 +5,12 @@
 use std::collections::HashMap;
 use std::sync::Mutex;
 
+use vet_core::num::sat_u32;
+
 use crate::mutex::lock;
 
-use super::discussion::Discussion;
-use super::model::{PullRequest, PullRequestHead};
+use super::discussion::{Discussion, ReviewerState};
+use super::model::{ChangesAsked, ChangesRequest, PullRequest, PullRequestHead, ReviewDecision};
 use super::remote::RemoteKey;
 
 /// How many pull requests are kept; the one observed longest ago goes first.
@@ -62,6 +64,34 @@ fn named_by(head: &mut PullRequestHead, discussion: &Discussion) {
     head.title.clone_from(&discussion.title);
     head.draft = discussion.draft;
     head.target_branch.clone_from(&discussion.target_branch);
+}
+
+/// What the queue shows of a pull request that a list of some platforms leaves to its discussion.
+#[derive(Default, PartialEq, Eq)]
+struct Details {
+    decision: ReviewDecision,
+    blocked: bool,
+    unresolved_threads: u32,
+    changes_requested: Vec<ChangesRequest>,
+}
+
+impl Details {
+    fn of(discussion: &Discussion) -> Self {
+        Self {
+            decision: discussion.decision,
+            blocked: discussion.blocked,
+            unresolved_threads: sat_u32(discussion.threads.iter().filter(|t| !t.resolved).count()),
+            changes_requested: discussion
+                .reviewers
+                .iter()
+                .filter(|r| r.state == ReviewerState::ChangesRequested)
+                .map(|r| ChangesRequest {
+                    reviewer: r.name.clone(),
+                    how: ChangesAsked::Requested,
+                })
+                .collect(),
+        }
+    }
 }
 
 /// The pull requests the platforms were asked about, by remote and number. Shared by everything
@@ -125,13 +155,38 @@ impl PullRequestCache {
 
     /// Notes the discussion of the pull request as read at `at`, which is as current as anything
     /// the platform said of it before: the name it gives the pull request replaces the one known.
-    pub fn record_discussion(&self, remote: &RemoteKey, number: u64, at: i64, discussion: Discussion) {
+    /// Answers whether that changes what [`Self::fill`] puts into a listed pull request.
+    pub fn record_discussion(&self, remote: &RemoteKey, number: u64, at: i64, discussion: Discussion) -> bool {
         let mut entries = self.entries();
         let known = entries.entry(remote, number);
         if let Some((head, _, _)) = known.head.as_mut() {
             named_by(head, &discussion);
         }
+        let shown = known
+            .discussion
+            .as_ref()
+            .map_or_else(Details::default, |(_, d)| Details::of(d));
+        let changed = shown != Details::of(&discussion);
         known.discussion = Some((at, discussion));
+        changed
+    }
+
+    /// Completes `pull_request`, as a platform whose lists leave out its details listed it, with
+    /// what its discussion said when it was last read. A pull request changed since shows the
+    /// details as of that read until the next one.
+    pub fn fill(&self, remote: &RemoteKey, pull_request: &mut PullRequest) {
+        let entries = self.entries();
+        let read = entries
+            .by_pull_request
+            .get(&(remote.clone(), pull_request.number))
+            .and_then(|k| k.discussion.as_ref());
+        if let Some((_, discussion)) = read {
+            let details = Details::of(discussion);
+            pull_request.decision = details.decision;
+            pull_request.blocked = details.blocked;
+            pull_request.unresolved_threads = details.unresolved_threads;
+            pull_request.changes_requested = details.changes_requested;
+        }
     }
 
     /// The discussion as last read, and when.
@@ -233,6 +288,92 @@ pub(super) mod tests {
         assert!(cache.head(&remote(), 1, None).is_some(), "it was seen again");
         assert!(cache.head(&remote(), 2, None).is_none());
         assert!(cache.head(&remote(), KEPT as u64 + 1, None).is_some());
+    }
+
+    pub(in crate::platform) fn reviewed(unresolved: usize, resolved: usize, asking_changes: &[&str]) -> Discussion {
+        use crate::platform::{DiffSide, PlatformThreadData, Reviewer};
+        let thread = |resolved| PlatformThreadData {
+            id: String::new(),
+            path: "a.rs".to_owned(),
+            side: DiffSide::Right,
+            lines: None,
+            outdated: false,
+            resolved,
+            resolved_by: None,
+            comments: Vec::new(),
+        };
+        let mut discussion = renamed("Add keys");
+        discussion.threads = (0..unresolved)
+            .map(|_| thread(false))
+            .chain((0..resolved).map(|_| thread(true)))
+            .collect();
+        discussion.reviewers = asking_changes
+            .iter()
+            .map(|name| Reviewer {
+                login: (*name).to_owned(),
+                name: (*name).to_owned(),
+                state: ReviewerState::ChangesRequested,
+            })
+            .chain([Reviewer {
+                login: "ada".to_owned(),
+                name: "Ada".to_owned(),
+                state: ReviewerState::Approved,
+            }])
+            .collect();
+        discussion
+    }
+
+    #[test]
+    fn a_listed_pull_request_is_completed_with_the_review_state_its_discussion_had() {
+        let cache = PullRequestCache::default();
+        let mut listed = pr(7);
+        cache.fill(&remote(), &mut listed);
+        assert_eq!((listed.unresolved_threads, listed.changes_requested.len()), (0, 0));
+
+        let mut read = reviewed(2, 1, &["Linus"]);
+        read.blocked = true;
+        read.decision = ReviewDecision::ChangesRequested;
+        cache.record_discussion(&remote(), 7, 1_000, read);
+        cache.fill(&remote(), &mut listed);
+
+        assert_eq!(
+            (listed.blocked, listed.decision),
+            (true, ReviewDecision::ChangesRequested)
+        );
+        assert_eq!(listed.unresolved_threads, 2, "the resolved one is not counted");
+        assert_eq!(
+            listed.changes_requested,
+            [ChangesRequest {
+                reviewer: "Linus".to_owned(),
+                how: ChangesAsked::Requested
+            }],
+            "who asked for changes, not who approved"
+        );
+        let mut other = pr(8);
+        cache.fill(&remote(), &mut other);
+        assert_eq!(
+            other.unresolved_threads, 0,
+            "another pull request's discussion is not this one's"
+        );
+    }
+
+    #[test]
+    fn reading_a_discussion_says_whether_the_list_shows_something_else_afterwards() {
+        let cache = PullRequestCache::default();
+
+        let first = cache.record_discussion(&remote(), 7, 1, reviewed(2, 0, &[]));
+        let again = cache.record_discussion(&remote(), 7, 2, reviewed(2, 3, &[]));
+        let resolved = cache.record_discussion(&remote(), 7, 3, reviewed(0, 5, &[]));
+        let nothing_to_show = cache.record_discussion(&remote(), 8, 4, reviewed(0, 5, &[]));
+        let mut held_back = reviewed(0, 5, &[]);
+        held_back.blocked = true;
+        let blocked = cache.record_discussion(&remote(), 7, 5, held_back);
+
+        assert_eq!(
+            (first, again, resolved, nothing_to_show, blocked),
+            (true, false, true, false, true),
+            "only a different count, reviewer, decision or merge state changes what the list shows"
+        );
     }
 
     #[test]

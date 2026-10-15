@@ -4,7 +4,7 @@
 use serde::{Deserialize, Serialize};
 use vet_core::review::Verdict;
 
-use super::model::{CiState, PlatformError, ReviewVerdict};
+use super::model::{CiState, PlatformError, ReviewDecision, ReviewVerdict};
 
 /// Which side of the diff a comment's lines are on.
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Serialize, Deserialize)]
@@ -119,6 +119,10 @@ pub struct Discussion {
     pub viewer_verdict: Option<Verdict>,
     pub labels: Vec<String>,
     pub ci: Option<CiState>,
+    /// What the reviewers decided together.
+    pub decision: ReviewDecision,
+    /// The platform holds the merge back: a blocking policy or branch protection is not met.
+    pub blocked: bool,
     /// Oldest first.
     pub conversation: Vec<ConversationItem>,
     pub threads: Vec<PlatformThreadData>,

@@ -177,7 +177,6 @@ async fn a_list_follows_the_pages_and_reads_what_the_queue_shows() {
             first.head.as_str(),
             first.draft,
             first.ci,
-            first.unresolved_threads,
             first.updated_at,
         ),
         (
@@ -188,7 +187,6 @@ async fn a_list_follows_the_pages_and_reads_what_the_queue_shows() {
             "c2c2c2",
             false,
             Some(CiState::Failure),
-            2,
             1_714_564_800,
         )
     );
@@ -237,7 +235,85 @@ async fn a_list_follows_the_pages_and_reads_what_the_queue_shows() {
     assert_eq!(found[2].fork, None, "a branch of the repository itself");
 
     assert_eq!(
-        first.changes_requested,
+        (
+            first.unresolved_threads,
+            &first.changes_requested[..],
+            first.decision,
+            first.blocked
+        ),
+        (0, &[][..], ReviewDecision::Undecided, false),
+        "what is expensive to work out is read per pull request"
+    );
+    assert_eq!(
+        (first.author_avatar.as_deref(), draft.author_avatar.as_deref()),
+        (Some("https://avatars.githubusercontent.com/u/2?v=4"), None),
+        "no account, no picture"
+    );
+}
+
+fn query_of(request: &Seen) -> String {
+    serde_json::from_str::<Value>(&request.body).unwrap()["query"]
+        .as_str()
+        .unwrap()
+        .to_owned()
+}
+
+#[tokio::test]
+async fn the_list_asks_for_what_a_row_needs_and_leaves_the_expensive_fields_to_each_pull_request() {
+    set_now(NOW);
+    let fake = repository(Arc::new(Mutex::new("v1")));
+    client(&fake).list_pull_requests(&remote(), &all_open()).await.unwrap();
+
+    let listing = query_of(&fake.graphql_requests()[0]);
+    for expensive in [
+        "reviewThreads",
+        "latestOpinionatedReviews",
+        "reviewDecision",
+        "mergeStateStatus",
+    ] {
+        assert!(
+            !listing.contains(expensive),
+            "the list asks for {expensive} of every pull request"
+        );
+    }
+    for needed in [
+        "isDraft",
+        "reviewRequests",
+        "viewerLatestReview",
+        "statusCheckRollup",
+        "labels",
+        "assignees",
+        "totalCommentsCount",
+    ] {
+        assert!(listing.contains(needed), "the list does not ask for {needed}");
+    }
+}
+
+#[tokio::test]
+async fn a_pull_request_read_alone_has_what_the_list_leaves_out() {
+    set_now(NOW);
+    let fake = Fake::start(|request, _| {
+        if request.variables()["after"].is_null() {
+            Canned::json(DETAIL_PAGE_1)
+        } else {
+            Canned::json(DETAIL_PAGE_2)
+        }
+    });
+    let read = client(&fake).pull_request(&remote(), 101).await.unwrap().pull_request;
+
+    let query = query_of(&fake.graphql_requests()[0]);
+    for asked in [
+        "reviewThreads",
+        "latestOpinionatedReviews",
+        "reviewDecision",
+        "mergeStateStatus",
+    ] {
+        assert!(query.contains(asked), "the detail does not ask for {asked}");
+    }
+    assert_eq!((read.decision, read.blocked), (ReviewDecision::ChangesRequested, true));
+    assert_eq!(read.unresolved_threads, 2);
+    assert_eq!(
+        read.changes_requested,
         [
             ChangesRequest {
                 reviewer: "Linus Torvalds".to_owned(),
@@ -249,20 +325,6 @@ async fn a_list_follows_the_pages_and_reads_what_the_queue_shows() {
             }
         ],
         "who requested changes, not who approved"
-    );
-    assert_eq!(draft.changes_requested, []);
-    assert_eq!(
-        (first.decision, first.blocked, first.author_avatar.as_deref()),
-        (
-            ReviewDecision::ChangesRequested,
-            true,
-            Some("https://avatars.githubusercontent.com/u/2?v=4")
-        )
-    );
-    assert_eq!(
-        (draft.decision, draft.blocked, draft.author_avatar.as_deref()),
-        (ReviewDecision::Undecided, false, None),
-        "nothing said, and no account to have a picture"
     );
 }
 

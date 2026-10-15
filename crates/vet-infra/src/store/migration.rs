@@ -296,7 +296,8 @@ mod tests {
                 "source_branch": "", "target_branch": "", "state": "Open",
                 "author": "", "author_name": "", "author_avatar": null,
                 "reviewers": [], "viewer_verdict": verdict, "labels": [],
-                "ci": null, "conversation": [], "threads": [], "complete": true,
+                "ci": null, "decision": "Undecided", "blocked": false,
+                "conversation": [], "threads": [], "complete": true,
             })
             .to_string()
         };
