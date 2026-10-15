@@ -77,7 +77,19 @@ fn symbol(info: &SymbolInfo) -> p::SymbolInfo {
         kind: symbol_kind(info.kind),
         span: span(info.span),
         at: position(info.at),
+        test: test(&info.sym),
     }
+}
+
+/// Vet's conclusion by file name (SPEC I6): the file's path and the containers the symbol is in.
+/// The symbol's own name is not a container of itself.
+fn test(sym: &Sym) -> bool {
+    vet_core::testfile::is_test(&sym.file.to_string_lossy(), containers(sym))
+}
+
+/// The containers a symbol is in: its name without its own last part.
+fn containers(sym: &Sym) -> &[String] {
+    &sym.name[..sym.name.len().saturating_sub(1)]
 }
 
 fn location(l: &Location) -> p::SemanticLocation {
@@ -92,6 +104,10 @@ fn reference(r: &Reference) -> p::Reference {
     p::Reference {
         location: location(&r.location),
         within: r.within.as_ref().map(symbol_name),
+        test: vet_core::testfile::is_test(
+            &r.location.file.to_string_lossy(),
+            r.within.as_ref().map_or(&[][..], |w| containers(&w.sym)),
+        ),
     }
 }
 
@@ -618,6 +634,41 @@ mod tests {
         };
         assert_eq!(kinds(SymbolKind::Function), Some(p::SymbolKind::Function));
         assert_eq!(kinds(SymbolKind::Type), Some(p::SymbolKind::Type));
+    }
+
+    #[test]
+    fn a_symbol_and_a_place_carry_the_test_conclusion_by_file_name() {
+        // A test by its path.
+        let by_path = SymbolInfo {
+            sym: Sym {
+                file: RepoPath::from("tests/a.rs"),
+                name: vec!["t".into()],
+            },
+            ..within(SymbolKind::Function)
+        };
+        assert!(super::symbol(&by_path).test);
+        // A test by a `tests` container.
+        let by_container = SymbolInfo {
+            sym: Sym {
+                file: RepoPath::from("src/a.rs"),
+                name: vec!["tests".into(), "t".into()],
+            },
+            ..within(SymbolKind::Function)
+        };
+        assert!(super::symbol(&by_container).test);
+        // Production code is not.
+        assert!(!super::symbol(&within(SymbolKind::Function)).test);
+        // A place too, judged by the containers of the symbol it is in.
+        let in_test = Reference {
+            within: Some(by_container),
+            ..reference("src/a.rs", (3, 8), (3, 13), false)
+        };
+        assert!(super::reference(&in_test).test);
+        let in_production = Reference {
+            within: Some(within(SymbolKind::Function)),
+            ..reference("src/a.rs", (3, 8), (3, 13), false)
+        };
+        assert!(!super::reference(&in_production).test);
     }
 
     fn a_row(change: Standing, external: bool) -> Row {

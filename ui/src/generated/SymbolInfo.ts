@@ -16,4 +16,9 @@ span: TextSpan,
 /**
  * Where its name is: the position to ask `References` about.
  */
-at: Position, };
+at: Position, 
+/**
+ * Vet's conclusion that this is a test, by the file's path and a `tests`/`test` container it
+ * is in (derived by file name, not from a language server; SPEC I6).
+ */
+test: boolean, };

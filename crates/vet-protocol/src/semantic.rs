@@ -72,6 +72,9 @@ pub struct SymbolInfo {
     pub span: TextSpan,
     /// Where its name is: the position to ask `References` about.
     pub at: Position,
+    /// Vet's conclusion that this is a test, by the file's path and a `tests`/`test` container it
+    /// is in (derived by file name, not from a language server; SPEC I6).
+    pub test: bool,
 }
 
 #[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize, TS)]
@@ -95,6 +98,9 @@ pub struct Reference {
     /// The innermost namespace, type or function around it; absent at the top level of a file,
     /// outside the repository and where the language server cannot list the file's symbols.
     pub within: Option<SymbolName>,
+    /// Vet's conclusion that this place is a test, by its file's path and the containers of the
+    /// symbol it is in (derived by file name, not from a language server; SPEC I6).
+    pub test: bool,
 }
 
 /// `revision` and `side` are those of the request.

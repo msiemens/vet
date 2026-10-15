@@ -1,6 +1,6 @@
 // Pure model of the Symbol panel's trees: what each root lists, as rows that nest. The component
-// draws them and keeps which are open; here are the grouping, the order, the test detection and
-// the words (SPEC §7.3).
+// draws them and keeps which are open; here are the grouping, the order and the words (SPEC §7.3).
+// Whether a row is a test is the backend's conclusion by file name (SPEC I6), carried on the row.
 
 import type { CallSite } from "../../generated/CallSite";
 import type { Calls } from "../../generated/Calls";
@@ -18,9 +18,9 @@ import type { SymbolKind } from "../../generated/SymbolKind";
 import type { SymbolName } from "../../generated/SymbolName";
 import type { Usages } from "../../generated/Usages";
 import { plural } from "../../lib/format.ts";
-import { MODULE_LEVEL, containersOf, fileName, partsOf, shortLabel } from "../../lib/symbolLabel.ts";
+import { MODULE_LEVEL, fileName, partsOf, shortLabel } from "../../lib/symbolLabel.ts";
 import { gapText } from "./gapText.ts";
-import { describeFate, type FateTone, rowTitle } from "./symbolDetail.ts";
+import { describeFate, type FateTone, rowTitle, testTitle } from "./symbolDetail.ts";
 
 /** Top-level rows a root shows before "N more". */
 export const ROWS = 5;
@@ -88,19 +88,6 @@ export interface Body {
   quiet?: string;
 }
 
-const TEST_PATH = [
-  /(^|\/)(tests?|__tests__)\//i,
-  /(^|\/)[^/]*\.tests?\//i,
-  /(Tests?|Spec)\.(cs|java|kt|scala)$/,
-  /\.(test|spec)\.[cm]?[jt]sx?$/,
-  /_test\.(rs|go|py)$/,
-  /(^|\/)test_[^/]*\.py$/,
-];
-
-/** A test by the conventions of the languages: where its file is and what it is called, or a `tests` module. */
-export const isTest = (path: string, containers: readonly string[] = []): boolean =>
-  TEST_PATH.some((p) => p.test(path)) || containers.some((c) => c === "tests" || c === "test");
-
 const open = (path: string, line: number | undefined, side: Side): Target => ({ type: "open", path, line, side });
 
 /** The file's name for a wide row, unless the container already says it (`Client` in `client.rs`). */
@@ -125,9 +112,9 @@ function symbolEntry(key: string, symbol: SymbolInfo, change: SymbolChange | und
     lines: lineText(symbol.at.line),
     change,
     gone: change === "removed",
-    muted: isTest(path, containersOf(symbol.id)),
+    muted: symbol.test,
     count: 0,
-    title: rowTitle(symbol.id, path, symbol.at),
+    title: testTitle(rowTitle(symbol.id, path, symbol.at), symbol.test),
     go,
     children: [],
   };
@@ -211,19 +198,21 @@ interface Place {
   at: Position;
   within: SymbolName | null;
   external: boolean;
+  /** Vet's conclusion by file name (SPEC I6): the backend's answer, not a primitive. */
+  test: boolean;
 }
 
-const placeOf = ({ location, within }: Reference): Place => ({
+const placeOf = ({ location, within, test }: Reference): Place => ({
   path: location.path,
   at: location.span.start,
   within,
   external: location.external,
+  test,
 });
 
 /** The type a place is grouped under: the one it is in, or itself when it is a type's own place. */
 const containerOfPlace = (p: Place): string | undefined =>
   p.within?.kind === "type" ? partsOf(p.within).name : p.within ? partsOf(p.within).container : undefined;
-const isTestPlace = (p: Place): boolean => isTest(p.path, p.within ? containersOf(p.within.id) : []);
 
 function groupBy<T>(items: readonly T[], keyOf: (item: T) => string): T[][] {
   const groups = new Map<string, T[]>();
@@ -242,7 +231,7 @@ function memberEntry(key: string, places: Place[], inGroup: boolean): Entry {
     key,
     lines,
     count: 0,
-    muted: isTestPlace(first),
+    muted: first.test,
     go: first.external ? undefined : open(first.path, first.at.line, "target"),
     sub: first.external ? "outside the repository" : undefined,
     children: [],
@@ -254,7 +243,7 @@ function memberEntry(key: string, places: Place[], inGroup: boolean): Entry {
       name: MODULE_LEVEL,
       file: true,
       container: inGroup ? undefined : fileName(first.path),
-      title: rowTitle(null, first.path, first.at),
+      title: testTitle(rowTitle(null, first.path, first.at), first.test),
     };
   }
   const { name, container } = partsOf(first.within);
@@ -265,7 +254,7 @@ function memberEntry(key: string, places: Place[], inGroup: boolean): Entry {
     // A free member names its file where a type's names the type.
     container: inGroup ? undefined : (container ?? fileName(first.path)),
     loc: inGroup ? undefined : locOf(first.path, container),
-    title: rowTitle(first.within.id, first.path, first.at),
+    title: testTitle(rowTitle(first.within.id, first.path, first.at), first.test),
   };
 }
 
@@ -286,7 +275,10 @@ export function groupPlaces(places: readonly Place[], key: string): Entry[] {
       loc: container ? fileName(first.path) : undefined,
       muted: rows.every((r) => r.muted),
       count: rows.length,
-      title: first.path,
+      title: testTitle(
+        first.path,
+        group.every((p) => p.test),
+      ),
       children: rows,
     };
   });
@@ -295,10 +287,13 @@ export function groupPlaces(places: readonly Place[], key: string): Entry[] {
 /** Places as rows: the production ones in groups, the tests in a branch of their own after them. */
 function placesBody(places: readonly Place[], key: string): Pick<Body, "entries" | "tail"> {
   const entries = groupPlaces(
-    places.filter((p) => !isTestPlace(p)),
+    places.filter((p) => !p.test),
     `${key}p`,
   );
-  const tests = groupPlaces(places.filter(isTestPlace), `${key}t`);
+  const tests = groupPlaces(
+    places.filter((p) => p.test),
+    `${key}t`,
+  );
   if (!tests.length) return { entries, tail: [] };
   const n = countLeaves(tests);
   const branch: Entry = {
@@ -314,7 +309,7 @@ function placesBody(places: readonly Place[], key: string): Pick<Body, "entries"
 }
 
 export function affectedBody(affected: readonly SymbolInfo[], gaps: readonly Gap[]): Body {
-  const places = affected.map((s): Place => ({ path: s.id.path, at: s.at, within: s, external: false }));
+  const places = affected.map((s): Place => ({ path: s.id.path, at: s.at, within: s, external: false, test: s.test }));
   const empty = gaps.length ? incomplete(gaps) : "No unchanged callers to check";
   return {
     count: affected.length,

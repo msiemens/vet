@@ -27,6 +27,12 @@ export const place = (path: string, at: Position): string => `${path}:${at.line 
 export const rowTitle = (id: SymbolId | null, path: string, at?: Position): string =>
   [id ? fullName(id) : undefined, at ? place(path, at) : path].filter(Boolean).join("\n");
 
+/** What a muted row's tooltip adds: Vet's conclusion by file name (SPEC I6: a derived result names its derivation). */
+export const TEST_BY_NAME = "test by file name";
+
+/** `title`, with the derivation named when the row is a test rather than a primitive. */
+export const testTitle = (title: string, test: boolean): string => (test ? `${title}\n${TEST_BY_NAME}` : title);
+
 export type FateTone = "bad" | "warn" | "mute";
 
 /** What became of a reference to a removed symbol, in words; `likelyBroken` is the one that needs attention. */

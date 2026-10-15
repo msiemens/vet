@@ -23,6 +23,7 @@ const symbol = (path: string, name: string[], change: ChangedSymbol["change"] = 
     kind: "function",
     span: { start: { line: 39, col: 0 }, end: { line: 50, col: 1 } },
     at: { line: 39, col: 7 },
+    test: false,
   },
 });
 

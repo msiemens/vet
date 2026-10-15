@@ -6,9 +6,11 @@ import { reconcile } from "./symbolLoad.ts";
 
 const info = (path: string, name: string): SymbolInfo => ({
   id: { path, name: [name] },
+  modules: 0,
   kind: "function",
   span: { start: { line: 1, col: 0 }, end: { line: 3, col: 0 } },
   at: { line: 1, col: 3 },
+  test: false,
 });
 
 void test("a symbol on show is updated to what the new analysis says, and unchanged if it left the changed ones", () => {

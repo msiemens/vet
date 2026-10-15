@@ -7,41 +7,46 @@ import type { SymbolInfo } from "../../generated/SymbolInfo.ts";
 import type { SymbolKind } from "../../generated/SymbolKind.ts";
 import type { Unavailable } from "../../generated/Unavailable.ts";
 import { gapText } from "./gapText.ts";
-import { affectedBody, calleesBody, callerTree, isTest, reachBody, removalBody, usagesBody } from "./symbolTree.ts";
+import { affectedBody, calleesBody, callerTree, reachBody, removalBody, usagesBody } from "./symbolTree.ts";
 
 const why = (message: string): Unavailable => ({ kind: "queryFailed", label: "Failed", message, language: null });
 
 const span = (line: number) => ({ start: { line, col: 0 }, end: { line, col: 1 } });
 
-function info(path: string, name: string[], line = 0, modules = 0): SymbolInfo {
-  return { id: { path, name }, modules, kind: "function", span: span(line), at: { line, col: 0 } };
+function info(path: string, name: string[], line = 0, modules = 0, test = false): SymbolInfo {
+  return { id: { path, name }, modules, kind: "function", span: span(line), at: { line, col: 0 }, test };
 }
 
 const caller = (symbol: SymbolInfo, depth: number): ChangedCaller => ({ symbol, change: "modified", depth });
 
-function ref(path: string, name: string[] | null, line: number, kind: SymbolKind = "function"): Reference {
+function ref(
+  path: string,
+  name: string[] | null,
+  line: number,
+  kind: SymbolKind = "function",
+  test = false,
+): Reference {
   return {
     location: { path, span: span(line), external: false },
     within: name && { id: { path, name }, modules: 0, kind },
+    test,
   };
 }
 
-void test("tests are found by the conventions of their language", () => {
-  assert.ok(isTest("tests/ledger_flow.rs"));
-  assert.ok(isTest("src/Relays/FooTests.cs"));
-  assert.ok(isTest("tests/HES.Application.Tests/Foo.cs"));
-  assert.ok(isTest("ui/src/a.test.ts"));
-  assert.ok(isTest("pkg/a_test.go"));
-  assert.ok(isTest("src/retry.rs", ["tests", "next_delay"]));
-  assert.ok(!isTest("src/Contest.cs"));
-  assert.ok(!isTest("src/retry.rs", ["RetryPolicy"]));
+void test("a row the backend flagged as a test is muted, and its tooltip names the derivation", () => {
+  const [flagged] = callerTree([caller(info("tests/a_test.rs", ["t1"], 0, 0, true), 0)]);
+  assert.equal(flagged.muted, true);
+  assert.equal(flagged.title, "t1\ntests/a_test.rs:1\ntest by file name");
+  const [plain] = callerTree([caller(info("src/a.rs", ["Handler", "run"]), 0)]);
+  assert.equal(plain.muted, false);
+  assert.doesNotMatch(plain.title, /test by file name/);
 });
 
 void test("callers nest under what they call, production code first", () => {
   const tree = callerTree([
-    caller(info("tests/a_test.rs", ["t1"]), 0),
+    caller(info("tests/a_test.rs", ["t1"], 0, 0, true), 0),
     caller(info("src/a.rs", ["Handler", "run"]), 0),
-    caller(info("tests/a_test.rs", ["t2"]), 1),
+    caller(info("tests/a_test.rs", ["t2"], 0, 0, true), 1),
     caller(info("src/b.rs", ["Service", "go"]), 0),
   ]);
   assert.deepEqual(
@@ -157,7 +162,11 @@ void test("module-level usages say so instead of repeating the file's name", () 
 
 void test("tests sit in a branch after the production usages, not among them", () => {
   const body = usagesBody({
-    references: [ref("tests/x.rs", ["check"], 3), ref("src/a.rs", ["A", "m"], 1), ref("src/c.rs", ["C", "n"], 2)],
+    references: [
+      ref("tests/x.rs", ["check"], 3, "function", true),
+      ref("src/a.rs", ["A", "m"], 1),
+      ref("src/c.rs", ["C", "n"], 2),
+    ],
   } as never);
   assert.deepEqual(
     body.entries.map((e) => e.name),
@@ -167,6 +176,8 @@ void test("tests sit in a branch after the production usages, not among them", (
   assert.equal(branch.branch, true);
   assert.equal(branch.count, 1);
   assert.equal(branch.children[0].name, "check");
+  assert.equal(branch.children[0].muted, true);
+  assert.match(branch.children[0].title, /test by file name$/);
 });
 
 void test("nothing to list is a quiet line, but a gap in the answer is not nothing", () => {

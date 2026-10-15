@@ -15,6 +15,7 @@ function sym(name: string[], from: number, to: number, change?: SymbolChange, co
       kind: name.length > 1 ? "function" : "type",
       span: { start: { line: from, col }, end: { line: to, col: 0 } },
       at: { line: from, col },
+      test: false,
     },
     change: change ?? null,
   };

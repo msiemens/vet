@@ -19,5 +19,6 @@ pub mod prepared;
 pub mod remap;
 pub mod resolve;
 pub mod review;
+pub mod testfile;
 pub mod text;
 pub mod version_diff;
