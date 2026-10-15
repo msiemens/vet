@@ -569,6 +569,52 @@ async fn a_rejected_token_a_missing_repository_and_a_down_server_have_readable_e
 }
 
 #[tokio::test]
+async fn an_answer_that_is_not_json_is_reported_with_its_status_content_type_and_body() {
+    set_now(NOW);
+    let html = "<html><head><title>502 Bad Gateway</title></head><body>nginx</body></html>";
+    let fake = Fake::start(move |request, _| {
+        if is_probe(request) {
+            return Canned::json(&newest("v1"));
+        }
+        Canned::status(502, html).with("content-type", "text/html")
+    });
+    let error = client(&fake)
+        .list_pull_requests(&remote(), &all_open())
+        .await
+        .unwrap_err();
+
+    let PlatformError::Unexpected(message) = &error else {
+        panic!("an answer that is not the JSON asked for cannot be used: {error:?}")
+    };
+    assert!(message.contains("502"), "{message}");
+    assert!(message.contains("text/html"), "{message}");
+    assert!(message.contains("<html>"), "{message}");
+}
+
+#[tokio::test]
+async fn an_empty_answer_is_reported_with_its_status_instead_of_a_parse_error() {
+    set_now(NOW);
+    for status in [200, 202] {
+        let fake = Fake::start(move |request, _| {
+            if is_probe(request) {
+                return Canned::json(&newest("v1"));
+            }
+            Canned::status(status, "")
+        });
+        let error = client(&fake)
+            .list_pull_requests(&remote(), &all_open())
+            .await
+            .unwrap_err();
+
+        let PlatformError::Unexpected(message) = &error else {
+            panic!("{status} with no body cannot be used: {error:?}")
+        };
+        assert!(message.contains(&status.to_string()), "{message}");
+        assert!(message.contains("empty"), "{message}");
+    }
+}
+
+#[tokio::test]
 async fn nothing_is_sent_without_a_credential() {
     let fake = Fake::start(|_, _| Canned::json("{}"));
     let client = client_with(&fake, Signed(None, vet_app::platform::CredentialSource::Cli));

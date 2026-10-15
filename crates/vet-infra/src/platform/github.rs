@@ -240,6 +240,12 @@ struct GraphQlError {
     message: String,
 }
 
+/// What GitHub's refused answers carry: the message its error body says.
+#[derive(Deserialize)]
+struct GitHubApiError {
+    message: String,
+}
+
 impl<C: CredentialProvider + Sync> GitHubClient<C> {
     pub fn new(credentials: C) -> Self {
         Self {
@@ -316,15 +322,7 @@ impl<C: CredentialProvider + Sync> GitHubClient<C> {
         let now = (self.now)();
         let failed = match error {
             octocrab::Error::GitHub { source, .. } => {
-                let (status, message) = (source.status_code, source.message);
-                let announced = self.limits.blocked_until(host, bucket, now);
-                if status == StatusCode::TOO_MANY_REQUESTS
-                    || (status == StatusCode::FORBIDDEN
-                        && (announced.is_some() || message.to_ascii_lowercase().contains("rate limit")))
-                {
-                    return Err(self.limited(host, bucket));
-                }
-                refusal(host, status, &message)
+                return Err(self.complain(host, self.refused(host, bucket, source.status_code, &source.message)));
             }
             octocrab::Error::Reqwest { source, .. } => unreachable_host(host, &source),
             // The transport's failures arrive wrapped.
@@ -342,6 +340,57 @@ impl<C: CredentialProvider + Sync> GitHubClient<C> {
         };
         tracing::warn!(host, reason = %failed, "GitHub request failed");
         Err(failed)
+    }
+
+    /// `status` and `message`, as GitHub's own error body says them: a rate limit is answered with
+    /// the limit's end, and anything else with the refusal that fits the status.
+    fn refused(&self, host: &str, bucket: Bucket, status: StatusCode, message: &str) -> PlatformError {
+        let now = (self.now)();
+        let announced = self.limits.blocked_until(host, bucket, now);
+        if status == StatusCode::TOO_MANY_REQUESTS
+            || (status == StatusCode::FORBIDDEN
+                && (announced.is_some() || message.to_ascii_lowercase().contains("rate limit")))
+        {
+            return self.limited(host, bucket);
+        }
+        refusal(host, status, message)
+    }
+
+    /// The JSON in `body`, or why the answer cannot be used: a non-2xx answer is the GitHub error
+    /// it carries when that parses, and anything else — an HTML gateway page, an empty body — is
+    /// reported as it came instead of as a parse error.
+    fn decoded<T: DeserializeOwned>(
+        &self,
+        host: &str,
+        bucket: Bucket,
+        status: StatusCode,
+        content_type: Option<&str>,
+        body: Option<&str>,
+    ) -> Result<T, PlatformError> {
+        let failed = if status.is_success() {
+            match body.and_then(|body| serde_json::from_str(body).ok()) {
+                Some(value) => return Ok(value),
+                None => unusable(host, status, content_type, body),
+            }
+        } else {
+            match body
+                .and_then(|body| serde_json::from_str::<GitHubApiError>(body).ok())
+                .map(|error| error.message)
+            {
+                Some(message) => self.refused(host, bucket, status, &message),
+                None => unusable(host, status, content_type, body),
+            }
+        };
+        Err(self.complain(host, failed))
+    }
+
+    /// Logs a failure the way [`settle`] does, except a rate limit, which `limits` logs once for
+    /// its window.
+    fn complain(&self, host: &str, failed: PlatformError) -> PlatformError {
+        if !matches!(failed, PlatformError::RateLimited { .. }) {
+            tracing::warn!(host, reason = %failed, "GitHub request failed");
+        }
+        failed
     }
 
     /// The error for a response that said the bucket is used up. The limit ends when the response
@@ -364,11 +413,17 @@ impl<C: CredentialProvider + Sync> GitHubClient<C> {
         query: &str,
         variables: Value,
     ) -> Result<T, PlatformError> {
-        let reply: octocrab::Result<GraphQlResponse<T>> = clients
+        let reply = clients
             .graphql
-            .post("/graphql", Some(&json!({ "query": query, "variables": variables })))
+            ._post("/graphql", Some(&json!({ "query": query, "variables": variables })))
             .await;
         let response = self.settle(host, Bucket::GraphQl, reply).await?;
+        // The status and the content type are read before the body is taken, so a body that cannot
+        // be read still leaves what the answer was.
+        let (status, content_type) = (response.status(), content_type(response.headers()));
+        let body = clients.graphql.body_to_string(response).await.ok();
+        let response: GraphQlResponse<T> =
+            self.decoded(host, Bucket::GraphQl, status, content_type.as_deref(), body.as_deref())?;
         if response
             .errors
             .iter()
@@ -424,19 +479,17 @@ impl<C: CredentialProvider + Sync> GitHubClient<C> {
         owner: &str,
         name: &str,
     ) -> Result<bool, PlatformError> {
-        let found: octocrab::Result<Vec<Newest>> = clients
+        let reply = clients
             .rest
-            .get(
-                format!("/repos/{owner}/{name}/pulls"),
-                Some(&[
-                    ("state", "all"),
-                    ("sort", "updated"),
-                    ("direction", "desc"),
-                    ("per_page", "1"),
-                ]),
-            )
+            ._get(format!(
+                "/repos/{owner}/{name}/pulls?state=all&sort=updated&direction=desc&per_page=1"
+            ))
             .await;
-        let newest = self.settle(host, Bucket::Core, found).await?.pop();
+        let response = self.settle(host, Bucket::Core, reply).await?;
+        let (status, content_type) = (response.status(), content_type(response.headers()));
+        let body = clients.rest.body_to_string(response).await.ok();
+        let newest: Vec<Newest> = self.decoded(host, Bucket::Core, status, content_type.as_deref(), body.as_deref())?;
+        let newest = newest.into_iter().last();
         let now = (self.now)();
         Ok(self.state().probed.insert(remote.clone(), newest.clone(), now) == Some(newest))
     }
@@ -675,6 +728,41 @@ fn unreachable_host(host: &str, error: &reqwest::Error) -> PlatformError {
 /// What an `octocrab` error says, without the backtrace.
 fn short(error: &octocrab::Error) -> String {
     error.to_string().lines().next().unwrap_or_default().to_owned()
+}
+
+/// The content type an answer named, if it named one.
+fn content_type(headers: &http::HeaderMap) -> Option<String> {
+    headers
+        .get(reqwest::header::CONTENT_TYPE)
+        .and_then(|value| value.to_str().ok())
+        .map(str::to_owned)
+}
+
+/// The most of a body that is quoted when the answer cannot be used.
+const QUOTED_BODY: usize = 120;
+
+/// Why an answer that is not the JSON Vet asked for cannot be used: the status, the content type
+/// and the start of the body, so the log says what the platform sent instead of only that a parse
+/// failed.
+fn unusable(host: &str, status: StatusCode, content_type: Option<&str>, body: Option<&str>) -> PlatformError {
+    let content_type = content_type.unwrap_or("no content type");
+    let body = body.map(snippet).unwrap_or_default();
+    let body = if body.is_empty() {
+        "an empty body".to_owned()
+    } else {
+        format!("body {:?}", body)
+    };
+    PlatformError::Unexpected(format!("{host} answered {status} ({content_type}) with {body}"))
+}
+
+/// The start of `body` on one line, so it reads in a log line.
+fn snippet(body: &str) -> String {
+    let flattened = body.split_whitespace().collect::<Vec<_>>().join(" ");
+    if flattened.chars().count() <= QUOTED_BODY {
+        return flattened;
+    }
+    let cut: String = flattened.chars().take(QUOTED_BODY).collect();
+    format!("{cut}…")
 }
 
 /// Why GitHub refused a request. Every message is fit to show.
