@@ -111,6 +111,38 @@ pub struct LanguageSymbols {
     pub result: Result<Vec<SymbolInfo>, SemanticError>,
 }
 
+/// The files of the same root, out of the places the answer names, that the revision
+/// had no copy of (D97): their text is what the server read from the disk, whose
+/// positions the answers are asked to keep. There are none where no texts were
+/// carried: the disk of a snapshot's side is the revision.
+async fn files_without_revisions<M: Materializer, L: ServerLauncher, T>(
+    pair: &Pair<M, L>,
+    side: Side,
+    answer: &Answer<Vec<T>>,
+    place_of: impl Fn(&T) -> &Location,
+) -> Vec<RepoPath> {
+    let Some(texts) = pair.texts(side) else {
+        return Vec::new();
+    };
+    let mut named: Vec<RepoPath> = match &answer.result {
+        Ok(places) => places
+            .iter()
+            .filter(|place| !place_of(place).external)
+            .map(|place| place_of(place).file.clone())
+            .collect(),
+        Err(_) => Vec::new(),
+    };
+    named.sort();
+    named.dedup();
+    let mut unknown: Vec<RepoPath> = Vec::new();
+    for file in named {
+        if texts.text(&file).await.is_none() {
+            unknown.push(file);
+        }
+    }
+    unknown
+}
+
 /// The symbols of the target side that match a name, per language of the project.
 pub struct WorkspaceSymbols {
     pub revision: u32,
@@ -306,6 +338,9 @@ where
     /// Keeps the changed content of the tree on view in the store (D97): what its
     /// live server's texts are read from. None where no live tree is served.
     retainer: Option<Arc<dyn Retainer>>,
+    /// The worktree the target side is served from, whose files the live tree's
+    /// server reads where the revision has no copy of them (D97).
+    live_root: std::path::PathBuf,
     /// The languages that have a file in the target of a revision, found once per revision: finding
     /// them walks every file of the snapshot.
     languages: Mutex<Option<(u32, Vec<BackendId>)>>,
@@ -484,13 +519,14 @@ where
         links: Links,
     ) -> Self {
         let Links { revisions, retainer } = links;
-        let pool = Pool::new(materializer, launcher, live_root, POOL_CAPACITY);
+        let pool = Pool::new(materializer, launcher, live_root.clone(), POOL_CAPACITY);
         Self {
             semantic: Arc::new(Semantic::new(pool, backends)),
             watched: Arc::default(),
             texts: None,
             revisions,
             retainer,
+            live_root,
             languages: Mutex::new(None),
         }
     }
@@ -629,6 +665,53 @@ where
         }
     }
 
+    /// The answer of `work` for `revision`, asked again once a newer revision is known
+    /// while it is of the worktree's newer text (D97): the answer names a file of the
+    /// target side whose text the server read from the disk, for the revision kept no
+    /// copy of it, and the disk's has moved since the revision settled. Each revision
+    /// the answer is asked about once, and nothing of the asking is shown; the asking
+    /// ends with the caller, and the places of a file the revision has a copy of are
+    /// answered as they stand. A file of which the revision read nothing keeps its
+    /// place in the answer.
+    async fn answered<T>(
+        &self,
+        view: &RevisionView<G, S>,
+        revision: u32,
+        work: impl for<'a> Fn(
+            &'a Self,
+            &'a RevisionView<G, S>,
+            u32,
+        ) -> Pin<Box<dyn Future<Output = Fallible<(Answer<T>, Vec<RepoPath>)>> + Send + 'a>>,
+    ) -> Fallible<Answer<T>> {
+        let mut revision = revision;
+        loop {
+            let (answer, unknown) = work(self, view, revision).await?;
+            if unknown.is_empty() {
+                return Ok(answer);
+            }
+            let mut moved: Vec<RepoPath> = Vec::new();
+            for file in &unknown {
+                if let Some(kept) = view.settled_text(revision, file).await?
+                    && self.worktree_text(file).await.is_none_or(|read| read != kept)
+                {
+                    moved.push(file.clone());
+                }
+            }
+            if moved.is_empty() {
+                return Ok(answer);
+            }
+            revision = self.revisions.newer(revision).await;
+        }
+    }
+
+    /// The worktree's text of a file of the live tree, as the server read it when it
+    /// was last fed the file. Files of a snapshot are never read from one: they keep
+    /// what they were restored as, and their answers name them for that.
+    async fn worktree_text(&self, file: &RepoPath) -> Option<Vec<u8>> {
+        let path = self.live_root.join(String::from_utf8_lossy(&file.0).as_ref());
+        tokio::fs::read(path).await.ok()
+    }
+
     pub async fn hover(
         &self,
         view: &RevisionView<G, S>,
@@ -653,19 +736,22 @@ where
         side: Side,
         at: &At,
     ) -> Fallible<Answer<Vec<Location>>> {
-        self.current(
-            revision,
+        let at = at.clone();
+        self.answered(view, revision, move |this, view, revision| {
+            let at = at.clone();
             Box::pin(async move {
-                let pair = self.pair(view, revision).await?;
-                let asked = pair.definition(side, at).await.map(|answered| {
+                let pair = this.pair(view, revision).await?;
+                let asked = pair.definition(side, &at).await.map(|answered| {
                     answered.map(|mut found| {
                         prefer_openable(&mut found);
                         found
                     })
                 });
-                Ok(Answer::of(revision, asked))
-            }),
-        )
+                let answer = Answer::of(revision, asked);
+                let unknown = files_without_revisions(&pair, side, &answer, |l| l).await;
+                Ok((answer, unknown))
+            })
+        })
         .await
     }
 
@@ -677,13 +763,16 @@ where
         side: Side,
         at: &At,
     ) -> Fallible<Answer<Vec<Reference>>> {
-        self.current(
-            revision,
+        let at = at.clone();
+        self.answered(view, revision, move |this, view, revision| {
+            let at = at.clone();
             Box::pin(async move {
-                let pair = self.pair(view, revision).await?;
-                Ok(Self::within(revision, side, &pair, pair.references(side, at).await).await)
-            }),
-        )
+                let pair = this.pair(view, revision).await?;
+                let answer = Self::within(revision, side, &pair, pair.references(side, &at).await).await;
+                let unknown = files_without_revisions(&pair, side, &answer, |l| &l.location).await;
+                Ok((answer, unknown))
+            })
+        })
         .await
     }
 
@@ -696,13 +785,16 @@ where
         side: Side,
         at: &At,
     ) -> Fallible<Answer<Vec<Reference>>> {
-        self.current(
-            revision,
+        let at = at.clone();
+        self.answered(view, revision, move |this, view, revision| {
+            let at = at.clone();
             Box::pin(async move {
-                let pair = self.pair(view, revision).await?;
-                Ok(Self::within(revision, side, &pair, pair.implementations(side, at).await).await)
-            }),
-        )
+                let pair = this.pair(view, revision).await?;
+                let answer = Self::within(revision, side, &pair, pair.implementations(side, &at).await).await;
+                let unknown = files_without_revisions(&pair, side, &answer, |l| &l.location).await;
+                Ok((answer, unknown))
+            })
+        })
         .await
     }
 
@@ -1199,7 +1291,7 @@ where
 
 #[cfg(test)]
 mod tests {
-    use std::path::Path;
+    use std::path::{Path, PathBuf};
     use std::sync::Mutex;
     use std::sync::atomic::{AtomicUsize, Ordering};
 
@@ -1300,6 +1392,8 @@ mod tests {
         text_symbol_requests: AtomicUsize,
         /// The texts a live-tree server's overlay held for the file it was asked about, in order.
         overlay_texts: Mutex<Vec<Option<String>>>,
+        /// Definitions asked, whether the worktree's text or the revision's is what it read.
+        definitions_asked: AtomicUsize,
         /// Hovers are asked and never answered.
         hang_hover: std::sync::atomic::AtomicBool,
         hovers_asked: AtomicUsize,
@@ -1353,8 +1447,8 @@ mod tests {
 
     struct FakeLauncher(Arc<Counters>);
 
-    /// A server of the language named last.
-    struct FakeServer(Arc<Counters>, Tree, String);
+    /// A server of the language named last, over the tree's root on the live one.
+    struct FakeServer(Arc<Counters>, Tree, String, PathBuf);
 
     impl ServerLauncher for FakeLauncher {
         type Server = FakeServer;
@@ -1394,7 +1488,7 @@ mod tests {
                     .then(restore_failure)
                     .into_iter()
                     .collect(),
-                server: FakeServer(c.clone(), tree, language.clone()),
+                server: FakeServer(c.clone(), tree, language.clone(), root.to_owned()),
                 identity: self.identify(root, backend, policy).await?,
                 restore: match tree {
                     Tree::Immutable => self.recorded_restore(root, backend, policy).await,
@@ -1440,6 +1534,19 @@ mod tests {
         }
     }
 
+    impl FakeServer {
+        /// The place of the file's `meadow` in the worktree, which the server's
+        /// answer was read from: the first line where nothing is there to read.
+        fn marker_line(&self, file: &RepoPath) -> Pos {
+            let path = self.3.join(String::from_utf8_lossy(&file.0).as_ref());
+            let text = std::fs::read_to_string(path).unwrap_or_default();
+            Pos {
+                line: text.lines().position(|line| line.contains("meadow")).unwrap_or(0) as u32,
+                col: 0,
+            }
+        }
+    }
+
     impl LanguageServer for FakeServer {
         fn readiness(&self) -> Readiness {
             Readiness { idle: true, epoch: 0 }
@@ -1466,8 +1573,16 @@ mod tests {
             symbol.detail = Some(text.trim().to_owned());
             Ok(vec![symbol])
         }
-        async fn definition(&self, _: &At, _: Option<OverlayText>) -> Result<Vec<Location>, QueryError> {
-            Ok(vec![])
+        async fn definition(&self, at: &At, _: Option<OverlayText>) -> Result<Vec<Location>, QueryError> {
+            self.0.definitions_asked.fetch_add(1, Ordering::SeqCst);
+            Ok(vec![Location {
+                file: at.file.clone(),
+                span: Span {
+                    start: self.marker_line(&at.file),
+                    end: Pos { line: 5, col: 0 },
+                },
+                external: false,
+            }])
         }
         async fn references(&self, _: &At, _: Option<OverlayText>) -> Result<Vec<Location>, QueryError> {
             Ok(vec![])
@@ -1588,6 +1703,101 @@ mod tests {
             seen,
             [Some("kept\n".to_owned())],
             "the settled text was kept and fed the server, not what the worktree now holds"
+        );
+    }
+
+    /// A definition that lands in a file whose text the revision had no copy of and
+    /// the worktree has moved since (the server read the disk, whose lines answer
+    /// nothing the revision was about): it is asked again at the newer revision,
+    /// which the fixture settles while the question under way waits for it. Nothing
+    /// of the first answer reaches the caller, and the asking is shown nowhere.
+    #[tokio::test]
+    async fn a_definition_of_a_file_the_worktree_has_moved_is_asked_again_at_the_newer_revision() {
+        let fx = Fixture::open(&[("a.rs", "kept\n")], &[("a.rs", "meadow\n")]).await;
+        let revision = fx.settle(&[("a.rs", "meadow\n")]).await;
+        fx.git.forget("meadow\n");
+        let worktree = tempfile::tempdir().unwrap();
+        std::fs::write(worktree.path().join("a.rs"), "older\nmeadow\n").unwrap();
+
+        let counters = Arc::new(Counters::default());
+        let semantics = Semantics::new(
+            FakeMaterializer(counters.clone()),
+            FakeLauncher(counters.clone()),
+            worktree.path().to_owned(),
+            vec![backend("rust", "rs")],
+            Links {
+                revisions: fx.session.revisions(),
+                retainer: None,
+            },
+        );
+        let at = At {
+            file: RepoPath(b"a.rs".to_vec()),
+            pos: Pos { line: 0, col: 0 },
+        };
+        let asked = semantics.definition(&fx.view, revision, Side::Target, &at);
+        let moved = async {
+            // The worktree moved once more; what it now holds settles.
+            while counters.definitions_asked.load(Ordering::SeqCst) == 0 {
+                tokio::task::yield_now().await;
+            }
+            std::fs::write(worktree.path().join("a.rs"), "fresh\nfurther\nmeadow\n").unwrap();
+            fx.settle(&[("a.rs", "fresh\nfurther\nmeadow\n")]).await;
+        };
+        let (answer, ()) = join(asked, moved).await;
+        let answer = answer.unwrap();
+        assert_eq!(
+            answer.revision, 2,
+            "the newer revision answers, not the one that was asked"
+        );
+        let found = answer.result.unwrap();
+        assert_eq!(
+            found[0].span.start.line, 2,
+            "the meadow where the newer revision has it"
+        );
+        assert_eq!(
+            counters.definitions_asked.load(Ordering::SeqCst),
+            2,
+            "the first answer was not delivered; the question was asked again"
+        );
+    }
+
+    /// A definition of a file that the revision has a copy of is served from the copy
+    /// and asked once, whatever the worktree elsewhere holds.
+    #[tokio::test]
+    async fn a_definition_of_a_file_the_revision_has_a_copy_of_is_asked_once() {
+        let fx = Fixture::open(&[("a.rs", "kept\n")], &[("a.rs", "meadow\n")]).await;
+        let revision = fx.settle(&[("a.rs", "meadow\n")]).await;
+        let worktree = tempfile::tempdir().unwrap();
+        std::fs::write(worktree.path().join("a.rs"), "older\nmeadow\n").unwrap();
+
+        let counters = Arc::new(Counters::default());
+        let semantics = Semantics::new(
+            FakeMaterializer(counters.clone()),
+            FakeLauncher(counters.clone()),
+            worktree.path().to_owned(),
+            vec![backend("rust", "rs")],
+            Links {
+                revisions: fx.session.revisions(),
+                retainer: None,
+            },
+        );
+        let answer = semantics
+            .definition(
+                &fx.view,
+                revision,
+                Side::Target,
+                &At {
+                    file: RepoPath(b"a.rs".to_vec()),
+                    pos: Pos { line: 0, col: 0 },
+                },
+            )
+            .await
+            .unwrap();
+        assert_eq!(answer.revision, revision);
+        assert_eq!(
+            counters.definitions_asked.load(Ordering::SeqCst),
+            1,
+            "the copy of the text the revision has is what the server read"
         );
     }
 

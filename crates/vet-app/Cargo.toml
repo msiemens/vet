@@ -10,9 +10,10 @@ publish.workspace = true
 vet-core.workspace = true
 vet-semantic.workspace = true
 vet-engine.workspace = true
-# The runtime-agnostic async mutex that serializes a session's review state, and the
-# timeout on a CLI tool's answer.
-tokio = { workspace = true, features = ["sync", "time"] }
+# The runtime-agnostic async mutex that serializes a session's review state, the
+# timeout on a CLI tool's answer, and the worktree file whose text the semantic
+# layer compares a revision's with (D97).
+tokio = { workspace = true, features = ["sync", "time", "fs"] }
 # Asking a platform for several commits' checks at once.
 futures = { workspace = true, features = ["alloc"] }
 # What `az` prints, and the stored form of what a platform said of a pull request.
@@ -23,6 +24,8 @@ tracing.workspace = true
 percent-encoding.workspace = true
 
 [dev-dependencies]
+# The worktree directories the semantic tests ask over.
+tempfile.workspace = true
 tokio = { workspace = true, features = ["macros", "rt", "time"] }
 
 [lints]

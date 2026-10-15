@@ -41,6 +41,15 @@ impl Revisions {
             Either::Right(done) => Ok(done),
         }
     }
+
+    /// The newest revision, once one newer than `revision` is known.
+    pub async fn newer(&self, revision: u32) -> u32 {
+        self.advance(revision);
+        let mut newest = self.0.subscribe();
+        // The sender lives as long as `self`, so waiting never fails.
+        let current = newest.wait_for(|newest| *newest > revision).await.map(|newest| *newest);
+        current.unwrap_or(revision)
+    }
 }
 
 #[cfg(test)]

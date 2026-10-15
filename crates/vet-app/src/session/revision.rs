@@ -95,6 +95,27 @@ impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> R
         Ok(Arc::clone(&st.target))
     }
 
+    /// What the target snapshot of `revision` held and its kept diff read: the worktree's
+    /// text as the revision settled, which the queries of it feed their server and keep.
+    /// `None` where the diff read nothing of the file. Fails if `revision` is stale.
+    pub async fn settled_text(&self, revision: u32, path: &RepoPath) -> Result<Option<Vec<u8>>> {
+        let kept = {
+            let st = self.published.read();
+            check_revision(&st, revision)?;
+            let entry = st
+                .target
+                .entries
+                .get(path)
+                .filter(|e| e.kind == EntryKind::File)
+                .map(|e| e.blob);
+            st.changes
+                .as_ref()
+                .and_then(|c| entry.and_then(|blob| c.diffed.blobs.get(&blob)))
+                .cloned()
+        };
+        Ok(kept)
+    }
+
     /// The snapshots of `revision`: what the semantic layer asks about. Fails
     /// if `revision` is no longer current.
     pub async fn semantic_sides(&self, revision: u32) -> Result<SemanticSides> {

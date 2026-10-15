@@ -270,6 +270,13 @@ impl<M: Materializer, L: ServerLauncher> Pair<M, L> {
         }
     }
 
+    /// The texts of the revision a side's queries were fed, which its live server
+    /// was given where the revision had a copy. `None` for a snapshot's side, whose
+    /// disk is the revision.
+    pub fn texts(&self, side: Side) -> Option<OverlayText> {
+        self.overlay(side)
+    }
+
     pub fn semantic(&self) -> &Semantic<M, L> {
         &self.semantic
     }

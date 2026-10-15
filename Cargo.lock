@@ -5415,6 +5415,7 @@ dependencies = [
  "percent-encoding",
  "serde",
  "serde_json",
+ "tempfile",
  "tokio",
  "tracing",
  "vet-core",
