@@ -6,7 +6,7 @@
 #![allow(clippy::disallowed_methods)]
 
 use std::os::unix::fs::PermissionsExt;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::Arc;
 use std::time::Duration;
@@ -80,6 +80,17 @@ while True:
         send({"jsonrpc": "2.0", "id": message["id"], "result": None})
 "#;
 
+/// Writes the fake rust server into `dir` and returns the script's path: it answers a hover on
+/// line 0 with its process id, dies at a hover on line 2, and treats the file `broken` in the
+/// same directory as a request to fail its start while that file exists.
+pub(crate) fn fake_rust_server(dir: &Path) -> PathBuf {
+    let broken = dir.join("broken");
+    let script = dir.join("fake-server");
+    std::fs::write(&script, FAKE_SERVER.replace("@BROKEN@", broken.to_str().unwrap())).unwrap();
+    std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
+    script
+}
+
 struct Rig {
     client: Arc<Client>,
     /// What the backend told the client.
@@ -108,14 +119,11 @@ impl Rig {
             &[("src/lib.rs", "pub fn f() -> u32 {\n    2\n}\n")],
         );
         let tools = tempfile::tempdir().unwrap();
-        let flag = tools.path().join("broken");
+        let script = fake_rust_server(tools.path());
         if broken {
-            std::fs::write(&flag, "").unwrap();
+            std::fs::write(tools.path().join("broken"), "").unwrap();
         }
-        let broken = flag;
-        let script = tools.path().join("fake-server");
-        std::fs::write(&script, FAKE_SERVER.replace("@BROKEN@", broken.to_str().unwrap())).unwrap();
-        std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let broken = tools.path().join("broken");
 
         let data = tempfile::tempdir().unwrap();
         let handler = Arc::new(Orchestrator::new(open_store(data.path()).await.unwrap(), config()));
@@ -204,7 +212,7 @@ fn alive(pid: u32) -> bool {
         .is_ok_and(|o| o.status.success())
 }
 
-async fn gone(pid: u32) -> bool {
+pub(crate) async fn gone(pid: u32) -> bool {
     for _ in 0..300 {
         if !alive(pid) {
             return true;

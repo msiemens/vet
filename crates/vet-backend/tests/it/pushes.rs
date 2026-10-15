@@ -4,7 +4,8 @@
 //!
 //! These cover the ways Vet learns of a push — an explicit fetch, the fetch interval, the queue's
 //! listing — on Azure DevOps (a branch in the same repository, a fork, and a platform whose own
-//! `lastMergeSourceCommit` lags its newest iteration) and on GitHub.
+//! `lastMergeSourceCommit` lags its newest iteration) and on GitHub. One test needs `python3` for a
+//! fake language server: it is ignored and run by `ci/tool-tests.sh`.
 //!
 //! The project's remote is an ssh URL that names `dev.azure.com/contoso/Shop/api`, but a wrapper
 //! set as `core.sshCommand` serves the fetch from a bare repository on disk: no network is
@@ -21,7 +22,7 @@ use std::time::Duration;
 use serde_json::{Value, json};
 use vet_backend::{Config, Orchestrator, open_store};
 use vet_infra::platform::fake::{Canned, Fake};
-use vet_protocol::{ChangesetKey, HunkState, Manifest, ProjectId, Request, Response, Secret};
+use vet_protocol::{ChangesetKey, HunkState, Manifest, ProjectId, Request, Response, Secret, Side, UnavailableKind};
 
 use crate::common::{Client, git, init, write};
 
@@ -717,4 +718,137 @@ async fn a_push_to_a_github_pull_request_leaves_the_changed_lines_unseen() {
         revision,
         m.revision
     );
+}
+
+/// Like `served`, but the source branch carries a Rust file, so a language server starts for the
+/// pull request on view.
+fn served_rust(dir: &Path) -> (Served, PathBuf) {
+    let work = dir.join("work");
+    std::fs::create_dir_all(&work).unwrap();
+    init(&work);
+    write(
+        &work,
+        "Cargo.toml",
+        "[package]\nname = \"tiny\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+    );
+    write(&work, "src/lib.rs", "pub fn f() -> u32 {\n    1\n}\n");
+    git(&work, &["add", "-A"]);
+    git(&work, &["commit", "-qm", "base"]);
+    let base = git(&work, &["rev-parse", "HEAD"]);
+    git(&work, &["checkout", "-q", "-b", "feature"]);
+    write(&work, "src/lib.rs", "pub fn f() -> u32 {\n    2\n}\n");
+    git(&work, &["add", "-A"]);
+    git(&work, &["commit", "-qm", "first push"]);
+    let head1 = git(&work, &["rev-parse", "HEAD"]);
+    let bare = dir.join("served.git");
+    git(dir, &["init", "-q", "--bare", bare.to_str().unwrap()]);
+    git(&bare, &["config", "uploadpack.allowAnySHA1InWant", "true"]);
+    git(
+        &work,
+        &[
+            "push",
+            "-q",
+            bare.to_str().unwrap(),
+            "main",
+            "feature:refs/heads/feature",
+        ],
+    );
+    write(&work, "src/lib.rs", "pub fn f() -> u32 {\n    3\n}\n");
+    git(&work, &["add", "-A"]);
+    git(&work, &["commit", "-qm", "second push"]);
+    let head2 = git(&work, &["rev-parse", "HEAD"]);
+    let wrapper = dir.join("ssh-fake.sh");
+    std::fs::write(
+        &wrapper,
+        format!("#!/bin/sh\nexec git-upload-pack '{}'\n", bare.display()),
+    )
+    .unwrap();
+    std::fs::set_permissions(&wrapper, std::fs::Permissions::from_mode(0o755)).unwrap();
+    (
+        Served {
+            base,
+            head1,
+            head2,
+            work,
+            bare,
+        },
+        wrapper,
+    )
+}
+
+/// §7.5: a push voids "Trust this PR". The server that ran under the trusted policy must stop, and
+/// the pushed head must be served only by servers that may not execute project code.
+#[tokio::test]
+#[ignore = "needs python3"]
+async fn a_push_that_voids_trust_stops_the_executing_server() {
+    let scratch = tempfile::tempdir().unwrap();
+    let (served, wrapper) = served_rust(scratch.path());
+    let mock = Arc::new(Mutex::new(Mock {
+        head: served.head1.clone(),
+        base: served.base.clone(),
+        fork: false,
+        iterations: vec![(1, "create", served.head1.clone())],
+    }));
+    let fake = azure_devops(mock.clone(), 7);
+    let repo = project(&wrapper);
+    let data = tempfile::tempdir().unwrap();
+    let (_backend, client) = backend(data.path(), &fake).await;
+    let project = client.open(repo.path()).await;
+
+    // The rust server is the fake one, which names its process in a hover.
+    let tools = tempfile::tempdir().unwrap();
+    let script = crate::restart::fake_rust_server(tools.path());
+    client
+        .call(Request::SetServerPath {
+            project,
+            language: "rust".into(),
+            path: Some(script.to_str().unwrap().into()),
+        })
+        .await
+        .unwrap();
+    client
+        .call(Request::OpenChangeset {
+            project,
+            changeset: ChangesetKey::PullRequest {
+                remote: remote().into(),
+                number: 7,
+            },
+        })
+        .await
+        .unwrap();
+    client.call(Request::TrustPullRequest { project }).await.unwrap();
+
+    // The trusted pull request runs the rust server.
+    let revision = manifest_of(&client, project).await.revision;
+    let (text, unavailable) = client
+        .hover(project, revision, Side::Target, "src/lib.rs", (0, 7))
+        .await;
+    assert!(unavailable.is_none(), "{unavailable:?}");
+    let pid: u32 = text
+        .expect("no answer from the trusted server")
+        .rsplit(' ')
+        .next()
+        .unwrap()
+        .trim()
+        .parse()
+        .unwrap();
+
+    // The author's push voids the trust.
+    push_again(&mock, &served);
+    client.call(Request::Fetch { project }).await.unwrap();
+
+    // The server that ran under the withdrawn trust is stopped.
+    assert!(
+        crate::restart::gone(pid).await,
+        "the server of the voided trust is still running"
+    );
+
+    // The pushed head is served only by servers that may not execute project code: the rust
+    // server, which does, is not started for it.
+    let revision = manifest_of(&client, project).await.revision;
+    let (text, unavailable) = client
+        .hover(project, revision, Side::Target, "src/lib.rs", (0, 7))
+        .await;
+    assert_eq!(text, None);
+    assert_eq!(unavailable.map(|why| why.kind), Some(UnavailableKind::AnalysisLimited));
 }

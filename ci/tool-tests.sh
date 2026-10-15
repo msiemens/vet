@@ -45,7 +45,7 @@ probes=(
     "command -v docker-langserver"
 )
 filters=(
-    'package(vet-backend) & binary(it) & test(/^(restart|cancel|load)::/)'
+    'package(vet-backend) & binary(it) & test(/^(restart|cancel|load|pushes)::/)'
     '(package(vet-infra) & binary(it) & test(/^lsp::rust_analyzer/)) | (package(vet-backend) & binary(it) & test(/^(semantic|symbols|problems)::/))'
     'package(vet-infra) & binary(it) & test(/^lsp::typescript/)'
     'package(vet-infra) & binary(it) & test(/^lsp::pyright/)'
