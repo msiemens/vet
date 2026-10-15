@@ -4,6 +4,7 @@
   import type { SymbolInfo } from "../../generated/SymbolInfo";
   import { LIST } from "../../lib/listKeys";
   import { basename } from "../../lib/paths";
+  import { changeGate } from "../../lib/ui/changeGate";
   import IconButton from "../../lib/ui/IconButton.svelte";
   import KeyHint from "../../lib/ui/KeyHint.svelte";
   import { ListNav } from "../../lib/ui/listNav";
@@ -49,10 +50,11 @@
   const fileName = $derived(target && basename(target.path));
 
   // The popup opens on the symbol the cursor is in; what is typed or toggled starts the list over.
+  const reset = changeGate();
   $effect(() => {
-    // eslint-disable-next-line @typescript-eslint/no-unused-expressions -- the reads make them dependencies
-    [query, structure.sort, structure.changedOnly];
-    cursor = Math.max(0, query ? rows.findIndex((r) => !r.muted) : rows.findIndex(selected));
+    if (reset(query, structure.sort, structure.changedOnly)) {
+      cursor = Math.max(0, query ? rows.findIndex((r) => !r.muted) : rows.findIndex(selected));
+    }
   });
 
   const selected = (r: StructureRow) => keyOf(r.symbol.id) === structure.selected;

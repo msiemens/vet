@@ -1,6 +1,7 @@
 <script lang="ts">
   import { plural } from "../../lib/format";
   import { SEARCH_OPTION_TOGGLES } from "../../lib/search/optionToggles";
+  import { changeGate } from "../../lib/ui/changeGate";
   import FilterChip from "../../lib/ui/FilterChip.svelte";
   import IconButton from "../../lib/ui/IconButton.svelte";
   import Icon from "../../lib/ui/Icon.svelte";
@@ -37,11 +38,12 @@
   const noSides = $derived(fileView || unchanged);
 
   // The cursor goes to the field each time the bar is asked for, also when it is open already.
+  const focusRequested = changeGate();
   $effect(() => {
-    // eslint-disable-next-line @typescript-eslint/no-unused-expressions -- the read makes the request a dependency
-    find.focusRequests;
-    input?.focus();
-    input?.select();
+    if (focusRequested(find.focusRequests)) {
+      input?.focus();
+      input?.select();
+    }
   });
 
   const count = $derived.by(() => {

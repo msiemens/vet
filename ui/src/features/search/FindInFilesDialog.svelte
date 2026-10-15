@@ -14,6 +14,7 @@
   import { NO_HIGHLIGHTS } from "../../lib/highlights";
   import { SEARCH_OPTION_TOGGLES } from "../../lib/search/optionToggles";
   import ChangeLetter from "../../lib/ui/ChangeLetter.svelte";
+  import { changeGate } from "../../lib/ui/changeGate";
   import EmptyState from "../../lib/ui/EmptyState.svelte";
   import FileIcon from "../../lib/ui/FileIcon.svelte";
   import FilterChip from "../../lib/ui/FilterChip.svelte";
@@ -109,13 +110,14 @@
   });
 
   // The cursor goes to the query each time the dialog is asked for.
+  const focusRequested = changeGate();
   $effect(() => {
-    // eslint-disable-next-line @typescript-eslint/no-unused-expressions -- the read makes the request a dependency
-    find.focusRequests;
-    void tick().then(() => {
-      input?.focus();
-      input?.select();
-    });
+    if (focusRequested(find.focusRequests)) {
+      void tick().then(() => {
+        input?.focus();
+        input?.select();
+      });
+    }
   });
 
   const asked = (): SearchQuery => ({
@@ -129,10 +131,11 @@
   });
 
   // The search runs as the query, the options or the changeset change; an answer to an older one is dropped.
+  const reasked = changeGate();
   $effect(() => {
     const request = asked();
-    // eslint-disable-next-line @typescript-eslint/no-unused-expressions -- the read makes the revision a dependency
-    revision;
+    // The gate reads the revision too, so a new changeset runs the search again.
+    if (!reasked(revision, request)) return;
     if (!request.pattern.text) {
       latest.cancel();
       results = undefined;

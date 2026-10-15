@@ -5,6 +5,7 @@
   import type { ExcludedGroup } from "../../generated/ExcludedGroup";
   import type { ReviewedFile } from "../../state/reviewModel";
   import { dirname } from "../../lib/paths";
+  import { changeGate } from "../../lib/ui/changeGate";
   import { letterOfChange } from "../../lib/changeLetter";
   import { arrowKey, toggleIn } from "../../lib/foldKeys";
   import { plural } from "../../lib/format";
@@ -113,21 +114,21 @@
   const scope = $derived(tool === "all" ? "all" : "changes");
 
   // A search belongs to the window it was typed in.
+  const toolChanged = changeGate();
   $effect(() => {
-    // eslint-disable-next-line @typescript-eslint/no-unused-expressions -- the read makes the tool a dependency
-    tool;
-    untrack(() => {
-      search.clear();
-      cursor = -1;
-    });
+    if (toolChanged(tool)) {
+      untrack(() => {
+        search.clear();
+        cursor = -1;
+      });
+    }
   });
 
   // A click on a file marks it at once; what it shows waits for a second click that would open the file instead.
   let pressed = $state<string>();
+  const selectionChanged = changeGate();
   $effect(() => {
-    // eslint-disable-next-line @typescript-eslint/no-unused-expressions -- the read makes the selection a dependency
-    selected;
-    untrack(() => (pressed = undefined));
+    if (selectionChanged(selected)) untrack(() => (pressed = undefined));
   });
   // The highlighted row: an index into the rows shown, -1 for none. While searching it is the row Enter opens.
   let cursor = $state(-1);

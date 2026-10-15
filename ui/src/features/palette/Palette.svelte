@@ -9,6 +9,7 @@
   import { bindingOf, matches } from "../../lib/keymap";
   import { splitPath } from "../../lib/paths";
   import ChangeLetter from "../../lib/ui/ChangeLetter.svelte";
+  import { changeGate } from "../../lib/ui/changeGate";
   import DiffBar from "../../lib/ui/DiffBar.svelte";
   import EmptyState from "../../lib/ui/EmptyState.svelte";
   import FileIcon from "../../lib/ui/FileIcon.svelte";
@@ -208,10 +209,9 @@
   );
 
   // What was typed or chosen as the tab starts the list over.
+  const typedChanged = changeGate();
   $effect(() => {
-    // eslint-disable-next-line @typescript-eslint/no-unused-expressions -- the reads make them dependencies
-    (palette.query, palette.tab);
-    cursor = 0;
+    if (typedChanged(palette.query, palette.tab)) cursor = 0;
   });
 
   // The changesets are listed afresh each time the popup opens, as the switcher's popover does.

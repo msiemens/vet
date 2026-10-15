@@ -6,6 +6,7 @@
   import Banner from "../../lib/ui/Banner.svelte";
   import SideBar from "../../lib/ui/SideBar.svelte";
   import type { SoftWrap } from "../../lib/softWrap";
+  import { changeGate } from "../../lib/ui/changeGate";
   import type { Backend } from "../../state/backend";
   import type { Changeset } from "../../state/changeset.svelte";
   import { keyId } from "../../state/changesetKey";
@@ -16,7 +17,6 @@
   import { platform } from "../../state/platform.svelte";
   import { session } from "../../state/session.svelte";
   import { structure } from "../../state/structure.svelte";
-  import { symbols } from "../../state/symbols.svelte";
   import { threads } from "../../state/threads.svelte";
   import { versions } from "../../state/versions.svelte";
   import { CommentsPanel } from "../comments";
@@ -205,25 +205,20 @@
   // the file at the top of the Changes tab, which follows its scrolling.
   const marked = $derived(pathOf(tabs.active) ?? picked ?? tabs.changesFile);
   // A pick in the tree gives way once the Changes tab moves on.
+  const pickedChanged = changeGate();
   $effect(() => {
-    // eslint-disable-next-line @typescript-eslint/no-unused-expressions -- the read makes the file a dependency
-    tabs.changesFile;
-    untrack(() => (picked = undefined));
+    if (pickedChanged(tabs.changesFile)) untrack(() => (picked = undefined));
   });
   // The active tab has hunks to step through: the Changes tab, or a changed file's.
   const stepping = $derived(kindOf(tabs.active) === "changes" || controller.fileChanged(tabs.active));
   /** The commit the active file tab stays at. */
   const pinned = $derived(commitOf(tabs.active));
   const fileOf = (path: string) => changeset.reviewed(path);
-  // The symbols of the file the review shows (the active file tab, else the one selected in the tree) are found first.
-  $effect(() => {
-    symbols.file = highlighted;
-  });
   // The Structure tool lists the symbols of the file the active tab shows, in the view the tab reads.
   $effect(() => {
-    // eslint-disable-next-line @typescript-eslint/no-unused-expressions -- the read makes the layout a dependency
-    changeset.layout;
-    structure.show(controller.structureTarget());
+    const layout = changeset.layout;
+    // No layout has no target either; reading it keeps the effect on the manifest, which `shown` alone is untracked of.
+    structure.show(layout === undefined ? undefined : controller.structureTarget());
   });
 
   onMount(() => {
@@ -260,36 +255,35 @@
   const range = $derived(changeset.layout?.interdiff);
   const readOnly = $derived(range?.markable === false);
   // A range shows the threads of its new side: they are read again for each range.
+  const viewChanged = changeGate();
   $effect(() => {
-    // eslint-disable-next-line @typescript-eslint/no-unused-expressions -- the read makes the range a dependency
-    changeset.viewKey;
-    untrack(() => void threads.reload());
+    if (viewChanged(changeset.viewKey)) untrack(() => void threads.reload());
   });
 
   // The open tabs, the active one or a view mode changed: the tabs are remembered.
+  const tabsChanged = changeGate();
   $effect(() => {
-    // eslint-disable-next-line @typescript-eslint/no-unused-expressions -- the reads make the tabs a dependency
-    [tabs.open.length, tabs.active, ...tabs.open.map((id) => tabs.modes.get(id))];
-    untrack(() => {
-      controller.scheduleSave();
-      controller.pruneScopes();
-      controller.syncFind();
-    });
+    const open = tabs.open;
+    if (tabsChanged(open.length, tabs.active, ...open, ...open.map((id) => tabs.modes.get(id)))) {
+      untrack(() => {
+        controller.scheduleSave();
+        controller.pruneScopes();
+        controller.syncFind();
+      });
+    }
   });
 
   // A settled snapshot moved the changeset to a new revision, another changeset is on view, or
   // the review view shows another range.
+  const shownChanged = changeGate();
   $effect(() => {
-    if (revision === undefined) return;
-    // eslint-disable-next-line @typescript-eslint/no-unused-expressions -- the read makes the range a dependency
-    changeset.viewKey;
-    // eslint-disable-next-line @typescript-eslint/no-unused-expressions -- the read makes the file filter a dependency
-    changeset.baseChanged;
-    untrack(() => {
-      const layout = changeset.currentLayout();
-      const facts = changeset.currentFacts();
-      if (layout && facts) controller.update({ layout, facts });
-    });
+    if (shownChanged(revision, changeset.viewKey, changeset.baseChanged)) {
+      untrack(() => {
+        const layout = changeset.currentLayout();
+        const facts = changeset.currentFacts();
+        if (layout && facts) controller.update({ layout, facts });
+      });
+    }
   });
 
   /** Shows the file in the Changes tab; an unchanged file is only selected. */

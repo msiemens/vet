@@ -7,6 +7,7 @@
   import { arrowKey } from "../../lib/foldKeys";
   import { plainKey } from "../../lib/listKeys";
   import { basename } from "../../lib/paths";
+  import { changeGate } from "../../lib/ui/changeGate";
   import { aimIndex, stepMatch } from "../../lib/speedSearch";
   import FileIcon from "../../lib/ui/FileIcon.svelte";
   import Icon from "../../lib/ui/Icon.svelte";
@@ -57,22 +58,23 @@
   const allShut = $derived(structure.closed.size > 0);
 
   // A search belongs to the file it was typed in.
+  const fileChanged = changeGate();
   $effect(() => {
-    // eslint-disable-next-line @typescript-eslint/no-unused-expressions -- the read makes the file a dependency
-    target?.tab;
-    untrack(() => {
-      search.clear();
-      cursor = -1;
-    });
+    if (fileChanged(target)) {
+      untrack(() => {
+        search.clear();
+        cursor = -1;
+      });
+    }
   });
 
   // The selection moved (a reveal): its row comes into view.
+  const revealed = changeGate();
   $effect(() => {
     const id = structure.selected;
-    // eslint-disable-next-line @typescript-eslint/no-unused-expressions -- the read makes the rows a dependency
-    rows;
-    if (id === undefined) return;
-    untrack(() => void tick().then(() => void list?.reveal(rows.findIndex((r) => keyOf(r.symbol.id) === id))));
+    if (id !== undefined && revealed(id, rows)) {
+      untrack(() => void tick().then(() => void list?.reveal(rows.findIndex((r) => keyOf(r.symbol.id) === id))));
+    }
   });
 
   const pick = (row: StructureRow) => structure.select(row.symbol, row.change);

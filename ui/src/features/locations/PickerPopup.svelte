@@ -8,6 +8,7 @@
   import { LIST } from "../../lib/listKeys";
   import { fullName } from "../../lib/symbolLabel";
   import ChangeLetter from "../../lib/ui/ChangeLetter.svelte";
+  import { changeGate } from "../../lib/ui/changeGate";
   import EmptyState from "../../lib/ui/EmptyState.svelte";
   import GroupLabel from "../../lib/ui/GroupLabel.svelte";
   import Icon from "../../lib/ui/Icon.svelte";
@@ -57,10 +58,9 @@
   const count = $derived(results && countText(results.total, results.rows.length));
 
   // What was typed or toggled starts the list over.
+  const filterChanged = changeGate();
   $effect(() => {
-    // eslint-disable-next-line @typescript-eslint/no-unused-expressions -- the reads make them dependencies
-    (search.query, onlyChangeset);
-    cursor = 0;
+    if (filterChanged(search.query, onlyChangeset)) cursor = 0;
   });
 
   // The side comes from the caret alone, so the popup never crosses it while open: not from

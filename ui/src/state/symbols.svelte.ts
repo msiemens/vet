@@ -63,8 +63,6 @@ class SymbolsState {
   files = new SvelteMap<string, FileLoad>();
   /** The files of the revision whose analysis ended, of those it is for. */
   progress = $state.raw({ done: 0, total: 0 });
-  /** The file the review shows. */
-  file = $state<string>();
   selected = $state.raw<Shown>();
   /** Why the cursor's symbol is unknown, when the language has no usable server. */
   unavailable = $state.raw<Unavailable>();
