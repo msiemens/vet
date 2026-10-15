@@ -1,4 +1,4 @@
-# Vet
+<h1 align="center">Vet</h1>
 
 <p align="center">An Integrated Review Environment for the agentic age.</p>
 
