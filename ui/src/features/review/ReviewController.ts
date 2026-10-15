@@ -13,7 +13,6 @@ import type { View } from "../../generated/View";
 import type { SymbolInfo } from "../../generated/SymbolInfo";
 import type { TextSpan } from "../../generated/TextSpan";
 import { isAbort } from "../../lib/abort";
-import { Debounced } from "../../lib/debounced";
 import type { LocationRow } from "../../generated/LocationRow";
 import { nextPaint } from "../../lib/nextPaint";
 import { platformName } from "../../lib/platformName";
@@ -47,7 +46,7 @@ import type { Thread } from "../../generated/Thread";
 import { SUBMIT_KEY } from "../../lib/composer";
 import { STALE_NOTICE } from "../../lib/notice";
 import { RequestError } from "../../lib/requestError";
-import { ChangesetView, type Listeners, type PanePosition, type ViewHooks } from "./editor/ChangesetView";
+import { ChangesetView, type Listeners, type ViewHooks } from "./editor/ChangesetView";
 import { fileSource } from "./editor/fileSource";
 import { type FindOptions, orderOf } from "./editor/findMatches";
 import type { OpenedResult } from "../search";
@@ -63,7 +62,7 @@ import type { SoftWrap } from "../../lib/softWrap";
 import type { Mode, ViewMode } from "../../lib/viewMode";
 import { type CommandContext, type TabId, commands } from "../../state/commands";
 import { type TextActions, TextView } from "./editor/TextView";
-import { type FilePositions, type SavedView, ViewMemory, restoredTabs } from "./changesetViews";
+import { type FilePositions, type SavedView, restoredTabs } from "./changesetViews";
 import { keyId } from "../../state/changesetKey";
 import { threadMenu } from "../comments";
 import { type HunkPlace, stepFlagged } from "./flaggedHunks";
@@ -76,7 +75,6 @@ import {
   type Origin,
   commitOf,
   fileTab,
-  hasDiff,
   kindOf,
   logTab,
   modesOf,
@@ -85,6 +83,7 @@ import {
 } from "./tabModel";
 import { Tabs } from "./Tabs.svelte";
 import { ViewScopes } from "./ViewScopes";
+import { ViewPersistence } from "./ViewPersistence";
 
 /** Space types in a field and presses a focused control; it marks the current item only when none of those has the focus. */
 const takesSpace = (el: Element | null) =>
@@ -125,9 +124,6 @@ const projectViews = {
   read: () => preferences.read("project", "tabs"),
   write: (value: string | undefined) => preferences.write("project", "tabs", value),
 };
-
-/** The tabs and positions are saved this long after the last change. */
-const SAVE_AFTER_MS = 400;
 
 /** Said when a mark or a comment is asked for in a range that does not end at the latest version. */
 export const READ_ONLY_NOTE = "This range does not end at the latest version: marks and comments are off";
@@ -172,13 +168,8 @@ export class ReviewController {
   private filtered?: ReadonlySet<string>;
   /** The commit the views show, if they show one. */
   private shownCommit?: number;
-  /** What each changeset of the repository had open when it was last on view, for when it comes back. */
-  private memory?: ViewMemory;
-  /** Scroll positions the next builds start at, instead of carrying the old views' over. */
-  private restore?: { scroll: Map<TabId, number> };
-  /** Where file tabs' panes are put when they are built: the positions of the changeset just brought back. */
-  private pending = new Map<TabId, FilePositions>();
-  private saving = new Debounced();
+  /** The tabs and positions each changeset of the repository had when it was last on view. */
+  private readonly persistence: ViewPersistence;
   /** The Changes tab of the views built last going to its first hunk. */
   private arriving: Promise<void> = Promise.resolve();
 
@@ -204,6 +195,7 @@ export class ReviewController {
         return path === undefined ? [] : [path];
       },
     });
+    this.persistence = new ViewPersistence(projectViews);
     const offReview = changeset.subscribe((paths) => this.refreshReview(paths));
     const offThreads = threads.onChange(() => this.showThreads());
     const offCommands = provideActions(this.viewActions());
@@ -382,7 +374,7 @@ export class ReviewController {
   /** Detaches the controller from the window and the store, and tears down the views. */
   destroy() {
     this.search.cancel();
-    this.saving.cancel();
+    this.persistence.cancelScheduled();
     this.findControl.cancel();
     this.saveView();
     this.unsubscribe();
@@ -1008,7 +1000,7 @@ export class ReviewController {
     const previous = this.texts.get(id);
     // A scope's views are rebuilt when its own manifest comes.
     if (!force && previous && source !== this.changeset && layout && previous.isFor(layout.shown)) return;
-    if (!layout) this.keepPlace(id, "text", previous?.lines());
+    if (!layout) this.persistence.keepPlace(id, "text", previous?.lines());
     const place = layout && previous?.isOfView(layout.shown.view) === false ? previous.lines() : undefined;
     previous?.destroy();
     this.texts.delete(id);
@@ -1026,7 +1018,7 @@ export class ReviewController {
     );
     this.texts.set(id, text);
     if (this.find.open.has(id)) this.findControl.apply(id);
-    const at = this.takePending(id, "text") ?? place;
+    const at = this.persistence.takePending(id, "text") ?? place;
     if (at) text.showLines(at);
     if (this.threadsFit(layout)) text.setThreads(this.shownThreads(id), shown.revision);
   }
@@ -1048,19 +1040,19 @@ export class ReviewController {
       path === undefined
         ? (layout?.files ?? []).filter((f) => !only || only.has(f.path))
         : (layout?.files ?? []).filter((f) => f.path === path);
-    const restoring = this.restore?.scroll.has(id) ? this.restore : undefined;
-    const anchor = restoring ? undefined : previous?.currentAnchor();
-    const top = restoring ? (restoring.scroll.get(id) ?? 0) : root.scrollTop;
-    if (restoring) {
-      restoring.scroll.delete(id);
-      if (restoring.scroll.size === 0) this.restore = undefined;
-    }
+    const restored = this.persistence.takeRestore(id);
+    const anchor = restored === undefined ? previous?.currentAnchor() : undefined;
+    const top = restored ?? root.scrollTop;
     // The file left the view, or it is not read yet: its place waits for the view that has it again.
     const absent = !layout || (path !== undefined && !files.length);
-    if (absent) this.keepPlace(id, "diff", previous?.lines());
+    if (absent) this.persistence.keepPlace(id, "diff", previous?.lines());
     // A file's tab that is put on another view (a commit, a push, All changes) keeps its lines.
     const place =
-      path !== undefined && !restoring && layout && previous && !sameView(previous.shown.view, layout.shown.view)
+      path !== undefined &&
+      restored === undefined &&
+      layout &&
+      previous &&
+      !sameView(previous.shown.view, layout.shown.view)
         ? previous.lines()
         : undefined;
     previous?.destroy();
@@ -1088,29 +1080,13 @@ export class ReviewController {
     // A file tab shows its one file at once; the Changes tab loads sections as they come near.
     // A stale revision is replaced by the next build.
     if (path === undefined) return;
-    const at = this.takePending(id, "diff") ?? place;
+    const at = this.persistence.takePending(id, "diff") ?? place;
     (at ? view.showLines(at) : view.load(0)).catch(() => undefined);
   }
 
-  /** Remembers where a pane was, for the view that replaces it once its source has read. */
-  private keepPlace(id: TabId, pane: keyof FilePositions, at: PanePosition | undefined) {
-    if (at) this.pending.set(id, { ...this.pending.get(id), [pane]: at });
-  }
-
-  /** The position a pane is put at when it is built, once. */
-  private takePending(id: TabId, pane: keyof FilePositions): PanePosition | undefined {
-    const positions = this.pending.get(id);
-    const at = positions?.[pane];
-    if (positions) {
-      positions[pane] = undefined;
-      if (!positions.diff && !positions.text) this.pending.delete(id);
-    }
-    return at;
-  }
-
-  /** The views of the tabs now, as `memory` keeps them. Where a pane has no view to ask (its tab's diff pane while the next changeset loads), the position stored for it stays. */
+  /** The views of the tabs now, as the persistence keeps them. Where a pane has no view to ask (its tab's diff pane while the next changeset loads), the position stored for it stays. */
   private capture(key: string): SavedView {
-    const before = this.memory?.get(key);
+    const before = this.persistence.stored(key);
     // A range or a commit shows other files than the changeset's own: the positions of what it shows are not kept.
     const plain = !this.shown && this.shownCommit === undefined;
     const panes = new Map<TabId, FilePositions>();
@@ -1118,8 +1094,8 @@ export class ReviewController {
       if (pathOf(id) === undefined) continue;
       const old = before?.panes.get(id);
       const live = (plain || this.scopes.specOf(id) !== undefined) && {
-        diff: this.views.get(id)?.lines() ?? this.pending.get(id)?.diff,
-        text: this.texts.get(id)?.lines() ?? this.pending.get(id)?.text,
+        diff: this.views.get(id)?.lines() ?? this.persistence.pendingOf(id, "diff"),
+        text: this.texts.get(id)?.lines() ?? this.persistence.pendingOf(id, "text"),
       };
       const kept = live ? { diff: live.diff ?? old?.diff, text: live.text ?? old?.text } : old;
       if (kept && (kept.diff || kept.text)) panes.set(id, kept);
@@ -1139,13 +1115,12 @@ export class ReviewController {
   private saveView() {
     const repo = session.repo;
     if (repo === undefined || this.key === undefined) return;
-    this.memory ??= new ViewMemory(projectViews);
-    this.memory.set(this.key, this.capture(this.key));
+    this.persistence.remember(this.key, this.capture(this.key));
   }
 
   /** The tabs or a pane changed: the views are saved once the changes pause. */
   scheduleSave = () => {
-    this.saving.schedule(SAVE_AFTER_MS, () => this.saveView());
+    this.persistence.schedule(() => this.saveView());
   };
 
   /** A file tab's text pane has its scroll root; returns the function that detaches it. The text is built once the tab shows it. */
@@ -1376,7 +1351,7 @@ export class ReviewController {
     // Another range or commit is another set of files: the Changes tab starts at the top, and so does
     // the filtered one. A file's tab keeps its lines (`build`).
     if ((rangeChanged || filterChanged) && !switching) {
-      this.restore = { scroll: new Map([[CHANGES, 0]]) };
+      this.persistence.beginRestore([CHANGES]);
     }
     this.show();
     const restored = switching && this.restoreChanges(brought, layout);
@@ -1408,16 +1383,14 @@ export class ReviewController {
 
   /** Remembers the changeset on view and brings back the tabs of `next`; answers what was remembered of it. */
   private switchTo(next: string): SavedView | undefined {
-    this.saving.cancel();
+    this.persistence.cancelScheduled();
     this.saveView();
     return this.bringBack(next);
   }
 
   /** Sets the tabs the changeset `key` had, and what its panes are put at when they are built. Each tab is judged by the view it reads. */
   private bringBack(key: string): SavedView | undefined {
-    const repo = session.repo;
-    if (repo !== undefined) this.memory ??= new ViewMemory(projectViews);
-    const saved = this.memory?.get(key);
+    const saved = session.repo === undefined ? undefined : this.persistence.stored(key);
     this.scopes.drop();
     this.scopes.setFrozen(false);
     const { open, active, modes } = restoredTabs(
@@ -1430,13 +1403,9 @@ export class ReviewController {
     for (const [id, mode] of modes) this.tabs.modes.set(id, mode);
     this.tabs.open = open;
     this.tabs.active = active;
-    this.pending.clear();
-    for (const id of open) {
-      const at = saved?.panes.get(id);
-      if (at) this.pending.set(id, { ...at });
-    }
+    this.persistence.setPending(saved?.panes);
     // Every diff view starts at the top; a remembered position is put on it once it is built.
-    this.restore = { scroll: new Map(open.filter(hasDiff).map((tab) => [tab, 0])) };
+    this.persistence.beginRestore(open);
     return saved;
   }
 
