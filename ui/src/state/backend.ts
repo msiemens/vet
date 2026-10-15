@@ -38,6 +38,8 @@ import type { RecentProject } from "../generated/RecentProject";
 import type { RemovalImpact } from "../generated/RemovalImpact";
 import type { Request } from "../generated/Request";
 import type { Response } from "../generated/Response";
+import type { ResponseOf } from "../generated/ResponseOf";
+import { RESPONSE_TAG } from "../generated/ResponseOf.ts";
 import type { ReviewFilter } from "../generated/ReviewFilter";
 import type { ReviewSubmitted } from "../generated/ReviewSubmitted";
 import type { ReviewUpdate } from "../generated/ReviewUpdate";
@@ -134,19 +136,15 @@ export interface PullRequestList {
   sources: PullRequestSource[];
 }
 
-function expect<T extends Response["type"]>(response: Response, type: T): Extract<Response, { type: T }> {
-  if (response.type !== type) throw new Error("unexpected response");
-  return response as Extract<Response, { type: T }>;
+/**
+ * The answer of `request`, narrowed to the response the protocol pairs with it (A16): the
+ * pairing comes from the generated `ResponseOf`, so `call` of a request the protocol shapes
+ * cannot be read as another answer. The transport itself hands answers over untyped.
+ */
+function matched<T extends Request>(request: T, response: Response): ResponseOf<T["type"]> {
+  if (response.type !== RESPONSE_TAG[request.type]) throw new Error("unexpected response");
+  return response as ResponseOf<T["type"]>;
 }
-
-/** The `checkLog` response carries the log's fields beside its tag. */
-const asCheckLog = (response: Extract<Response, { type: "checkLog" }>): CheckLog => response;
-
-/** The `thread` response carries the thread's fields beside its tag. */
-const asThread = (response: Extract<Response, { type: "thread" }>): Thread => response;
-
-/** Likewise the `account` response. */
-const asAccount = (response: Extract<Response, { type: "account" }>): Account => response;
 
 export class Backend {
   /** The open project, if any; one at a time. */
@@ -173,6 +171,11 @@ export class Backend {
     return new Backend(conn, conn.repo);
   }
 
+  /** Sends `request` and narrows the answer to the response the protocol pairs with it. */
+  private async call<T extends Request>(request: T, signal?: AbortSignal): Promise<ResponseOf<T["type"]>> {
+    return matched(request, await this.conn.request(request, signal));
+  }
+
   /** Calls `listener` whenever the connection drops, stalls or is up again. */
   onLinkState(listener: (state: LinkState) => void): () => void {
     return this.conn.onState(listener);
@@ -193,22 +196,22 @@ export class Backend {
    * subscribes this connection to the backend's events.
    */
   async recentProjects(): Promise<RecentProject[]> {
-    return expect(await this.conn.request({ type: "recentProjects" }), "recentProjects").projects;
+    return (await this.call({ type: "recentProjects" })).projects;
   }
 
   /** Puts `path` at the top of the recent list; resolves with the list. */
   async recordRecentProject(path: string): Promise<RecentProject[]> {
-    return expect(await this.conn.request({ type: "recordRecentProject", path }), "recentProjects").projects;
+    return (await this.call({ type: "recordRecentProject", path })).projects;
   }
 
   /** Resolves with the recent list without `path`. */
   async forgetRecentProject(path: string): Promise<RecentProject[]> {
-    return expect(await this.conn.request({ type: "forgetRecentProject", path }), "recentProjects").projects;
+    return (await this.call({ type: "forgetRecentProject", path })).projects;
   }
 
   /** Opens a project on `repo`; resolves with the repository root the backend settled on. */
   async open(repo: string): Promise<string> {
-    const opened = expect(await this.conn.request({ type: "openProject", repo }), "project");
+    const opened = await this.call({ type: "openProject", repo });
     this.project = opened.project;
     // The backend resolves a subfolder to its repository root and reports it.
     return opened.root;
@@ -217,7 +220,7 @@ export class Backend {
   async close(): Promise<void> {
     const project = this.project;
     this.project = undefined;
-    if (project !== undefined) await this.conn.request({ type: "closeProject", project });
+    if (project !== undefined) await this.call({ type: "closeProject", project });
   }
 
   private get pid(): number {
@@ -258,7 +261,7 @@ export class Backend {
 
   /** The credentials the backend holds or can get, per host; asking also subscribes this connection to the backend's events. */
   async accounts(): Promise<Account[]> {
-    return expect(await this.conn.request({ type: "accounts" }), "accounts").accounts;
+    return (await this.call({ type: "accounts" })).accounts;
   }
 
   /**
@@ -267,13 +270,12 @@ export class Backend {
    * host is the normalized one.
    */
   async setCredentials(host: string, token: string, validate: boolean): Promise<Account> {
-    const request = { type: "setCredentials", host, token, validate } as const;
-    return asAccount(expect(await this.conn.request(request), "account"));
+    return await this.call({ type: "setCredentials", host, token, validate });
   }
 
   /** Forgets the personal access token of a host; resolves with the accounts left. */
   async removeCredentials(host: string): Promise<Account[]> {
-    return expect(await this.conn.request({ type: "removeCredentials", host }), "accounts").accounts;
+    return (await this.call({ type: "removeCredentials", host })).accounts;
   }
 
   /**
@@ -281,17 +283,17 @@ export class Backend {
    * nothing uses. Only speed is lost. Resolves with the bytes the semantic cache takes on disk afterwards.
    */
   async clearSemanticCaches(): Promise<number> {
-    return expect(await this.conn.request({ type: "clearSemanticCaches" }), "semanticCacheUsage").bytes;
+    return (await this.call({ type: "clearSemanticCaches" })).bytes;
   }
 
   /** The bytes the answers of the language servers kept between launches take on disk. */
   async semanticCacheUsage(): Promise<number> {
-    return expect(await this.conn.request({ type: "semanticCacheUsage" }), "semanticCacheUsage").bytes;
+    return (await this.call({ type: "semanticCacheUsage" })).bytes;
   }
 
   /** The backend's own settings, app-wide. Asking also subscribes this connection to the backend's events. */
   async settings(): Promise<BackendSettings> {
-    return expect(await this.conn.request({ type: "settings" }), "settings").settings;
+    return (await this.call({ type: "settings" })).settings;
   }
 
   /** Calls `listener` when the backend's own settings changed, by this window or another. */
@@ -306,12 +308,12 @@ export class Backend {
    * Asking also subscribes this connection to the backend's events.
    */
   async preferences(scope: string | null): Promise<Preference[]> {
-    return expect(await this.conn.request({ type: "preferences", scope }), "preferences").values;
+    return (await this.call({ type: "preferences", scope })).values;
   }
 
   /** Keeps `value` (JSON text) under `key`, or forgets the key for `undefined`. */
   async setPreference(scope: string | null, key: string, value: string | undefined): Promise<void> {
-    expect(await this.conn.request({ type: "setPreference", scope, key, value: value ?? null }), "done");
+    await this.call({ type: "setPreference", scope, key, value: value ?? null });
   }
 
   /** Calls `listener` when a preference was kept or forgotten, by this window or another. */
@@ -323,52 +325,47 @@ export class Backend {
 
   /** Replaces the backend's own settings; resolves with them as kept, rejects with the backend's message. */
   async setSettings(settings: BackendSettings): Promise<BackendSettings> {
-    return expect(await this.conn.request({ type: "setSettings", settings }), "settings").settings;
+    return (await this.call({ type: "setSettings", settings })).settings;
   }
 
   /** The folder of the backend's log files, as a path of the machine it runs on. */
   async logDirectory(): Promise<string> {
-    return expect(await this.conn.request({ type: "logDirectory" }), "logDirectory").path;
+    return (await this.call({ type: "logDirectory" })).path;
   }
 
   /** The background tasks of the open project that are running now. */
   async tasks(): Promise<Task[]> {
-    return expect(await this.conn.request({ type: "tasks", project: this.pid }), "tasks").tasks;
+    return (await this.call({ type: "tasks", project: this.pid })).tasks;
   }
 
   /** The versions of the open review, oldest first; none while browsing. */
   async versions(): Promise<VersionInfo[]> {
-    return expect(await this.conn.request({ type: "versions", project: this.pid }), "versions").versions;
+    return (await this.call({ type: "versions", project: this.pid })).versions;
   }
 
   /** The commits of the changeset on view with their own progress, oldest first; none for the working tree. */
   async commits(): Promise<{ revision: number; commits: CommitUnit[] }> {
-    const { revision, commits } = expect(await this.conn.request({ type: "commits", project: this.pid }), "commits");
+    const { revision, commits } = await this.call({ type: "commits", project: this.pid });
     return { revision, commits };
   }
 
   /** Remembers the lens the changeset on view is reviewed in; every subscriber, this one included, then gets `lensChanged`. */
   async setLens(lens: Lens): Promise<void> {
-    expect(await this.conn.request({ type: "setLens", project: this.pid, lens }), "done");
+    await this.call({ type: "setLens", project: this.pid, lens });
   }
 
   /** The changeset, or with another `view` an interdiff of two of its versions or one commit. */
   async manifest(view: View): Promise<Manifest> {
-    return expect(await this.conn.request({ type: "manifest", project: this.pid, view }), "manifest");
+    return await this.call({ type: "manifest", project: this.pid, view });
   }
 
   fileContents(path: string, view: View): Promise<FileContents> {
-    return this.conn
-      .request({ type: "fileContents", project: this.pid, view, path })
-      .then((r) => expect(r, "fileContents"));
+    return this.call({ type: "fileContents", project: this.pid, view, path });
   }
 
   /** The direct children of a directory of the target snapshot (`""` is the root), as of `revision`. */
   async listDirectory(path: string): Promise<{ revision: number; entries: DirEntry[] }> {
-    const { revision, entries } = expect(
-      await this.conn.request({ type: "listDirectory", project: this.pid, path }),
-      "directory",
-    );
+    const { revision, entries } = await this.call({ type: "listDirectory", project: this.pid, path });
     return { revision, entries };
   }
 
@@ -376,25 +373,19 @@ export class Backend {
   async patternMatches(
     filter: ReviewFilter,
   ): Promise<{ roots: number[]; include: PatternMatch[]; exclude: PatternMatch[] }> {
-    const { roots, include, exclude } = expect(
-      await this.conn.request({ type: "patternMatches", project: this.pid, filter }),
-      "patternMatches",
-    );
+    const { roots, include, exclude } = await this.call({ type: "patternMatches", project: this.pid, filter });
     return { roots, include, exclude };
   }
 
   /** The path of every file of the target snapshot, as of `revision`. */
   async listFiles(): Promise<{ revision: number; paths: string[] }> {
-    const { revision, paths } = expect(await this.conn.request({ type: "listFiles", project: this.pid }), "files");
+    const { revision, paths } = await this.call({ type: "listFiles", project: this.pid });
     return { revision, paths };
   }
 
   /** The text of any path on the target side of `view`, changed or not: for a commit, the file as the commit leaves it. */
   async fileText(path: string, view: View): Promise<{ revision: number; content: TextContent }> {
-    const { revision, content } = expect(
-      await this.conn.request({ type: "fileText", project: this.pid, view, path }),
-      "fileText",
-    );
+    const { revision, content } = await this.call({ type: "fileText", project: this.pid, view, path });
     return { revision, content };
   }
 
@@ -403,13 +394,13 @@ export class Backend {
    * when the pattern or the file mask is invalid. Aborting `signal` stops the search in the backend.
    */
   async search(query: SearchQuery, signal?: AbortSignal): Promise<SearchResults> {
-    return expect(await this.conn.request({ type: "search", project: this.pid, ...query }, signal), "searchResults");
+    return await this.call({ type: "search", project: this.pid, ...query }, signal);
   }
 
   /** One side of a non-text item's file, as of `revision`. */
   async itemBlob(revision: number, path: string, kind: NonTextKind, side: Side, view: View): Promise<BlobContent> {
     const request = { type: "itemBlob", project: this.pid, view, revision, path, kind, side } as const;
-    return expect(await this.conn.request(request), "itemBlob").content;
+    return (await this.call(request)).content;
   }
 
   /**
@@ -418,51 +409,48 @@ export class Backend {
    */
   async toggleHunk(revision: number, path: string, hunk: number, view: View): Promise<ReviewUpdate> {
     const request = { type: "toggleHunk", project: this.pid, view, revision, path, hunk } as const;
-    return expect(await this.conn.request(request), "review");
+    return await this.call(request);
   }
 
   /** Flips the flag for later review of one hunk; a flag is independent of the hunk being seen. */
   async toggleFlag(revision: number, path: string, hunk: number, view: View): Promise<ReviewUpdate> {
     const request = { type: "toggleFlag", project: this.pid, view, revision, path, hunk } as const;
-    return expect(await this.conn.request(request), "review");
+    return await this.call(request);
   }
 
   /** Flips the acknowledgement of one non-text item. */
   async toggleItem(revision: number, path: string, kind: NonTextKind, view: View): Promise<ReviewUpdate> {
     const request = { type: "toggleItem", project: this.pid, view, revision, path, kind } as const;
-    return expect(await this.conn.request(request), "review");
+    return await this.call(request);
   }
 
   /** Marks everything of a file seen, or takes every mark back if it all is seen already. */
   async toggleFileSeen(revision: number, path: string, view: View): Promise<ReviewUpdate> {
     const request = { type: "toggleFileSeen", project: this.pid, view, revision, path } as const;
-    return expect(await this.conn.request(request), "review");
+    return await this.call(request);
   }
 
   /** Marks everything of each of the files seen, or takes every mark back; the answers are in the order of `paths`. */
   async setFilesSeen(revision: number, paths: string[], seen: boolean, view: View): Promise<ReviewUpdate[]> {
     const request = { type: "setFilesSeen", project: this.pid, view, revision, paths, seen } as const;
-    return expect(await this.conn.request(request), "reviews").updates;
+    return (await this.call(request)).updates;
   }
 
   /** Marks the hunks of a file seen against an old base seen again, against the base now. The changeset's file only. */
   async reconfirmFile(revision: number, path: string): Promise<ReviewUpdate> {
     const request = { type: "reconfirmFile", project: this.pid, revision, path } as const;
-    return expect(await this.conn.request(request), "review");
+    return await this.call(request);
   }
 
   /** The base-side lines of a hunk seen against an old base as they were when it was marked, as a diff to the base now. */
   async baseDiff(revision: number, path: string, hunk: number): Promise<BaseDiff> {
     const request = { type: "baseDiff", project: this.pid, revision, path, hunk } as const;
-    return expect(await this.conn.request(request), "baseDiff");
+    return await this.call(request);
   }
 
   /** The changesets on offer, the working tree first, and the one on view. */
   async listChangesets(): Promise<{ rows: ChangesetRow[]; onView: ChangesetKey }> {
-    const { rows, onView } = expect(
-      await this.conn.request({ type: "listChangesets", project: this.pid }),
-      "changesets",
-    );
+    const { rows, onView } = await this.call({ type: "listChangesets", project: this.pid });
     return { rows, onView };
   }
 
@@ -471,10 +459,7 @@ export class Backend {
    * and how asking each repository went. Asks the platform, so it takes a moment.
    */
   async listPullRequests(): Promise<PullRequestList> {
-    const { rows, sources } = expect(
-      await this.conn.request({ type: "listPullRequests", project: this.pid }),
-      "pullRequests",
-    );
+    const { rows, sources } = await this.call({ type: "listPullRequests", project: this.pid });
     return { rows, sources };
   }
 
@@ -483,10 +468,7 @@ export class Backend {
    * pull request that was not fetched. Takes a moment for a large changeset, so ask per row.
    */
   async changesetLines(changeset: ChangesetKey): Promise<LineDelta | undefined> {
-    const { lines } = expect(
-      await this.conn.request({ type: "changesetLines", project: this.pid, changeset }),
-      "changesetLines",
-    );
+    const { lines } = await this.call({ type: "changesetLines", project: this.pid, changeset });
     return lines ?? undefined;
   }
 
@@ -496,27 +478,23 @@ export class Backend {
    * seconds) that the platform limits requests until then.
    */
   async checks(commits: string[]): Promise<{ checks: CommitChecks[]; error?: string; limitedUntil?: number }> {
-    const { checks, error, limitedUntil } = expect(
-      await this.conn.request({ type: "checks", project: this.pid, commits }),
-      "checks",
-    );
+    const { checks, error, limitedUntil } = await this.call({ type: "checks", project: this.pid, commits });
     return { checks, error: error ?? undefined, limitedUntil: limitedUntil ?? undefined };
   }
 
   /** The steps of a job of `checks` that has a pipeline, in the order they run. */
   async pipelineSteps(check: string): Promise<PipelineStep[]> {
-    return expect(await this.conn.request({ type: "pipelineSteps", project: this.pid, check }), "pipelineSteps").steps;
+    return (await this.call({ type: "pipelineSteps", project: this.pid, check })).steps;
   }
 
   /** Asks the platform to re-run or stop a run; the platform does its work later, so ask for the checks again. */
   async changePipeline(action: PipelineAction): Promise<PipelineOutcome> {
-    return expect(await this.conn.request({ type: "changePipeline", project: this.pid, action }), "pipelineChanged")
-      .outcome;
+    return (await this.call({ type: "changePipeline", project: this.pid, action })).outcome;
   }
 
   /** The log of a run of `checks` that has one. Rejects with the reason it could not be had. */
   async checkLog(run: string): Promise<CheckLog> {
-    return asCheckLog(expect(await this.conn.request({ type: "checkLog", project: this.pid, run }), "checkLog"));
+    return await this.call({ type: "checkLog", project: this.pid, run });
   }
 
   /**
@@ -524,12 +502,12 @@ export class Backend {
    * request is fetched first, so this waits for the network and rejects with the reason it could not.
    */
   async openChangeset(changeset: ChangesetKey): Promise<void> {
-    expect(await this.conn.request({ type: "openChangeset", project: this.pid, changeset }), "done");
+    await this.call({ type: "openChangeset", project: this.pid, changeset });
   }
 
   /** Replaces the open repository's review filter; every subscriber, this one included, then gets `snapshotSettled`. Rejects with the backend's message for an invalid glob. */
   async setProjectFilter(filter: ReviewFilter): Promise<void> {
-    expect(await this.conn.request({ type: "setProjectFilter", project: this.pid, filter }), "done");
+    await this.call({ type: "setProjectFilter", project: this.pid, filter });
   }
 
   /**
@@ -538,30 +516,27 @@ export class Backend {
    * nothing changed. Rejects with the backend's message for an invalid glob.
    */
   async narrowReview(changeset: ChangesetKey, filter: ReviewFilter | undefined): Promise<void> {
-    expect(
-      await this.conn.request({ type: "narrowReview", project: this.pid, changeset, filter: filter ?? null }),
-      "done",
-    );
+    await this.call({ type: "narrowReview", project: this.pid, changeset, filter: filter ?? null });
   }
 
   /** Marks the open repository trusted or not; every subscriber, this one included, then gets `targetChanged` and `serversChanged`. */
   async setProjectTrusted(trusted: boolean): Promise<void> {
-    expect(await this.conn.request({ type: "setProjectTrusted", project: this.pid, trusted }), "done");
+    await this.call({ type: "setProjectTrusted", project: this.pid, trusted });
   }
 
   /** Trusts the pull request on view at its current head; announced like `setProjectTrusted`. */
   async trustPullRequest(): Promise<void> {
-    expect(await this.conn.request({ type: "trustPullRequest", project: this.pid }), "done");
+    await this.call({ type: "trustPullRequest", project: this.pid });
   }
 
   /** Excludes a file, or with `directory` everything below a folder, from the review; every subscriber, this one included, then gets `snapshotSettled`. */
   async excludePath(path: string, directory: boolean): Promise<void> {
-    expect(await this.conn.request({ type: "excludePath", project: this.pid, path, directory }), "done");
+    await this.call({ type: "excludePath", project: this.pid, path, directory });
   }
 
   /** Ends the open review; every subscriber, this one included, then gets `snapshotSettled` and `changesetsChanged`. Resolves with whether it was complete. */
   async finishReview(): Promise<boolean> {
-    return expect(await this.conn.request({ type: "finishReview", project: this.pid }), "reviewFinished").complete;
+    return (await this.call({ type: "finishReview", project: this.pid })).complete;
   }
 
   /**
@@ -569,17 +544,21 @@ export class Backend {
    * here. If any remote was fetched, every subscriber then gets `changesetsChanged`.
    */
   async fetch(): Promise<void> {
-    expect(await this.conn.request({ type: "fetch", project: this.pid }), "done");
+    await this.call({ type: "fetch", project: this.pid });
   }
 
   /**
    * A request about the changeset at `revision`. Aborting `signal` cancels it in the backend, down to the
    * language server, and so does the changeset moving to a newer revision; either rejects with an abort.
    */
-  private async semantic(revision: number, request: Request, signal?: AbortSignal): Promise<Response> {
+  private async semantic<T extends Request>(
+    revision: number,
+    request: T,
+    signal?: AbortSignal,
+  ): Promise<ResponseOf<T["type"]>> {
     const tracked = this.stale.track(revision, signal);
     try {
-      return await this.conn.request(request, tracked.signal);
+      return matched(request, await this.conn.request(request, tracked.signal));
     } finally {
       tracked.release();
     }
@@ -598,7 +577,7 @@ export class Backend {
     signal?: AbortSignal,
   ): Promise<HoverText> {
     const request = { type: "hover", project: this.pid, revision, side, path, line, col } as const;
-    const r = expect(await this.semantic(revision, request, signal), "hover");
+    const r = await this.semantic(revision, request, signal);
     return { text: r.text ?? "", code: r.codeHighlights, unavailable: r.unavailable ?? undefined };
   }
 
@@ -612,7 +591,7 @@ export class Backend {
     signal?: AbortSignal,
   ): Promise<{ locations: SemanticLocation[]; unavailable?: Unavailable }> {
     const request = { type: "definition", project: this.pid, revision, side, path, line, col } as const;
-    const r = expect(await this.semantic(revision, request, signal), "definition");
+    const r = await this.semantic(revision, request, signal);
     return { locations: r.locations, unavailable: r.unavailable ?? undefined };
   }
 
@@ -630,7 +609,7 @@ export class Backend {
     limit?: number,
   ): Promise<LocationRows> {
     const request = { type: "references", project: this.pid, revision, side, path, line, col, limit } as const;
-    return expect(await this.semantic(revision, request, signal), "references");
+    return await this.semantic(revision, request, signal);
   }
 
   /** The implementations of the interface, trait or abstract member at the position, as rows to list; otherwise like `definition`. */
@@ -643,7 +622,7 @@ export class Backend {
     signal?: AbortSignal,
   ): Promise<LocationRows> {
     const request = { type: "implementations", project: this.pid, revision, side, path, line, col } as const;
-    return expect(await this.semantic(revision, request, signal), "implementations");
+    return await this.semantic(revision, request, signal);
   }
 
   /**
@@ -665,7 +644,7 @@ export class Backend {
     incomplete?: Unavailable;
   }> {
     const request = { type: "diagnostics", project: this.pid, revision, path, againstBase } as const;
-    const r = expect(await this.semantic(revision, request, signal), "diagnostics");
+    const r = await this.semantic(revision, request, signal);
     return {
       diagnostics: r.diagnostics,
       count: r.count,
@@ -682,33 +661,32 @@ export class Backend {
    */
   async workspaceSymbols(revision: number, query: string, signal?: AbortSignal): Promise<LanguageSymbols[]> {
     const request = { type: "workspaceSymbols", project: this.pid, revision, query } as const;
-    return expect(await this.semantic(revision, request, signal), "workspaceSymbols").languages;
+    return (await this.semantic(revision, request, signal)).languages;
   }
 
   /** Each language's server as it resolves for the open repository, and what the servers of the changeset on view are doing. */
   async listServers(): Promise<ServersAnswer> {
-    return expect(await this.conn.request({ type: "listServers", project: this.pid }), "servers");
+    return await this.call({ type: "listServers", project: this.pid });
   }
 
   /** Which server serves each of `paths`, in order. */
   async servedBy(paths: readonly string[]): Promise<Serving[]> {
-    return expect(await this.conn.request({ type: "servedBy", project: this.pid, paths: [...paths] }), "servedBy")
-      .serving;
+    return (await this.call({ type: "servedBy", project: this.pid, paths: [...paths] })).serving;
   }
 
   /** Installs the pinned server; output arrives as `serverInstallOutput` events. Rejects with the tool's output tail. */
   async installServer(language: string): Promise<ServersAnswer> {
-    return expect(await this.conn.request({ type: "installServer", project: this.pid, language }), "servers");
+    return await this.call({ type: "installServer", project: this.pid, language });
   }
 
   /** `null` removes the custom path: automatic resolution again. The path is not checked; `listServers` says whether it works. */
   async setServerPath(language: string, path: string | null): Promise<ServersAnswer> {
-    return expect(await this.conn.request({ type: "setServerPath", project: this.pid, language, path }), "servers");
+    return await this.call({ type: "setServerPath", project: this.pid, language, path });
   }
 
   /** Stops the project's servers of the language at once and starts them anew; resolves when they run. Rejects with why one did not start. */
   async restartServer(language: string): Promise<ServersAnswer> {
-    return expect(await this.conn.request({ type: "restartServer", project: this.pid, language }), "servers");
+    return await this.call({ type: "restartServer", project: this.pid, language });
   }
 
   /**
@@ -716,7 +694,7 @@ export class Backend {
    * changeset on view only while a window does, and start when it comes up.
    */
   async setReviewShown(shown: boolean): Promise<void> {
-    expect(await this.conn.request({ type: "setReviewShown", project: this.pid, shown }), "done");
+    await this.call({ type: "setReviewShown", project: this.pid, shown });
   }
 
   /**
@@ -724,12 +702,12 @@ export class Backend {
    * analysis of symbols and problems reads those first.
    */
   async setOpenFiles(paths: string[]): Promise<void> {
-    expect(await this.conn.request({ type: "setOpenFiles", project: this.pid, paths }), "done");
+    await this.call({ type: "setOpenFiles", project: this.pid, paths });
   }
 
   /** Asks the backend to analyse the changeset on view's problems again (the Retry action). */
   async refreshProblems(): Promise<void> {
-    expect(await this.conn.request({ type: "refreshProblems", project: this.pid }), "done");
+    await this.call({ type: "refreshProblems", project: this.pid });
   }
 
   /**
@@ -738,7 +716,7 @@ export class Backend {
    */
   async fileSymbols(revision: number, path: string, signal?: AbortSignal): Promise<FileSymbols> {
     const request = { type: "fileSymbols", project: this.pid, revision, path } as const;
-    return expect(await this.semantic(revision, request, signal), "fileSymbols");
+    return await this.semantic(revision, request, signal);
   }
 
   /**
@@ -747,7 +725,7 @@ export class Backend {
    */
   async fileOutline(revision: number, view: View, path: string, signal?: AbortSignal): Promise<FileOutline> {
     const request = { type: "fileOutline", project: this.pid, view, revision, path } as const;
-    return expect(await this.semantic(revision, request, signal), "fileOutline");
+    return await this.semantic(revision, request, signal);
   }
 
   /**
@@ -763,7 +741,7 @@ export class Backend {
     signal?: AbortSignal,
   ): Promise<SymbolAt> {
     const request = { type: "symbolAt", project: this.pid, revision, side, path, line, col } as const;
-    return expect(await this.semantic(revision, request, signal), "symbolAt");
+    return await this.semantic(revision, request, signal);
   }
 
   /** The declaration of a symbol; `signature` is unset if the server has nothing, `unavailable` says why. */
@@ -773,38 +751,38 @@ export class Backend {
     signal?: AbortSignal,
   ): Promise<{ signature?: SymbolSignature; unavailable?: Unavailable }> {
     const request = { type: "signature", project: this.pid, revision, symbol } as const;
-    const r = expect(await this.semantic(revision, request, signal), "signature");
+    const r = await this.semantic(revision, request, signal);
     return { signature: r.signature ?? undefined, unavailable: r.unavailable ?? undefined };
   }
 
   /** The changed callers and callees of a symbol of the target side; may take a while on a cold server. */
   async symbolCalls(revision: number, symbol: SymbolId, signal?: AbortSignal): Promise<Calls> {
     const request = { type: "calls", project: this.pid, revision, symbol } as const;
-    return expect(await this.semantic(revision, request, signal), "calls");
+    return await this.semantic(revision, request, signal);
   }
 
   /** The references to a symbol of the target side. */
   async symbolUsages(revision: number, symbol: SymbolId, signal?: AbortSignal): Promise<Usages> {
     const request = { type: "usages", project: this.pid, revision, symbol } as const;
-    return expect(await this.semantic(revision, request, signal), "usages");
+    return await this.semantic(revision, request, signal);
   }
 
   /** What became of the references to a removed changed symbol. */
   async removalImpact(revision: number, symbol: SymbolId, signal?: AbortSignal): Promise<RemovalImpact> {
     const request = { type: "removalImpact", project: this.pid, revision, symbol } as const;
-    return expect(await this.semantic(revision, request, signal), "removalImpact");
+    return await this.semantic(revision, request, signal);
   }
 
   /** Whether an added or modified changed symbol is reached from an entry point. */
   async reachability(revision: number, symbol: SymbolId, signal?: AbortSignal): Promise<Reachability> {
     const request = { type: "reachability", project: this.pid, revision, symbol } as const;
-    return expect(await this.semantic(revision, request, signal), "reachability");
+    return await this.semantic(revision, request, signal);
   }
 
   /** Every thread with its anchor resolved at `revision`, the current one, in creation order. */
   async threads(view: View): Promise<{ revision: number; threads: Thread[] }> {
     const request = { type: "threads", project: this.pid, view } as const;
-    const { revision, threads } = expect(await this.conn.request(request), "threads");
+    const { revision, threads } = await this.call(request);
     return { revision, threads };
   }
 
@@ -814,7 +792,7 @@ export class Backend {
    */
   async targetLine(revision: number, side: Side, path: string, line: number, view: View): Promise<number> {
     const request = { type: "targetLine", project: this.pid, view, revision, side, path, line } as const;
-    return expect(await this.conn.request(request), "targetLine").line;
+    return (await this.call(request)).line;
   }
 
   /**
@@ -824,7 +802,7 @@ export class Backend {
    */
   async mapLines(revision: number, from: number, path: string, lines: number[]): Promise<MappedLine[]> {
     const request = { type: "mapLines", project: this.pid, revision, from, path, lines } as const;
-    return expect(await this.conn.request(request), "mappedLines").lines;
+    return (await this.call(request)).lines;
   }
 
   /**
@@ -838,75 +816,73 @@ export class Backend {
     view: View,
   ): Promise<{ target: ThreadTarget; line: number | null }> {
     const request = { type: "commentTarget", project: this.pid, view, revision, path, at } as const;
-    const { target, line } = expect(await this.conn.request(request), "commentTarget");
+    const { target, line } = await this.call(request);
     return { target, line };
   }
 
   /** `revision` is the manifest's; lines of a range target are in its text. */
   async createThread(revision: number, target: ThreadTarget, body: string, view: View): Promise<Thread> {
     const request = { type: "createThread", project: this.pid, view, revision, target, body } as const;
-    return asThread(expect(await this.conn.request(request), "thread"));
+    return await this.call(request);
   }
 
   async reply(thread: number, body: string): Promise<Thread> {
     const request = { type: "reply", project: this.pid, thread, body } as const;
-    return asThread(expect(await this.conn.request(request), "thread"));
+    return await this.call(request);
   }
 
   async setThreadStatus(thread: number, status: ThreadStatus): Promise<Thread> {
     const request = { type: "setThreadStatus", project: this.pid, thread, status } as const;
-    return asThread(expect(await this.conn.request(request), "thread"));
+    return await this.call(request);
   }
 
   async deleteThread(thread: number): Promise<void> {
-    expect(await this.conn.request({ type: "deleteThread", project: this.pid, thread }), "done");
+    await this.call({ type: "deleteThread", project: this.pid, thread });
   }
 
   /** Edits one of the viewer's own comments; a posted one is edited on the platform too. */
   async editMessage(message: number, body: string): Promise<Thread> {
     const request = { type: "editMessage", project: this.pid, message, body } as const;
-    return asThread(expect(await this.conn.request(request), "thread"));
+    return await this.call(request);
   }
 
   /** Removes one of the viewer's own comments; removing a thread's first removes the thread. */
   async removeMessage(message: number): Promise<void> {
-    expect(await this.conn.request({ type: "removeMessage", project: this.pid, message }), "done");
+    await this.call({ type: "removeMessage", project: this.pid, message });
   }
 
   /** Settles a comment that was edited here and on the platform by keeping one of the texts. */
   async keepEdit(message: number, keep: EditChoice): Promise<Thread> {
     const request = { type: "keepEdit", project: this.pid, message, keep } as const;
-    return asThread(expect(await this.conn.request(request), "thread"));
+    return await this.call(request);
   }
 
   /** Edits one of the viewer's comments in the conversation of the pull request, on the platform. */
   async editConversationComment(comment: string, body: string): Promise<void> {
-    const request = { type: "editConversationComment", project: this.pid, comment, body } as const;
-    expect(await this.conn.request(request), "done");
+    await this.call({ type: "editConversationComment", project: this.pid, comment, body });
   }
 
   /** Deletes one of the viewer's comments in the conversation of the pull request, on the platform. */
   async deleteConversationComment(comment: string): Promise<void> {
-    const request = { type: "deleteConversationComment", project: this.pid, comment } as const;
-    expect(await this.conn.request(request), "done");
+    await this.call({ type: "deleteConversationComment", project: this.pid, comment });
   }
 
   /** Syncs the threads of the pull request on view with its platform now. */
   async syncThreads(): Promise<void> {
-    expect(await this.conn.request({ type: "syncThreads", project: this.pid }), "done");
+    await this.call({ type: "syncThreads", project: this.pid });
   }
 
   /** Posts the drafts as one review with the verdict (one of `PullRequestInfo.traits.verdicts`). */
   async submitReview(verdict: Verdict, body: string | null): Promise<ReviewSubmitted> {
     const request = { type: "submitReview", project: this.pid, verdict, body } as const;
-    const { posted, skipped, voteCast, problem } = expect(await this.conn.request(request), "reviewSubmitted");
+    const { posted, skipped, voteCast, problem } = await this.call(request);
     return { posted, skipped, voteCast, problem };
   }
 
   /** Posts the drafts one after the other, then the staged vote, on a platform that takes comments that way. */
   async postDrafts(): Promise<ReviewSubmitted> {
     const request = { type: "postDrafts", project: this.pid } as const;
-    const { posted, skipped, voteCast, problem } = expect(await this.conn.request(request), "reviewSubmitted");
+    const { posted, skipped, voteCast, problem } = await this.call(request);
     return { posted, skipped, voteCast, problem };
   }
 
@@ -915,29 +891,29 @@ export class Backend {
    * it apart from posting. The viewer's current vote clears the staged one instead.
    */
   async stageVote(verdict: Verdict): Promise<void> {
-    expect(await this.conn.request({ type: "stageVote", project: this.pid, verdict }), "done");
+    await this.call({ type: "stageVote", project: this.pid, verdict });
   }
 
   /** Drops the staged vote. */
   async discardVote(): Promise<void> {
-    expect(await this.conn.request({ type: "discardVote", project: this.pid }), "done");
+    await this.call({ type: "discardVote", project: this.pid });
   }
 
   /** What the platform said of the pull request on view at the last sync; fails before the first. */
   async pullRequestInfo(): Promise<PullRequestInfo> {
     const request = { type: "pullRequestInfo", project: this.pid } as const;
-    return expect(await this.conn.request(request), "pullRequestInfo");
+    return await this.call(request);
   }
 
   /** Re-anchors an inferred thread where it is now. */
   async confirmAnchor(revision: number, thread: number): Promise<Thread> {
     const request = { type: "confirmAnchor", project: this.pid, revision, thread } as const;
-    return asThread(expect(await this.conn.request(request), "thread"));
+    return await this.call(request);
   }
 
   /** Re-anchors an ambiguous thread at one of its candidates (an index into its `ambiguous` anchor). */
   async attachAnchor(revision: number, thread: number, candidate: number): Promise<Thread> {
     const request = { type: "attachAnchor", project: this.pid, revision, thread, candidate } as const;
-    return asThread(expect(await this.conn.request(request), "thread"));
+    return await this.call(request);
   }
 }
