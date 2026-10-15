@@ -1,11 +1,13 @@
 //! Threads, comments, votes and posting, against a local server that keeps a pull request's
 //! threads as Azure DevOps does.
 
+use crate::platform::azure_devops::discussion::{verdict_of, vote_of};
 use serde_json::{Value, json};
 use vet_app::platform::{
     CommentKind, CommentRef, DiffSide, NewConversationComment, NewReply, NewThread, PullRequestState, ReviewerState,
     Submission,
 };
+use vet_core::review::Verdict;
 
 use super::*;
 
@@ -378,7 +380,7 @@ async fn a_discussion_has_the_pull_request_its_reviewers_the_viewers_vote_and_th
         ],
         "who declined is not listed"
     );
-    assert_eq!(discussion.viewer_verdict.as_deref(), Some("approved-with-suggestions"));
+    assert_eq!(discussion.viewer_verdict, Some(Verdict::ApproveWithSuggestions));
     assert_eq!(discussion.labels, ["performance"]);
     assert_eq!(discussion.description, "Why PR 7 exists.\n\n- one\n- two");
     assert_eq!(discussion.ci, None);
@@ -477,12 +479,31 @@ async fn an_id_that_names_no_thread_or_comment_is_not_found_without_asking() {
 
 #[tokio::test]
 async fn the_vote_is_set_for_the_viewer_alone_and_a_verdict_azure_devops_lacks_is_refused() {
+    for (verdict, vote) in [
+        (Verdict::Approve, 10),
+        (Verdict::ApproveWithSuggestions, 5),
+        (Verdict::WaitForAuthor, -5),
+        (Verdict::Reject, -10),
+    ] {
+        assert_eq!(vote_of(&verdict), Some(vote));
+        assert_eq!(verdict_of(vote), Some(verdict));
+    }
+    for unknown in [0, 6, -1, 25] {
+        assert_eq!(verdict_of(unknown), None, "a vote of a new kind is no known verdict");
+    }
+    for unspellable in [
+        Verdict::Comment,
+        Verdict::RequestChanges,
+        Verdict::Other("strange new verdict".to_owned()),
+    ] {
+        assert_eq!(vote_of(&unspellable), None);
+    }
     set_now(NOW);
     let (fake, _) = hosting(vec![]);
     let client = client(&fake);
 
-    client.vote(&remote(), 7, "wait-for-author").await.unwrap();
-    let unknown = client.vote(&remote(), 7, "APPROVE").await;
+    client.vote(&remote(), 7, &Verdict::WaitForAuthor).await.unwrap();
+    let unknown = client.vote(&remote(), 7, &Verdict::RequestChanges).await;
 
     let sent = fake.requests();
     let put = sent.iter().find(|r| r.method == "PUT").expect("a vote");
@@ -500,7 +521,7 @@ async fn the_vote_is_set_for_the_viewer_alone_and_a_verdict_azure_devops_lacks_i
 
 fn review() -> Submission {
     Submission {
-        verdict: String::new(),
+        verdict: Verdict::Comment,
         body: None,
         commit: "a2".to_owned(),
         threads: vec![NewThread {

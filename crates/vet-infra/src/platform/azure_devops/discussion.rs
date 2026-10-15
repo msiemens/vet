@@ -25,24 +25,33 @@ use vet_app::platform::{
 
 use super::wire::{self, Me};
 use super::{AzureDevOpsClient, Call, Repository};
+use vet_core::review::Verdict;
 
 /// The most pages of a pull request's changes read to find a file's tracking id.
 const MAX_CHANGE_PAGES: usize = 20;
 
-/// The votes and the verdicts that name them, in the platform's order.
-const VOTES: [(&str, i64); 4] = [
-    ("approved", 10),
-    ("approved-with-suggestions", 5),
-    ("wait-for-author", -5),
-    ("rejected", -10),
+/// The votes, with the verdicts that name them ([`vet_core::review::Verdict`]), in the platform's
+/// order. The platform's own of these is the vote, what the pull request keeps for each reviewer.
+const VOTES: [(Verdict, i64); 4] = [
+    (Verdict::Approve, 10),
+    (Verdict::ApproveWithSuggestions, 5),
+    (Verdict::WaitForAuthor, -5),
+    (Verdict::Reject, -10),
 ];
 
-pub(super) fn vote_of(verdict: &str) -> Option<i64> {
-    VOTES.iter().find(|(id, _)| *id == verdict).map(|(_, vote)| *vote)
+/// The vote the platform keeps for `verdict`; `None` where it has none (the session sends one of
+/// the platform's, still, an unknown one is refused rather than sent as another).
+pub(super) fn vote_of(verdict: &Verdict) -> Option<i64> {
+    VOTES.iter().find(|(v, _)| v == verdict).map(|(_, vote)| *vote)
 }
 
-fn verdict_of(vote: i64) -> Option<&'static str> {
-    VOTES.iter().find(|(_, v)| *v == vote).map(|(id, _)| *id)
+/// The verdict a vote of the platform's is, if one is known; a vote of a new kind is no verdict
+/// the viewer's cast is asked for, and reads as none so far.
+pub(super) fn verdict_of(vote: i64) -> Option<Verdict> {
+    VOTES
+        .iter()
+        .find(|(_, v)| *v == vote)
+        .map(|(verdict, _)| verdict.clone())
 }
 
 pub(super) fn thread_id(pull_request: i32, thread: i32) -> String {
@@ -121,9 +130,9 @@ fn reviewers(pr: &GitPullRequest, me: &Me) -> Vec<Reviewer> {
 }
 
 /// The verdict the viewer voted, if they have a vote.
-fn viewer_verdict(pr: &GitPullRequest, me: &Me) -> Option<String> {
+fn viewer_verdict(pr: &GitPullRequest, me: &Me) -> Option<Verdict> {
     let vote = pr.reviewers.iter().find(|r| me.is(&r.identity_ref))?.vote?;
-    verdict_of(vote).map(str::to_owned)
+    verdict_of(vote)
 }
 
 /// The commit of each iteration.
@@ -502,7 +511,7 @@ impl<C: CredentialProvider + Sync> AzureDevOpsClient<C> {
         &self,
         remote: &vet_app::platform::RemoteKey,
         number: u64,
-        verdict: &str,
+        verdict: &Verdict,
     ) -> Result<(), PlatformError> {
         let vote = vote_of(verdict)
             .ok_or_else(|| PlatformError::Unexpected(format!("{} has no verdict {verdict}", remote.account())))?;

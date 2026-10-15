@@ -14,6 +14,7 @@ use super::model::{
 };
 use super::port::Platform;
 use super::remote::RemoteKey;
+use vet_core::review::Verdict;
 
 pub(crate) struct Hosted {
     pub discussion: Discussion,
@@ -23,8 +24,8 @@ pub(crate) struct Hosted {
     /// Calls whose description starts with the text fail with the error.
     pub failing: Vec<(String, PlatformError)>,
     pub submissions: Vec<Submission>,
-    /// The ids of the verdicts the viewer voted, in order.
-    pub votes: Vec<String>,
+    /// The verdicts the viewer voted, in order.
+    pub votes: Vec<Verdict>,
     pub traits: PlatformTraits,
     /// Edit times, so a platform edit is later than any before it.
     clock: i64,
@@ -190,7 +191,7 @@ impl FakeHosting {
         hosting
     }
 
-    pub fn votes(&self) -> Vec<String> {
+    pub fn votes(&self) -> Vec<Verdict> {
         self.0.lock().unwrap().votes.clone()
     }
 
@@ -419,11 +420,11 @@ impl Platform for FakeHosting {
         unreachable!("the tests of threads ask for no checks")
     }
 
-    async fn vote(&self, _: &RemoteKey, _: u64, verdict: &str) -> Result<(), PlatformError> {
+    async fn vote(&self, _: &RemoteKey, _: u64, verdict: &Verdict) -> Result<(), PlatformError> {
         let mut hosted = self.0.lock().unwrap();
         hosted.check(format!("vote {verdict}"))?;
-        hosted.votes.push(verdict.to_owned());
-        hosted.discussion.viewer_verdict = Some(verdict.to_owned());
+        hosted.votes.push(verdict.clone());
+        hosted.discussion.viewer_verdict = Some(verdict.clone());
         Ok(())
     }
 

@@ -1,5 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
+import type { PendingVote } from "../../generated/PendingVote.ts";
+import type { Verdict } from "../../generated/Verdict.ts";
 import type { Thread } from "../../generated/Thread.ts";
 import type { ThreadMessage } from "../../generated/ThreadMessage.ts";
 import {
@@ -73,27 +75,24 @@ void test("the button counts what is outgoing, how much the platform refused, an
 
 void test("a staged vote is outgoing like a comment, in its own state", () => {
   const list = outgoingComments([thread(1, "a.rs", 1, [message(1)])]);
-  assert.deepEqual(summarizeOutgoing(list, { verdict: "approved", state: { type: "draft" } }), {
-    count: 2,
-    failed: 0,
-    posting: false,
-  });
-  assert.deepEqual(summarizeOutgoing(list, { verdict: "approved", state: failed }), {
+  const vote = { verdict: { type: "approve" } as const, state: { type: "draft" } } as const;
+  assert.deepEqual(summarizeOutgoing(list, vote), { count: 2, failed: 0, posting: false });
+  assert.deepEqual(summarizeOutgoing(list, { ...vote, state: failed }), {
     count: 2,
     failed: 1,
     posting: false,
   });
-  assert.deepEqual(summarizeOutgoing([], { verdict: "approved", state: posting }), {
+  assert.deepEqual(summarizeOutgoing([], { ...vote, state: { type: "posting" } }), {
     count: 1,
     failed: 0,
     posting: true,
   });
 });
 
-void test("the popover names the staged vote by the platform's label and the button says what is outgoing", () => {
-  const traits = { verdicts: [{ id: "approved", label: "Approve" }] };
-  assert.equal(voteText({ traits }, { verdict: "approved", state: { type: "draft" } }), "Vote: Approve");
-  assert.equal(voteText({ traits }, { verdict: "other", state: { type: "draft" } }), "Vote: other");
+void test("the popover names the staged vote by its words and the button says what is outgoing", () => {
+  const vote = (verdict: Verdict): PendingVote => ({ verdict, state: { type: "draft" } });
+  assert.equal(voteText(vote({ type: "approve" })), "Vote: Approve");
+  assert.equal(voteText(vote({ type: "other", value: "swagger" })), "Vote: swagger");
   const summary = { count: 3, failed: 1, posting: false };
   assert.equal(outgoingTitle(summary, false), "1 of 3 outgoing comments failed to post");
   assert.equal(outgoingTitle({ ...summary, failed: 0 }, true), "3 outgoing items");
@@ -101,25 +100,27 @@ void test("the popover names the staged vote by the platform's label and the but
 });
 
 void test("the vote picker lists the platform's verdicts and marks the staged vote, else the one the viewer cast, else none", () => {
-  const traits = {
-    verdicts: [
-      { id: "approved", label: "Approve" },
-      { id: "waiting", label: "Wait for Author" },
-      { id: "rejected", label: "Reject" },
-    ],
-  };
+  const traits = { verdicts: [{ type: "approve" }, { type: "waitForAuthor" }, { type: "reject" }] as const };
   const marked = (info: Parameters<typeof voteChoices>[0]) => voteChoices(info).map((c) => c.checked);
-  const staged = { verdict: "rejected", state: { type: "draft" } } as const;
-  assert.deepEqual(marked({ traits, pendingVote: staged, viewerVerdict: "approved" }), [false, false, true]);
-  assert.deepEqual(marked({ traits, pendingVote: null, viewerVerdict: "waiting" }), [false, true, false]);
+  const staged = { verdict: { type: "reject" } as const, state: { type: "draft" } } as const;
+  assert.deepEqual(marked({ traits, pendingVote: staged, viewerVerdict: { type: "approve" } }), [false, false, true]);
+  assert.deepEqual(marked({ traits, pendingVote: null, viewerVerdict: { type: "waitForAuthor" } }), [
+    false,
+    true,
+    false,
+  ]);
   assert.deepEqual(marked({ traits, pendingVote: null, viewerVerdict: null }), [false, false, false]);
   assert.deepEqual(
     voteChoices({ traits, pendingVote: null, viewerVerdict: null }).map((c) => [c.id, c.label]),
     [
-      ["approved", "Approve"],
-      ["waiting", "Wait for Author"],
-      ["rejected", "Reject"],
+      ["approve", "Approve"],
+      ["waitForAuthor", "Wait for author"],
+      ["reject", "Reject"],
     ],
+  );
+  assert.deepEqual(
+    voteChoices({ traits, pendingVote: staged, viewerVerdict: null }).map((c) => c.id),
+    ["approve", "waitForAuthor", "reject"],
   );
 });
 

@@ -61,15 +61,22 @@ pub enum Blocker {
     ChangesRequested,
 }
 
-/// One of the platform's ways to close a review.
+/// One of the ways to close a review. The adapters spell it as their platform does on the wire;
+/// the UI words it.
 #[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize, TS)]
-#[serde(rename_all = "camelCase")]
+#[serde(tag = "type", rename_all = "camelCase", rename_all_fields = "camelCase")]
 #[ts(export)]
-pub struct Verdict {
-    /// What `SubmitReview` takes.
-    pub id: String,
-    /// Fit to show.
-    pub label: String,
+pub enum Verdict {
+    Comment,
+    Approve,
+    RequestChanges,
+    ApproveWithSuggestions,
+    WaitForAuthor,
+    Reject,
+    /// A verdict Vet does not know the spelling of; `value` is what Vet saw spelled.
+    Other {
+        value: String,
+    },
 }
 
 /// The platform's properties the UI branches on (SPEC §11), never its name.
@@ -169,13 +176,14 @@ pub struct PlatformStatus {
     pub connection: PlatformConnection,
 }
 
-/// The viewer's vote that waits to be sent, on its way to the platform like a comment of theirs.
+/// The vote of the viewer's on a pull request that waits to be sent, on its way to the platform
+/// like a comment of theirs.
 #[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
 #[ts(export)]
 pub struct PendingVote {
-    /// An id from `PlatformTraits::verdicts`.
-    pub verdict: String,
+    /// One of `PlatformTraits::verdicts`.
+    pub verdict: Verdict,
     /// Never `posted`: a vote the platform has is no longer pending.
     pub state: CommentState,
 }
@@ -200,9 +208,9 @@ pub struct PullRequestInfo {
     pub source_branch: String,
     pub target_branch: String,
     pub reviewers: Vec<Reviewer>,
-    /// The id of the verdict the viewer voted, on a platform that keeps the vote apart from posting
-    /// (`traits.verdict_separate`); absent without a vote.
-    pub viewer_verdict: Option<String>,
+    /// The platform's verdict the viewer has voted, on a platform that keeps the vote apart from
+    /// posting (`traits.verdict_separate`); absent without a vote.
+    pub viewer_verdict: Option<Verdict>,
     /// The vote staged and not sent yet (`StageVote`), on such a platform; sent by `PostDrafts`.
     pub pending_vote: Option<PendingVote>,
     pub labels: Vec<String>,

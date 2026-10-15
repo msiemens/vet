@@ -39,6 +39,7 @@ use crate::platform::limits::Gate;
 use crate::sync::lock;
 use access::{API_ENDPOINT, Access, failure};
 use limits::Watch;
+use vet_core::review::Verdict;
 use wire::Me;
 
 pub(crate) mod access;
@@ -680,7 +681,7 @@ impl<C: CredentialProvider + Sync> Platform for AzureDevOpsClient<C> {
         self.post_in_turn(remote, number, submission).await
     }
 
-    async fn vote(&self, remote: &RemoteKey, number: u64, verdict: &str) -> Result<(), PlatformError> {
+    async fn vote(&self, remote: &RemoteKey, number: u64, verdict: &Verdict) -> Result<(), PlatformError> {
         self.set_vote(remote, number, verdict).await
     }
 }

@@ -7,6 +7,7 @@ import { type AppActions, appCommands } from "./appCommands.ts";
 import { keyId } from "./changesetKey.ts";
 import type { CommandContext } from "./commands.ts";
 import { type MenuState, mainMenuSpec } from "./mainMenu.ts";
+import type { Verdict } from "../generated/Verdict.ts";
 
 const state: MenuState = {
   native: false,
@@ -64,7 +65,7 @@ const actions: AppActions = {
   commentOnChangeset: () => calls.push("commentOnChangeset"),
   postComments: () => calls.push("post"),
   pickVote: () => calls.push("pickVote"),
-  stageVote: (verdict) => calls.push(`vote ${verdict}`),
+  stageVote: (verdict) => calls.push(`vote ${verdict.type}`),
   clearSemanticCaches: () => calls.push("clearCaches"),
   showLog: () => calls.push("showLog"),
   restartBackend: () => calls.push("restart"),
@@ -84,7 +85,7 @@ const submenu = (items: MenuItem[], id: string) => items.find((m) => m.id === id
 
 void test("every leaf item that is not the host's runs a command", () => {
   for (const native of [false, true]) {
-    for (const item of flatten(menu({ native, votes: { verdicts: [{ id: "approved", label: "Approve" }] } }))) {
+    for (const item of flatten(menu({ native, votes: { verdicts: [{ type: "reject" }] as Verdict[] } }))) {
       if (item.children || item.separator || item.predefined) continue;
       calls.length = 0;
       assert.ok(registry.run(item.id, { ...open, manyCommits: true, serverLanguage: "rust", problems: true }), item.id);
@@ -345,20 +346,16 @@ void test("posting is Post Comments, or Submit Review where the platform submits
 });
 
 void test("the Vote submenu exists only for a platform that keeps the vote apart, checks the chosen vote and stages another as the dropdown does", () => {
-  const verdicts = [
-    { id: "approved", label: "Approve" },
-    { id: "waiting", label: "Wait for Author" },
-    { id: "rejected", label: "Reject" },
-  ];
+  const verdicts = [{ type: "approve" }, { type: "waitForAuthor" }, { type: "reject" }] as Verdict[];
   assert.equal(find(menu(), "vote"), undefined);
 
-  const vote = find(menu({ votes: { verdicts, chosen: "waiting" } }), "vote");
+  const vote = find(menu({ votes: { verdicts, chosen: { type: "waitForAuthor" } } }), "vote");
   assert.deepEqual(
     vote?.children?.map((v) => [v.id, v.label, v.checked, v.radio]),
     [
-      ["review.vote:approved", "Approve", false, true],
-      ["review.vote:waiting", "Wait for Author", true, true],
-      ["review.vote:rejected", "Reject", false, true],
+      ["review.vote:approve", "Approve", false, true],
+      ["review.vote:waitForAuthor", "Wait for author", true, true],
+      ["review.vote:reject", "Reject", false, true],
     ],
   );
   assert.equal(vote.enabled, undefined);
@@ -368,17 +365,17 @@ void test("the Vote submenu exists only for a platform that keeps the vote apart
   );
 
   calls.length = 0;
-  assert.equal(registry.run("review.vote:rejected", open), true);
-  assert.deepEqual(calls, ["vote rejected"]);
+  assert.equal(registry.run("review.vote:reject", open), true);
+  assert.deepEqual(calls, ["vote reject"]);
 
   const away = menu({ votes: { verdicts } }, { pullRequest: false });
   assert.equal(find(away, "vote")?.enabled, false);
-  assert.equal(registry.run("review.vote:approved", { ...open, pullRequest: false }), false);
+  assert.equal(registry.run("review.vote:approve", { ...open, pullRequest: false }), false);
   const blocked = menu({ votes: { verdicts } }, { voteBlock: "Sign in to submit the review" });
   assert.equal(find(blocked, "vote")?.enabled, false);
-  assert.equal(find(blocked, "review.vote:approved")?.reason, "Sign in to submit the review");
-  assert.equal(registry.run("review.vote:approved", { ...open, voteBlock: "Sign in to submit the review" }), false);
-  assert.deepEqual(calls, ["vote rejected"]);
+  assert.equal(find(blocked, "review.vote:approve")?.reason, "Sign in to submit the review");
+  assert.equal(registry.run("review.vote:approve", { ...open, voteBlock: "Sign in to submit the review" }), false);
+  assert.deepEqual(calls, ["vote reject"]);
 });
 
 void test("Restart Language Server restarts the language of the active file, and says why it is off for a file without a server", () => {

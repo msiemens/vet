@@ -1,10 +1,15 @@
 //! Review threads, the conversation and what is posted, against a local server that answers as
 //! GitHub's GraphQL API does.
 
+//! Review threads, the conversation and what is posted, against a local server that answers as
+//! GitHub's GraphQL API does.
+
+use crate::platform::github::discussion::event_of;
 use vet_app::platform::{
     CommentKind, CommentRef, ConversationKind, DiffSide, NewConversationComment, NewReply, NewThread, PullRequestState,
     ReviewerState, Submission,
 };
+use vet_core::review::Verdict;
 
 use super::*;
 
@@ -472,7 +477,7 @@ async fn a_comment_is_read_as_it_is_now_and_one_that_is_gone_is_not_found() {
 
 fn review() -> Submission {
     Submission {
-        verdict: "REQUEST_CHANGES".to_owned(),
+        verdict: Verdict::RequestChanges,
         body: Some("Needs a TTL.".to_owned()),
         commit: "c2c2c2".to_owned(),
         threads: vec![
@@ -639,7 +644,7 @@ async fn a_review_is_one_pending_review_filled_and_submitted_with_its_verdict() 
 
 fn conversation_only() -> Submission {
     Submission {
-        verdict: "COMMENT".to_owned(),
+        verdict: Verdict::Comment,
         body: None,
         commit: "c2c2c2".to_owned(),
         threads: vec![],
@@ -674,11 +679,31 @@ async fn comments_on_the_pull_request_alone_are_posted_without_a_review() {
 
 #[tokio::test]
 async fn a_verdict_or_a_summary_makes_a_review_even_without_lines() {
+    // GitHub's event for each verdict it takes; another one is refused rather than sent.
+    for (verdict, event) in [
+        (Verdict::Comment, "COMMENT"),
+        (Verdict::Approve, "APPROVE"),
+        (Verdict::RequestChanges, "REQUEST_CHANGES"),
+    ] {
+        assert_eq!(event_of(&verdict).unwrap(), event);
+    }
+    for unknown in [
+        Verdict::ApproveWithSuggestions,
+        Verdict::WaitForAuthor,
+        Verdict::Reject,
+        Verdict::Other("waiting".to_owned()),
+    ] {
+        assert!(
+            matches!(event_of(&unknown), Err(PlatformError::Unexpected(_))),
+            "{unknown:?}"
+        );
+    }
+
     set_now(NOW);
-    for (verdict, body) in [("APPROVE", None), ("COMMENT", Some("Looks fine."))] {
+    for (verdict, body) in [(&Verdict::Approve, None), (&Verdict::Comment, Some("Looks fine."))] {
         let fake = reviewing("");
         let submission = Submission {
-            verdict: verdict.to_owned(),
+            verdict: verdict.clone(),
             body: body.map(str::to_owned),
             ..conversation_only()
         };

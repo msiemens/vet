@@ -28,7 +28,7 @@ use vet_core::inline::TextChange;
 use vet_core::num::sat_u32;
 use vet_core::review::{
     AnchorState, CommentTarget, Confidence, Location, Message, Outgoing, PendingVote, Side, StaleReason, Strategy,
-    ThreadStatus,
+    ThreadStatus, Verdict,
 };
 use vet_protocol as p;
 use vet_semantic::ports::RestoreFailure;
@@ -1059,20 +1059,37 @@ fn reviewer_state(s: ReviewerState) -> p::ReviewerState {
     }
 }
 
+pub fn verdict(v: &Verdict) -> p::Verdict {
+    match v {
+        Verdict::Comment => p::Verdict::Comment,
+        Verdict::Approve => p::Verdict::Approve,
+        Verdict::RequestChanges => p::Verdict::RequestChanges,
+        Verdict::ApproveWithSuggestions => p::Verdict::ApproveWithSuggestions,
+        Verdict::WaitForAuthor => p::Verdict::WaitForAuthor,
+        Verdict::Reject => p::Verdict::Reject,
+        Verdict::Other(value) => p::Verdict::Other { value: value.clone() },
+    }
+}
+
+pub fn verdict_of(v: p::Verdict) -> Verdict {
+    match v {
+        p::Verdict::Comment => Verdict::Comment,
+        p::Verdict::Approve => Verdict::Approve,
+        p::Verdict::RequestChanges => Verdict::RequestChanges,
+        p::Verdict::ApproveWithSuggestions => Verdict::ApproveWithSuggestions,
+        p::Verdict::WaitForAuthor => Verdict::WaitForAuthor,
+        p::Verdict::Reject => Verdict::Reject,
+        p::Verdict::Other { value } => Verdict::Other(value),
+    }
+}
+
 /// The properties of a platform the UI branches on.
 pub fn platform_traits(kind: PlatformKind) -> p::PlatformTraits {
     let traits = PlatformTraits::of(kind);
     p::PlatformTraits {
         conversation_feed: traits.conversation_feed,
         batched_review: traits.posting == Posting::BatchedReview,
-        verdicts: traits
-            .verdicts
-            .iter()
-            .map(|v| p::Verdict {
-                id: v.id.into(),
-                label: v.label.into(),
-            })
-            .collect(),
+        verdicts: traits.verdicts.iter().map(verdict).collect(),
         verdict_separate: traits.verdict_separate,
         pipelines: p::PipelineWords {
             group: traits.pipelines.group.into(),
@@ -1167,9 +1184,9 @@ pub fn pull_request_info(
                 state: reviewer_state(r.state),
             })
             .collect(),
-        viewer_verdict: d.viewer_verdict.clone(),
+        viewer_verdict: d.viewer_verdict.as_ref().map(verdict),
         pending_vote: pending_vote.map(|v| p::PendingVote {
-            verdict: v.verdict.clone(),
+            verdict: verdict(&v.verdict),
             state: outgoing_state(&v.outgoing),
         }),
         labels: d.labels.clone(),

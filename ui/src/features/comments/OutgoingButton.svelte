@@ -6,6 +6,7 @@
   import Menu from "../../lib/ui/Menu.svelte";
   import Popover from "../../lib/ui/Popover.svelte";
   import Spinner from "../../lib/ui/Spinner.svelte";
+  import { verdictOf } from "../../lib/verdicts";
   import { commands } from "../../state/commands";
   import { platform } from "../../state/platform.svelte";
   import { threads } from "../../state/threads.svelte";
@@ -49,9 +50,10 @@
     onopen(thread);
   }
 
-  async function pick(verdict: string) {
+  async function pick(id: string) {
     platform.outgoingOpen = false;
-    await platform.stageVote(verdict);
+    const verdict = verdictOf(id);
+    if (verdict) await platform.stageVote(verdict);
   }
 
   const postable = $derived(canPost(ready, busy, blocked));
@@ -141,7 +143,7 @@
         {#if info && vote}
           <li>
             <div class="row">
-              <span class="text">{voteText(info, vote)}</span>
+              <span class="text">{voteText(vote)}</span>
               {#if vote.state.type === "posting"}<span class="note">posting…</span>{/if}
             </div>
             {#if vote.state.type === "failed"}

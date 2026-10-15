@@ -5453,6 +5453,8 @@ dependencies = [
  "blake3",
  "gix-imara-diff",
  "globset",
+ "serde",
+ "serde_json",
  "unicode-normalization",
 ]
 

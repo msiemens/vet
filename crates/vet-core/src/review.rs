@@ -1,5 +1,7 @@
 //! Anchors, review state, threads (SPEC §5). Content-anchored, never line-anchored (I3).
 
+use serde::{Deserialize, Serialize};
+
 use crate::content::{BlobId, FileDiff, Hash, Hunk, LineRange, RepoPath, SnapshotId};
 
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Debug)]
@@ -124,13 +126,115 @@ pub enum Outgoing {
     Failed { error: String },
 }
 
+/// One of the ways to close a review, in terms that hold for every platform (SPEC §11). The
+/// adapters own how their platform spells one on the wire, and the UI owns the words shown. How
+/// each reads: `Comment` "Comment", `Approve` "Approve", `RequestChanges` "Request changes",
+/// `ApproveWithSuggestions` "Approve with suggestions", `WaitForAuthor` "Wait for author",
+/// `Reject` "Reject", `Other` as the text it carries.
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub enum Verdict {
+    /// Reviews without a side taken (a plain comment).
+    Comment,
+    Approve,
+    /// A review that asks the author for changes.
+    RequestChanges,
+    /// An approval that points the author to follow-up work.
+    ApproveWithSuggestions,
+    /// An approval held back until the author has answered.
+    WaitForAuthor,
+    /// A review that says the pull request is not good to merge.
+    Reject,
+    /// A verdict whose spelling no adapter owns. It carries what Vet found spelled, is shown as
+    /// that, and is spelled so again where it is kept, so the platform still knows it.
+    Other(String),
+}
+
+impl Verdict {
+    /// What the verdict reads as, where it is named.
+    pub fn reads(&self) -> &str {
+        match self {
+            Verdict::Other(text) => text,
+            Verdict::Comment => "Comment",
+            Verdict::Approve => "Approve",
+            Verdict::RequestChanges => "Request changes",
+            Verdict::ApproveWithSuggestions => "Approve with suggestions",
+            Verdict::WaitForAuthor => "Wait for author",
+            Verdict::Reject => "Reject",
+        }
+    }
+
+    /// The spell the verdict is kept under where Vet stores it itself (the vote that waits to be
+    /// sent, a platform's verdict the viewer cast). Not the platform's wire spelling, which their
+    /// adapters own; not a label, which the UI gives.
+    pub fn spell(&self) -> &str {
+        match self {
+            Verdict::Other(text) => text,
+            _ => self.kebab(),
+        }
+    }
+
+    /// The verdict spelled that way, if Vet owns the spelling.
+    pub fn of_spell(spelled: &str) -> Option<Verdict> {
+        use Verdict::*;
+        Some(match spelled {
+            "comment" => Comment,
+            "approve" => Approve,
+            "request-changes" => RequestChanges,
+            "approve-with-suggestions" => ApproveWithSuggestions,
+            "wait-for-author" => WaitForAuthor,
+            "reject" => Reject,
+            _ => return None,
+        })
+    }
+
+    fn kebab(&self) -> &'static str {
+        match self {
+            Verdict::Comment => "comment",
+            Verdict::Approve => "approve",
+            Verdict::RequestChanges => "request-changes",
+            Verdict::ApproveWithSuggestions => "approve-with-suggestions",
+            Verdict::WaitForAuthor => "wait-for-author",
+            Verdict::Reject => "reject",
+            Verdict::Other(_) => unreachable!("spelled as its own text"),
+        }
+    }
+}
+
+impl std::fmt::Display for Verdict {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.reads())
+    }
+}
+
+impl Serialize for Verdict {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.serialize_str(self.spell())
+    }
+}
+
+impl<'de> Deserialize<'de> for Verdict {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        struct Spell;
+        impl<'de> serde::de::Visitor<'de> for Spell {
+            type Value = Verdict;
+            fn expecting(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                f.write_str("a verdict")
+            }
+            fn visit_str<E: serde::de::Error>(self, spelled: &str) -> Result<Verdict, E> {
+                Ok(Verdict::of_spell(spelled).unwrap_or_else(|| Verdict::Other(spelled.to_owned())))
+            }
+        }
+        deserializer.deserialize_str(Spell)
+    }
+}
+
 /// The vote of the viewer's on a pull request that waits to be sent, on a platform that keeps the
 /// vote apart from posting. There is at most one per pull request, and it is on its way to the
 /// platform like a draft: `outgoing` is never a comment's posted state.
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub struct PendingVote {
-    /// An id of the platform's verdicts.
-    pub verdict: String,
+    /// A verdict of the platform's ([`crate::review::Verdict`]).
+    pub verdict: Verdict,
     pub outgoing: Outgoing,
 }
 
@@ -301,5 +405,37 @@ mod tests {
             ..renamed
         };
         assert_eq!(sides(&added, &hunk)[0].1, None);
+    }
+
+    #[test]
+    fn a_verdict_is_spelled_back_as_itself_and_an_unknown_one_is_kept() {
+        for (verdict, spelled, reads) in [
+            (Verdict::Comment, "comment", "Comment"),
+            (Verdict::Approve, "approve", "Approve"),
+            (Verdict::RequestChanges, "request-changes", "Request changes"),
+            (
+                Verdict::ApproveWithSuggestions,
+                "approve-with-suggestions",
+                "Approve with suggestions",
+            ),
+            (Verdict::WaitForAuthor, "wait-for-author", "Wait for author"),
+            (Verdict::Reject, "reject", "Reject"),
+        ] {
+            assert_eq!(verdict.spell(), spelled);
+            assert_eq!(Verdict::of_spell(spelled), Some(verdict.clone()));
+            assert_eq!(verdict.reads(), reads);
+        }
+        for spelled in ["approved", "REQUEST_CHANGES", "strange new verdict"] {
+            assert_eq!(Verdict::of_spell(spelled), None);
+        }
+        assert_eq!(
+            serde_json::from_str::<Verdict>("\"wait-for-author\"").unwrap(),
+            Verdict::WaitForAuthor
+        );
+        assert_eq!(
+            serde_json::from_str::<Verdict>("\"strange new verdict\"").unwrap(),
+            Verdict::Other("strange new verdict".into())
+        );
+        assert_eq!(serde_json::to_string(&Verdict::Other("odd".into())).unwrap(), "\"odd\"");
     }
 }

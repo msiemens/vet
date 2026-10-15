@@ -6,7 +6,7 @@ use std::sync::Arc;
 use vet_app::changeset::Source;
 use vet_app::platform::{RemoteKey, Standing};
 use vet_app::session::{Keep, SyncReport, VoteSent};
-use vet_core::review::MessageId;
+use vet_core::review::{MessageId, Verdict};
 use vet_infra::clock::unix_now;
 use vet_mapping as mapping;
 use vet_protocol::{EditChoice, Event, ProjectId, Response};
@@ -81,12 +81,12 @@ impl Orchestrator {
     pub(crate) async fn submit_review(
         &self,
         project: ProjectId,
-        verdict: String,
+        verdict: Verdict,
         body: Option<String>,
     ) -> Result<Response> {
         let open = self.ready(project).await?;
         let report = (open.session)
-            .submit_review(&open.hosting().await?, &verdict, body)
+            .submit_review(&open.hosting().await?, verdict, body)
             .await?;
         self.after_posting(&open, project, &report).await
     }
@@ -122,9 +122,9 @@ impl Orchestrator {
         Ok(mapping::review_submitted(report))
     }
 
-    pub(crate) async fn stage_vote(&self, project: ProjectId, verdict: String) -> Result<Response> {
+    pub(crate) async fn stage_vote(&self, project: ProjectId, verdict: Verdict) -> Result<Response> {
         let open = self.ready(project).await?;
-        (open.session).stage_vote(&open.hosting().await?, &verdict).await?;
+        (open.session).stage_vote(&open.hosting().await?, verdict).await?;
         threads_changed(&open).await;
         Ok(Response::Done)
     }

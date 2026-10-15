@@ -6,6 +6,7 @@
 import type { Verdict } from "../generated/Verdict.ts";
 import type { MenuSpec } from "../lib/commandMenu.ts";
 import { THEMES, type Theme } from "../lib/theme/theme.ts";
+import { verdictId, verdictLabel } from "../lib/verdicts.ts";
 import { type ViewMode, modeCommand } from "../lib/viewMode.ts";
 import { toolCommand } from "./appCommands.ts";
 
@@ -37,7 +38,7 @@ export interface MenuState {
   /** The platform of the pull request last on view reviews in one batch, so posting submits the review. */
   batchedReview: boolean;
   /** The votes of a platform that keeps the vote apart from the comments, and the one the viewer has: staged, else cast. */
-  votes?: { verdicts: Verdict[]; chosen?: string };
+  votes?: { verdicts: Verdict[]; chosen?: Verdict };
 }
 
 /** Also offered by the project chip's menu. */
@@ -129,11 +130,11 @@ export function mainMenuSpec(s: MenuState): MenuSpec {
           {
             id: "vote",
             label: "Vote",
-            items: s.votes.verdicts.map(({ id, label }) => ({
+            items: s.votes.verdicts.map((v) => ({
               command: "review.vote",
-              arg: id,
-              label,
-              checked: s.votes?.chosen === id,
+              arg: verdictId(v),
+              label: verdictLabel(v),
+              checked: s.votes?.chosen !== undefined && verdictId(s.votes.chosen) === verdictId(v),
               radio: true,
             })),
           },

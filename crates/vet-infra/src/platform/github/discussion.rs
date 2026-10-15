@@ -21,6 +21,7 @@ use super::wire::{
 };
 use super::{Clients, GitHubClient, repository};
 use crate::platform::time::parse_rfc3339;
+use vet_core::review::Verdict;
 
 /// Threads asked for per page.
 const THREAD_PAGE: u32 = 50;
@@ -750,7 +751,8 @@ impl<C: CredentialProvider + Sync> GitHubClient<C> {
                 return Err(e);
             }
         };
-        let mut body = json!({ "pullRequestReviewId": review, "event": submission.verdict });
+        let event = event_of(&submission.verdict)?;
+        let mut body = json!({ "pullRequestReviewId": review, "event": event });
         if let Some(text) = &submission.body {
             body["body"] = json!(text);
         }
@@ -873,11 +875,23 @@ impl<C: CredentialProvider + Sync> GitHubClient<C> {
     }
 }
 
+/// How GitHub names the verdict a submission closes its review with, in the submission's event.
+/// The session sends one of GitHub's verdicts; another one is refused, for sending it as another
+/// would tell the platform what the viewer did not.
+pub(super) fn event_of(verdict: &Verdict) -> Result<&'static str, PlatformError> {
+    match verdict {
+        Verdict::Comment => Ok("COMMENT"),
+        Verdict::Approve => Ok("APPROVE"),
+        Verdict::RequestChanges => Ok("REQUEST_CHANGES"),
+        other => Err(PlatformError::Unexpected(format!("GitHub has no verdict {other}"))),
+    }
+}
+
 /// Whether a submission is a review: comments on the lines or in threads, a verdict other than a
 /// plain comment, or a summary. Comments on the pull request as a whole are not.
 fn needs_review(submission: &Submission) -> bool {
     !submission.threads.is_empty()
         || !submission.replies.is_empty()
         || submission.body.is_some()
-        || submission.verdict != "COMMENT"
+        || submission.verdict != Verdict::Comment
 }

@@ -5,7 +5,7 @@ use ts_rs::TS;
 
 use crate::{
     BackendSettings, ChangesetKey, CommentAt, EditChoice, Lens, NonTextKind, PipelineAction, ProjectId, ReviewFilter,
-    SearchPattern, SearchScope, SearchSide, Secret, Side, SymbolId, ThreadStatus, ThreadTarget, View,
+    SearchPattern, SearchScope, SearchSide, Secret, Side, SymbolId, ThreadStatus, ThreadTarget, Verdict, View,
 };
 
 #[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize, TS)]
@@ -739,13 +739,13 @@ pub enum Request {
     SyncThreads {
         project: ProjectId,
     },
-    /// Posts the viewer's drafts of the pull request on view as one review with `verdict` (an id
-    /// from `PlatformTraits::verdicts`) and an optional text, then syncs. Nothing of the review
+    /// Posts the viewer's drafts of the pull request on view as one review with `verdict` (one of
+    /// `PlatformTraits::verdicts`) and an optional text, then syncs. Nothing of the review
     /// is posted if the platform refuses it, and the request fails with the reason. Answers with
     /// `Response::ReviewSubmitted`.
     SubmitReview {
         project: ProjectId,
-        verdict: String,
+        verdict: Verdict,
         body: Option<String>,
     },
     /// Posts the viewer's drafts of the pull request on view one after the other, on a platform
@@ -758,13 +758,13 @@ pub enum Request {
         project: ProjectId,
     },
     /// Stages the viewer's vote on the pull request on view, on a platform that keeps the vote
-    /// apart from posting (`PlatformTraits::verdict_separate`); `verdict` is an id from
+    /// apart from posting (`PlatformTraits::verdict_separate`); `verdict` is one of
     /// `PlatformTraits::verdicts`. The vote is stored with the pull request and sent by
     /// `PostDrafts`. It replaces a vote staged before; the viewer's current vote stages nothing and
     /// clears the staged one. Announces `ThreadsChanged`. Answers with `Response::Done`.
     StageVote {
         project: ProjectId,
-        verdict: String,
+        verdict: Verdict,
     },
     /// Drops the vote staged on the pull request on view. Fails while it is being posted.
     /// Announces `ThreadsChanged`. Answers with `Response::Done`.

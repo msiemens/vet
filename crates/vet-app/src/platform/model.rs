@@ -3,6 +3,7 @@
 
 use serde::{Deserialize, Serialize};
 use vet_core::content::LineDelta;
+pub use vet_core::review::Verdict;
 
 use super::host::PlatformKind;
 
@@ -14,7 +15,7 @@ pub struct PlatformTraits {
     /// A flat feed of comments and events beside the threads.
     pub conversation_feed: bool,
     pub posting: Posting,
-    /// The platform's own choices, in its order.
+    /// The platform's ways to close a review (`Verdict`), in its order, as its lists show them.
     pub verdicts: Vec<Verdict>,
     /// The vote is set independently of posting.
     pub verdict_separate: bool,
@@ -59,13 +60,6 @@ pub enum Posting {
     BatchedReview,
 }
 
-/// A way to close a review. `id` is for the code, `label` is fit to show.
-#[derive(Clone, PartialEq, Eq, Debug)]
-pub struct Verdict {
-    pub id: &'static str,
-    pub label: &'static str,
-}
-
 /// What can hold a merge back.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum BlockingSource {
@@ -87,20 +81,7 @@ impl PlatformTraits {
             changeset_threads: ChangesetThreads::Flat,
             conversation_feed: true,
             posting: Posting::BatchedReview,
-            verdicts: vec![
-                Verdict {
-                    id: "COMMENT",
-                    label: "Comment",
-                },
-                Verdict {
-                    id: "APPROVE",
-                    label: "Approve",
-                },
-                Verdict {
-                    id: "REQUEST_CHANGES",
-                    label: "Request changes",
-                },
-            ],
+            verdicts: vec![Verdict::Comment, Verdict::Approve, Verdict::RequestChanges],
             verdict_separate: false,
             blocking: vec![BlockingSource::UnresolvedThreads],
             revision_scoped: false,
@@ -123,22 +104,10 @@ impl PlatformTraits {
             conversation_feed: false,
             posting: Posting::PerComment,
             verdicts: vec![
-                Verdict {
-                    id: "approved",
-                    label: "Approve",
-                },
-                Verdict {
-                    id: "approved-with-suggestions",
-                    label: "Approve with suggestions",
-                },
-                Verdict {
-                    id: "wait-for-author",
-                    label: "Wait for author",
-                },
-                Verdict {
-                    id: "rejected",
-                    label: "Reject",
-                },
+                Verdict::Approve,
+                Verdict::ApproveWithSuggestions,
+                Verdict::WaitForAuthor,
+                Verdict::Reject,
             ],
             verdict_separate: true,
             blocking: vec![BlockingSource::UnresolvedThreads],

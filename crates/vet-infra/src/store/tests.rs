@@ -18,7 +18,7 @@ use vet_core::prepared::PreparedFile;
 use vet_core::remap::{RemapMode, remap_span};
 use vet_core::review::{
     Anchor, CommentTarget, EditConflict, FileRemapInput, Message, Outgoing, PendingVote, PlatformThread, RemoteComment,
-    ReviewedSpan, Side, SpanState, ThreadStatus,
+    ReviewedSpan, Side, SpanState, ThreadStatus, Verdict,
 };
 
 use super::*;
@@ -509,10 +509,7 @@ async fn a_pending_vote_is_kept_per_pull_request_in_its_state_across_a_restart_a
         },
         number,
     };
-    let vote = |verdict: &str, outgoing| PendingVote {
-        verdict: verdict.into(),
-        outgoing,
-    };
+    let vote = |verdict: Verdict, outgoing| PendingVote { verdict, outgoing };
     let failed = Outgoing::Failed {
         error: "no access".into(),
     };
@@ -520,11 +517,19 @@ async fn a_pending_vote_is_kept_per_pull_request_in_its_state_across_a_restart_a
 
     let writes = store.writes();
     writes
-        .set_pending_vote("/repo".into(), pull_request(7), Some(vote("approved", Outgoing::Draft)))
+        .set_pending_vote(
+            "/repo".into(),
+            pull_request(7),
+            Some(vote(Verdict::Approve, Outgoing::Draft)),
+        )
         .await
         .unwrap();
     writes
-        .set_pending_vote("/repo".into(), pull_request(7), Some(vote("rejected", failed.clone())))
+        .set_pending_vote(
+            "/repo".into(),
+            pull_request(7),
+            Some(vote(Verdict::Reject, failed.clone())),
+        )
         .await
         .unwrap();
     drop(writes);
@@ -533,7 +538,7 @@ async fn a_pending_vote_is_kept_per_pull_request_in_its_state_across_a_restart_a
     let store = open(&dir).await;
     assert_eq!(
         store.pending_vote("/repo".into(), pull_request(7)).await.unwrap(),
-        Some(vote("rejected", failed)),
+        Some(vote(Verdict::Reject, failed)),
         "the vote chosen last, with why it failed"
     );
     assert_eq!(store.pending_vote("/repo".into(), pull_request(8)).await.unwrap(), None);
@@ -545,12 +550,16 @@ async fn a_pending_vote_is_kept_per_pull_request_in_its_state_across_a_restart_a
     let posting = Outgoing::Posting { since: T0 };
     let writes = store.writes();
     writes
-        .set_pending_vote("/repo".into(), pull_request(7), Some(vote("rejected", posting.clone())))
+        .set_pending_vote(
+            "/repo".into(),
+            pull_request(7),
+            Some(vote(Verdict::Reject, posting.clone())),
+        )
         .await
         .unwrap();
     assert_eq!(
         store.pending_vote("/repo".into(), pull_request(7)).await.unwrap(),
-        Some(vote("rejected", posting))
+        Some(vote(Verdict::Reject, posting))
     );
 
     // The closed review is old enough to expire; the vote keeps its changeset.

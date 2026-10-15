@@ -1,5 +1,6 @@
 <script lang="ts">
   import type { PullRequestInfo } from "../../generated/PullRequestInfo";
+  import { verdictId, verdictLabel, verdictOf } from "../../lib/verdicts";
   import { platform } from "../../state/platform.svelte";
   import { chosenVerdict } from "./posting";
 
@@ -13,13 +14,15 @@
   // The form's state is the store's, so the Comments tool window and the toolbar's popover share it.
   const form = platform.review;
   const shown = $derived(info.pendingVote?.verdict ?? info.viewerVerdict);
+  const chosen = $derived(chosenVerdict(info));
+  const value = $derived(chosen === undefined ? "" : verdictId(chosen));
 </script>
 
 {#if part === "review" && info.traits.batchedReview}
   <label>
     <span>Verdict</span>
-    <select class="field" value={chosenVerdict(info)} onchange={(e) => (form.verdict = e.currentTarget.value)}>
-      {#each info.traits.verdicts as v (v.id)}<option value={v.id}>{v.label}</option>{/each}
+    <select class="field" {value} onchange={(e) => (form.verdict = verdictOf(e.currentTarget.value))}>
+      {#each info.traits.verdicts as v (v.type)}<option value={verdictId(v)}>{verdictLabel(v)}</option>{/each}
     </select>
   </label>
   <textarea class="field" rows="3" placeholder="Leave a summary (optional)" bind:value={form.body}></textarea>
@@ -30,11 +33,14 @@
       <select
         class="field"
         disabled={disabled || info.pendingVote?.state.type === "posting"}
-        value={shown ?? ""}
-        onchange={(e) => void platform.stageVote(e.currentTarget.value)}
+        value={shown ? verdictId(shown) : ""}
+        onchange={(e) => {
+          const verdict = verdictOf(e.currentTarget.value);
+          if (verdict) void platform.stageVote(verdict);
+        }}
       >
         {#if !shown}<option value="" disabled>No vote</option>{/if}
-        {#each info.traits.verdicts as v (v.id)}<option value={v.id}>{v.label}</option>{/each}
+        {#each info.traits.verdicts as v (v.type)}<option value={verdictId(v)}>{verdictLabel(v)}</option>{/each}
       </select>
     </label>
   </div>

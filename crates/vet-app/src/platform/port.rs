@@ -6,6 +6,7 @@ use super::discussion::{CommentRef, Discussion, PlatformComment, Submission, Sub
 use super::model::{PlatformError, PlatformTraits, PullRequestDetail, PullRequestListing, PullRequestQuery, Viewer};
 use super::queue::{PullRequestRow, rows};
 use super::remote::RemoteKey;
+use vet_core::review::Verdict;
 
 pub trait Platform {
     fn traits(&self) -> PlatformTraits;
@@ -137,12 +138,12 @@ pub trait Platform {
     }
 
     /// Sets the viewer's vote on a platform that keeps it apart from posting
-    /// ([`super::PlatformTraits::verdict_separate`]); `verdict` is the id of one of its verdicts.
+    /// ([`super::PlatformTraits::verdict_separate`]); `verdict` is one of its verdicts.
     fn vote(
         &self,
         remote: &RemoteKey,
         number: u64,
-        verdict: &str,
+        verdict: &Verdict,
     ) -> impl Future<Output = Result<(), PlatformError>> + Send {
         let _ = (remote, number, verdict);
         async { Err(unsupported("voting")) }

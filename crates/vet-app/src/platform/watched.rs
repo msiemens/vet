@@ -11,6 +11,7 @@ use super::known::PullRequestCache;
 use super::model::{PlatformError, PlatformTraits, PullRequestDetail, PullRequestListing, PullRequestQuery, Viewer};
 use super::port::Platform;
 use super::remote::RemoteKey;
+use vet_core::review::Verdict;
 
 /// `platform`, of the kind `kind`, with its calls watched.
 pub struct Watched<P> {
@@ -128,7 +129,7 @@ impl<P: Platform + Sync> Platform for Watched<P> {
             .await
     }
 
-    async fn vote(&self, remote: &RemoteKey, number: u64, verdict: &str) -> Result<(), PlatformError> {
+    async fn vote(&self, remote: &RemoteKey, number: u64, verdict: &Verdict) -> Result<(), PlatformError> {
         self.watched(remote, self.platform.vote(remote, number, verdict)).await
     }
 }

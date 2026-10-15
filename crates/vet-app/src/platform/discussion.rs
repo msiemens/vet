@@ -2,6 +2,7 @@
 //! with their comments, the flat conversation, who reviews it, and what Vet posts.
 
 use serde::{Deserialize, Serialize};
+use vet_core::review::Verdict;
 
 use super::model::{CiState, PlatformError, ReviewVerdict};
 
@@ -113,9 +114,9 @@ pub struct Discussion {
     pub author_name: String,
     pub author_avatar: Option<String>,
     pub reviewers: Vec<Reviewer>,
-    /// The id of the platform's verdict the viewer has voted, on a platform that keeps the vote
-    /// apart from the review ([`super::PlatformTraits::verdict_separate`]).
-    pub viewer_verdict: Option<String>,
+    /// The platform's verdict the viewer has voted, on a platform that keeps the vote apart from
+    /// the review ([`super::PlatformTraits::verdict_separate`]).
+    pub viewer_verdict: Option<Verdict>,
     pub labels: Vec<String>,
     pub ci: Option<CiState>,
     /// Oldest first.
@@ -188,9 +189,9 @@ pub struct NewConversationComment {
 /// one at a time the drafts to post in turn.
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub struct Submission {
-    /// The id of one of the platform's verdicts (`PlatformTraits::verdicts`); empty where posting
-    /// has none ([`super::Posting::PerComment`]).
-    pub verdict: String,
+    /// The verdict the review closes with; [`Verdict::Comment`] where posting has none
+    /// ([`super::Posting::PerComment`]). One of the platform's ([`super::PlatformTraits::verdicts`]).
+    pub verdict: Verdict,
     pub body: Option<String>,
     /// The head commit the lines of `threads` are numbered in.
     pub commit: String,

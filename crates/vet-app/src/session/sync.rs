@@ -10,7 +10,7 @@ use vet_core::content::{EntryKind, LineRange, RepoPath, Snapshot, SnapshotStatus
 use vet_core::num::sat_u32;
 use vet_core::review::{
     Anchor, AnchorState, CommentTarget, EditConflict, Message, MessageId, Outgoing, PendingVote, PlatformThread,
-    RemoteComment, Side, Strategy, Thread, ThreadId, ThreadStatus,
+    RemoteComment, Side, Strategy, Thread, ThreadId, ThreadStatus, Verdict,
 };
 
 use super::hold::Held;
@@ -644,13 +644,13 @@ impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> L
         Ok(())
     }
 
-    /// Posts the viewer's drafts as one review with `verdict` (an id of the platform's), then
+    /// Posts the viewer's drafts as one review with `verdict` (one of the platform's), then
     /// records where they are on the platform. Drafts whose code is gone, and those in a thread
     /// with an edit conflict, wait. Fails, posting nothing of the review, if the platform refuses.
     pub async fn submit_review<P: Platform + Sync>(
         &self,
         platform: &P,
-        verdict: &str,
+        verdict: Verdict,
         body: Option<String>,
     ) -> Result<SubmitReport> {
         let traits = platform.traits();
@@ -659,11 +659,12 @@ impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> L
                 "this platform takes comments one at a time: post them instead".into(),
             ));
         }
-        if !traits.verdicts.iter().any(|v| v.id == verdict) {
+        if !traits.verdicts.contains(&verdict) {
             return Err(SessionError::Invalid(format!("the platform has no verdict {verdict}")));
         }
+        let allow_empty = verdict != Verdict::Comment;
         let body = body.map(|b| b.trim().to_owned()).filter(|b| !b.is_empty());
-        self.send_drafts(platform, verdict, body, verdict != "COMMENT").await
+        self.send_drafts(platform, verdict, body, allow_empty).await
     }
 
     /// Posts the viewer's drafts one after the other, on a platform that takes comments one at a
@@ -679,7 +680,7 @@ impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> L
             ));
         }
         let vote_waits = traits.verdict_separate && self.vote_to_send().await?.is_some();
-        let mut report = self.send_drafts(platform, "", None, vote_waits).await?;
+        let mut report = self.send_drafts(platform, Verdict::Comment, None, vote_waits).await?;
         if vote_waits && report.problem.is_none() {
             let (sent, problem) = self.send_vote(platform).await?;
             report.vote = sent;
@@ -707,17 +708,17 @@ impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> L
             .filter(|v| !matches!(v.outgoing, Outgoing::Posting { .. })))
     }
 
-    /// Stages `verdict` (an id of the platform's) as the viewer's vote on a platform that keeps it
+    /// Stages `verdict` (one of the platform's) as the viewer's vote on a platform that keeps it
     /// apart from posting, to be sent with the next post. It replaces a vote staged before; the
     /// viewer's current vote on the platform stages nothing and clears the one staged.
-    pub async fn stage_vote<P: Platform + Sync>(&self, platform: &P, verdict: &str) -> Result<()> {
+    pub async fn stage_vote<P: Platform + Sync>(&self, platform: &P, verdict: Verdict) -> Result<()> {
         let traits = platform.traits();
         if !traits.verdict_separate {
             return Err(SessionError::Invalid(
                 "this platform sets the vote with the review".into(),
             ));
         }
-        if !traits.verdicts.iter().any(|v| v.id == verdict) {
+        if !traits.verdicts.contains(&verdict) {
             return Err(SessionError::Invalid(format!("the platform has no verdict {verdict}")));
         }
         let _exchange = self.exchange.lock().await;
@@ -726,8 +727,8 @@ impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> L
             let (remote, number) = pull_request(&st)?;
             (self.known.discussion(&remote, number)).and_then(|(_, d)| d.viewer_verdict)
         };
-        let vote = (current.as_deref() != Some(verdict)).then(|| PendingVote {
-            verdict: verdict.to_owned(),
+        let vote = (current.as_ref() != Some(&verdict)).then_some(PendingVote {
+            verdict,
             outgoing: Outgoing::Draft,
         });
         self.store_vote(vote).await
@@ -803,7 +804,7 @@ impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> L
         else {
             return Ok(false);
         };
-        let settled = if discussion.viewer_verdict.as_deref() == Some(vote.verdict.as_str()) {
+        let settled = if discussion.viewer_verdict.as_ref() == Some(&vote.verdict) {
             None
         } else if matches!(vote.outgoing, Outgoing::Posting { .. }) {
             Some(PendingVote {
@@ -820,7 +821,7 @@ impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> L
     async fn send_drafts<P: Platform + Sync>(
         &self,
         platform: &P,
-        verdict: &str,
+        verdict: Verdict,
         body: Option<String>,
         allow_empty: bool,
     ) -> Result<SubmitReport> {
@@ -1319,9 +1320,9 @@ async fn push<P: Platform + Sync>(platform: &P, remote: &RemoteKey, pushes: Push
 }
 
 /// The drafts of the threads in `st` as a review, and how many cannot be posted.
-fn drafts_of(st: &State, verdict: &str, body: Option<String>) -> (Submission, u32) {
+fn drafts_of(st: &State, verdict: Verdict, body: Option<String>) -> (Submission, u32) {
     let mut submission = Submission {
-        verdict: verdict.to_owned(),
+        verdict,
         body,
         commit: st.head.0.clone(),
         threads: Vec::new(),

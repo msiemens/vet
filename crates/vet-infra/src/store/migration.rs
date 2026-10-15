@@ -33,6 +33,10 @@ impl MigratorTrait for Migrator {
                 name: "m20261014_000004_pull_request_details",
                 sql: include_str!("migration/pull_request_details.sql"),
             }),
+            Box::new(Sql {
+                name: "m20261015_000005_typed_verdicts",
+                sql: include_str!("migration/typed_verdicts.sql"),
+            }),
         ]
     }
 }
@@ -88,10 +92,13 @@ pub(super) async fn origin(db: &DatabaseConnection) -> Result<Origin, DbErr> {
 #[cfg(test)]
 mod tests {
     use sea_orm::{ConnectionTrait, DbBackend, Schema, Statement};
+    use vet_app::platform::{Discussion, Verdict};
 
     use super::super::ReviewWriter;
     use super::super::entity::*;
     use super::*;
+
+    const REPO: &str = "/kept";
 
     async fn database() -> (tempfile::TempDir, DatabaseConnection) {
         let dir = tempfile::tempdir().unwrap();
@@ -250,5 +257,97 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(origin(&db).await.unwrap(), Origin::Newer);
+    }
+
+    #[tokio::test]
+    async fn a_vote_and_a_copys_verdict_spelled_earlier_become_how_vet_spells_them_an_unknown_stays() {
+        let (_dir, db) = database().await;
+        Migrator::up(&db, Some((Migrator::migrations().len() - 1) as u32))
+            .await
+            .unwrap();
+        // What a staged vote was spelled as in the versions before the verdicts
+        // are typed, and what each is spelled as now.
+        let spelled: &[(&str, &str)] = &[
+            ("approved", "approve"),
+            ("approved-with-suggestions", "approve-with-suggestions"),
+            ("rejected", "reject"),
+            ("APPROVE", "approve"),
+            ("REQUEST_CHANGES", "request-changes"),
+            // The one that is spelled the same both ways.
+            ("wait-for-author", "wait-for-author"),
+            // A spelling the migrations do not know stays spelled.
+            ("hidden rule", "hidden rule"),
+        ];
+        let rows: Vec<String> = spelled
+            .iter()
+            .enumerate()
+            .map(|(i, (spelled, _))| format!("('{REPO}', 0, 'k{i}', '{spelled}')"))
+            .collect();
+        db.execute_unprepared(&format!(
+            "INSERT INTO changeset (repo, kind, key, vote) VALUES {}",
+            rows.join(", ")
+        ))
+        .await
+        .unwrap();
+
+        let detail = |verdict: &str| {
+            serde_json::json!({
+                "title": "", "url": "", "description": "", "draft": false,
+                "source_branch": "", "target_branch": "", "state": "Open",
+                "author": "", "author_name": "", "author_avatar": null,
+                "reviewers": [], "viewer_verdict": verdict, "labels": [],
+                "ci": null, "conversation": [], "threads": [], "complete": true,
+            })
+            .to_string()
+        };
+        for (i, verdict) in ["approved", "rejected", "hidden rule", "approve"].iter().enumerate() {
+            db.execute_unprepared(&format!(
+                "INSERT INTO pull_request (host, path, number, head, updated_at, synced_at, detail) \
+                 VALUES ('dev.azure.com', '{REPO}', {i}, '', 1, 1, '{}')",
+                detail(verdict).replace('\'', "''")
+            ))
+            .await
+            .unwrap();
+        }
+
+        Migrator::up(&db, None).await.unwrap();
+
+        let votes = db
+            .query_all_raw(Statement::from_string(
+                DbBackend::Sqlite,
+                format!("SELECT key, vote FROM changeset WHERE repo = '{REPO}' ORDER BY key"),
+            ))
+            .await
+            .unwrap();
+        let got: Vec<String> = votes.iter().map(|r| r.try_get("", "vote").unwrap()).collect();
+        let kept: Vec<String> = spelled.iter().map(|(_, vote)| (*vote).to_owned()).collect();
+        assert_eq!(got, kept);
+
+        let copies = db
+            .query_all_raw(Statement::from_string(
+                DbBackend::Sqlite,
+                format!("SELECT detail FROM pull_request WHERE path = '{REPO}' ORDER BY number"),
+            ))
+            .await
+            .unwrap();
+        let got: Vec<Option<Verdict>> = copies
+            .iter()
+            .map(|r| {
+                serde_json::from_str::<Discussion>(&r.try_get::<String>("", "detail").unwrap())
+                    .unwrap()
+                    .viewer_verdict
+            })
+            .collect();
+        let kept: Vec<Option<Verdict>> = [
+            Verdict::Approve,
+            Verdict::Reject,
+            Verdict::Other("hidden rule".into()),
+            // One spelled the way Vet spells it already is left as it is.
+            Verdict::Approve,
+        ]
+        .into_iter()
+        .map(Some)
+        .collect();
+        assert_eq!(got, kept);
     }
 }

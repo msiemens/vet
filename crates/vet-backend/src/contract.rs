@@ -664,13 +664,13 @@ mod tests {
             Request::SyncThreads { project },
             Request::SubmitReview {
                 project,
-                verdict: String::new(),
+                verdict: vet_protocol::Verdict::Comment,
                 body: None,
             },
             Request::PostDrafts { project },
             Request::StageVote {
                 project,
-                verdict: String::new(),
+                verdict: vet_protocol::Verdict::Comment,
             },
             Request::DiscardVote { project },
             Request::PullRequestInfo { project },

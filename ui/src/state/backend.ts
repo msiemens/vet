@@ -46,6 +46,7 @@ import type { Serving } from "../generated/Serving";
 import type { Side } from "../generated/Side";
 import type { SymbolAt } from "../generated/SymbolAt";
 import type { SymbolId } from "../generated/SymbolId";
+import type { Verdict } from "../generated/Verdict";
 import type { SymbolSignature } from "../generated/SymbolSignature";
 import type { Task } from "../generated/Task";
 import type { TextContent } from "../generated/TextContent";
@@ -895,8 +896,8 @@ export class Backend {
     expect(await this.conn.request({ type: "syncThreads", project: this.pid }), "done");
   }
 
-  /** Posts the drafts as one review with the verdict (an id of `PullRequestInfo.traits.verdicts`). */
-  async submitReview(verdict: string, body: string | null): Promise<ReviewSubmitted> {
+  /** Posts the drafts as one review with the verdict (one of `PullRequestInfo.traits.verdicts`). */
+  async submitReview(verdict: Verdict, body: string | null): Promise<ReviewSubmitted> {
     const request = { type: "submitReview", project: this.pid, verdict, body } as const;
     const { posted, skipped, voteCast, problem } = expect(await this.conn.request(request), "reviewSubmitted");
     return { posted, skipped, voteCast, problem };
@@ -910,10 +911,10 @@ export class Backend {
   }
 
   /**
-   * Stages the viewer's vote (an id of `PullRequestInfo.traits.verdicts`) for the next post, on a platform that keeps
+   * Stages the viewer's vote (one of `PullRequestInfo.traits.verdicts`) for the next post, on a platform that keeps
    * it apart from posting. The viewer's current vote clears the staged one instead.
    */
-  async stageVote(verdict: string): Promise<void> {
+  async stageVote(verdict: Verdict): Promise<void> {
     expect(await this.conn.request({ type: "stageVote", project: this.pid, verdict }), "done");
   }
 

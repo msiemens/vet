@@ -17,7 +17,7 @@ use vet_core::filter::ReviewFilter;
 use vet_core::merkle::TreeNode;
 use vet_core::review::{
     Anchor, CommentTarget, EditConflict, Message, MessageId, Outgoing, PendingVote, PlatformThread, RemoteComment,
-    ReviewedSpan, Side, SpanState, Thread, ThreadId, ThreadStatus,
+    ReviewedSpan, Side, SpanState, Thread, ThreadId, ThreadStatus, Verdict,
 };
 
 use super::entity::{
@@ -628,23 +628,30 @@ fn outgoing_error(outgoing: &Outgoing) -> Option<String> {
     }
 }
 
+/// The verdict spelled `spelled` in what Vet keeps (a staged vote's column, a details copy's
+/// viewer verdict): its own spelling now, the migration `typed_verdicts` keeps it spelled so;
+/// anything else stays spelled, as a verdict Vet does not know. Shown as it.
+fn spelled_verdict(spelled: &str) -> Verdict {
+    Verdict::of_spell(spelled).unwrap_or(Verdict::Other(spelled.to_owned()))
+}
+
 /// The vote that waits to be sent, from the columns of its changeset.
 pub fn vote_from(c: changeset::Model) -> Result<Option<PendingVote>, DbErr> {
-    let Some(verdict) = c.vote else {
+    let Some(spelled) = c.vote else {
         return match (c.vote_posting_since, c.vote_error) {
             (None, None) => Ok(None),
             _ => Err(corrupt("a vote's state belongs to a vote")),
         };
     };
     Ok(Some(PendingVote {
-        verdict,
+        verdict: spelled_verdict(&spelled),
         outgoing: outgoing_from(c.vote_posting_since, c.vote_error)?,
     }))
 }
 
 /// The vote columns of a changeset row.
 pub fn vote_columns(row: &mut changeset::ActiveModel, vote: Option<&PendingVote>) {
-    row.vote = Set(vote.map(|v| v.verdict.clone()));
+    row.vote = Set(vote.map(|v| v.verdict.spell().to_owned()));
     row.vote_posting_since = Set(vote.and_then(|v| outgoing_since(&v.outgoing)));
     row.vote_error = Set(vote.and_then(|v| outgoing_error(&v.outgoing)));
 }
@@ -714,7 +721,7 @@ pub fn detail_row(
 
 /// The details a stored row keeps.
 pub fn detail_from(m: pull_request::Model) -> Result<StoredDiscussion, DbErr> {
-    let discussion = serde_json::from_str(&m.detail)
+    let discussion: Discussion = serde_json::from_str(&m.detail)
         .map_err(|e| DbErr::Custom(format!("cannot read a pull request's stored details: {e}")))?;
     Ok(StoredDiscussion {
         updated_at: m.updated_at,

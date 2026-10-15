@@ -7,6 +7,7 @@ import type { PlatformStatus } from "./PlatformStatus";
 import type { PlatformTraits } from "./PlatformTraits";
 import type { PullRequestState } from "./PullRequestState";
 import type { Reviewer } from "./Reviewer";
+import type { Verdict } from "./Verdict";
 
 /**
  * What the Comments tool window shows of the pull request on view, above its threads.
@@ -25,10 +26,10 @@ author: string,
  */
 authorName: string, authorAvatar: string | null, sourceBranch: string, targetBranch: string, reviewers: Array<Reviewer>, 
 /**
- * The id of the verdict the viewer voted, on a platform that keeps the vote apart from posting
- * (`traits.verdict_separate`); absent without a vote.
+ * The platform's verdict the viewer has voted, on a platform that keeps the vote apart from
+ * posting (`traits.verdict_separate`); absent without a vote.
  */
-viewerVerdict: string | null, 
+viewerVerdict: Verdict | null, 
 /**
  * The vote staged and not sent yet (`StageVote`), on such a platform; sent by `PostDrafts`.
  */

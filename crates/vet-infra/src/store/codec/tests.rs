@@ -13,7 +13,7 @@ use vet_core::content::{
 use vet_core::filter::ReviewFilter;
 use vet_core::review::{
     Anchor, CommentTarget, EditConflict, Message, MessageId, Outgoing, PendingVote, PlatformThread, RemoteComment,
-    Side, SpanState, ThreadStatus,
+    Side, SpanState, ThreadStatus, Verdict,
 };
 
 use super::super::entity::{
@@ -553,18 +553,40 @@ fn a_pending_vote_keeps_its_verdict_and_state_and_no_vote_leaves_no_state() {
         Outgoing::Failed { error: "no".into() },
     ] {
         let vote = PendingVote {
-            verdict: "approve".into(),
+            verdict: Verdict::Approve,
             outgoing,
         };
 
-        assert_eq!(vote_from(changeset_model(Some(&vote))).unwrap(), Some(vote));
+        assert_eq!(vote_from(changeset_model(Some(&vote))).unwrap(), Some(vote.clone()));
+        assert_eq!(changeset_model(Some(&vote)).vote.as_deref(), Some("approve"));
     }
+}
+
+#[test]
+fn a_vote_is_kept_spelled_how_vet_spells_it_and_one_spelled_else_stays_so() {
+    assert_eq!(
+        changeset_model(Some(&PendingVote {
+            verdict: Verdict::ApproveWithSuggestions,
+            outgoing: Outgoing::Draft,
+        }))
+        .vote
+        .as_deref(),
+        Some("approve-with-suggestions")
+    );
+    // A spelling that is no verdict of Vet's keeps spelled, and no verdict pretends to read it.
+    assert_eq!(spelled_verdict("approved").clone(), Verdict::Other("approved".into()));
+    let strange = PendingVote {
+        verdict: Verdict::Other("hidden rule".into()),
+        outgoing: Outgoing::Draft,
+    };
+    assert_eq!(changeset_model(Some(&strange)).vote.as_deref(), Some("hidden rule"));
+    assert_eq!(vote_from(changeset_model(Some(&strange))).unwrap(), Some(strange));
 }
 
 #[test]
 fn a_votes_state_without_a_vote_and_a_vote_in_two_states_are_corrupt() {
     let vote = PendingVote {
-        verdict: "approve".into(),
+        verdict: Verdict::Approve,
         outgoing: Outgoing::Draft,
     };
     let stray_posting = changeset::Model {

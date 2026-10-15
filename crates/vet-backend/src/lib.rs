@@ -577,9 +577,13 @@ impl Orchestrator {
                 reply(async move { self.delete_conversation_comment(project, &comment).await })
             }
             Request::SyncThreads { project } => reply(self.sync_threads(project)),
-            Request::SubmitReview { project, verdict, body } => reply(self.submit_review(project, verdict, body)),
+            Request::SubmitReview { project, verdict, body } => {
+                reply(self.submit_review(project, vet_mapping::verdict_of(verdict), body))
+            }
             Request::PostDrafts { project } => reply(self.post_drafts(project)),
-            Request::StageVote { project, verdict } => reply(self.stage_vote(project, verdict)),
+            Request::StageVote { project, verdict } => {
+                reply(self.stage_vote(project, vet_mapping::verdict_of(verdict)))
+            }
             Request::DiscardVote { project } => reply(self.discard_vote(project)),
             Request::PullRequestInfo { project } => reply(self.pull_request_info(project)),
             Request::ConfirmAnchor {

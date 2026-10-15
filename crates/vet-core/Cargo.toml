@@ -10,7 +10,11 @@ blake3 = { workspace = true, features = ["pure", "std"] }
 globset.workspace = true
 # The line diff gitoxide uses, so hunks match what git shows.
 imara-diff.workspace = true
+serde.workspace = true
 unicode-normalization.workspace = true
+
+[dev-dependencies]
+serde_json.workspace = true
 
 [lints]
 workspace = true

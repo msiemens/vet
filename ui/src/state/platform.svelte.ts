@@ -8,6 +8,7 @@ import type { PlatformStatus } from "../generated/PlatformStatus";
 import type { PlatformTraits } from "../generated/PlatformTraits";
 import type { PullRequestInfo } from "../generated/PullRequestInfo";
 import type { ReviewSubmitted } from "../generated/ReviewSubmitted";
+import type { Verdict } from "../generated/Verdict";
 import { HoldTimer } from "../lib/ui/holdTimer";
 import { AccountResync } from "./accountResync";
 import type { Backend } from "./backend";
@@ -38,7 +39,7 @@ class PlatformStore {
   /** The Submit review form, kept here so that switching tool windows does not empty it. */
   review = $state({
     open: false,
-    verdict: undefined as string | undefined,
+    verdict: undefined as Verdict | undefined,
     body: "",
   });
   /** The toolbar's list of the outgoing comments and the vote, with the button that posts them, is open. */
@@ -123,7 +124,7 @@ class PlatformStore {
   }
 
   /** Posts the drafts as one review; resolves what became of them, or nothing if it failed. */
-  async submit(verdict: string, body: string): Promise<ReviewSubmitted | undefined> {
+  async submit(verdict: Verdict, body: string): Promise<ReviewSubmitted | undefined> {
     let submitted: ReviewSubmitted | undefined;
     try {
       submitted = await this.backend?.submitReview(verdict, body.trim() || null);
@@ -171,7 +172,7 @@ class PlatformStore {
   }
 
   /** Stages the viewer's vote for the next post; the current vote clears the staged one. Resolves whether the backend took it. */
-  async stageVote(verdict: string): Promise<boolean> {
+  async stageVote(verdict: Verdict): Promise<boolean> {
     return this.changeVote(this.backend?.stageVote(verdict), "set the vote");
   }
 

@@ -11,6 +11,7 @@ use vet_app::platform::{
     PullRequestQuery, RemoteKey, Standing, Step, Submission, Submitted, Viewer, Watched,
 };
 use vet_app::registry::Subscribers;
+use vet_core::review::Verdict;
 use vet_mapping as mapping;
 use vet_protocol::{Event, Notification, NotificationKind, PlatformConnection, ProjectId};
 
@@ -216,7 +217,7 @@ impl Platform for Client {
         on!(self, p => p.submit_review(remote, number, submission).await)
     }
 
-    async fn vote(&self, remote: &RemoteKey, number: u64, verdict: &str) -> Result<(), PlatformError> {
+    async fn vote(&self, remote: &RemoteKey, number: u64, verdict: &Verdict) -> Result<(), PlatformError> {
         on!(self, p => p.vote(remote, number, verdict).await)
     }
 }

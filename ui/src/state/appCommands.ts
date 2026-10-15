@@ -2,8 +2,10 @@
 // they change (`App`) supplies the actions.
 
 import type { ChangesetKey } from "../generated/ChangesetKey";
+import type { Verdict } from "../generated/Verdict";
 import type { Command } from "../lib/commands.ts";
 import { THEMES, type Theme } from "../lib/theme/theme.ts";
+import { verdictOf } from "../lib/verdicts.ts";
 import { parseKeyId } from "./changesetKey.ts";
 import type { CommandContext } from "./commands.ts";
 
@@ -54,7 +56,7 @@ export interface AppActions {
   /** Opens the picker of the viewer's vote at the toolbar's outgoing button. */
   pickVote(): void;
   /** Stages the viewer's vote on the pull request. */
-  stageVote(verdict: string): void;
+  stageVote(verdict: Verdict): void;
   /** Clears the backend's semantic caches. */
   clearSemanticCaches(): void;
   /** Opens the folder of the log files, or says where it is. */
@@ -249,8 +251,10 @@ export function appCommands(a: AppActions): Command<CommandContext>[] {
       enabled: (c) => !!c.pullRequest && c.voteBlock === undefined,
       disabledReason: (c) => (c.pullRequest ? c.voteBlock : NO_PULL_REQUEST),
       run: (_, verdict) => {
-        if (!verdict) return false;
-        a.stageVote(verdict);
+        const chosen = verdict !== undefined ? verdictOf(verdict) : undefined;
+        if (!chosen) return false;
+        a.stageVote(chosen);
+        return true;
       },
     },
     {
