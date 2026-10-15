@@ -3,6 +3,8 @@
 use std::sync::Arc;
 use std::time::Duration;
 
+use futures::StreamExt;
+use futures::stream::FuturesOrdered;
 use vet_app::changeset::{RemoteKey, Source};
 use vet_app::fetch::FetchMark;
 use vet_app::platform::{
@@ -23,6 +25,10 @@ use crate::hosting::{Hosting, Platforms};
 use crate::open::{Ready, kind_of};
 use crate::sync::sync_in_background;
 use crate::{Live, Open, Orchestrator, PlatformAccounts, start_servers_in_background};
+
+/// How many rows of the queue have their lines counted at once: as many as the review lane's
+/// blocking pool runs, so the pool stays busy without rows queueing behind each other.
+const LINES_AT_ONCE: usize = vet_infra::budget::REVIEW_IO;
 
 impl Orchestrator {
     pub(crate) async fn list_changesets(&self, project: ProjectId) -> Result<Response> {
@@ -121,14 +127,25 @@ impl Orchestrator {
             .map_err(Error::Invalid)?;
         let open = self.ready(project).await?;
         let mut lines = Vec::with_capacity(sources.len());
-        for (source, changeset) in sources.iter().zip(&changesets) {
-            lines.push(open.session.lines_of(source).await?);
-            // Each row as it is counted, in order, so an early row shows before the last is.
+        // A few rows are counted at once, so a long queue is counted in a fraction of the time
+        // one after another takes; more at once than the review pool's blocking threads would
+        // only queue behind them. The pushes stay in the request's order: a row's count is held
+        // until the rows before it are pushed, so the client's list fills top first.
+        let mut pending = sources.iter().zip(&changesets);
+        let mut counted = FuturesOrdered::new();
+        loop {
+            while counted.len() < LINES_AT_ONCE {
+                let Some((source, _)) = pending.next() else { break };
+                counted.push_back(open.session.lines_of(source));
+            }
+            let Some(gotten) = counted.next().await else { break };
+            let gotten = gotten?;
             open.subscribers.broadcast(mapping::changeset_lines_changed(
                 project,
-                vec![changeset.clone()],
-                vec![lines.last().copied().flatten()],
+                vec![changesets[lines.len()].clone()],
+                vec![gotten],
             ));
+            lines.push(gotten);
         }
         Ok(mapping::changeset_lines(lines))
     }
