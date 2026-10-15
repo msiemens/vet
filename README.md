@@ -1,6 +1,6 @@
 # Vet
 
-<center>An Integrated Review Environment for the agentic age.</center>
+<p align="center">An Integrated Review Environment for the agentic age.</p>
 
 ![](docs/screenshot.png)
 
