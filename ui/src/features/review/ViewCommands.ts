@@ -33,7 +33,8 @@ export interface CommandHost {
 export class ViewCommands {
   private tabs: Tabs;
   private scopes: ViewScopes;
-  private changeset: ChangesetSource;
+  /** The changeset on screen as the commands read it: the commit it shows, and stepping to the next one. */
+  private changeset: Pick<ChangesetSource, "shownCommit" | "stepCommit">;
   private views: ReviewViews;
   private nav: ViewNavigation;
   private find: FindState;
@@ -43,7 +44,7 @@ export class ViewCommands {
   constructor(
     tabs: Tabs,
     scopes: ViewScopes,
-    changeset: ChangesetSource,
+    changeset: Pick<ChangesetSource, "shownCommit" | "stepCommit">,
     views: ReviewViews,
     nav: ViewNavigation,
     find: FindState,

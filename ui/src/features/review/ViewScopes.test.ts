@@ -5,8 +5,9 @@ import type { ScopeSpec } from "../../state/scopeSpec";
 import type { Answer } from "../../state/reviewMarks";
 import type { WriteListener } from "../../state/reviewSource";
 import type { ViewScope } from "../../state/viewScope.svelte";
+import type { ChangesetSource } from "./changesetSource";
 import type { Tabs } from "./Tabs.svelte.ts";
-import { type ScopedChangeset, ViewScopes } from "./ViewScopes.ts";
+import { ViewScopes } from "./ViewScopes.ts";
 
 /** A scope the registry can hold: only what the registry reads or calls. */
 class FakeScope {
@@ -60,7 +61,7 @@ function registry(open: string[], changeset = changesetOf()) {
   const told: { scope: ViewScope; paths: ReadonlySet<string> | "all" }[] = [];
   const tabs = { open };
   const scopes = new ViewScopes(
-    changeset as unknown as ScopedChangeset,
+    changeset as unknown as ChangesetSource,
     tabs as unknown as Tabs,
     (scope, paths) => told.push({ scope, paths }),
     (spec) => {

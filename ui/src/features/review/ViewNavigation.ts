@@ -43,7 +43,8 @@ import type { ViewScopes } from "./ViewScopes";
 /** The view a request that starts from `origin` reads: the tab's own (see `ViewScopes`), or for `ON_SCREEN` the one on screen. */
 export class ViewNavigation {
   private backend: Backend;
-  private changeset: ChangesetSource;
+  /** The changeset on screen as the navigation reads it: its source, plus the commit it shows, where failures are reported and how the view is switched. */
+  private changeset: ViewSource & Pick<ChangesetSource, "shownCommit" | "reportFailure" | "setRange" | "showWhole">;
   private tabs: Tabs;
   private scopes: ViewScopes;
   private views: ReviewViews;
@@ -53,7 +54,7 @@ export class ViewNavigation {
 
   constructor(
     backend: Backend,
-    changeset: ChangesetSource,
+    changeset: ViewSource & Pick<ChangesetSource, "shownCommit" | "reportFailure" | "setRange" | "showWhole">,
     tabs: Tabs,
     scopes: ViewScopes,
     views: ReviewViews,

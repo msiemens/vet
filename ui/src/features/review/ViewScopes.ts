@@ -9,14 +9,9 @@ import type { Answer } from "../../state/reviewMarks";
 import { type ScopeSpec, scopeKey } from "../../state/scopeSpec.ts";
 import type { Shown } from "../../state/shown";
 import type { ViewScope, ViewSource } from "../../state/viewScope.svelte";
+import type { ChangesetSource } from "./changesetSource";
 import type { Tabs } from "./Tabs.svelte";
 import { commitOf, kindOf, pathOf } from "./tabModel.ts";
-
-/** What the registry reads of the open changeset; the store itself is the view on screen's source. */
-export type ScopedChangeset = ViewSource & {
-  shownCommit: number | undefined;
-  adopt(shown: Shown, update: Answer): void;
-};
 
 /** Makes the scope of a view; the real one is `newScope`, plugged in so this module reaches no runes. */
 export type ScopeFactory = (spec: ScopeSpec, marked: (shown: Shown, update: Answer) => void) => ViewScope;
@@ -30,12 +25,18 @@ export class ViewScopes {
   /** Another changeset is on its way: the open tabs are the old one's, and no scope may read for them. */
   private frozen = false;
 
-  private changeset: ScopedChangeset;
+  /** The changeset on screen: its source, the commit it shows, and where a scope's answer goes back into it. */
+  private changeset: ViewSource & Pick<ChangesetSource, "shownCommit" | "adopt">;
   private tabs: Tabs;
   private written: ScopeListener;
   private makeScope: ScopeFactory;
 
-  constructor(changeset: ScopedChangeset, tabs: Tabs, written: ScopeListener, makeScope: ScopeFactory) {
+  constructor(
+    changeset: ViewSource & Pick<ChangesetSource, "shownCommit" | "adopt">,
+    tabs: Tabs,
+    written: ScopeListener,
+    makeScope: ScopeFactory,
+  ) {
     this.changeset = changeset;
     this.tabs = tabs;
     this.written = written;

@@ -76,7 +76,8 @@ export class ReviewViews {
   private mode: Mode = "unified";
 
   private backend: Backend;
-  private changeset: ChangesetSource;
+  /** The changeset on screen as the views read it: its source, plus the files it is narrowed to and where failures are reported. */
+  private changeset: ViewSource & Pick<ChangesetSource, "baseChanged" | "reportFailure">;
   private tabs: Tabs;
   private scopes: ViewScopes;
   private find: FindControl;
@@ -85,7 +86,7 @@ export class ReviewViews {
 
   constructor(
     backend: Backend,
-    changeset: ChangesetSource,
+    changeset: ViewSource & Pick<ChangesetSource, "baseChanged" | "reportFailure">,
     tabs: Tabs,
     scopes: ViewScopes,
     find: FindControl,
