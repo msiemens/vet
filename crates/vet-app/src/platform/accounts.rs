@@ -1,12 +1,15 @@
 //! The credentials Vet uses against hosting platforms (design §4.7). Per host and
 //! app-wide, not per session. Held in memory only: a CLI token is asked of the CLI
 //! again when it expires, a personal access token is kept for as long as the shell's
-//! keychain says so (the shell hands it over, and takes it back on `remove`).
+//! keychain says so (the shell hands it over, and takes it back on `remove`). A CLI
+//! read is one flight per host however many callers ask while it reads, and a read
+//! that gave no token is trusted to give none for a moment.
 
 use std::collections::{BTreeMap, BTreeSet};
+use std::convert::Infallible;
 use std::fmt;
-use std::path::PathBuf;
-use std::sync::{Mutex, MutexGuard};
+use std::path::{Path, PathBuf};
+use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::Duration;
 
 use super::cli;
@@ -16,6 +19,7 @@ use super::credentials::{
 use super::host::{PlatformKind, normalize_host};
 use crate::mutex::lock;
 use crate::ports::{Command, ProcessEvent, ProcessRunner, RunningProcess};
+use vet_engine::{Computed, Engine, Kind, Limits, Retention};
 
 /// How long a CLI gets to answer; `az` can take a couple of seconds.
 const CLI_TIMEOUT: Duration = Duration::from_secs(15);
@@ -26,11 +30,35 @@ const CLI_TOKEN_LIFETIME: i64 = 300;
 /// A CLI token that says when it expires is read again this many seconds before.
 const EXPIRY_MARGIN: i64 = 120;
 
+/// How long a CLI read that gave no token is trusted to still give none, in seconds.
+/// Short, so that signing in from a terminal (`gh auth login`) is seen by the next
+/// read; whatever many requests in those seconds ask, the CLI is spawned once. Vet's
+/// own account changes forget it at once.
+const ABSENT_LIFETIME: i64 = 30;
+
 /// Hosts whose CLI is looked at even before anything asks for them, so that a signed-in
 /// `gh` shows up in the accounts, besides the GitHub Enterprise hosts `gh` says it is signed
 /// in to. An `az` token is of no organization in particular, so it shows up with the
 /// organizations that are asked for.
 const DEFAULT_HOSTS: [&str; 1] = ["github.com"];
+
+/// One read of the CLI of the host it names, the key of the flight that is asked of:
+/// however many callers ask while a host's CLI is being read, they join it and share
+/// its answer, instead of each spawning the CLI (R6). A host has one CLI.
+#[derive(Clone, PartialEq, Eq, Hash, Debug)]
+struct CliCall(String);
+
+impl Kind for CliCall {
+    type Value = CliRead;
+
+    /// A CLI read cannot fail: [`CliRead`] is all it answers.
+    type Error = Infallible;
+
+    /// Nothing is kept of the flight itself: [`Accounts`] keeps what it looked up.
+    fn retention(&self) -> Retention {
+        Retention::InFlight
+    }
+}
 
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub enum AccountState {
@@ -105,6 +133,8 @@ struct HostSlot {
     /// Why the CLI lists the host but gave no token, in the CLI's words.
     cli_unusable: Option<String>,
     pat: Option<Held>,
+    /// Unix seconds until which a CLI read that gave no token is not asked again.
+    absent_until: i64,
 }
 
 impl HostSlot {
@@ -124,10 +154,14 @@ struct State {
 }
 
 pub struct Accounts<R, V> {
-    runner: R,
+    /// Where the CLIs are looked at. Moved through an `Arc` into a read's flight,
+    /// which is owned by the engine, not by the caller that began it.
+    runner: Arc<R>,
     validator: V,
     /// Where the CLIs run; they do not depend on it.
     cwd: PathBuf,
+    /// The reads of the CLIs, so that the callers asking at the same moment share one.
+    flights: Engine<CliCall>,
     /// Called with a host that something needed a credential for and there was none.
     needed: Box<dyn Fn(&str) + Send + Sync>,
     state: Mutex<State>,
@@ -135,15 +169,16 @@ pub struct Accounts<R, V> {
 
 impl<R, V> Accounts<R, V>
 where
-    R: ProcessRunner + Sync,
+    R: ProcessRunner + Send + Sync + 'static,
     R::Process: Send,
     V: CredentialValidator + Sync,
 {
     pub fn new(runner: R, validator: V, cwd: PathBuf, needed: impl Fn(&str) + Send + Sync + 'static) -> Self {
         Self {
-            runner,
+            runner: Arc::new(runner),
             validator,
             cwd,
+            flights: Engine::new(Limits::entries(0)),
             needed: Box::new(needed),
             state: Mutex::default(),
         }
@@ -228,7 +263,11 @@ where
         {
             let mut state = self.state();
             state.asked.remove(&host);
-            state.hosts.entry(host.clone()).or_default().pat = Some(Held {
+            let slot = state.hosts.entry(host.clone()).or_default();
+            // The host's account changed: whatever the CLI was read to have just now,
+            // it is read again for the answer whether the CLI still shadows it.
+            slot.absent_until = 0;
+            slot.pat = Some(Held {
                 token,
                 refresh_at: i64::MAX,
                 identity,
@@ -246,8 +285,13 @@ where
     /// Forgets the personal access token of `host`. Answers with the accounts afterwards.
     pub async fn remove_credentials(&self, host: &str, now: i64) -> Result<Vec<Account>, AccountError> {
         let host = normalize_host(host).map_err(AccountError::InvalidHost)?;
-        if let Some(slot) = self.state().hosts.get_mut(&host) {
-            slot.pat = None;
+        {
+            let mut state = self.state();
+            if let Some(slot) = state.hosts.get_mut(&host) {
+                slot.pat = None;
+                // Signing out is an account change: the CLI is read again, at once.
+                slot.absent_until = 0;
+            }
         }
         Ok(self.accounts(now).await)
     }
@@ -256,7 +300,7 @@ where
     /// credential before its personal access token. Credentials the platform was not
     /// asked about yet are asked about now.
     pub async fn accounts(&self, now: i64) -> Vec<Account> {
-        let signed_in: Vec<String> = match self.run(&cli::hosts_command(&self.cwd)).await {
+        let signed_in: Vec<String> = match Self::run(&self.runner, &cli::hosts_command(&self.cwd)).await {
             Some(status) => cli::parse_hosts(&status.stdout).into_iter().map(|h| h.host).collect(),
             None => Vec::new(),
         };
@@ -355,13 +399,34 @@ where
     }
 
     /// The signed-in CLI's token for `host`, from what was read earlier while it is
-    /// still good, else read from the CLI again.
+    /// still good, else read from the CLI again: one read for every caller asking
+    /// while it reads, and a read that gave nothing trusted to give nothing for a
+    /// moment, so that a burst of asks is not a burst of spawns (R6).
     async fn cli_token(&self, host: &str, now: i64) -> Option<Token> {
         let cached = self.state().hosts.get(host).and_then(|s| s.cli.clone());
         if let Some(held) = cached.filter(|h| now < h.refresh_at) {
             return Some(held.token);
         }
-        let read = self.read_cli(host).await;
+        // Nothing was there moments ago, so it still is not: asking again waits for
+        // the window instead of another spawn. Vet's own account changes forget this.
+        if self.state().hosts.get(host).is_some_and(|s| now < s.absent_until) {
+            return None;
+        }
+        let call = CliCall(host.to_owned());
+        let (runner, cwd) = (Arc::clone(&self.runner), self.cwd.clone());
+        let read = match self
+            .flights
+            .get(call.clone(), move |_| async move {
+                // The read cannot fail; the moved-in call names its host.
+                Ok::<_, Infallible>(Computed::new(Self::read_cli(&runner, &cwd, &call.0).await, false))
+            })
+            .await
+        {
+            Ok(got) => got.value,
+            // A CLI read cannot fail.
+            Err(never) => match never {},
+        };
+        let absent = matches!(read, CliRead::Absent);
         let mut state = self.state();
         let slot = state.hosts.entry(host.to_owned()).or_default();
         slot.cli_unusable = None;
@@ -380,14 +445,19 @@ where
                 None
             }
         };
+        // A read that gave nothing is trusted to stay that way while the window runs;
+        // anything found, or a CLI whose sign-in is broken (of which the reads keep up
+        // to date), is read again on the next ask.
+        slot.absent_until = if absent { now + ABSENT_LIFETIME } else { 0 };
         slot.cli.as_ref().map(|held| held.token.clone())
     }
 
     /// What the CLI prints. A `gh` that lists the host but cannot deliver its token is
-    /// [`CliRead::Unusable`], with `gh`'s own words for why.
-    async fn read_cli(&self, host: &str) -> CliRead {
+    /// [`CliRead::Unusable`], with `gh`'s own words for why. Standalone over the runner
+    /// and the cwd they need: a read belongs to its flight, so outlives any caller.
+    async fn read_cli(runner: &R, cwd: &Path, host: &str) -> CliRead {
         let kind = PlatformKind::of_account(host);
-        let Some(output) = self.run(&cli::command(kind, host, &self.cwd)).await else {
+        let Some(output) = Self::run(runner, &cli::command(kind, host, cwd)).await else {
             return CliRead::Absent;
         };
         if output.succeeded() {
@@ -396,7 +466,7 @@ where
         if kind != PlatformKind::GitHub {
             return CliRead::Absent;
         }
-        let listed = match self.run(&cli::hosts_command(&self.cwd)).await {
+        let listed = match Self::run(runner, &cli::hosts_command(cwd)).await {
             Some(status) => cli::parse_hosts(&status.stdout).into_iter().find(|h| h.host == host),
             None => None,
         };
@@ -408,8 +478,8 @@ where
 
     /// Runs a command; `None` if it could not be started. Only what is needed to say why a
     /// failure happened is kept of stderr; stdout may hold a token and is never logged.
-    async fn run(&self, command: &Command) -> Option<Output> {
-        let mut process = self.runner.spawn(command).ok()?;
+    async fn run(runner: &R, command: &Command) -> Option<Output> {
+        let mut process = runner.spawn(command).ok()?;
         let mut stdout = Vec::new();
         let mut stderr = Vec::new();
         let finished = async {
@@ -451,6 +521,7 @@ where
 }
 
 /// What a CLI said for a host.
+#[derive(Clone, Debug)]
 enum CliRead {
     Token(cli::CliToken),
     /// Not installed, not signed in, or it does not answer.
@@ -489,7 +560,7 @@ impl Output {
 
 impl<R, V> CredentialProvider for Accounts<R, V>
 where
-    R: ProcessRunner + Sync,
+    R: ProcessRunner + Send + Sync + 'static,
     R::Process: Send,
     V: CredentialValidator + Sync,
 {
@@ -507,16 +578,25 @@ mod tests {
     use std::collections::HashMap;
     use std::sync::Arc;
 
+    use futures::future::join_all;
+
     use super::*;
 
     /// The CLIs on this machine: what each program prints and its exit code, changeable
     /// between calls. A program that is not in the script is not installed. A script for a
-    /// command line (`gh auth status`) comes before the program's own.
+    /// command line (`gh auth status`) comes before the program's own. What is recorded of
+    /// a spawn is its whole command line.
     #[derive(Clone, Default)]
     struct Machine {
         programs: Arc<Mutex<HashMap<String, (i32, String)>>>,
         spawned: Arc<Mutex<Vec<String>>>,
+        /// Programs whose next spawn holds until the test lets it answer.
+        holds: Arc<Mutex<HashMap<String, Hold>>>,
     }
+
+    /// The hold [`Machine::hold`]'s spawn gets: how it tells the test it went out,
+    /// and the release the test answers it with.
+    type Hold = (tokio::sync::oneshot::Sender<()>, Arc<tokio::sync::Notify>);
 
     impl Machine {
         fn install(&self, program: &str, code: i32, stdout: &str) {
@@ -526,16 +606,53 @@ mod tests {
                 .insert(program.to_owned(), (code, stdout.to_owned()));
         }
 
-        fn runs_of(&self, program: &str) -> usize {
-            self.spawned.lock().unwrap().iter().filter(|p| *p == program).count()
+        /// How often a command line was spawned, by its first words.
+        fn runs_of(&self, command: &str) -> usize {
+            self.spawned
+                .lock()
+                .unwrap()
+                .iter()
+                .filter(|p| p.starts_with(command))
+                .count()
+        }
+
+        /// Makes `program`'s next spawn hold until the test says so. What comes back:
+        /// when the held spawn went out, and how to let it go.
+        fn hold(&self, program: &str) -> Gate {
+            let (sender, held) = tokio::sync::oneshot::channel();
+            let release = Arc::new(tokio::sync::Notify::new());
+            self.holds
+                .lock()
+                .unwrap()
+                .insert(program.to_owned(), (sender, Arc::clone(&release)));
+            Gate { held, release }
         }
     }
 
-    struct Script(std::vec::IntoIter<ProcessEvent>);
+    /// A fake CLI held before it answers, on behalf of the test: it learns when the
+    /// spawn went out, and holds it until `release`; only then is its read over.
+    struct Gate {
+        /// The spawned and held CLI.
+        held: tokio::sync::oneshot::Receiver<()>,
+        /// `notify_one` and the held read goes on.
+        release: Arc<tokio::sync::Notify>,
+    }
+
+    struct Script {
+        events: std::vec::IntoIter<ProcessEvent>,
+        /// Set once for the held spawn: the script answers when the test does.
+        hold: Option<(tokio::sync::oneshot::Sender<()>, Arc<tokio::sync::Notify>)>,
+    }
 
     impl RunningProcess for Script {
         async fn next(&mut self) -> ProcessEvent {
-            self.0.next().unwrap_or(ProcessEvent::Exit(None))
+            if let Some((held, release)) = self.hold.take() {
+                let _ = held.send(());
+                // Held on until the test released it, so that the read stays in flight
+                // while the other callers asking for an answer arrive on it.
+                release.notified().await;
+            }
+            self.events.next().unwrap_or(ProcessEvent::Exit(None))
         }
 
         fn kill(&self) {}
@@ -545,8 +662,8 @@ mod tests {
         type Process = Script;
 
         fn spawn(&self, command: &Command) -> Result<Script, String> {
-            self.spawned.lock().unwrap().push(command.program.clone());
             let line = format!("{} {} ", command.program, command.args.join(" "));
+            self.spawned.lock().unwrap().push(line.trim_end().to_owned());
             let programs = self.programs.lock().unwrap();
             let (code, stdout) = programs
                 .iter()
@@ -558,7 +675,11 @@ mod tests {
                 ProcessEvent::Stdout(stdout.into_bytes()),
                 ProcessEvent::Exit(Some(code)),
             ];
-            Ok(Script(events.into_iter()))
+            let hold = self.holds.lock().unwrap().remove(command.program.as_str());
+            Ok(Script {
+                events: events.into_iter(),
+                hold,
+            })
         }
     }
 
@@ -607,7 +728,7 @@ mod tests {
     }
 
     struct Fixture {
-        accounts: Accounts<Machine, Platforms>,
+        accounts: Arc<Accounts<Machine, Platforms>>,
         machine: Machine,
         platforms: Platforms,
         needed: Arc<Mutex<Vec<String>>>,
@@ -618,9 +739,14 @@ mod tests {
         let platforms = Platforms::default();
         let needed = Arc::new(Mutex::new(Vec::new()));
         let record = needed.clone();
-        let accounts = Accounts::new(machine.clone(), platforms.clone(), PathBuf::from("/"), move |host| {
-            record.lock().unwrap().push(host.to_owned());
-        });
+        let accounts = Arc::new(Accounts::new(
+            machine.clone(),
+            platforms.clone(),
+            PathBuf::from("/"),
+            move |host| {
+                record.lock().unwrap().push(host.to_owned());
+            },
+        ));
         Fixture {
             accounts,
             machine,
@@ -657,8 +783,11 @@ mod tests {
         );
 
         f.machine.install("gh", 0, "gho_cli\n");
+        // The appearance of a CLI in the shell is not seen in what Vet trusts missing,
+        // until the memory of it just now ran out; a sign in from a terminal is picked
+        // up at the next read after it.
         assert_eq!(
-            token_for(&f.accounts, "github.com", 0).await,
+            token_for(&f.accounts, "github.com", ABSENT_LIFETIME + 1).await,
             Some(("gho_cli".into(), CredentialSource::Cli))
         );
     }
@@ -741,6 +870,106 @@ mod tests {
         assert_eq!(
             token_for(&f.accounts, "github.com", 3_600).await.unwrap().0,
             "gho_second"
+        );
+    }
+
+    #[tokio::test]
+    async fn callers_asking_while_a_host_s_cli_reads_share_its_one_read() {
+        let f = fixture();
+        // `gh` is installed and signed out: its read is a miss, and it is held in
+        // flight until the test lets it go.
+        f.machine.install("gh", 1, "");
+        let gate = f.machine.hold("gh");
+        let reads = tokio::spawn({
+            let accounts = Arc::clone(&f.accounts);
+            async move {
+                // Many requests for the host decide at the same moment, all of them a
+                // miss, that they need its CLI's token.
+                let reads = (0..5).map(|_| {
+                    let accounts = Arc::clone(&accounts);
+                    async move { accounts.credential("github.com", 0).await }
+                });
+                join_all(reads).await
+            }
+        });
+        gate.held.await.unwrap();
+        assert_eq!(
+            f.machine.runs_of("gh auth token"),
+            1,
+            "however many askers while the read is in flight, the one spawn"
+        );
+        gate.release.notify_one();
+        let reads = reads.await.unwrap();
+        assert_eq!(reads.len(), 5);
+        assert!(reads.into_iter().all(|read| read.is_none()));
+        assert_eq!(
+            f.machine.runs_of("gh auth token"),
+            1,
+            "so it stayed, all of it being one read"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_second_miss_within_a_short_window_of_the_first_spawns_the_cli_nothing_more() {
+        let f = fixture();
+        // `gh` is installed and signed out: every read is a miss.
+        f.machine.install("gh", 1, "");
+        assert!(f.accounts.credential("github.com", 0).await.is_none());
+        assert_eq!(f.machine.runs_of("gh auth token"), 1);
+
+        // A moment later the answer is remembered, whatever asked again.
+        f.accounts.credential("github.com", 1).await;
+        assert_eq!(
+            f.machine.runs_of("gh auth token"),
+            1,
+            "still inside the window: no spawn"
+        );
+
+        // Past the window the CLI is asked again, its answer unknown meanwhile.
+        f.accounts.credential("github.com", ABSENT_LIFETIME + 1).await;
+        assert_eq!(f.machine.runs_of("gh auth token"), 2, "the window ran out: asked again");
+    }
+
+    #[tokio::test]
+    async fn a_host_s_account_change_asks_the_cli_again_right_away() {
+        let f = fixture();
+        // `gh` is installed but signed out: a miss, remembered for a moment.
+        f.machine.install("gh", 1, "");
+        assert!(f.accounts.credential("github.com", 0).await.is_none());
+        f.accounts.credential("github.com", 1).await;
+        assert_eq!(f.machine.runs_of("gh auth token"), 1, "the miss is remembered");
+
+        // Signing in holds a token of the host in the very moment `gh` is signed in
+        // here: the shadow answer has the CLI read again, though the miss was fresh.
+        f.machine.install("gh", 0, "gho_cli\n");
+        f.accounts
+            .set_credentials("github.com", "ghp_pat", false, 5)
+            .await
+            .unwrap();
+        assert_eq!(
+            f.machine.runs_of("gh auth token"),
+            2,
+            "read again at the change, instead of trusted missing"
+        );
+        assert_eq!(
+            token_for(&f.accounts, "github.com", 6).await.map(|(_, source)| source),
+            Some(CredentialSource::Cli)
+        );
+    }
+
+    #[tokio::test]
+    async fn signing_out_of_a_host_asks_the_cli_again_right_away() {
+        let f = fixture();
+        // `gh` is installed but signed out: a miss, remembered for a moment.
+        f.machine.install("gh", 1, "");
+        assert!(f.accounts.credential("github.com", 0).await.is_none());
+        assert_eq!(f.machine.runs_of("gh auth token"), 1);
+
+        f.accounts.remove_credentials("github.com", 1).await.unwrap();
+        assert_eq!(
+            f.machine.runs_of("gh auth token"),
+            2,
+            "the accounts answer of the sign out read the CLI again, though the miss was fresh"
         );
     }
 

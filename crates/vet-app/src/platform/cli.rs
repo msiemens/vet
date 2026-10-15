@@ -11,6 +11,7 @@ use crate::ports::Command;
 const AZURE_DEVOPS_RESOURCE: &str = "499b84ac-1321-427f-aa17-267ca6975798";
 
 /// A token a CLI printed, and when it stops being good (unix seconds) if it said.
+#[derive(Clone, Debug)]
 pub(super) struct CliToken {
     pub token: Token,
     pub expires_at: Option<i64>,
