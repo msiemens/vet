@@ -52,6 +52,8 @@ const OPEN_TIMEOUT: Duration = Duration::from_secs(30);
 /// How often a query is repeated after the server dropped it, and how long to wait before.
 const TRANSIENT_RETRIES: u32 = 20;
 const TRANSIENT_BACKOFF: Duration = Duration::from_millis(100);
+/// The shortest lock wait worth reporting in a timing description.
+const MIN_REPORTED_LOCK: Duration = Duration::from_millis(1);
 
 struct Doc {
     file: RepoPath,
@@ -103,7 +105,7 @@ impl Synced {
     /// `sync` is the whole time the query spent before it asked the server.
     fn describe(&self, sync: Duration) -> String {
         let mut parts = vec![format!("sync {} ms", sync.as_millis())];
-        if self.lock >= Duration::from_millis(1) {
+        if self.lock >= MIN_REPORTED_LOCK {
             parts.push(format!("lock {} ms", self.lock.as_millis()));
         }
         if self.changed {

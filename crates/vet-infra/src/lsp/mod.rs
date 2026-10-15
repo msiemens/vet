@@ -47,6 +47,10 @@ pub use server::LspServer;
 /// not waited for, so this only bounds a server that would never answer.
 const SETTINGS_TIMEOUT: Duration = Duration::from_secs(10);
 
+/// How long a start waits for indexing after `initialized`, by default. Servers that never
+/// report done are not waited for beyond this.
+const READY_TIMEOUT: Duration = Duration::from_secs(180);
+
 pub struct LspLauncher<L, R> {
     /// How long to wait for indexing after `initialized`.
     pub ready_timeout: Duration,
@@ -65,7 +69,7 @@ pub struct LspLauncher<L, R> {
 impl<L, R> LspLauncher<L, R> {
     pub fn new(locator: L, restorer: R) -> Self {
         Self {
-            ready_timeout: Duration::from_secs(180),
+            ready_timeout: READY_TIMEOUT,
             locator,
             restorer,
             tasks: Tasks::default(),

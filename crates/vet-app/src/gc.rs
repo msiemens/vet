@@ -8,6 +8,11 @@ use vet_core::content::SnapshotId;
 
 use crate::ports::{ChangesetStore, GcFacts, GcPlan, GcReport, GcStore, StoreError};
 
+/// How long a changeset with no open review is kept after its last review closed, by default.
+const DEFAULT_CLOSED_CHANGESETS: Duration = Duration::from_secs(30 * 24 * 3600);
+/// How long content and snapshots are never collected, by default.
+const DEFAULT_GRACE: Duration = Duration::from_secs(3600);
+
 #[derive(Clone, Copy, Debug)]
 pub struct Retention {
     /// How long a changeset with no open review is kept after its last review
@@ -21,8 +26,8 @@ pub struct Retention {
 impl Default for Retention {
     fn default() -> Self {
         Self {
-            closed_changesets: Duration::from_secs(30 * 24 * 3600),
-            grace: Duration::from_secs(3600),
+            closed_changesets: DEFAULT_CLOSED_CHANGESETS,
+            grace: DEFAULT_GRACE,
         }
     }
 }

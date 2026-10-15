@@ -32,6 +32,12 @@ use crate::sync::lock;
 pub(super) const REQUEST_TIMEOUT: Duration = Duration::from_secs(60);
 /// No server message for this long, none in progress: the server is done with what it was at.
 const QUIET: Duration = Duration::from_millis(750);
+/// How long a waiter for readiness sleeps before looking again; "quiet for N ms" has no event.
+const WAKE_INTERVAL: Duration = Duration::from_millis(100);
+/// How long the server gets to answer `shutdown` before it is told to exit.
+const SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(5);
+/// How long a server that was told to exit gets to before it is killed.
+const EXIT_TIMEOUT: Duration = Duration::from_secs(3);
 const STDERR_LINES: usize = 20;
 const STDERR_SETTLE: Duration = Duration::from_millis(100);
 const CONTENT_MODIFIED: i64 = -32801;
@@ -367,7 +373,7 @@ impl Connection {
                 }
             }
             // Wake periodically too: "quiet for N ms" has no event of its own.
-            let wake = deadline.min(tokio::time::Instant::now() + Duration::from_millis(100));
+            let wake = deadline.min(tokio::time::Instant::now() + WAKE_INTERVAL);
             let _ = tokio::time::timeout_at(wake, notified).await;
             if tokio::time::Instant::now() >= deadline {
                 return ready(&lock(&self.shared.state));
@@ -429,12 +435,12 @@ impl Connection {
     /// `shutdown` then `exit`; kills the process if it lingers.
     pub(super) async fn close(&self) {
         let _ = self
-            .request_with_timeout::<lsp_types::request::Shutdown>((), Duration::from_secs(5))
+            .request_with_timeout::<lsp_types::request::Shutdown>((), SHUTDOWN_TIMEOUT)
             .await;
         let _ = self.notify::<lsp_types::notification::Exit>(());
         let mut child = self.child.lock().await;
         let Some(child) = child.as_mut() else { return };
-        if tokio::time::timeout(Duration::from_secs(3), child.wait()).await.is_err() {
+        if tokio::time::timeout(EXIT_TIMEOUT, child.wait()).await.is_err() {
             let _ = child.kill().await;
         }
     }

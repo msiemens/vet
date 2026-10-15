@@ -39,6 +39,9 @@ use crate::sync::lock;
 /// How often a restore waits for the lock of its tree to be free.
 const LOCK_POLL: Duration = Duration::from_millis(100);
 
+/// How long to wait before renaming a staged tree again; Windows may have it open just then.
+const PUBLISH_RETRY: Duration = Duration::from_millis(100);
+
 const STAGING: &str = ".staging";
 const LOCKS: &str = ".locks";
 const TRASH: &str = ".trash";
@@ -414,7 +417,7 @@ fn publish(base: &Path, key: &Key, staging: &Path) -> Result<(), String> {
             Err(e) => failure = Some(e),
         }
         if attempt + 1 < attempts {
-            std::thread::sleep(Duration::from_millis(100));
+            std::thread::sleep(PUBLISH_RETRY);
         }
     }
     let _ = std::fs::remove_dir_all(staging);

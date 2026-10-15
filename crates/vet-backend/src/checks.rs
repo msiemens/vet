@@ -15,6 +15,9 @@ use crate::{Live, Open};
 /// How many of the newest versions' tips have their checks asked for, as the review shows them.
 const MAX_CHECKED_VERSIONS: usize = 20;
 
+/// The shortest pause after a rate-limited checks refresh, however soon the platform says.
+const MIN_PACE: Duration = Duration::from_millis(50);
+
 /// Starts (or restarts) the task that keeps the checks of the changeset on view fresh. It runs
 /// while a pull request is on view — in the queue or on the review screen, both of which show its
 /// checks — and stops when another changeset comes on view or the project closes. A newer run
@@ -91,7 +94,7 @@ async fn run(open: Arc<Open>, pace: Duration, mut settle: Option<Duration>) {
         match open.platforms.standing(&remote.account()) {
             Some(Standing::Failing(PlatformError::RateLimited { retry_at, .. })) => {
                 let until = retry_at.map(|t| Duration::from_secs((t - unix_now()).max(0) as u64));
-                tokio::time::sleep(until.unwrap_or(pace).max(Duration::from_millis(50))).await;
+                tokio::time::sleep(until.unwrap_or(pace).max(MIN_PACE)).await;
                 continue;
             }
             Some(Standing::Failing(_)) => return,

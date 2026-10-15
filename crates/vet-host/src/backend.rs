@@ -23,6 +23,9 @@ const RESPAWN_WINDOW: Duration = Duration::from_secs(60);
 /// How long a backend that closed its stdout gets to exit before it is killed.
 const EXIT_GRACE: Duration = Duration::from_secs(2);
 
+/// How often a backend that closed its stdout is checked for having exited.
+const EXIT_POLL: Duration = Duration::from_millis(20);
+
 #[derive(Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub enum Step {
@@ -213,7 +216,7 @@ fn exit_status(child: &mut Child) -> std::io::Result<ExitStatus> {
         if let Some(status) = child.try_wait()? {
             return Ok(status);
         }
-        std::thread::sleep(Duration::from_millis(20));
+        std::thread::sleep(EXIT_POLL);
     }
     child.kill()?;
     child.wait()

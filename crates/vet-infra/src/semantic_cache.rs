@@ -38,6 +38,9 @@ const SET_SCHEMA: &str = "PRAGMA user_version = 1";
 const BATCH_WINDOW: Duration = Duration::from_millis(200);
 const BATCH_ROWS: usize = 100;
 
+/// How long a connection waits for a lock SQLite holds before it gives up.
+const BUSY_TIMEOUT: Duration = Duration::from_secs(10);
+
 /// Rows written between two checks of the budget.
 const CHECK_EVERY: usize = 1000;
 
@@ -99,7 +102,7 @@ async fn connect(path: &Path) -> Result<SqlitePool, Unusable> {
         .filename(path)
         .create_if_missing(true)
         .journal_mode(SqliteJournalMode::Wal)
-        .busy_timeout(Duration::from_secs(10));
+        .busy_timeout(BUSY_TIMEOUT);
     let pool = SqlitePoolOptions::new()
         .max_connections(4)
         .connect_with(options)
