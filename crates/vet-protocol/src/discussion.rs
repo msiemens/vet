@@ -257,28 +257,50 @@ pub struct PullRequestInfo {
     pub platform: PlatformStatus,
 }
 
+/// What a notification is about, as the backend saw it; the shell words it for the viewer. It is
+/// the message for a card in the window's corner, and for the list the footer's bell opens.
+#[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize, TS)]
+#[serde(tag = "type", rename_all = "camelCase", rename_all_fields = "camelCase")]
+#[ts(export)]
+pub enum Notification {
+    /// The platform no longer has a thread the viewer had a draft in; `dropped` are the texts of
+    /// the drafts that went with it, empty when none did.
+    ThreadDeleted {
+        place: String,
+        platform: PlatformKind,
+        dropped: Vec<String>,
+    },
+    /// The vote staged for posting was not cast: `problem` is why.
+    VoteNotCast { problem: String },
+    /// Comments were not posted: `not_posted` are their texts and `problem` is why.
+    CommentsNotPosted { not_posted: Vec<String>, problem: String },
+    /// A language server died while running: `name` is what the language is called to the viewer
+    /// and `outcome` what became of the server.
+    ServerDied { name: String, outcome: ServerOutcome },
+    /// Syncing with the platform `host` stopped: `reason` is why.
+    SyncStopped { host: String, reason: SyncStopReason },
+}
+
+/// What became of a language server that stopped on its own.
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
 #[ts(export)]
-pub enum NotificationKind {
-    /// Something that happened to the viewer's work: a thread deleted on the platform.
-    Info,
-    /// The platform cannot be synced with; the viewer can sign in again.
-    SyncStopped,
+pub enum ServerOutcome {
+    /// A new server runs in its place.
+    Restarted,
+    /// It stays stopped until the viewer restarts it.
+    Stopped,
 }
 
-/// A message for a card in the window's corner, and for the list the footer's bell opens.
-#[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize, TS)]
+/// Why syncing with a platform stopped.
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
 #[ts(export)]
-pub struct Notification {
-    pub kind: NotificationKind,
-    /// Fit to show.
-    pub text: String,
-    /// What "Copy text" copies, when there is something worth keeping from it: a dropped draft.
-    pub copy_text: Option<String>,
-    /// The host a `SyncStopped` is about.
-    pub host: Option<String>,
+pub enum SyncStopReason {
+    /// There is no credential for the host.
+    SignedOut,
+    /// The platform no longer accepts the credential.
+    TokenExpired,
 }
 
 /// What a submitted review became.

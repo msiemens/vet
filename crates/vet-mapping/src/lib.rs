@@ -1152,11 +1152,11 @@ pub fn platform_traits(kind: PlatformKind) -> p::PlatformTraits {
     }
 }
 
-/// What the platform is called to the viewer.
-fn platform_name(kind: PlatformKind) -> &'static str {
+/// The protocol's name for the kind of platform.
+fn platform_kind(kind: PlatformKind) -> p::PlatformKind {
     match kind {
-        PlatformKind::GitHub => "GitHub",
-        PlatformKind::AzureDevOps => "Azure DevOps",
+        PlatformKind::GitHub => p::PlatformKind::GitHub,
+        PlatformKind::AzureDevOps => p::PlatformKind::AzureDevOps,
     }
 }
 
@@ -1181,10 +1181,7 @@ pub fn platform_connection(result: Option<&PlatformError>) -> p::PlatformConnect
 pub fn platform_status(host: &str, kind: PlatformKind, connection: p::PlatformConnection) -> p::PlatformStatus {
     p::PlatformStatus {
         host: host.to_owned(),
-        kind: match kind {
-            PlatformKind::GitHub => p::PlatformKind::GitHub,
-            PlatformKind::AzureDevOps => p::PlatformKind::AzureDevOps,
-        },
+        kind: platform_kind(kind),
         connection,
     }
 }
@@ -1274,45 +1271,25 @@ pub fn pull_request_info(
 }
 
 pub fn notification(n: &SyncNotice, kind: PlatformKind) -> p::Notification {
-    let platform = platform_name(kind);
     match n {
-        SyncNotice::ThreadDeleted { place, dropped } => p::Notification {
-            kind: p::NotificationKind::Info,
-            text: if dropped.is_empty() {
-                format!("Thread on {place} was deleted on {platform}.")
-            } else {
-                format!("Thread on {place} was deleted on {platform}. Your draft reply was removed.")
-            },
-            copy_text: (!dropped.is_empty()).then(|| dropped.join("\n\n")),
-            host: None,
+        SyncNotice::ThreadDeleted { place, dropped } => p::Notification::ThreadDeleted {
+            place: place.clone(),
+            platform: platform_kind(kind),
+            dropped: dropped.clone(),
         },
     }
 }
 
-/// What the viewer should hear when posting stopped short: why, and the texts that were not posted
-/// to copy.
+/// What posting that stopped short reaches the shell with: why, and the texts that were not posted
+/// so the viewer can copy them.
 pub fn submit_notification(r: &SubmitReport) -> Option<p::Notification> {
-    let problem = r.problem.as_ref()?;
-    let count = r.not_posted.len();
+    let problem = r.problem.as_ref()?.to_string();
     if r.vote == VoteSent::Failed {
-        return Some(p::Notification {
-            kind: p::NotificationKind::Info,
-            text: format!("The vote was not cast: {problem}"),
-            copy_text: None,
-            host: None,
-        });
+        return Some(p::Notification::VoteNotCast { problem });
     }
-    Some(p::Notification {
-        kind: p::NotificationKind::Info,
-        text: format!(
-            "{} not posted: {problem}",
-            match count {
-                0 | 1 => "A comment was".to_owned(),
-                n => format!("{n} comments were"),
-            },
-        ),
-        copy_text: (count > 0).then(|| r.not_posted.join("\n\n")),
-        host: None,
+    Some(p::Notification::CommentsNotPosted {
+        not_posted: r.not_posted.clone(),
+        problem,
     })
 }
 
@@ -1485,5 +1462,61 @@ mod tests {
             let error = core_changeset_key(key).unwrap_err();
             assert!(error.contains("is not a repository"), "{remote:?}: {error}");
         }
+    }
+
+    #[test]
+    fn a_deleted_thread_reaches_the_shell_as_its_place_platform_and_dropped_drafts() {
+        let notice = notification(
+            &SyncNotice::ThreadDeleted {
+                place: "a.txt:21".to_owned(),
+                dropped: vec!["Then use 48 h.".to_owned()],
+            },
+            PlatformKind::GitHub,
+        );
+        assert_eq!(
+            notice,
+            p::Notification::ThreadDeleted {
+                place: "a.txt:21".to_owned(),
+                platform: p::PlatformKind::GitHub,
+                dropped: vec!["Then use 48 h.".to_owned()],
+            },
+            "the shell, not the backend, words it"
+        );
+    }
+
+    #[test]
+    fn posting_that_stopped_short_reaches_the_shell_as_the_vote_or_the_texts_that_were_not_posted() {
+        let failed = SubmitReport {
+            vote: VoteSent::Failed,
+            problem: Some(PlatformError::Unreachable(
+                "the platform could not be reached".to_owned(),
+            )),
+            ..SubmitReport::default()
+        };
+        assert_eq!(
+            submit_notification(&failed),
+            Some(p::Notification::VoteNotCast {
+                problem: "the platform could not be reached".to_owned(),
+            })
+        );
+
+        let stopped = SubmitReport {
+            problem: Some(PlatformError::Rejected("the platform refused it".to_owned())),
+            not_posted: vec!["Fix the header.".to_owned()],
+            ..SubmitReport::default()
+        };
+        assert_eq!(
+            submit_notification(&stopped),
+            Some(p::Notification::CommentsNotPosted {
+                not_posted: vec!["Fix the header.".to_owned()],
+                problem: "the platform refused it".to_owned(),
+            })
+        );
+
+        assert_eq!(
+            submit_notification(&SubmitReport::default()),
+            None,
+            "nothing stopped short"
+        );
     }
 }

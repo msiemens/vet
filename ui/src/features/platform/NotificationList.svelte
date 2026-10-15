@@ -4,6 +4,7 @@
   import { platform } from "../../state/platform.svelte";
   import { shortTime } from "../../lib/shortTime";
   import { copyText } from "./copy";
+  import { notificationCopyText, notificationText } from "./notificationText";
 
   let { onclose }: { onclose: () => void } = $props();
 </script>
@@ -16,14 +17,18 @@
   <ul>
     {#each platform.notified as item (item.id)}
       <li>
-        <span class="text selectable">{item.notification.text}</span>
+        <span class="text selectable">{notificationText(item.notification)}</span>
         <span class="time">{shortTime(item.at, minute.now)}</span>
-        {#if item.notification.copyText}
-          <button class="flat" type="button" onclick={() => void copyText(item.notification.copyText ?? "")}>
+        {#if notificationCopyText(item.notification)}
+          <button
+            class="flat"
+            type="button"
+            onclick={() => void copyText(notificationCopyText(item.notification) ?? "")}
+          >
             Copy text
           </button>
         {/if}
-        {#if item.notification.kind === "syncStopped"}
+        {#if item.notification.type === "syncStopped"}
           <button class="flat" type="button" onclick={() => commands.run("app.accounts")}>Sign in…</button>
         {/if}
       </li>

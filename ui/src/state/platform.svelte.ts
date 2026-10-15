@@ -223,7 +223,9 @@ class PlatformStore {
     const id = ++this.lastId;
     this.notified = [{ id, notification, at: Math.floor(Date.now() / 1000), card: true }, ...this.notified];
     // A stopped sync stays on screen until the viewer deals with it; the rest is only told.
-    if (notification.kind === "info") this.cardTimers.set(id, new HoldTimer(() => this.dismiss(id), CARD_MS));
+    if (notification.type !== "syncStopped") {
+      this.cardTimers.set(id, new HoldTimer(() => this.dismiss(id), CARD_MS));
+    }
   }
 }
 

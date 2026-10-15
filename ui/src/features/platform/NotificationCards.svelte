@@ -4,6 +4,7 @@
   import { commands } from "../../state/commands";
   import { platform } from "../../state/platform.svelte";
   import { copyText } from "./copy";
+  import { notificationCopyText, notificationText } from "./notificationText";
 
   const cards = $derived(platform.notified.filter((n) => n.card));
 
@@ -24,16 +25,20 @@
       )}
     >
       <div class="top">
-        <span class="text selectable">{item.notification.text}</span>
+        <span class="text selectable">{notificationText(item.notification)}</span>
         <IconButton icon="close" label="Dismiss" size="xs" iconSize={12} onclick={() => platform.dismiss(item.id)} />
       </div>
       <div class="buttons">
-        {#if item.notification.copyText}
-          <button class="ctl small" type="button" onclick={() => void copyText(item.notification.copyText ?? "")}>
+        {#if notificationCopyText(item.notification)}
+          <button
+            class="ctl small"
+            type="button"
+            onclick={() => void copyText(notificationCopyText(item.notification) ?? "")}
+          >
             Copy text
           </button>
         {/if}
-        {#if item.notification.kind === "syncStopped"}
+        {#if item.notification.type === "syncStopped"}
           <button class="ctl small" type="button" onclick={() => signIn(item.id)}>Sign in…</button>
         {/if}
       </div>

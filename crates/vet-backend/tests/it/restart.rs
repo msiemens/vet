@@ -15,8 +15,8 @@ use tokio::sync::Mutex;
 use tokio::sync::mpsc::UnboundedReceiver;
 use vet_backend::{Orchestrator, open_store};
 use vet_protocol::{
-    Event, Notification, Request, Response, ServerMessage, ServerPhase, ServerRuntime, ServerRuntimes, Side,
-    UnavailableKind,
+    Event, Notification, Request, Response, ServerMessage, ServerOutcome, ServerPhase, ServerRuntime, ServerRuntimes,
+    Side, UnavailableKind,
 };
 use vet_transport::Events;
 
@@ -384,16 +384,30 @@ async fn a_server_that_dies_is_restarted_once_with_a_notice_and_the_second_death
     rig.kill().await;
     let notice = rig.notification().await;
     assert!(
-        notice.text.contains("stopped unexpectedly and was restarted"),
-        "{}",
-        notice.text
+        matches!(
+            notice,
+            Notification::ServerDied {
+                outcome: ServerOutcome::Restarted,
+                ..
+            }
+        ),
+        "{notice:?}"
     );
     assert_ne!(rig.pid().await, before);
     assert!(gone(before).await);
 
     rig.kill().await;
     let notice = rig.notification().await;
-    assert!(notice.text.contains("stays stopped"), "{}", notice.text);
+    assert!(
+        matches!(
+            notice,
+            Notification::ServerDied {
+                outcome: ServerOutcome::Stopped,
+                ..
+            }
+        ),
+        "{notice:?}"
+    );
 
     let (text, unavailable) = rig.hover(0).await;
     assert_eq!(text, None);
@@ -405,6 +419,12 @@ async fn a_server_that_dies_is_restarted_once_with_a_notice_and_the_second_death
     rig.restart().await.unwrap();
     rig.pid().await;
     rig.kill().await;
-    assert!(rig.notification().await.text.contains("was restarted"));
+    assert!(matches!(
+        rig.notification().await,
+        Notification::ServerDied {
+            outcome: ServerOutcome::Restarted,
+            ..
+        }
+    ));
     rig.pid().await;
 }

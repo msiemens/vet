@@ -13,7 +13,7 @@ use vet_app::platform::{
 use vet_app::registry::Subscribers;
 use vet_core::review::Verdict;
 use vet_mapping as mapping;
-use vet_protocol::{Event, Notification, NotificationKind, PlatformConnection, ProjectId};
+use vet_protocol::{Event, Notification, PlatformConnection, ProjectId, SyncStopReason};
 
 use crate::events::Connection;
 use crate::mutex::lock;
@@ -89,23 +89,19 @@ fn announce(announcers: &Mutex<Vec<Weak<Announcer>>>, process: &Subscribers<Conn
     }
     let connection = mapping::platform_connection(outcome.now.error());
     let host = &outcome.account;
-    let stopped = match &connection {
-        PlatformConnection::SignedOut => Some(format!("Not signed in to {host}: comments are not synced.")),
-        PlatformConnection::TokenExpired { .. } => Some(format!(
-            "The token for {host} is no longer accepted: comments are not synced."
-        )),
+    let reason = match &connection {
+        PlatformConnection::SignedOut => Some(SyncStopReason::SignedOut),
+        PlatformConnection::TokenExpired { .. } => Some(SyncStopReason::TokenExpired),
         _ => None,
     };
     let live: Vec<Arc<Announcer>> = lock(announcers).iter().filter_map(Weak::upgrade).collect();
     for announcer in live {
-        if let Some(text) = &stopped {
+        if let Some(reason) = reason {
             announcer.subscribers.broadcast(Event::Notification {
                 project: announcer.project,
-                notification: Notification {
-                    kind: NotificationKind::SyncStopped,
-                    text: text.clone(),
-                    copy_text: None,
-                    host: Some(host.clone()),
+                notification: Notification::SyncStopped {
+                    host: host.clone(),
+                    reason,
                 },
             });
         }
@@ -274,7 +270,13 @@ mod tests {
         assert_eq!(events.len(), 2, "{events:?}");
         assert!(matches!(
             &events[0],
-            Event::Notification { project: 4, notification } if notification.kind == NotificationKind::SyncStopped
+            Event::Notification {
+                project: 4,
+                notification: Notification::SyncStopped {
+                    host,
+                    reason: SyncStopReason::SignedOut,
+                },
+            } if host == "github.com"
         ));
         assert!(matches!(
             &events[1],

@@ -233,19 +233,14 @@ pub fn unsupported() -> p::Unavailable {
     }
 }
 
-/// What the viewer hears when the server `name` died while running.
+/// What the shell is told when the server `name` died while running.
 pub fn server_died(name: &str, outcome: Outcome) -> p::Notification {
-    let text = match outcome {
-        Outcome::Restarted => format!("{name} stopped unexpectedly and was restarted."),
-        Outcome::Stopped => {
-            format!("{name} stopped unexpectedly again and stays stopped. Restart it from the Help menu.")
-        }
-    };
-    p::Notification {
-        kind: p::NotificationKind::Info,
-        text,
-        copy_text: None,
-        host: None,
+    p::Notification::ServerDied {
+        name: name.to_owned(),
+        outcome: match outcome {
+            Outcome::Restarted => p::ServerOutcome::Restarted,
+            Outcome::Stopped => p::ServerOutcome::Stopped,
+        },
     }
 }
 
@@ -725,5 +720,23 @@ mod tests {
         let unchanged = super::row(&a_row(Standing::Unchanged, true));
         assert_eq!(unchanged.change, p::LocationChange::Unchanged);
         assert_eq!((unchanged.hunk, unchanged.external), (None, true));
+    }
+
+    #[test]
+    fn a_server_that_died_reaches_the_shell_as_its_name_and_what_became_of_it() {
+        assert_eq!(
+            server_died("rust-analyzer", Outcome::Restarted),
+            p::Notification::ServerDied {
+                name: "rust-analyzer".to_owned(),
+                outcome: p::ServerOutcome::Restarted,
+            }
+        );
+        assert_eq!(
+            server_died("rust-analyzer", Outcome::Stopped),
+            p::Notification::ServerDied {
+                name: "rust-analyzer".to_owned(),
+                outcome: p::ServerOutcome::Stopped,
+            }
+        );
     }
 }
