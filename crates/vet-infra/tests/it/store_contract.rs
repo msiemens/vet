@@ -6,7 +6,7 @@
 use std::path::Path;
 use std::sync::atomic::{AtomicU32, Ordering};
 
-use vet_app::store_contract::store_contract;
+use vet_app::store_contract::{gc_contract, settings_contract, store_contract};
 use vet_infra::store::SqliteStore;
 
 #[tokio::test]
@@ -16,6 +16,26 @@ async fn the_real_store_satisfies_the_contract() {
     let opened = AtomicU32::new(0);
     store_contract(|| async {
         let dir = root.join(format!("case-{}", opened.fetch_add(1, Ordering::SeqCst)));
+        std::fs::create_dir_all(&dir).unwrap();
+        fresh(&dir).await
+    })
+    .await;
+}
+
+/// The settings and gc ports have no fake, so only the real store's behaviour is checked.
+#[tokio::test]
+async fn the_real_store_satisfies_the_settings_and_gc_contract() {
+    let data = tempfile::tempdir().unwrap();
+    let root = data.path().to_owned();
+    let opened = AtomicU32::new(0);
+    settings_contract(|| async {
+        let dir = root.join(format!("settings-{}", opened.fetch_add(1, Ordering::SeqCst)));
+        std::fs::create_dir_all(&dir).unwrap();
+        fresh(&dir).await
+    })
+    .await;
+    gc_contract(|| async {
+        let dir = root.join(format!("gc-{}", opened.fetch_add(1, Ordering::SeqCst)));
         std::fs::create_dir_all(&dir).unwrap();
         fresh(&dir).await
     })

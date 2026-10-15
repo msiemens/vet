@@ -845,14 +845,17 @@ impl ThreadStore for MemStore {
 }
 
 impl PreferenceStore for MemStore {
+    /// The values of a scope, by key, as `SqliteStore` reads them.
     async fn preferences(&self, scope: Option<String>) -> StoreResult<Vec<(String, String)>> {
         let mem = self.0.lock().unwrap();
-        Ok(mem
+        let mut values: Vec<(String, String)> = mem
             .preferences
             .iter()
             .filter(|((s, _), _)| *s == scope)
             .map(|((_, key), value)| (key.clone(), value.clone()))
-            .collect())
+            .collect();
+        values.sort_by(|a, b| a.0.cmp(&b.0));
+        Ok(values)
     }
 
     async fn set_preference(&self, scope: Option<String>, key: String, value: Option<String>) -> StoreResult<()> {

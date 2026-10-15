@@ -1,16 +1,21 @@
 //! The contract of the store ports ([`crate::ports`]: `Store`, `ChangesetStore`,
-//! `ReviewStore`, `ThreadStore`, written through `ReviewWrites`), checked once and generic over
-//! the store, so that the in-memory fake of `session/tests.rs` and `vet-infra`'s `SqliteStore`
-//! cannot drift apart (audit T4): what one satisfies, the other must satisfy too. The fake runs
-//! it from this module's tests; the real store runs it from `vet-infra/tests/it`, which enables
-//! the `contract` feature to reach this module, without `vet-app` depending on `vet-infra`
-//! (`ci/check-deps.sh` forbids that).
+//! `ReviewStore`, `ThreadStore`, `PreferenceStore`, written through `ReviewWrites`), checked
+//! once and generic over the store, so that the in-memory fake of `session/tests.rs` and
+//! `vet-infra`'s `SqliteStore` cannot drift apart (audit T4): what one satisfies, the other
+//! must satisfy too. The fake runs it from this module's tests; the real store runs it from
+//! `vet-infra/tests/it`, which enables the `contract` feature to reach this module, without
+//! `vet-app` depending on `vet-infra` (`ci/check-deps.sh` forbids that).
+//!
+//! The `SettingsStore` and `GcStore` ports have no fake, so [`settings_contract`] and
+//! [`gc_contract`] run against the real store alone, from `vet-infra/tests/it`.
 //!
 //! Every case opens its own store empty: the fake models one repository's changesets at a time,
 //! and the checks that tell the two apart are those the ports phrase as "per repository",
 //! "per changeset", "per review".
 
 use std::collections::BTreeMap;
+use std::sync::OnceLock;
+use std::time::Duration;
 
 use vet_core::content::{
     BlobId, EntryKind, FileEntry, Hash, LineDelta, LineRange, NonTextKind, RepoPath, Snapshot, SnapshotId,
@@ -28,7 +33,7 @@ use crate::changeset::{
     VersionOrigin,
 };
 use crate::platform::{Discussion, PullRequestHead, PullRequestState};
-use crate::ports::{LiveStore, ReviewRow, ReviewWrites, Store};
+use crate::ports::{GcFacts, GcPlan, GcStore, LiveStore, ReviewRow, ReviewWrites, Settings, SettingsStore, Store};
 use crate::review::{NonTextAck, ReviewId, ReviewSummary, SpanOrigin};
 use crate::trust::PullRequestTrust;
 
@@ -69,6 +74,10 @@ pub async fn store_contract<S: LiveStore>(mut open: impl AsyncFnMut() -> S) {
     {
         let store = open().await;
         holds_a_repositorys_settings_apart(&store).await;
+    }
+    {
+        let store = open().await;
+        keeps_preferences_per_scope_by_key(&store).await;
     }
     {
         let store = open().await;
@@ -1106,6 +1115,350 @@ async fn what_the_store_was_never_told_of_reads_empty<S: LiveStore>(store: &S) {
         "each source as its own, the one answered the way one written is, the other empty"
     );
     assert_eq!(store.open_changesets().await.unwrap(), [cid]);
+}
+
+/// `PreferenceStore`: a scope's values are its own, a key's write replaces it, `None` forgets it,
+/// and a scope's values are read by key.
+async fn keeps_preferences_per_scope_by_key<S: LiveStore>(store: &S) {
+    assert_eq!(store.preferences(None).await.unwrap(), [], "nothing kept reads empty");
+    assert_eq!(store.preferences(Some(REPO.into())).await.unwrap(), []);
+
+    // Written out of order, so that a store reading them by key is told apart from one reading
+    // them in the order they were written in.
+    for (key, value) in [
+        ("theme", "dark"),
+        ("wrap", "true"),
+        ("font", "mono"),
+        ("zoom", "1.0"),
+        ("sidebar", "wide"),
+        ("tabs", "2"),
+    ] {
+        store
+            .set_preference(None, key.into(), Some(value.into()))
+            .await
+            .unwrap();
+    }
+    store
+        .set_preference(Some(REPO.into()), "theme".into(), Some("project".into()))
+        .await
+        .unwrap();
+
+    let pairs = |list: Vec<(String, String)>| list.into_iter().map(|(k, v)| format!("{k}={v}")).collect::<Vec<_>>();
+    assert_eq!(
+        pairs(store.preferences(None).await.unwrap()),
+        [
+            "font=mono",
+            "sidebar=wide",
+            "tabs=2",
+            "theme=dark",
+            "wrap=true",
+            "zoom=1.0"
+        ],
+        "the app scope's values, by key"
+    );
+    assert_eq!(
+        pairs(store.preferences(Some(REPO.into())).await.unwrap()),
+        ["theme=project"],
+        "a project's values are its own, not the app's"
+    );
+    assert_eq!(
+        store.preferences(Some(OTHER_REPO.into())).await.unwrap(),
+        [],
+        "a scope never written reads empty"
+    );
+
+    store
+        .set_preference(None, "theme".into(), Some("light".into()))
+        .await
+        .unwrap();
+    assert_eq!(
+        pairs(store.preferences(None).await.unwrap()),
+        [
+            "font=mono",
+            "sidebar=wide",
+            "tabs=2",
+            "theme=light",
+            "wrap=true",
+            "zoom=1.0"
+        ],
+        "a key's value is replaced"
+    );
+    store.set_preference(None, "tabs".into(), None).await.unwrap();
+    store.set_preference(None, "never kept".into(), None).await.unwrap();
+    assert_eq!(
+        pairs(store.preferences(None).await.unwrap()),
+        ["font=mono", "sidebar=wide", "theme=light", "wrap=true", "zoom=1.0"],
+        "`None` forgets only that scope's key"
+    );
+    assert_eq!(
+        pairs(store.preferences(Some(REPO.into())).await.unwrap()),
+        ["theme=project"],
+        "another scope's value of the same key stays"
+    );
+}
+
+/// `SettingsStore`: the defaults before a write, what was set read back, and a later write
+/// replacing it. No fake implements this port, so it runs against the real store alone.
+pub async fn settings_contract<S: SettingsStore>(mut open: impl AsyncFnMut() -> S) {
+    let store = open().await;
+    assert_eq!(
+        store.backend_settings().await.unwrap(),
+        Settings::default(),
+        "a setting that was never kept has its default"
+    );
+    let one = Settings {
+        semantic_cache_mb: 64,
+        finished_review_days: 7,
+    };
+    store.set_backend_settings(one).await.unwrap();
+    assert_eq!(
+        store.backend_settings().await.unwrap(),
+        one,
+        "the settings as they were set"
+    );
+
+    let two = Settings {
+        semantic_cache_mb: 1024,
+        finished_review_days: 1,
+    };
+    store.set_backend_settings(two).await.unwrap();
+    assert_eq!(
+        store.backend_settings().await.unwrap(),
+        two,
+        "a later write replaces the settings of the earlier one"
+    );
+}
+
+/// `GcStore`: the facts the store hands `decide`, the rows the plan deletes, and the tree nodes
+/// and content no kept snapshot reaches. No fake implements this port, so it runs against the
+/// real store alone.
+pub async fn gc_contract<S: LiveStore + GcStore>(mut open: impl AsyncFnMut() -> S) {
+    {
+        let store = open().await;
+        reads_the_facts_of_what_it_holds(&store).await;
+    }
+    {
+        let store = open().await;
+        deletes_the_planned_rows_and_sweeps_what_none_reaches(&store).await;
+    }
+}
+
+/// A version whose base and target are the same snapshot, which is what GC refers to.
+fn version_at(snapshot: SnapshotId, n: u32) -> Version {
+    Version {
+        snapshots: Some(Snapshots {
+            base: snapshot,
+            target: snapshot,
+        }),
+        ..version_of(n)
+    }
+}
+
+fn waiting_vote() -> PendingVote {
+    PendingVote {
+        verdict: Verdict::Approve,
+        outgoing: Outgoing::Posting { since: T0 },
+    }
+}
+
+/// The facts the store hands `decide`, recorded with a plan that deletes nothing.
+async fn recorded_facts<S: GcStore>(store: &S, now: i64) -> GcFacts {
+    let seen = OnceLock::new();
+    store
+        .gc(now, &|facts| {
+            let _ = seen.set(facts.clone());
+            GcPlan::default()
+        })
+        .await
+        .unwrap();
+    seen.into_inner().expect("gc handed the facts to decide")
+}
+
+/// `GcStore`: the facts say of each changeset what refers to it, and of each snapshot when it was
+/// stored.
+async fn reads_the_facts_of_what_it_holds<S: LiveStore + GcStore>(store: &S) {
+    let writes = store.writes();
+    let kept = snapshot(&[("kept.txt", 31)]);
+    let dead = snapshot(&[("dead.txt", 32)]);
+    let anchored = snapshot(&[("anchored.txt", 33)]);
+    for (s, at) in [(&kept, T0), (&dead, T0 + 1), (&anchored, T0 + 2)] {
+        writes
+            .put_snapshot(s.clone(), SnapshotStatus::default(), at)
+            .await
+            .unwrap();
+    }
+    let (kept_cid, kept_rid) = writes
+        .start_review(
+            REPO.into(),
+            tree_of_repo(),
+            BaseChoice::MergeBase {
+                reference: "main".into(),
+            },
+            vec![version_at(kept.id, 1)],
+            T0,
+        )
+        .await
+        .unwrap();
+    writes
+        .set_pending_vote(REPO.into(), tree_of_repo(), Some(waiting_vote()))
+        .await
+        .unwrap();
+    writes
+        .add_thread(
+            kept_cid,
+            Some(kept_rid),
+            CommentTarget::Range(Anchor {
+                snapshot: anchored.id,
+                ..anchor(Side::Target, 0)
+            }),
+            message("open"),
+            None,
+            ThreadStatus::Open,
+        )
+        .await
+        .unwrap();
+    let (dead_cid, dead_rid) = writes
+        .start_review(
+            REPO.into(),
+            branch_of("dead"),
+            BaseChoice::MergeBase {
+                reference: "main".into(),
+            },
+            vec![version_at(dead.id, 1)],
+            T0 + 10,
+        )
+        .await
+        .unwrap();
+    writes.close_review(dead_rid, T0 + 20, false).await.unwrap();
+
+    let facts = recorded_facts(store, T0).await;
+
+    let mut changesets = facts.changesets;
+    changesets.sort_by_key(|c| c.id.0);
+    assert_eq!(changesets.len(), 2, "one entry per stored changeset");
+    let kept_facts = &changesets[0];
+    assert_eq!(kept_facts.id, kept_cid);
+    assert!(kept_facts.has_open_review, "its review is open");
+    assert_eq!(kept_facts.last_closed_at, None, "no review of it closed");
+    assert!(kept_facts.has_open_thread, "its thread is open");
+    assert!(kept_facts.has_pending_vote, "its vote waits to be sent");
+    let mut named = kept_facts.snapshots.clone();
+    named.sort();
+    named.dedup();
+    let mut expected = vec![kept.id, anchored.id];
+    expected.sort();
+    assert_eq!(
+        named, expected,
+        "the snapshots its versions and its thread's anchor name"
+    );
+
+    let dead_facts = &changesets[1];
+    assert_eq!(dead_facts.id, dead_cid);
+    assert!(!dead_facts.has_open_review, "its review was closed");
+    assert_eq!(dead_facts.last_closed_at, Some(T0 + 20));
+    assert!(!dead_facts.has_open_thread);
+    assert!(!dead_facts.has_pending_vote);
+    let mut dead_named = dead_facts.snapshots.clone();
+    dead_named.sort();
+    dead_named.dedup();
+    assert_eq!(dead_named, vec![dead.id]);
+
+    let mut stored = facts.snapshots;
+    stored.sort_by_key(|(id, _)| *id);
+    let mut expected = vec![(kept.id, T0), (dead.id, T0 + 1), (anchored.id, T0 + 2)];
+    expected.sort_by_key(|(id, _)| *id);
+    assert_eq!(stored, expected, "every stored snapshot with when it was stored");
+}
+
+/// `GcStore`: the store deletes the changesets and snapshots the plan names, with everything that
+/// hung off them, and sweeps the tree nodes and content no kept snapshot reaches.
+async fn deletes_the_planned_rows_and_sweeps_what_none_reaches<S: LiveStore + GcStore>(store: &S) {
+    let writes = store.writes();
+    let kept = snapshot(&[("kept.txt", 31)]);
+    let dead = snapshot(&[("dead.txt", 32)]);
+    let orphan = b"orphan".to_vec();
+    store.put_blobs(vec![vec![31], vec![32], orphan.clone()]).await.unwrap();
+    writes
+        .put_snapshot(kept.clone(), SnapshotStatus::default(), T0)
+        .await
+        .unwrap();
+    writes
+        .put_snapshot(dead.clone(), SnapshotStatus::default(), T0 + 1)
+        .await
+        .unwrap();
+    let (kept_cid, _) = writes
+        .start_review(
+            REPO.into(),
+            tree_of_repo(),
+            BaseChoice::MergeBase {
+                reference: "main".into(),
+            },
+            vec![version_at(kept.id, 1)],
+            T0,
+        )
+        .await
+        .unwrap();
+    let (dead_cid, dead_rid) = writes
+        .start_review(
+            REPO.into(),
+            branch_of("dead"),
+            BaseChoice::MergeBase {
+                reference: "main".into(),
+            },
+            vec![version_at(dead.id, 1)],
+            T0 + 10,
+        )
+        .await
+        .unwrap();
+    writes.close_review(dead_rid, T0 + 20, false).await.unwrap();
+
+    let plan = GcPlan {
+        changesets: vec![dead_cid],
+        snapshots: vec![dead.id],
+        content_grace: Duration::ZERO,
+    };
+    let report = store.gc(T0, &|_| plan.clone()).await.unwrap();
+    assert_eq!(
+        (
+            report.changesets_deleted,
+            report.snapshots_deleted,
+            report.nodes_deleted,
+            report.blobs_deleted
+        ),
+        (1, 1, 1, 2),
+        "the planned changeset and snapshot, its tree node, and the content no kept tree names"
+    );
+
+    assert_eq!(store.changeset(REPO.into(), branch_of("dead")).await.unwrap(), None);
+    assert_eq!(store.versions(dead_cid).await.unwrap(), []);
+    assert!(
+        store.review(dead_rid).await.unwrap().is_none(),
+        "the closed review is gone"
+    );
+    assert_eq!(store.threads(dead_cid).await.unwrap(), []);
+    assert_eq!(store.snapshot(dead.id).await.unwrap(), None);
+    assert_eq!(store.blob(BlobId::of(&[32])).await.unwrap(), None);
+    assert_eq!(store.blob(BlobId::of(&orphan)).await.unwrap(), None);
+
+    assert_eq!(
+        store.changeset(REPO.into(), tree_of_repo()).await.unwrap(),
+        Some(kept_cid),
+        "the changeset the plan did not name stays"
+    );
+    assert!(store.open_review(kept_cid).await.unwrap().is_some());
+    assert_eq!(store.versions(kept_cid).await.unwrap().len(), 1);
+    assert_eq!(store.snapshot(kept.id).await.unwrap().map(|(s, _)| s), Some(kept));
+    assert_eq!(store.blob(BlobId::of(&[31])).await.unwrap(), Some(vec![31]));
+
+    let young = b"young".to_vec();
+    store.put_blobs(vec![young.clone()]).await.unwrap();
+    let keep = GcPlan {
+        content_grace: Duration::from_secs(365 * 24 * 3600),
+        ..GcPlan::default()
+    };
+    let report = store.gc(T0, &|_| keep.clone()).await.unwrap();
+    assert_eq!(report.blobs_deleted, 0, "content within the plan's grace is kept");
+    assert_eq!(store.blob(BlobId::of(&young)).await.unwrap(), Some(young));
 }
 
 /// The fake of the session tests satisfies the contract as `SqliteStore` does.
