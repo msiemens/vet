@@ -61,7 +61,7 @@ const keys = (rows: { item: { key: string } }[]) => rows.map((r) => r.item.key);
 const rowKeys = (entries: Entry[]) => entries.flatMap((e) => (e.type === "row" ? [e.row.item.key] : []));
 
 void test("letters on word starts find a file and highlight them", () => {
-  const rows = rank([file("src/sync/retry_policy.rs"), file("src/sync/job.rs")], "rtp", []);
+  const rows = rank([file("src/sync/retry_policy.rs"), file("src/sync/job.rs")], "rtp", []).rows;
   assert.deepEqual(keys(rows), ["src/sync/retry_policy.rs"]);
   assert.deepEqual(rows[0].ranges, [
     [9, 10],
@@ -71,7 +71,7 @@ void test("letters on word starts find a file and highlight them", () => {
 });
 
 void test("a match in the file name outranks the same match only in the folders", () => {
-  const rows = rank([file("docs/retry/notes.md"), file("src/retry.rs"), file("tests/retry/mod.rs")], "retry", []);
+  const rows = rank([file("docs/retry/notes.md"), file("src/retry.rs"), file("tests/retry/mod.rs")], "retry", []).rows;
   assert.equal(rows[0].item.key, "src/retry.rs");
 });
 
@@ -80,29 +80,29 @@ void test("a changed file leads an unchanged one however well the unchanged one 
     [file("benches/retry.rs", { changed: false }), file("src/sync/rate_limiter_retry.rs", { seen: 100 })],
     "retry.rs",
     [],
-  );
+  ).rows;
   assert.deepEqual(keys(rows), ["src/sync/rate_limiter_retry.rs", "benches/retry.rs"]);
 });
 
 void test("a changed file that is not fully seen leads one that is", () => {
-  const rows = rank([file("a/retry.rs", { seen: 100 }), file("b/retry.rs", { seen: 40 })], "retry", []);
+  const rows = rank([file("a/retry.rs", { seen: 100 }), file("b/retry.rs", { seen: 40 })], "retry", []).rows;
   assert.deepEqual(keys(rows), ["b/retry.rs", "a/retry.rs"]);
 });
 
 void test("a recent result wins between close matches but never over a better match", () => {
   const items = [file("a/retry.rs"), file("b/retry.rs"), file("c/rety_extra_long_name.rs")];
   const recent = [recentId("file", "b/retry.rs")];
-  assert.equal(rank(items, "retry", recent)[0].item.key, "b/retry.rs");
-  assert.equal(rank(items, "retry", [])[0].item.key, "a/retry.rs");
+  assert.equal(rank(items, "retry", recent).rows[0].item.key, "b/retry.rs");
+  assert.equal(rank(items, "retry", []).rows[0].item.key, "a/retry.rs");
   const far = [file("retry/mod.rs"), file("y/retry.rs")];
-  assert.equal(rank(far, "retry", [recentId("file", "retry/mod.rs")])[0].item.key, "y/retry.rs");
+  assert.equal(rank(far, "retry", [recentId("file", "retry/mod.rs")]).rows[0].item.key, "y/retry.rs");
 });
 
 void test("a line typed after a file's name narrows to the name and is kept for opening", () => {
   assert.deepEqual(splitLine("retry.rs:40"), { query: "retry.rs", line: 40 });
   assert.deepEqual(splitLine("retry.rs:40:7"), { query: "retry.rs", line: 40 });
   assert.deepEqual(splitLine("retry.rs"), { query: "retry.rs" });
-  const rows = rank([file("src/retry.rs"), file("src/job.rs")], "retry.rs:40", []);
+  const rows = rank([file("src/retry.rs"), file("src/job.rs")], "retry.rs:40", []).rows;
   assert.deepEqual(keys(rows), ["src/retry.rs"]);
   assert.equal(rows[0].line, 40);
 });
@@ -112,15 +112,15 @@ void test("an action that cannot run is listed after those that can, with its re
     [action("Post Comments", { off: true, disabled: "No comment waits" }), action("Re-confirm All", { off: false })],
     "o",
     [],
-  );
+  ).rows;
   assert.deepEqual(keys(rows), ["Re-confirm All", "Post Comments"]);
-  const all = rank([action("Zoom", { off: true }), action("Alpha")], "", []);
+  const all = rank([action("Zoom", { off: true }), action("Alpha")], "", []).rows;
   assert.deepEqual(keys(all), ["Alpha", "Zoom"]);
 });
 
 void test("open threads come before resolved ones, in a tab and in a query", () => {
   const items = [thread(1, "jitter cap", { resolved: true }), thread(2, "jitter cap again")];
-  assert.deepEqual(keys(rank(items, "jitter", [])), ["2", "1"]);
+  assert.deepEqual(keys(rank(items, "jitter", []).rows), ["2", "1"]);
   const tab = build("thread", "", { ...none, thread: items }, []);
   assert.deepEqual(
     tab.groups.map((g) => [g.label, rowKeys(g.entries)]),
@@ -132,12 +132,12 @@ void test("open threads come before resolved ones, in a tab and in a query", () 
 });
 
 void test("the changeset on view is listed but never first", () => {
-  const rows = rank([changeset("a", "retry policy", { onView: true }), changeset("b", "retry sync")], "retry", []);
+  const rows = rank([changeset("a", "retry policy", { onView: true }), changeset("b", "retry sync")], "retry", []).rows;
   assert.deepEqual(keys(rows), ["b", "a"]);
 });
 
 void test("empty files list the least seen changed files first", () => {
-  const rows = rank([file("a.rs", { seen: 100 }), file("b.rs", { seen: 0 }), file("c.rs", { seen: 50 })], "", []);
+  const rows = rank([file("a.rs", { seen: 100 }), file("b.rs", { seen: 0 }), file("c.rs", { seen: 50 })], "", []).rows;
   assert.deepEqual(keys(rows), ["b.rs", "c.rs", "a.rs"]);
 });
 
@@ -269,10 +269,10 @@ void test("a symbol a server found stays listed below those that match, without 
     ],
     "retry",
     [],
-  );
+  ).rows;
   assert.deepEqual(keys(found), ["retry_one", "retry_all", "zzz"]);
   assert.deepEqual(found[2].ranges, []);
-  assert.deepEqual(keys(rank([symbol("zzz")], "retry", [])), []);
+  assert.deepEqual(keys(rank([symbol("zzz")], "retry", []).rows), []);
 });
 
 void test("while the servers are asked the symbols' place says so, with or without symbols to show", () => {

@@ -172,9 +172,7 @@
   );
   /** How many unchanged files match what was typed, when nothing else does and they are not searched. */
   const hidden = $derived(
-    !palette.unchanged && typed && !entries.length && TOGGLES.includes(palette.tab)
-      ? rank(others, typed, []).length
-      : 0,
+    !palette.unchanged && typed && !entries.length && TOGGLES.includes(palette.tab) ? rank(others, typed, []).count : 0,
   );
   // The list of all files is asked for when they are searched, or when it can say what a search found nothing of.
   $effect(() => {

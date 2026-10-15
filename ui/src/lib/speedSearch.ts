@@ -22,22 +22,93 @@ const SAME_CASE = 1;
 
 const isLetter = (c: string) => /\p{L}/u.test(c);
 const isDigit = (c: string) => /\p{N}/u.test(c);
-const isUpper = (c: string) => isLetter(c) && c === c.toUpperCase() && c !== c.toLowerCase();
-const isLower = (c: string) => isLetter(c) && c === c.toLowerCase() && c !== c.toUpperCase();
 
-/** Which characters start a word of `text`: after a separator, at a lower-to-upper change (`ChangesetView`), at the end of an acronym (`XMLParser`). */
-function humpStarts(text: string): boolean[] {
-  return text.split("").map((c, i) => {
-    if (!isLetter(c) && !isDigit(c)) return false;
-    if (i === 0) return true;
-    const before = text.charAt(i - 1);
-    if (!isLetter(before) && !isDigit(before)) return true;
-    if (!isUpper(c)) return false;
-    return isLower(before) || isDigit(before) || (isUpper(before) && isLower(text.charAt(i + 1)));
-  });
+// Per-code-unit classes, computed once per name: whether it is a word character and its case.
+const WORD = 1;
+const UPPER = 2;
+const LOWER = 4;
+const DIGIT = 8;
+
+// Scratch buffers for one match, grown as needed and reused (speed search runs on one thread).
+let cls = new Uint8Array(0);
+let hump = new Uint8Array(0);
+let codes = new Int32Array(0);
+let lowered = new Int32Array(0);
+let from = new Int32Array(0);
+let prev = new Float64Array(0);
+let cur = new Float64Array(0);
+let segStart = new Int32Array(0);
+
+function grow(n: number, m: number): void {
+  if (cls.length < n) {
+    cls = new Uint8Array(n);
+    hump = new Uint8Array(n);
+    codes = new Int32Array(n);
+    lowered = new Int32Array(n);
+    prev = new Float64Array(n);
+    cur = new Float64Array(n);
+    segStart = new Int32Array(n);
+  }
+  if (from.length < m * n) from = new Int32Array(m * n);
 }
 
-const same = (a: string, b: string) => a.toLowerCase() === b.toLowerCase();
+/** Whether two code units are equal ignoring case, as `a.toLowerCase() === b.toLowerCase()` for single ones. */
+function eqLower(a: number, b: number): boolean {
+  if (a < 128 && b < 128) return (a >= 65 && a <= 90 ? a + 32 : a) === (b >= 65 && b <= 90 ? b + 32 : b);
+  return String.fromCharCode(a).toLowerCase() === String.fromCharCode(b).toLowerCase();
+}
+
+/** The lowercase of one code unit, or -1 when it lowercases to more than one. */
+function lowerCode(code: number): number {
+  if (code < 128) return code >= 65 && code <= 90 ? code + 32 : code;
+  const l = String.fromCharCode(code).toLowerCase();
+  return l.length === 1 ? l.charCodeAt(0) : -1;
+}
+
+/** Fills `cls`, `codes` and `lowered` with each code unit's class, its code, and its lowercase. */
+function classify(text: string, n: number): void {
+  for (let i = 0; i < n; i++) {
+    const code = text.charCodeAt(i);
+    let f = 0;
+    if (code < 128) {
+      if (code >= 65 && code <= 90) f = WORD | UPPER;
+      else if (code >= 97 && code <= 122) f = WORD | LOWER;
+      else if (code >= 48 && code <= 57) f = WORD | DIGIT;
+      lowered[i] = code >= 65 && code <= 90 ? code + 32 : code;
+    } else {
+      const c = String.fromCharCode(code);
+      const l = c.toLowerCase();
+      lowered[i] = l.length === 1 ? l.charCodeAt(0) : -1;
+      if (isLetter(c)) {
+        f = WORD;
+        if (c === c.toUpperCase() && c !== c.toLowerCase()) f |= UPPER;
+        else if (c === c.toLowerCase() && c !== c.toUpperCase()) f |= LOWER;
+      } else if (isDigit(c)) f = WORD | DIGIT;
+    }
+    codes[i] = code;
+    cls[i] = f;
+  }
+}
+
+/** Fills `hump` with whether each position starts a word: after a separator, at a lower-to-upper change (`ChangesetView`), at the end of an acronym (`XMLParser`), and `segStart` with where the word a position belongs to begins. */
+function humps(n: number): void {
+  let start = 0;
+  for (let i = 0; i < n; i++) {
+    const f = cls[i];
+    let h = 0;
+    if (f & WORD) {
+      if (i === 0) h = 1;
+      else {
+        const b = cls[i - 1];
+        if (!(b & WORD)) h = 1;
+        else if (f & UPPER && (b & LOWER || b & DIGIT || (b & UPPER && i + 1 < n && cls[i + 1] & LOWER))) h = 1;
+      }
+    }
+    hump[i] = h;
+    if (h) start = i;
+    segStart[i] = start;
+  }
+}
 
 function toRanges(indices: number[]): Range[] {
   const ranges: Range[] = [];
@@ -49,59 +120,103 @@ function toRanges(indices: number[]): Range[] {
   return ranges;
 }
 
-/** The best way to place the query's characters, in order, on word starts and runs after them. */
-function matchHumps(query: string, text: string): Match | undefined {
-  const m = query.length;
-  const n = text.length;
+/**
+ * The best way to place the query's characters, in order, on word starts and runs after them. Each
+ * row of the grid is read in one pass: a run onto a word start takes the best earlier cell up to
+ * there, a run within a word the best earlier cell of that word, so the work is close to the product
+ * of the two lengths. `from` holds the way back for the ranges.
+ */
+function matchHumps(query: string, text: string, m: number, n: number): Match | undefined {
   if (m > n) return undefined;
-  const hump = humpStarts(text);
-  // Humps up to and including each position, to tell whether a word starts between two matches.
-  const humpsUpTo: number[] = [];
-  let count = 0;
-  for (const h of hump) humpsUpTo.push((count += h ? 1 : 0));
+  grow(n, m);
+  classify(text, n);
+  humps(n);
 
-  // best[j][i]: the best score with query[j] on text[i], and which position query[j - 1] had.
-  const best: { score: number; from: number }[][] = [];
-  for (let j = 0; j < m; j++) {
-    const row: { score: number; from: number }[] = Array.from({ length: n }, () => ({ score: -Infinity, from: -1 }));
+  const q0 = query.charCodeAt(0);
+  const l0 = lowerCode(q0);
+  for (let i = 0; i < n; i++) {
+    cur[i] = -Infinity;
+    from[i] = -1;
+    if (!hump[i] || !sameCode(q0, l0, codes[i], lowered[i])) continue;
+    cur[i] = FIRST + (i === 0 ? AT_START : 0) + (q0 === codes[i] ? SAME_CASE : 0);
+  }
+
+  for (let j = 1; j < m; j++) {
+    // The row just read becomes `prev`; the buffers trade places, so nothing is copied.
+    const done = prev;
+    prev = cur;
+    cur = done;
+    const qj = query.charCodeAt(j);
+    const lj = lowerCode(qj);
+    const at = j * n;
+    // The best `prev` up to the position two back, the first position that reached it: the run onto
+    // a word start.
+    let bv = -Infinity;
+    let bk = -1;
     for (let i = 0; i < n; i++) {
-      const c = text.charAt(i);
-      if (!same(query.charAt(j), c)) continue;
-      const exact = query.charAt(j) === c ? SAME_CASE : 0;
-      if (j === 0) {
-        if (hump[i]) row[i].score = FIRST + (i === 0 ? AT_START : 0) + exact;
-        continue;
+      const k = i - 2;
+      if (k >= 0) {
+        const p = prev[k];
+        if (p > bv) {
+          bv = p;
+          bk = k;
+        }
       }
-      for (let k = 0; k < i; k++) {
-        const before = best[j - 1][k].score;
-        if (before === -Infinity) continue;
-        let gain: number;
-        if (k === i - 1) gain = CONSECUTIVE;
-        else if (hump[i]) gain = HUMP;
-        else if (humpsUpTo[i] === humpsUpTo[k]) gain = WITHIN_WORD - 0.1 * (i - k - 1);
-        else continue;
-        if (before + gain + exact > row[i].score) row[i] = { score: before + gain + exact, from: k };
+      cur[i] = -Infinity;
+      from[at + i] = -1;
+      if (!sameCode(qj, lj, codes[i], lowered[i])) continue;
+      const exact = qj === codes[i] ? SAME_CASE : 0;
+      if (i >= 2) {
+        if (hump[i]) {
+          if (bv > -Infinity) {
+            cur[i] = bv + HUMP + exact;
+            from[at + i] = bk;
+          }
+        } else {
+          // The word's own earlier cells, in order, exactly as the plain scan reads them.
+          for (let k = segStart[i]; k <= i - 2; k++) {
+            const before = prev[k];
+            if (before === -Infinity) continue;
+            const gain = WITHIN_WORD - 0.1 * (i - k - 1);
+            const v = before + gain + exact;
+            if (v > cur[i]) {
+              cur[i] = v;
+              from[at + i] = k;
+            }
+          }
+        }
+      }
+      if (i >= 1 && prev[i - 1] > -Infinity) {
+        const v = prev[i - 1] + CONSECUTIVE + exact;
+        if (v > cur[i]) {
+          cur[i] = v;
+          from[at + i] = i - 1;
+        }
       }
     }
-    best.push(row);
   }
 
-  const last = best[m - 1];
-  let at = -1;
-  for (let i = 0; i < n; i++) if (last[i].score > -Infinity && (at < 0 || last[i].score > last[at].score)) at = i;
-  if (at < 0) return undefined;
+  let last = -1;
+  for (let i = 0; i < n; i++) if (cur[i] > -Infinity && (last < 0 || cur[i] > cur[last])) last = i;
+  if (last < 0) return undefined;
   const indices: number[] = [];
-  for (let j = m - 1, i = at; j >= 0; j--) {
+  for (let j = m - 1, i = last; j >= 0; j--) {
     indices.unshift(i);
-    i = best[j][i].from;
+    i = from[j * n + i];
   }
-  return { score: last[at].score, ranges: toRanges(indices) };
+  return { score: cur[last], ranges: toRanges(indices) };
+}
+
+/** Whether the query code unit `q` and the text code unit `t` are the same ignoring case. */
+function sameCode(q: number, qLower: number, t: number, tLower: number): boolean {
+  if (qLower >= 0 && tLower >= 0) return qLower === tLower;
+  return eqLower(q, t);
 }
 
 /** A run of the text anywhere, which ranks below any match on word starts. */
-function matchSubstring(query: string, text: string): Match | undefined {
-  const at = text.toLowerCase().indexOf(query.toLowerCase());
-  return at < 0 ? undefined : { score: query.length * 0.5, ranges: [[at, at + query.length]] };
+function matchSubstring(queryLower: string, textLower: string, length: number): Match | undefined {
+  const at = textLower.indexOf(queryLower);
+  return at < 0 ? undefined : { score: length * 0.5, ranges: [[at, at + length]] };
 }
 
 /**
@@ -111,9 +226,17 @@ function matchSubstring(query: string, text: string): Match | undefined {
  * matches everything.
  */
 export function match(query: string, text: string): Match | undefined {
+  return matchLowered(query, query.toLowerCase(), text, text.toLowerCase());
+}
+
+/**
+ * `match` with the two lowercased forms already at hand, so a caller that keeps them (rank) need
+ * not lowercase the same name on every keystroke. The names are not written through.
+ */
+export function matchLowered(query: string, queryLower: string, text: string, textLower: string): Match | undefined {
   if (!query) return { score: 0, ranges: [] };
-  const humps = matchHumps(query, text);
-  const run = matchSubstring(query, text);
+  const humps = matchHumps(query, text, query.length, text.length);
+  const run = matchSubstring(queryLower, textLower, query.length);
   const found = humps && run ? (humps.score >= run.score ? humps : run) : (humps ?? run);
   return found && { ...found, score: found.score - text.length * 0.01 };
 }

@@ -8,7 +8,7 @@ import type { SymbolKind } from "../../generated/SymbolKind";
 import type { StatusLetter } from "../../lib/changeLetter.ts";
 import { compareText } from "../../lib/format.ts";
 import { basename } from "../../lib/paths.ts";
-import { match, type Match, type Range } from "../../lib/speedSearch.ts";
+import { matchLowered, type Match, type Range } from "../../lib/speedSearch.ts";
 
 export type Kind = "file" | "symbol" | "changeset" | "thread" | "action";
 export type PaletteTab = "all" | Kind;
@@ -171,12 +171,6 @@ export function remember(recent: readonly string[], id: string): string[] {
   return [id, ...recent.filter((r) => r !== id)].slice(0, RECENT_KEPT);
 }
 
-/** What a recently chosen result adds to a match: more the more recently it was chosen. */
-function recentBonus(recent: readonly string[], item: Candidate): number {
-  const at = recent.indexOf(recentId(item.kind, item.key));
-  return at < 0 ? 0 : RECENT_BONUS * RECENT_FALLOFF ** at;
-}
-
 /** A file query with the line (and column) typed after its name: `retry.rs:40`. */
 export function splitLine(query: string): { query: string; line?: number } {
   const found = /^(.*?):(\d+)(?::\d+)?$/.exec(query);
@@ -185,40 +179,79 @@ export function splitLine(query: string): { query: string; line?: number } {
 
 const unreviewed = (seen: number) => (seen < 100 ? UNREVIEWED : 0);
 
-/**
- * `match`, after a cheap look at whether the query's characters are in the text in order, which
- * every match needs: most of a project's files are rejected there, so tens of thousands cost little.
- */
-function fuzzy(query: string, text: string): Match | undefined {
-  const lower = text.toLowerCase();
-  let at = 0;
-  for (const c of query.toLowerCase()) {
-    at = lower.indexOf(c, at) + 1;
-    if (at === 0) return undefined;
-  }
-  return match(query, text);
+/** A candidate's text, lowercased once, and what else matching it needs. */
+interface Prepared {
+  /** The id of the row in the recent list. */
+  id: string;
+  /** The text its kind matches by: a file's name, else the name itself. */
+  text: string;
+  lower: string;
+  /** A file's whole path, matched when its name does not; the name sits at its end, so ranges shift by `cut`. */
+  path?: { text: string; lower: string };
+  cut: number;
 }
 
-/** How `item` matches `query`; `undefined` when it does not. */
-function matchOf(item: Candidate, query: string): Match | undefined {
+function prepare(item: Candidate): Prepared {
+  const id = recentId(item.kind, item.key);
   switch (item.kind) {
     case "file": {
       const name = basename(item.path);
-      const cut = item.path.length - name.length;
-      const byName = fuzzy(query, name);
-      if (byName)
-        return { score: byName.score + NAME_OVER_PATH, ranges: byName.ranges.map(([a, b]) => [a + cut, b + cut]) };
-      return fuzzy(query, item.path);
+      return {
+        id,
+        text: name,
+        lower: name.toLowerCase(),
+        path: { text: item.path, lower: item.path.toLowerCase() },
+        cut: item.path.length - name.length,
+      };
     }
     case "symbol":
-      return fuzzy(query, item.label);
-    case "changeset":
-      return fuzzy(query, item.number ? `${item.number} ${item.title}` : item.title);
+      return { id, text: item.label, lower: item.label.toLowerCase(), cut: 0 };
+    case "changeset": {
+      const text = item.number ? `${item.number} ${item.title}` : item.title;
+      return { id, text, lower: text.toLowerCase(), cut: 0 };
+    }
     case "thread":
-      return fuzzy(query, item.text);
+      return { id, text: item.text, lower: item.text.toLowerCase(), cut: 0 };
     case "action":
-      return fuzzy(query, item.label);
+      return { id, text: item.label, lower: item.label.toLowerCase(), cut: 0 };
   }
+}
+
+const prepared = new WeakMap<readonly Candidate[], Prepared[]>();
+
+/** The candidates' texts, lowercased once and reused while the list itself is unchanged. */
+function prepareAll(items: readonly Candidate[]): Prepared[] {
+  const had = prepared.get(items);
+  if (had?.length === items.length) return had;
+  const list = items.map(prepare);
+  prepared.set(items, list);
+  return list;
+}
+
+/**
+ * `matchLowered`, after a cheap look at whether the query's characters are in the text in order,
+ * which every match needs: most of a project's files are rejected there, so tens of thousands cost
+ * little. The two lowercased forms are the ones the list already keeps.
+ */
+function fuzzy(query: string, queryLower: string, text: string, textLower: string): Match | undefined {
+  let at = 0;
+  for (const c of queryLower) {
+    at = textLower.indexOf(c, at) + 1;
+    if (at === 0) return undefined;
+  }
+  return matchLowered(query, queryLower, text, textLower);
+}
+
+/** How the prepared `prep` matches `query`; `undefined` when it does not. */
+function matchOf(prep: Prepared, query: string, queryLower: string): Match | undefined {
+  const byName = fuzzy(query, queryLower, prep.text, prep.lower);
+  if (prep.path === undefined) return byName;
+  if (byName)
+    return {
+      score: byName.score + NAME_OVER_PATH,
+      ranges: byName.ranges.map(([a, b]) => [a + prep.cut, b + prep.cut]),
+    };
+  return fuzzy(query, queryLower, prep.path.text, prep.path.lower);
 }
 
 /** What a result adds to its match for what it is. */
@@ -244,31 +277,104 @@ function emptyWeight(item: Candidate): number {
 
 const labelOf = (item: Candidate): string => (item.kind === "action" ? item.label : item.key);
 
+/** The best rows of a kind, and how many matched in all when only the best few are kept. */
+export interface Ranked {
+  rows: Row[];
+  count: number;
+}
+
+/** Whether the row at `ai` sorts before the one at `bi`: score first, then the label (when the query or an action asks), then the order they came in. */
+function before(a: Row, ai: number, b: Row, bi: number, byLabel: boolean): boolean {
+  if (a.score !== b.score) return a.score > b.score;
+  if (byLabel) {
+    const order = compareText(labelOf(a.item), labelOf(b.item));
+    if (order !== 0) return order < 0;
+  }
+  return ai < bi;
+}
+
+/** Keeps `rows`/`at` a heap whose root is the worst row kept, so a better one can replace it. */
+function siftDown(rows: Row[], at: number[], byLabel: boolean, i: number): void {
+  for (;;) {
+    let worst = i;
+    const left = 2 * i + 1;
+    const right = left + 1;
+    if (left < rows.length && before(rows[worst], at[worst], rows[left], at[left], byLabel)) worst = left;
+    if (right < rows.length && before(rows[worst], at[worst], rows[right], at[right], byLabel)) worst = right;
+    if (worst === i) return;
+    [rows[i], rows[worst]] = [rows[worst], rows[i]];
+    [at[i], at[worst]] = [at[worst], at[i]];
+    i = worst;
+  }
+}
+
+function heapify(rows: Row[], at: number[], byLabel: boolean): void {
+  for (let i = (rows.length >> 1) - 1; i >= 0; i--) siftDown(rows, at, byLabel, i);
+}
+
 /**
- * The candidates of one kind that match `query`, best first. A query matches the way speed search
- * does; what the match is worth is raised by what the review needs first (changed, not yet seen,
- * open) and a little by what was chosen recently, which only decides between close matches. Nothing
- * typed lists everything, in the order the sources gave except for files, which come least seen first.
- * A symbol a language server found stays listed without a match, below all that match.
+ * The candidates of one kind that match `query`, best first, and how many matched. A query matches
+ * the way speed search does; what the match is worth is raised by what the review needs first
+ * (changed, not yet seen, open) and a little by what was chosen recently, which only decides between
+ * close matches. Nothing typed lists everything, in the order the sources gave except for files,
+ * which come least seen first. A symbol a language server found stays listed without a match, below
+ * all that match. With `keep` only that many of the best rows are kept (a bounded heap), and `only`
+ * narrows the list to one part of it, such as the changed files.
  */
-export function rank(items: readonly Candidate[], query: string, recent: readonly string[]): Row[] {
-  const rows: Row[] = [];
+export function rank(
+  items: readonly Candidate[],
+  query: string,
+  recent: readonly string[],
+  keep = Infinity,
+  only?: (item: Candidate) => boolean,
+): Ranked {
   const typed = items[0]?.kind === "file" ? splitLine(query.trim()) : { query: query.trim(), line: undefined };
-  for (const item of items) {
-    const matched = typed.query ? matchOf(item, typed.query) : { score: 0, ranges: [] };
+  const q = typed.query;
+  const qLower = q.toLowerCase();
+  const preps = prepareAll(items);
+  const byLabel = q !== "" || items[0]?.kind === "action";
+  // Where each recently chosen id sits, the first of equals, as `indexOf` would find it.
+  const recentAt = new Map<string, number>();
+  for (let i = 0; i < recent.length; i++) if (!recentAt.has(recent[i])) recentAt.set(recent[i], i);
+
+  const bounded = keep < items.length;
+  const rows: Row[] = [];
+  const at: number[] = [];
+  let count = 0;
+  for (let index = 0; index < items.length; index++) {
+    const item = items[index];
+    if (only && !only(item)) continue;
+    const matched = q ? matchOf(preps[index], q, qLower) : { score: 0, ranges: [] };
     const unmatched = !matched && item.kind === "symbol" && item.fromServer;
     const found = matched ?? (unmatched ? { score: UNMATCHED, ranges: [] } : undefined);
     if (!found) continue;
-    const base = typed.query ? weight(item) : emptyWeight(item);
-    rows.push({ item, score: found.score + base + recentBonus(recent, item), ranges: found.ranges, line: typed.line });
+    count++;
+    const base = q ? weight(item) : emptyWeight(item);
+    const recentIndex = recentAt.get(preps[index].id);
+    const bonus = recentIndex === undefined ? 0 : RECENT_BONUS * RECENT_FALLOFF ** recentIndex;
+    const row: Row = { item, score: found.score + base + bonus, ranges: found.ranges, line: typed.line };
+    if (!bounded) {
+      rows.push(row);
+    } else if (rows.length < keep) {
+      rows.push(row);
+      at.push(index);
+      if (rows.length === keep) heapify(rows, at, byLabel);
+    } else if (before(row, index, rows[0], at[0], byLabel)) {
+      rows[0] = row;
+      at[0] = index;
+      siftDown(rows, at, byLabel, 0);
+    }
   }
-  const byScore = (a: Row, b: Row) => b.score - a.score;
-  if (typed.query || items[0]?.kind === "action") {
-    rows.sort((a, b) => byScore(a, b) || compareText(labelOf(a.item), labelOf(b.item)));
-  } else {
-    rows.sort(byScore);
+
+  if (!bounded) {
+    const byScore = (a: Row, b: Row) => b.score - a.score;
+    if (byLabel) rows.sort((a, b) => byScore(a, b) || compareText(labelOf(a.item), labelOf(b.item)));
+    else rows.sort(byScore);
+    return { rows, count };
   }
-  return rows;
+  const kept = rows.map((row, i) => ({ row, at: at[i] }));
+  kept.sort((a, b) => (before(a.row, a.at, b.row, b.at, byLabel) ? -1 : 1));
+  return { rows: kept.map((k) => k.row), count };
 }
 
 /** The results the recent list names that the sources still have, newest first. */
@@ -286,13 +392,38 @@ function recentRows(recent: readonly string[], candidates: Candidates, kinds: re
 
 const rowsOf = (rows: readonly Row[]): Entry[] => rows.map((row) => ({ type: "row", row }));
 
-/** A group of a kind's own tab: a project can have tens of thousands of files, so only the best are drawn. */
-const listed = (label: string, rows: readonly Row[]): Group => ({
+/** A group of a kind's own tab that already keeps only the best few. */
+const listed = (label: string, ranked: Ranked): Group => ({
+  label,
+  count: ranked.count,
+  entries: rowsOf(ranked.rows),
+  cut: Math.max(0, ranked.count - ranked.rows.length),
+});
+
+/** A group of a kind's own tab, from rows that are all there is. */
+const listedRows = (label: string, rows: readonly Row[]): Group => ({
   label,
   count: rows.length,
   entries: rowsOf(rows.slice(0, LIST_CAP)),
   cut: Math.max(0, rows.length - LIST_CAP),
 });
+
+/** Whether the file row `a` sorts before `b`, the order `rank` settles ties in. */
+const fileBefore = (a: Row, b: Row): boolean =>
+  a.score !== b.score ? a.score > b.score : compareText(labelOf(a.item), labelOf(b.item)) < 0;
+
+/** The changed and unchanged files merged, best first. Their paths are unique, so the two sorted lists interleave. */
+function mergeFiles(changed: Ranked, other: Ranked): Ranked {
+  const rows: Row[] = [];
+  let i = 0;
+  let j = 0;
+  while (rows.length < LIST_CAP && (i < changed.rows.length || j < other.rows.length)) {
+    const takeChanged =
+      j >= other.rows.length || (i < changed.rows.length && fileBefore(changed.rows[i], other.rows[j]));
+    rows.push(takeChanged ? changed.rows[i++] : other.rows[j++]);
+  }
+  return { rows, count: changed.count + other.count };
+}
 
 /** The place of the files that are still being listed. */
 const LISTING: Group = { label: "Other files", loading: "Listing the project’s files…", entries: [] };
@@ -312,6 +443,7 @@ export interface Waiting {
  * result, each ending in the way to its tab; nothing typed shows the recent results and the changed
  * files least seen. A kind's own tab lists all its results, grouped where that says something. With a
  * query the lists end in the way on to Find in Files. A group still waiting for an answer says so.
+ * A query ranks only the rows a tab can draw (the best few), the files' changed and unchanged apart.
  */
 export function build(
   tab: PaletteTab,
@@ -321,7 +453,21 @@ export function build(
   waiting: Waiting = {},
 ): Built {
   const q = query.trim();
-  const ranked = Object.fromEntries(KINDS.map((k) => [k, rank(candidates[k], q, recent)])) as Record<Kind, Row[]>;
+  // A file query may be only a line, `:12`, which matches everything: then the order is the sources', not a label's.
+  const byFileQuery = splitLine(q).query !== "";
+  const fileChanged = byFileQuery
+    ? rank(candidates.file, q, recent, LIST_CAP, (c) => c.kind === "file" && c.changed)
+    : undefined;
+  const fileOther = byFileQuery
+    ? rank(candidates.file, q, recent, LIST_CAP, (c) => c.kind === "file" && !c.changed)
+    : undefined;
+  const ranked: Record<Kind, Ranked> = {
+    file: fileChanged && fileOther ? mergeFiles(fileChanged, fileOther) : rank(candidates.file, q, recent),
+    symbol: rank(candidates.symbol, q, recent, LIST_CAP),
+    changeset: rank(candidates.changeset, q, recent),
+    thread: rank(candidates.thread, q, recent),
+    action: rank(candidates.action, q, recent),
+  };
   const groups: Group[] = [];
   const find: Group = { label: "", entries: [{ type: "find", query: q }] };
 
@@ -329,59 +475,62 @@ export function build(
     if (!q) {
       const latest = recentRows(recent, candidates, KINDS);
       if (latest.length) groups.push({ label: "Recent", entries: rowsOf(latest) });
-      const least = ranked.file.filter((r) => r.item.kind === "file" && r.item.changed && r.item.seen < 100);
+      const least = ranked.file.rows.filter((r) => r.item.kind === "file" && r.item.changed && r.item.seen < 100);
       if (least.length)
         groups.push({ label: "Changed files, least reviewed first", entries: rowsOf(least.slice(0, LEAST_REVIEWED)) });
       return { groups };
     }
     const kinds = KINDS.flatMap((kind, order) => {
-      const rows = ranked[kind];
-      if (!rows.length) return [];
-      const entries = rowsOf(rows.slice(0, CAPS[kind]));
-      if (rows.length > CAPS[kind]) entries.push({ type: "more", kind, count: rows.length });
+      const best = ranked[kind];
+      if (!best.rows.length) return [];
+      const entries = rowsOf(best.rows.slice(0, CAPS[kind]));
+      if (best.count > CAPS[kind]) entries.push({ type: "more", kind, count: best.count });
       const group: Group = {
         label: TITLES[kind],
         entries,
         loading: kind === "symbol" && waiting.symbols ? ASKING : undefined,
       };
-      return [{ order, best: rows[0].score, group }];
+      return [{ order, best: best.rows[0].score, group }];
     });
     kinds.sort((a, b) => b.best - a.best || a.order - b.order);
     groups.push(...kinds.map((k) => k.group));
-    if (waiting.symbols && !ranked.symbol.length) groups.push({ label: TITLES.symbol, loading: ASKING, entries: [] });
+    if (waiting.symbols && !ranked.symbol.count) groups.push({ label: TITLES.symbol, loading: ASKING, entries: [] });
     if (waiting.files) groups.push(LISTING);
     if (groups.length) groups.push(find);
     return { groups, counts: counts(ranked) };
   }
 
-  const rows = ranked[tab];
   if (tab === "file") {
-    const latest = q ? [] : recentRows(recent, candidates, ["file"]);
-    const taken = new Set(latest.map((r) => r.item.key));
-    const fresh = rows.filter((r) => !taken.has(r.item.key));
-    if (latest.length) groups.push({ label: "Recent", entries: rowsOf(latest) });
-    groups.push(
-      listed(
-        "Changed files",
-        fresh.filter((r) => r.item.kind === "file" && r.item.changed),
-      ),
-      listed(
-        "Other files",
-        fresh.filter((r) => r.item.kind === "file" && !r.item.changed),
-      ),
-    );
+    if (fileChanged && fileOther) {
+      groups.push(listed("Changed files", fileChanged), listed("Other files", fileOther));
+    } else {
+      const latest = q ? [] : recentRows(recent, candidates, ["file"]);
+      const taken = new Set(latest.map((r) => r.item.key));
+      const fresh = ranked.file.rows.filter((r) => !taken.has(r.item.key));
+      if (latest.length) groups.push({ label: "Recent", entries: rowsOf(latest) });
+      groups.push(
+        listedRows(
+          "Changed files",
+          fresh.filter((r) => r.item.kind === "file" && r.item.changed),
+        ),
+        listedRows(
+          "Other files",
+          fresh.filter((r) => r.item.kind === "file" && !r.item.changed),
+        ),
+      );
+    }
   } else if (!q && tab === "action") {
     const latest = recentRows(recent, candidates, ["action"]);
     const taken = new Set(latest.map((r) => r.item.key));
     if (latest.length) groups.push({ label: "Recent", entries: rowsOf(latest) });
     groups.push({
       label: "All actions",
-      count: rows.length,
-      entries: rowsOf(rows.filter((r) => !taken.has(r.item.key))),
+      count: ranked.action.count,
+      entries: rowsOf(ranked.action.rows.filter((r) => !taken.has(r.item.key))),
     });
   } else if (!q && tab === "thread") {
-    const open = rows.filter((r) => r.item.kind === "thread" && !r.item.resolved);
-    const resolved = rows.filter((r) => r.item.kind === "thread" && r.item.resolved);
+    const open = ranked.thread.rows.filter((r) => r.item.kind === "thread" && !r.item.resolved);
+    const resolved = ranked.thread.rows.filter((r) => r.item.kind === "thread" && r.item.resolved);
     groups.push(
       { label: "Open", count: open.length, entries: rowsOf(open) },
       { label: "Resolved", count: resolved.length, entries: rowsOf(resolved) },
@@ -389,13 +538,13 @@ export function build(
   } else if (tab === "symbol") {
     groups.push({
       label: q ? "Symbols" : "Changed symbols",
-      count: rows.length,
-      entries: rowsOf(rows.slice(0, LIST_CAP)),
-      cut: Math.max(0, rows.length - LIST_CAP),
+      count: ranked.symbol.count,
+      entries: rowsOf(ranked.symbol.rows),
+      cut: Math.max(0, ranked.symbol.count - ranked.symbol.rows.length),
       loading: waiting.symbols ? ASKING : undefined,
     });
   } else {
-    groups.push({ label: TITLES[tab], count: rows.length, entries: rowsOf(rows) });
+    groups.push({ label: TITLES[tab], count: ranked[tab].count, entries: rowsOf(ranked[tab].rows) });
   }
   const shown = groups.filter((g) => g.entries.length || g.loading);
   if (waiting.files && tab === "file") shown.push(LISTING);
@@ -403,8 +552,8 @@ export function build(
   return { groups: shown, counts: q ? counts(ranked) : undefined };
 }
 
-function counts(ranked: Record<Kind, Row[]>): Record<PaletteTab, number> {
-  const per = Object.fromEntries(KINDS.map((k) => [k, ranked[k].length])) as Record<Kind, number>;
+function counts(ranked: Record<Kind, Ranked>): Record<PaletteTab, number> {
+  const per = Object.fromEntries(KINDS.map((k) => [k, ranked[k].count])) as Record<Kind, number>;
   return { ...per, all: KINDS.reduce((sum, k) => sum + per[k], 0) };
 }
 
