@@ -5,7 +5,7 @@ use ts_rs::TS;
 
 use crate::{ErrorKind, Event, Request, Response};
 
-pub const PROTOCOL_VERSION: u32 = 6;
+pub const PROTOCOL_VERSION: u32 = 7;
 
 /// The one line the backend prints to stdout once it is listening. The shell
 /// reads it to learn the port and the per-launch random token.

@@ -71,6 +71,10 @@ pub enum Event {
     /// What `ListChangesets` and `ListPullRequests` list may have changed: a fetch moved
     /// branches or pull request heads, or a review finished. List again.
     ChangesetsChanged { project: ProjectId },
+    /// What `ListPullRequests` lists of a pull request changed because its details were read:
+    /// the platform's list leaves out its unresolved threads and who asked for changes. List
+    /// the pull requests again.
+    PullRequestsChanged { project: ProjectId },
     /// A chunk of a `ChangesetLines` answer, pushed in the request's order while the backend
     /// counts the rest (A16), so the first rows show before the last is counted. `changesets`
     /// are at `lines`, in the same order. The request's answer settles the whole list, so a
