@@ -308,9 +308,8 @@ impl Orchestrator {
         }
     }
 
-    /// The settings, and this connection subscribed to the events of the backend.
-    async fn settings(&self, from: &Connection) -> Result<Response> {
-        self.process_subscribers.subscribe(from.clone());
+    /// The settings.
+    async fn settings(&self) -> Result<Response> {
         let settings = self.store.backend_settings().await?;
         Ok(Response::Settings {
             settings: BackendSettings {
@@ -348,10 +347,8 @@ impl Orchestrator {
         Ok(Response::Settings { settings: new })
     }
 
-    /// What the window remembers in `scope`, and this connection subscribed to the events of
-    /// the backend.
-    async fn preferences(&self, scope: Option<String>, from: &Connection) -> Result<Response> {
-        self.process_subscribers.subscribe(from.clone());
+    /// What the window remembers in `scope`.
+    async fn preferences(&self, scope: Option<String>) -> Result<Response> {
         let values = self.store.preferences(scope).await?;
         Ok(Response::Preferences {
             values: values
@@ -393,17 +390,21 @@ impl Orchestrator {
     fn answer<'a>(&'a self, request: Request, from: &'a Connection) -> Reply<'a> {
         match request {
             Request::Ping { payload } => reply(async move { Ok(Response::Pong { payload }) }),
-            Request::RecentProjects => reply(async move {
-                self.process_subscribers.subscribe(from.clone());
-                recent_projects(self.recent.list().await)
-            }),
+            Request::Subscribe => {
+                let subscriber = from.clone();
+                reply(async move {
+                    self.process_subscribers.subscribe(subscriber);
+                    Ok(Response::Done)
+                })
+            }
+            Request::RecentProjects => reply(async move { recent_projects(self.recent.list().await) }),
             Request::RecordRecentProject { path } => {
                 reply(async move { self.recent_changed(self.recent.record(path, unix_now()).await) })
             }
             Request::ForgetRecentProject { path } => {
                 reply(async move { self.recent_changed(self.recent.forget(&path).await) })
             }
-            Request::Accounts => reply(self.accounts(from)),
+            Request::Accounts => reply(self.accounts()),
             Request::SetCredentials { host, token, validate } => {
                 reply(async move { self.set_credentials(&host, &token, validate).await })
             }
@@ -413,9 +414,9 @@ impl Orchestrator {
                 Ok(self.semantic_cache_usage().await)
             }),
             Request::SemanticCacheUsage => reply(async move { Ok(self.semantic_cache_usage().await) }),
-            Request::Settings => reply(self.settings(from)),
+            Request::Settings => reply(self.settings()),
             Request::SetSettings { settings } => reply(self.set_settings(settings)),
-            Request::Preferences { scope } => reply(self.preferences(scope, from)),
+            Request::Preferences { scope } => reply(self.preferences(scope)),
             Request::SetPreference { scope, key, value } => reply(self.set_preference(scope, key, value)),
             Request::LogDirectory => reply(async move {
                 Ok(Response::LogDirectory {

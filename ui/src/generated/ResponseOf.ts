@@ -6,6 +6,7 @@ import type { Response } from "./Response";
 /** The response tag each request tag is answered with, as the protocol pairs them. */
 export const RESPONSE_TAG = {
   ping: "pong",
+  subscribe: "done",
   recentProjects: "recentProjects",
   recordRecentProject: "recentProjects",
   forgetRecentProject: "recentProjects",

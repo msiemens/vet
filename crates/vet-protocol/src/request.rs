@@ -16,10 +16,15 @@ pub enum Request {
     Ping {
         payload: String,
     },
+    /// Hears the events of the backend itself from here on: a credential it needs
+    /// (`CredentialsNeeded`), a change of the accounts, the recent list, the settings or a
+    /// preference. It belongs to the connection, not to a project: opening one is what hears a
+    /// project's events. The subscription ends when the connection closes; a connection that
+    /// came back asks again. Answers with `Response::Done`.
+    Subscribe,
     /// The recently opened repositories, as the paths they were recorded with and
-    /// when, most recent first. They belong to the backend, not to a project. Subscribes
-    /// this connection to the events of the backend (`RecentProjectsChanged`,
-    /// `AccountsChanged`, `CredentialsNeeded`). Answers with `Response::RecentProjects`.
+    /// when, most recent first. They belong to the backend, not to a project. Answers
+    /// with `Response::RecentProjects`.
     RecentProjects,
     /// Puts `path` at the top of the recent list, opened now, dropping its earlier
     /// entry and the oldest ones beyond ten. Every connection subscribed to the events of
@@ -33,8 +38,7 @@ pub enum Request {
         path: String,
     },
     /// The credentials the backend holds or can get for hosting platforms, per host
-    /// and not tied to a project, and subscribes this connection to the events of the
-    /// backend, as `RecentProjects` does.
+    /// and not tied to a project.
     /// Asking also looks up what the platform says about each credential, so it may
     /// take a moment. Answers with `Response::Accounts`.
     Accounts,
@@ -68,8 +72,7 @@ pub enum Request {
     /// How much disk the answers of the language servers kept between launches take. They
     /// belong to the backend, not to a project. Answers with `Response::SemanticCacheUsage`.
     SemanticCacheUsage,
-    /// The backend's own settings. Subscribes this connection to the events of the backend,
-    /// as `RecentProjects` does. Answers with `Response::Settings`.
+    /// The backend's own settings. Answers with `Response::Settings`.
     Settings,
     /// Replaces the backend's own settings and keeps them across launches. A smaller
     /// semantic cache budget removes the answers used least recently at once. Every connection
@@ -80,8 +83,7 @@ pub enum Request {
     },
     /// What the window remembers of how the viewer left it (theme, key bindings, open tabs,
     /// panel sizes): the values kept for the whole app (`scope` none) or for the project whose
-    /// repository root is `scope`. They belong to the backend, not to a connection. Subscribes
-    /// this connection to the events of the backend, as `RecentProjects` does. Answers with
+    /// repository root is `scope`. They belong to the backend, not to a connection. Answers with
     /// `Response::Preferences`.
     Preferences {
         scope: Option<String>,

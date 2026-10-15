@@ -9,6 +9,7 @@
 /// The `Response` tag each `Request` tag is answered with, in the order of `Request`.
 pub const EXCHANGES: &[(&str, &str)] = &[
     ("ping", "pong"),
+    ("subscribe", "done"),
     ("recentProjects", "recentProjects"),
     ("recordRecentProject", "recentProjects"),
     ("forgetRecentProject", "recentProjects"),

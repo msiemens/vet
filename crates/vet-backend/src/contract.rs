@@ -106,6 +106,7 @@ pub fn effect(request: &Request) -> Effect {
     use Kind::*;
     match request {
         Request::Ping { .. }
+        | Request::Subscribe
         | Request::RecentProjects
         | Request::Accounts
         | Request::SemanticCacheUsage
@@ -314,6 +315,7 @@ mod tests {
         };
         vec![
             Request::Ping { payload: String::new() },
+            Request::Subscribe,
             Request::RecentProjects,
             Request::RecordRecentProject { path: path() },
             Request::ForgetRecentProject { path: path() },
@@ -862,7 +864,7 @@ mod tests {
         orchestrator.open(root, observer.connection.clone()).await.unwrap();
         for listener in [&requester, &observer] {
             orchestrator
-                .answer(Request::RecentProjects, &listener.connection)
+                .answer(Request::Subscribe, &listener.connection)
                 .await
                 .unwrap();
         }

@@ -192,6 +192,15 @@ export class Backend {
   }
 
   /**
+   * Hears the events of the backend itself from here on (`credentialsNeeded`, `accountsChanged`,
+   * `recentProjectsChanged`, `settingsChanged`, `preferenceChanged`), which belong to the
+   * connection and not to a project. The subscription ends when the connection closes.
+   */
+  async subscribe(): Promise<void> {
+    await this.call({ type: "subscribe" });
+  }
+
+  /**
    * The recently opened repositories, most recent first. They belong to the backend, not to a project. Asking also
    * subscribes this connection to the backend's events.
    */

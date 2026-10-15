@@ -16,7 +16,7 @@ class RecentRepositories {
     await this.load(backend);
   }
 
-  /** Reads the list again, which also subscribes the connection to its changes. */
+  /** Reads the list again; `Subscribe` is what hears a change of it. */
   async load(backend: Backend) {
     await this.take(backend.recentProjects().catch(() => []));
   }

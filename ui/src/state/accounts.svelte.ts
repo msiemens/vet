@@ -37,8 +37,8 @@ class AccountsStore {
   }
 
   /**
-   * Subscribes the connection to the backend's events, then hands it every token the keychain holds; each that it
-   * did not hold is announced, which reads the accounts.
+   * Reads the accounts, then hands the backend every token the keychain holds; each one it did not
+   * hold is announced, which reads them again.
    */
   private async restoreAll(backend: Backend) {
     await this.load();

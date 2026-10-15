@@ -44,6 +44,8 @@ async fn preferences_are_kept_per_scope_across_launches_and_announced_to_the_oth
     let (handler, data) = handler().await;
     let mut window = Client::new(&handler);
     let mut other = Client::new(&handler);
+    window.call(Request::Subscribe).await.unwrap();
+    other.call(Request::Subscribe).await.unwrap();
     assert!(values(&window, None).await.is_empty());
     assert!(values(&other, Some("/repo")).await.is_empty());
 
@@ -85,6 +87,7 @@ async fn a_change_of_the_backends_settings_is_announced_to_the_other_connection(
     let (handler, _data) = handler().await;
     let window = Client::new(&handler);
     let mut other = Client::new(&handler);
+    other.call(Request::Subscribe).await.unwrap();
     other.call(Request::Settings).await.unwrap();
 
     let settings = BackendSettings {
@@ -99,4 +102,46 @@ async fn a_change_of_the_backends_settings_is_announced_to_the_other_connection(
         matches!(answer, Ok(Response::Settings { settings: s }) if s == settings),
         "{answer:?}"
     );
+}
+
+#[tokio::test]
+async fn reading_the_settings_or_preferences_does_not_subscribe() {
+    let (handler, _data) = handler().await;
+    let window = Client::new(&handler);
+    let mut reader = Client::new(&handler);
+    // Reading them is no longer what hears their changes.
+    reader.call(Request::Preferences { scope: None }).await.unwrap();
+    reader.call(Request::Settings).await.unwrap();
+
+    window
+        .call(Request::SetPreference {
+            scope: None,
+            key: "theme".into(),
+            value: Some("\"dark\"".into()),
+        })
+        .await
+        .unwrap();
+    window
+        .call(Request::SetSettings {
+            settings: BackendSettings {
+                semantic_cache_mb: 32,
+                finished_review_days: 3,
+            },
+        })
+        .await
+        .unwrap();
+    assert!(heard(&mut reader).is_empty(), "a read must not subscribe");
+
+    // `Subscribe` is what hears them.
+    reader.call(Request::Subscribe).await.unwrap();
+    window
+        .call(Request::SetSettings {
+            settings: BackendSettings {
+                semantic_cache_mb: 64,
+                finished_review_days: 3,
+            },
+        })
+        .await
+        .unwrap();
+    assert_eq!(heard(&mut reader), [Event::SettingsChanged]);
 }

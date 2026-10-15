@@ -41,6 +41,7 @@ class SessionStore {
   async connect() {
     try {
       const backend = await Backend.connect();
+      await backend.subscribe();
       await preferenceSync.start(backend);
       backend.onLinkState((state) => (this.link = state));
       backend.onReconnect(() => void this.resync(backend));
@@ -54,11 +55,13 @@ class SessionStore {
   }
 
   /**
-   * The connection is up again after it dropped, maybe to a backend the host started anew: the open
-   * repository is opened again on it, which subscribes to its events, and every store reads anew.
+   * The connection is up again after it dropped, maybe to a backend the host started anew: this
+   * connection hears the backend's own events again, the open repository is opened again on it,
+   * which subscribes to its events, and every store reads anew.
    */
   private async resync(backend: Backend) {
     const repo = this.repo;
+    await backend.subscribe();
     if (repo !== undefined) {
       try {
         await backend.open(repo);

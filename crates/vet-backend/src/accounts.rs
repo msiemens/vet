@@ -9,7 +9,6 @@ use vet_mapping as mapping;
 use vet_protocol::{Event, Response, Secret};
 
 use crate::error::Result;
-use crate::events::Connection;
 use crate::sync::sync_in_background;
 use crate::{Orchestrator, PlatformAccounts};
 
@@ -23,9 +22,8 @@ impl Credentials for Held<'_> {
 }
 
 impl Orchestrator {
-    /// The accounts, for a connection that from now on hears the events of the process.
-    pub(crate) async fn accounts(&self, from: &Connection) -> Result<Response> {
-        self.process_subscribers.subscribe(from.clone());
+    /// The accounts.
+    pub(crate) async fn accounts(&self) -> Result<Response> {
         let accounts = self.accounts.accounts(unix_now()).await;
         Ok(Response::Accounts {
             accounts: mapping::account::accounts(&accounts),

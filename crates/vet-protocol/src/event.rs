@@ -17,26 +17,23 @@ use crate::{
 #[ts(export)]
 pub enum Event {
     /// The backend needs a credential for `host` and has none. Sent to every
-    /// connection that asked for `Accounts` or `RecentProjects`. The shell answers with `SetCredentials`
+    /// connection that asked to `Subscribe`. The shell answers with `SetCredentials`
     /// if its keychain holds a token for the host, and otherwise does nothing.
     CredentialsNeeded { host: String },
     /// A credential was given (`SetCredentials`, unless the token is the one held already
     /// and was not to be checked) or removed (`RemoveCredentials`): what `Accounts` says, and
     /// which pull requests `ListPullRequests` finds, may have changed. Sent to every
-    /// connection that asked for `Accounts` or `RecentProjects`. The open pull requests of the
+    /// connection that asked to `Subscribe`. The open pull requests of the
     /// host are synced again, which they announce as usual.
     AccountsChanged,
     /// The recent list changed (`RecordRecentProject`, `ForgetRecentProject`): ask for
-    /// `RecentProjects` again. Sent to every connection that asked for `Accounts` or
-    /// `RecentProjects`.
+    /// `RecentProjects` again. Sent to every connection that asked to `Subscribe`.
     RecentProjectsChanged,
     /// The backend's own settings changed (`SetSettings`): ask for `Settings` again. Sent to
-    /// every connection that asked for `Settings`, `Preferences`, `Accounts` or
-    /// `RecentProjects`.
+    /// every connection that asked to `Subscribe`.
     SettingsChanged,
     /// A preference was kept or forgotten (`SetPreference`): `value` is the new one, none for
-    /// a forgotten one. Sent to every connection that asked for `Settings`, `Preferences`,
-    /// `Accounts` or `RecentProjects`.
+    /// a forgotten one. Sent to every connection that asked to `Subscribe`.
     PreferenceChanged {
         scope: Option<String>,
         key: String,
