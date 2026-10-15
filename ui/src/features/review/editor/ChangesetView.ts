@@ -89,6 +89,16 @@ export interface HunkAnchor {
 
 /** How long a find searches texts before it lets the page draw. */
 const FIND_SLICE_MS = 8;
+/** How many sections the trickle starts loading in one step. */
+const TRICKLE_BATCH = 4;
+/** How long the trickle waits after the view comes up before its first step. */
+const TRICKLE_FIRST_MS = 400;
+/** How long the trickle waits between its steps. */
+const TRICKLE_DELAY_MS = 60;
+/** How long after the viewer acts the trickle stays paused. */
+const TRICKLE_IDLE_MS = 250;
+/** How many background loads may be in flight at once. */
+const LOAD_CONCURRENCY = 8;
 
 export class ChangesetView {
   private sections: Section[] = [];
@@ -122,6 +132,15 @@ export class ChangesetView {
   private findRun?: FindRun;
   private findListener?: (summary: FindSummary) => void;
   private findFrame?: number;
+  /** Sections the owner asked for by name, and the ones the viewport needs: their contents are wanted next. */
+  private wanted: number[] = [];
+  private wantedSet = new Set<number>();
+  /** Background loads in flight, up to `LOAD_CONCURRENCY`. */
+  private inFlight = 0;
+  /** The trickle that loads the rest of the sections in the background while the reviewer is idle. */
+  private trickling = false;
+  private trickleTimer?: number;
+  private trickleAt = 0;
 
   /** The manifest revision the files are of. */
   get revision(): number {
@@ -194,6 +213,7 @@ export class ChangesetView {
     this.heights.changed = this.scrollbar.refresh;
     this.publishPane();
     this.windowing = new Windowing(root, this.sections, this.heights, {
+      load: (fi) => this.want(fi),
       mount: (fi) => void this.mount(fi),
       scrolled: () => this.pin.update(this.root.scrollTop),
       unmount: (s, scrollTop) => this.unmount(s, scrollTop),
@@ -291,6 +311,9 @@ export class ChangesetView {
 
   destroy() {
     this.destroyed = true;
+    this.stopTrickle();
+    this.wanted = [];
+    this.wantedSet.clear();
     this.windowing.destroy();
     this.scrollbar.destroy();
     this.pin.destroy();
@@ -428,8 +451,15 @@ export class ChangesetView {
     return this.sections.map((s) => s.file.path);
   }
 
+  /** The paths of the files whose editor is mounted, so a view of a new revision loads what the reviewer saw first. */
+  mountedPaths(): string[] {
+    return this.sections.filter((s) => s.handle).map((s) => s.file.path);
+  }
+
   load(fi: number): Promise<Loaded> {
     const s = this.sections[fi];
+    // A section that already has its text is not fetched again.
+    if (s.loaded) return Promise.resolve(s.loaded);
     return loadOnce(
       s,
       () =>
@@ -451,18 +481,85 @@ export class ChangesetView {
     );
   }
 
-  /** Loads every section, the ones nearest the viewport first. */
-  async loadAll(concurrency = 8): Promise<void> {
-    const middle = this.root.scrollTop + this.root.clientHeight / 2;
-    const distance = (s: Section) => Math.abs(s.top + s.height / 2 - middle);
-    const order = this.sections
-      .map((s, i) => i)
-      .sort((a, b) => distance(this.sections[a]) - distance(this.sections[b]));
-    let next = 0;
-    const worker = async () => {
-      while (next < order.length) await this.load(order[next++]);
-    };
-    await Promise.all(Array.from({ length: concurrency }, worker));
+  /** Asks for the sections of `paths` first, before the trickle and whatever comes into view. */
+  eager(paths: Iterable<string>): void {
+    const first = new Set(paths);
+    this.sections.forEach((s, fi) => {
+      if (first.has(s.file.path)) this.want(fi);
+    });
+  }
+
+  /** Starts loading the sections the viewport has not reached, a few at a time while the reviewer is idle. */
+  startTrickle() {
+    if (this.trickling || this.destroyed) return;
+    this.trickling = true;
+    this.trickleAt = 0;
+    this.scheduleTrickle(TRICKLE_FIRST_MS);
+  }
+
+  /** Stops the background trickle: the review screen went away, or the view is replaced. */
+  stopTrickle() {
+    this.trickling = false;
+    if (this.trickleTimer !== undefined) {
+      clearTimeout(this.trickleTimer);
+      this.trickleTimer = undefined;
+    }
+  }
+
+  private scheduleTrickle(ms: number) {
+    if (!this.trickling || this.trickleTimer !== undefined) return;
+    this.trickleTimer = window.setTimeout(() => {
+      this.trickleTimer = undefined;
+      this.trickleStep();
+    }, ms);
+  }
+
+  /**
+   * Starts the next few sections on their way while nothing is going on. A scroll or the viewer acting
+   * pauses it; when every section is loaded or its load is in flight, the trickle is done.
+   */
+  private trickleStep() {
+    if (!this.trickling || this.destroyed) return;
+    if (this.windowing.busy) {
+      this.scheduleTrickle(TRICKLE_IDLE_MS);
+      return;
+    }
+    const unreached = () => this.trickleAt < this.sections.length;
+    for (let i = 0; i < TRICKLE_BATCH && unreached(); i++) this.want(this.trickleAt++);
+    if (!unreached() && !this.wanted.length && !this.inFlight) {
+      this.trickling = false;
+      return;
+    }
+    this.scheduleTrickle(TRICKLE_DELAY_MS);
+  }
+
+  /** Asks for a section's contents in the background, in the order the viewport and the trickle reach it. */
+  private want(fi: number) {
+    const s = this.sections[fi];
+    if (s.loaded || s.loading || this.wantedSet.has(fi)) return;
+    this.wantedSet.add(fi);
+    this.wanted.push(fi);
+    this.pump();
+  }
+
+  /** Keeps up to `LOAD_CONCURRENCY` background loads going. */
+  private pump() {
+    for (let fi = this.wanted.shift(); fi !== undefined; fi = this.wanted.shift()) {
+      if (this.inFlight >= LOAD_CONCURRENCY) {
+        this.wanted.unshift(fi);
+        return;
+      }
+      this.wantedSet.delete(fi);
+      const s = this.sections[fi];
+      if (s.loaded || s.loading) continue;
+      this.inFlight++;
+      void this.load(fi)
+        .catch(() => undefined)
+        .finally(() => {
+          this.inFlight--;
+          this.pump();
+        });
+    }
   }
 
   /** Mounts the editor of a loaded section. */

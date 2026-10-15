@@ -11,6 +11,8 @@ import type { SectionHeights } from "./sectionHeights.ts";
 const MOUNT_BUDGET_MS = 6;
 /** Scrolling counts as stopped after this long without a scroll event. */
 const SETTLE_MS = 120;
+/** Acting in the view (a press, a key) keeps background work waiting for this long. */
+const ACT_MS = 200;
 
 /** An inclusive range of section indices. */
 export type Range = [first: number, last: number];
@@ -27,6 +29,8 @@ export function windowRanges(indexAt: (y: number) => number, top: number, h: num
 }
 
 export interface WindowHost {
+  /** Asks for the contents of a section near the viewport, so it can be shown there. */
+  load(fi: number): void;
   /** Creates the editor of a loaded section. */
   mount(fi: number): void;
   /** The root scrolled. */
@@ -45,6 +49,9 @@ export class Windowing {
   private settle = new Debounced();
   /** Set from a scroll event until scrolling settles. */
   private scrolling = false;
+  /** Set while the viewer acts in the view, until the actions pause. */
+  private acting = false;
+  private acted = new Debounced();
   /** A scroll event ran this frame's pass. */
   private passed = false;
   private endOfPass?: number;
@@ -63,9 +70,16 @@ export class Windowing {
     this.host = host;
   }
 
-  /** Listens to the root's scroll. Called before any editor mounts: see `onScroll`. */
+  /** Listens to the root's scroll and to what the viewer does in it. Called before any editor mounts: see `onScroll`. */
   start() {
     this.root.addEventListener("scroll", this.onScroll, { passive: true });
+    this.root.addEventListener("pointerdown", this.onAct, { passive: true });
+    this.root.addEventListener("keydown", this.onAct);
+  }
+
+  /** The viewer is scrolling or has just scrolled or acted: background loading waits for them to pause. */
+  get busy(): boolean {
+    return this.scrolling || this.acting;
   }
 
   destroy() {
@@ -74,10 +88,19 @@ export class Windowing {
     if (this.endOfPass !== undefined) cancelAnimationFrame(this.endOfPass);
     this.later = this.endOfPass = undefined;
     this.settle.cancel();
+    this.acted.cancel();
     this.root.removeEventListener("scroll", this.onScroll);
+    this.root.removeEventListener("pointerdown", this.onAct);
+    this.root.removeEventListener("keydown", this.onAct);
     for (const fi of this.previewing) this.sections[fi].cards.forEach((c) => c.setPreview(false));
     this.previewing.clear();
   }
+
+  /** A press or a key in the view: the trickle waits until they pause. */
+  private onAct = () => {
+    this.acting = true;
+    this.acted.schedule(ACT_MS, () => (this.acting = false));
+  };
 
   /** While the viewer scrolls only what is in view mounts; the surroundings follow once the scrolling stops. */
   private onScroll = (e: Event) => {
@@ -112,6 +135,8 @@ export class Windowing {
     let top = this.root.scrollTop;
     const h = this.root.clientHeight;
     const { near, far } = windowRanges((y) => this.heights.indexAt(y), top, h, wide);
+    // What is in view and the margin around it loads first; the rest is the owner's to trickle.
+    for (let fi = near[0]; fi <= near[1]; fi++) this.host.load(fi);
     for (const fi of [...this.mounted]) {
       if (fi < far[0] || fi > far[1]) {
         top += this.host.unmount(this.sections[fi], top);

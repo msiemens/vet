@@ -33,6 +33,8 @@ export interface Driver {
   step(name: string, run: () => Promise<unknown>, expected?: { marks?: number; stale?: boolean }): Promise<void>;
   /** Double-clicks the row of `path` in the file tree and waits for its text. */
   openText(path: string): Promise<void>;
+  /** Writes `count` new files into the working tree and waits until the page has them in the changeset. */
+  manyFiles(count: number): Promise<void>;
   /** Another window comments on the changeset `count` times, each comment long enough to fill a side panel. */
   manyThreads(count: number): Promise<void>;
   /** An agent edits a file of the working tree; resolves once the page has a version for it. */
@@ -90,14 +92,16 @@ export async function runBrowserSession(
 
   // Counts the requests that reach the backend from the very first one, before the app can send any.
   await page.addInitScript(`(() => {
-    const wire = { fileContents: 0, fileText: 0, itemBlob: 0, targetLine: 0 };
+    const wire = { fileContents: 0, fileText: 0, itemBlob: 0, targetLine: 0, filePaths: [] };
     window.__wire = wire;
     const send = WebSocket.prototype.send;
     WebSocket.prototype.send = function (data) {
       try {
         const message = JSON.parse(data);
-        if (message && message.type === "request" && message.request && wire[message.request.type] !== undefined)
+        if (message && message.type === "request" && message.request && wire[message.request.type] !== undefined) {
           wire[message.request.type]++;
+          if (message.request.type === "fileContents") wire.filePaths.push(message.request.path);
+        }
       } catch {}
       return send.call(this, data);
     };
@@ -234,6 +238,10 @@ export async function runBrowserSession(
       const differences = [...found, ...problems];
       process.stderr.write(`  ${stepName}: ${differences.length ? `${differences.length} differences` : "ok"}\n`);
       results.push({ step: stepName, differences });
+    },
+    async manyFiles(count) {
+      fixture.manyFiles(count);
+      await until(`__t.changeset.paths.length >= ${count}`, "the many files in the changeset");
     },
     async manyThreads(count) {
       const body = Array.from({ length: 12 }, (_, i) => `Line ${i} of a long comment that wraps in a narrow panel.`);

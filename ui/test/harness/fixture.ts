@@ -48,6 +48,15 @@ export class Fixture {
     writeFileSync(join(this.repo, path), lines.join("\n") + "\n");
   }
 
+  /**
+   * Writes `count` new files under `many/`, each a 40-line text file with one line changed, so a
+   * changeset of many files has to be scrolled and loaded. The extension is not prose, so the lines
+   * do not wrap and a section's height comes from the manifest alone.
+   */
+  manyFiles(count: number) {
+    for (let i = 0; i < count; i++) this.write(`many/f${String(i).padStart(3, "0")}.dat`, `m${i}`, [20]);
+  }
+
   /** Moves `HEAD` to `ref` and leaves the files as they are. */
   resetHeadTo(ref: string) {
     this.git(this.repo, "reset", "-q", "--soft", ref);

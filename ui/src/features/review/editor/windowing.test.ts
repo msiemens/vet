@@ -51,15 +51,16 @@ function column(msPerMount: number, viewport = 200, count = 10) {
   global.requestAnimationFrame = (run) => frames.push(run);
   global.cancelAnimationFrame = () => void (frames.length = 0);
   performance.now = () => clock;
-  let scrolled: ((e: Event) => void) | undefined;
+  const listeners = new Map<string, (e: Event) => void>();
   const root = {
     scrollTop: 500,
     clientHeight: viewport,
-    addEventListener: (_type: string, listener: (e: Event) => void) => (scrolled = listener),
-    removeEventListener: () => undefined,
+    addEventListener: (type: string, listener: (e: Event) => void) => listeners.set(type, listener),
+    removeEventListener: (type: string) => listeners.delete(type),
   };
   const heights = { indexAt: (y: number) => sectionAt(sections, y) } as unknown as SectionHeights;
   const windowing = new Windowing(root, sections as unknown as Section[], heights, {
+    load: () => undefined,
     mount: (fi) => {
       sections[fi].handle = { views: [] };
       windowing.mounted.add(fi);
@@ -78,7 +79,7 @@ function column(msPerMount: number, viewport = 200, count = 10) {
      */
     frame(scrolls: boolean) {
       const before = windowing.mounted.size;
-      if (scrolls) scrolled?.(new Event("scroll"));
+      if (scrolls) listeners.get("scroll")?.(new Event("scroll"));
       frames.splice(0).forEach((run) => run());
       return windowing.mounted.size - before;
     },

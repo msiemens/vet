@@ -190,6 +190,16 @@ export class ReviewViews {
     };
   }
 
+  /** Starts the Changes tab loading the rest of its files a few at a time while the reviewer is idle. */
+  startTrickle() {
+    if (reviewShown.on) this.views.get(CHANGES)?.startTrickle();
+  }
+
+  /** Stops the Changes tab's background loading: the review screen went away. */
+  stopTrickle() {
+    this.views.get(CHANGES)?.stopTrickle();
+  }
+
   /** Gives every view the threads, if they are of the view's revision and range. */
   showThreads() {
     const revision = threads.revision;
@@ -392,6 +402,8 @@ export class ReviewViews {
       !sameView(previous.shown.view, layout.shown.view)
         ? previous.lines()
         : undefined;
+    // The files whose editor was mounted are what the reviewer saw: the new view loads them first.
+    const seen = previous?.mountedPaths();
     previous?.destroy();
     this.views.delete(id);
     if (absent) return;
@@ -412,6 +424,7 @@ export class ReviewViews {
     if (this.threadsFit(layout)) view.setThreads(this.shownThreads(id), shown.revision);
     view.scrollTo(top);
     view.keepCurrent(anchor);
+    if (seen) view.eager(seen);
     view.sync();
     if (this.find.isOpen(id)) this.find.apply(id);
     // A file tab shows its one file at once; the Changes tab loads sections as they come near.

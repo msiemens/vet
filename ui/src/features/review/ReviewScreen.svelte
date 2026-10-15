@@ -240,7 +240,7 @@
         return true;
       },
     });
-    controller.open(true).then(
+    controller.open().then(
       (opened) => opened && onready(controller),
       (e: unknown) => void session.abandon(e),
     );

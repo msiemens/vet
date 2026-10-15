@@ -4,7 +4,7 @@
 import type { Driver, Probe } from "./browserHarness.ts";
 
 /** The sessions whose script starts on the queue, before the review screen is shown. */
-export const startOnQueue = new Set<string>(["hidden"]);
+export const startOnQueue = new Set<string>(["hidden", "many"]);
 
 /** A step that sends one review request. */
 const ONE = { marks: 1 };
@@ -201,6 +201,116 @@ export const sessions: Record<string, (d: Driver) => Promise<void>> = {
     const whole = await scrolledTo();
     await keeps("a commit is shown", whole, () => d.page(`__t.changeset.showLens("perCommit")`));
     await keeps("all changes after the commit", whole, () => d.page(`__t.changeset.showLens("squash")`));
+  },
+
+  /**
+   * All changes loads a file's contents on demand: what is on screen plus the margin around it, and
+   * anything a command needs. The rest loads a few at a time while the review screen is idle. A file
+   * that fills in does not move the scroll position, because its height comes from the manifest. A new
+   * revision reloads what is in view and leaves the rest to the trickle.
+   */
+  async many(d) {
+    const TOTAL = 120;
+    const far = `many/f100.dat`;
+    const changed = `many/f118.dat`;
+    const files = () => d.page(`__t.changeset.paths.length`) as Promise<number>;
+    const requests = () => d.page(`__wire.fileContents`) as Promise<number>;
+    const loaded = () => d.page(`new Set(__wire.filePaths).size`) as Promise<number>;
+
+    await d.manyFiles(TOTAL);
+    await d.page(`__t.session.backend.waitForQuiet()`);
+    // Nothing loads while the queue is on screen; the review screen's files wait for its return.
+    if ((await requests()) !== 0) throw new Error("the hidden review screen loaded files");
+
+    await d.page(`__t.commands.run("view.review")`);
+    await d.until(`document.querySelectorAll(".pane.active .cm-editor").length > 0`, "the first editors");
+
+    // 1. Opening loads the visible part plus the margin around it, not the whole changeset.
+    const opened = (await d.page(`(() => {
+      const scroller = document.querySelector(".pane.active .scroll");
+      const rect = scroller.getBoundingClientRect();
+      const bottom = rect.top + scroller.clientHeight;
+      const margin = scroller.clientHeight * 0.5;
+      let visible = 0, mounted = 0, below = 0;
+      for (const s of scroller.querySelectorAll("section.file")) {
+        const at = s.getBoundingClientRect();
+        if (at.top < bottom && at.bottom > rect.top) visible++;
+        if (s.querySelector(".cm-editor")) {
+          mounted++;
+          if (at.top >= bottom + margin) below++;
+        }
+      }
+      return { requests: window.__wire.fileContents, visible, mounted, below };
+    })()`)) as { requests: number; visible: number; mounted: number; below: number };
+    const total = await files();
+    process.stderr.write(
+      `  open: ${opened.requests} requests, ${opened.visible} visible, ${opened.mounted} mounted, ${opened.below} in the lower margin\n`,
+    );
+    if (opened.requests === 0) throw new Error("opening the review screen loaded nothing");
+    if (opened.requests >= total) throw new Error(`opening loaded every file (${opened.requests} of ${total})`);
+    if (opened.below === 0) throw new Error("opening loaded nothing beyond the visible part: the margin is gone");
+
+    // 2. A far hunk the keyboard goes to is loaded on demand, and the view lands on it.
+    await d.step("a far hunk is flagged by another window", () => d.otherFlag(far, 0));
+    await d.step("the keyboard goes to the far flagged hunk", async () => {
+      await d.press("Alt+f");
+      await d.until(
+        `document.querySelector(".pane.active .scroll section.file.current-file")?.querySelector(".cm-editor") !== null`,
+        "the far file's editor",
+      );
+    });
+    const landed = (await d.page(`(() => {
+      const scroller = document.querySelector(".pane.active .scroll");
+      const section = scroller.querySelector("section.file.current-file");
+      const at = section.getBoundingClientRect();
+      const rect = scroller.getBoundingClientRect();
+      return {
+        path: section.querySelector(".path").textContent,
+        visible: at.bottom > rect.top && at.top < rect.top + scroller.clientHeight,
+      };
+    })()`)) as { path: string; visible: boolean };
+    if (landed.path !== far) throw new Error(`the keyboard landed on ${landed.path}, not ${far}`);
+    if (!landed.visible) throw new Error("the far file is not in view after the keyboard navigation");
+
+    // 3. Scrolling to the end loads the files there; the position and the last file stay put as they fill in.
+    const before = (await d.page(`(() => {
+      const scroller = document.querySelector(".pane.active .scroll");
+      scroller.scrollTop = scroller.scrollHeight;
+      window.__last = [...scroller.querySelectorAll("section.file")].filter((s) => s.querySelector(".path").textContent.endsWith(".dat")).at(-1);
+      window.__anchor = { top: scroller.scrollTop, y: window.__last.getBoundingClientRect().top - scroller.getBoundingClientRect().top };
+      return window.__anchor;
+    })()`)) as { top: number; y: number };
+    await d.until(`window.__last.querySelector(".cm-editor") !== null`, "the last file's text");
+    const after = (await d.page(`(() => {
+      const scroller = document.querySelector(".pane.active .scroll");
+      return { top: scroller.scrollTop, y: window.__last.getBoundingClientRect().top - scroller.getBoundingClientRect().top };
+    })()`)) as { top: number; y: number };
+    process.stderr.write(`  scroll: top ${before.top} -> ${after.top}, anchor ${before.y} -> ${after.y}\n`);
+    if (Math.abs(after.top - before.top) > 1)
+      throw new Error(`the scroll position moved when the end filled in (${before.top} -> ${after.top})`);
+    if (Math.abs(after.y - before.y) > 1.5)
+      throw new Error(`the file at the end moved when it filled in (${before.y} -> ${after.y})`);
+
+    // 4. Left idle, the trickle loads every file.
+    await d.until(`new Set(__wire.filePaths).size >= ${total}`, "the trickle to reach every file");
+    process.stderr.write(`  trickle: ${await loaded()} of ${total} files loaded\n`);
+
+    // 5. A revision reloads what is in view; the rest is left to the trickle.
+    let reloaded: string[] = [];
+    await d.step("a revision settles", async () => {
+      const at = (await d.page(`__wire.filePaths.length`)) as number;
+      await d.revise(changed, "r1", [20]);
+      await d.until(`__wire.filePaths.length > ${at}`, "the revision's reloads");
+      await d.sleep(60);
+      reloaded = (await d.page(`__wire.filePaths.slice(${at})`)) as string[];
+      if (!reloaded.length) throw new Error("the revision reloaded nothing");
+    });
+    process.stderr.write(
+      `  revision: ${reloaded.length} requests, ${reloaded.includes(changed) ? "with" : "without"} the changed file\n`,
+    );
+    if (!reloaded.includes(changed)) throw new Error("the revision did not reload the file in view that changed");
+    if (reloaded.length >= total / 2)
+      throw new Error(`the revision reloaded ${reloaded.length} of ${total} files eagerly`);
   },
 
   /** Panels fuller than the window scroll inside themselves: the page never does (checked after every step). */

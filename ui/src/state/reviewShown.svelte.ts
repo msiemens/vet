@@ -11,6 +11,7 @@ import { session } from "./session.svelte";
 class ReviewShown {
   on = $state(false);
   private listeners = new Set<() => void>();
+  private hiddenListeners = new Set<() => void>();
   private report = new ScreenReport((shown) => void session.backend?.setReviewShown(shown).catch(() => undefined));
   private told?: { backend?: Backend; repo?: string };
 
@@ -35,12 +36,19 @@ class ReviewShown {
     if (on === this.on) return;
     this.on = on;
     if (on) for (const listener of this.listeners) listener();
+    else for (const listener of this.hiddenListeners) listener();
   }
 
   /** Calls `listener` whenever the review screen comes up. Returns the function that stops that. */
   onShown(listener: () => void): () => void {
     this.listeners.add(listener);
     return () => this.listeners.delete(listener);
+  }
+
+  /** Calls `listener` whenever the review screen goes away. Returns the function that stops that. */
+  onHidden(listener: () => void): () => void {
+    this.hiddenListeners.add(listener);
+    return () => this.hiddenListeners.delete(listener);
   }
 
   private tell(backend: Backend | undefined, repo: string | undefined, on: boolean, onView: boolean) {

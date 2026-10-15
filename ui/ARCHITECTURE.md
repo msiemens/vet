@@ -84,7 +84,7 @@ There are no full rebuilds: a keyed or incremental `$derived`, so one change inv
 
 #### The review screen
 
-`App` shows the queue or the review under the header; the review stays mounted while the queue shows (laid out, hidden and `inert`), so editors keep their size and scroll. Nothing of its files loads while it is hidden: a manifest that moves while it is away is drawn when it comes up. The base note appears only for a pull request into a non-default branch or a `HEAD` off its base, and the scope chip names the view on show.
+`App` shows the queue or the review under the header; the review stays mounted while the queue shows (laid out, hidden and `inert`), so editors keep their size and scroll. Nothing of its files loads while it is hidden: a manifest that moves while it is away is drawn when it comes up. Once it is shown, the Changes tab loads the files in view and the margin around them, and any file a command goes to; the rest loads a few at a time while the screen is idle, pausing while the viewer scrolls or acts. The base note appears only for a pull request into a non-default branch or a `HEAD` off its base, and the scope chip names the view on show.
 
 - A pane hands its scroll root to `ReviewController`, which builds a view for the tab; the view is not torn down when the state it reads changes, only remade by a new manifest.
 - Heights come from the manifest, not from CodeMirror, which estimates off-screen sections; layout reads happen in CodeMirror's measure phase, never on the mount path. Wrapping is the viewer's setting, and only prose wraps by default.
