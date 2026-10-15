@@ -8,6 +8,7 @@ use std::sync::{Arc, Mutex};
 use vet_core::content::{BlobId, EntryKind, RepoPath, Snapshot, SnapshotId, SnapshotStatus};
 
 use crate::changeset::CommitId;
+use crate::mutex::lock;
 use crate::ports::{BlobRead, BlobReader, Dirty, GitError, History, Scan, Scanner, Store, StoreError};
 use crate::progress::{TaskKind, Tasks};
 
@@ -52,7 +53,7 @@ impl<G, S> Acquisition<G, S> {
     /// `commit`; everything else must be in the content store. Needed before
     /// `materialize` can serve the snapshot (§7.2).
     pub fn record_commit(&self, snapshot: SnapshotId, commit: CommitId) {
-        self.commits.lock().expect("not poisoned").insert(snapshot, commit);
+        lock(&self.commits).insert(snapshot, commit);
     }
 }
 
@@ -194,7 +195,7 @@ impl<G: History, S: Store> Acquisition<G, S> {
     /// committed blobs and what is known about it. The error is for a person to
     /// read.
     pub async fn recorded(&self, id: SnapshotId) -> Result<(CommitId, Snapshot, SnapshotStatus), String> {
-        let commit = (self.commits.lock().expect("not poisoned"))
+        let commit = lock(&self.commits)
             .get(&id)
             .cloned()
             .ok_or("the snapshot has no recorded origin")?;

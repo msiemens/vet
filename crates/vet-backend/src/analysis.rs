@@ -4,9 +4,11 @@
 #[cfg(debug_assertions)]
 use std::collections::{HashMap, VecDeque};
 #[cfg(debug_assertions)]
-use std::sync::{Mutex, PoisonError};
+use std::sync::Mutex;
 use std::time::Duration;
 
+#[cfg(debug_assertions)]
+use crate::mutex::lock;
 #[cfg(debug_assertions)]
 use vet_app::ports::StoreError;
 use vet_app::session::{FileView, SessionError, View};
@@ -120,7 +122,7 @@ impl Injected {
 /// debug build only; a release build has no script and answers nothing.
 #[cfg(debug_assertions)]
 pub(crate) fn injected(open: &Open, path: &str) -> Option<Injected> {
-    let mut failures = open.analysis_failures.lock().unwrap_or_else(PoisonError::into_inner);
+    let mut failures = lock(&open.analysis_failures);
     let script = failures.get_mut(path)?;
     let next = script.pop_front();
     if script.is_empty() {

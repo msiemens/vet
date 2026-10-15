@@ -3,7 +3,7 @@
 //! requests in their [`PullRequestCache`], and tells the open projects when the standing of an
 //! account changed.
 
-use std::sync::{Arc, Mutex, PoisonError, Weak};
+use std::sync::{Arc, Mutex, Weak};
 
 use vet_app::platform::{
     CheckLog, CommentRef, CommitChecks, Discussion, Health, Outcome, PipelineAction, Platform, PlatformComment,
@@ -16,6 +16,7 @@ use vet_mapping as mapping;
 use vet_protocol::{Event, Notification, NotificationKind, PlatformConnection, ProjectId};
 
 use crate::events::Connection;
+use crate::mutex::lock;
 use crate::{AzureDevOps, GitHub};
 
 /// An open project, which hears of the platforms' standing.
@@ -49,7 +50,7 @@ impl Platforms {
 
     /// Lets `announcer` hear of the platforms' standing for as long as it lives.
     pub(crate) fn tell(&self, announcer: &Arc<Announcer>) {
-        let mut announcers = self.announcers.lock().unwrap_or_else(PoisonError::into_inner);
+        let mut announcers = lock(&self.announcers);
         announcers.retain(|a| a.strong_count() > 0);
         announcers.push(Arc::downgrade(announcer));
     }
@@ -95,12 +96,7 @@ fn announce(announcers: &Mutex<Vec<Weak<Announcer>>>, process: &Subscribers<Conn
         )),
         _ => None,
     };
-    let live: Vec<Arc<Announcer>> = announcers
-        .lock()
-        .unwrap_or_else(PoisonError::into_inner)
-        .iter()
-        .filter_map(Weak::upgrade)
-        .collect();
+    let live: Vec<Arc<Announcer>> = lock(announcers).iter().filter_map(Weak::upgrade).collect();
     for announcer in live {
         if let Some(text) = &stopped {
             announcer.subscribers.broadcast(Event::Notification {

@@ -89,6 +89,7 @@ impl Backend {
         Ok(backend)
     }
 
+    #[allow(clippy::disallowed_methods, reason = "the one place that locks the backend's state")]
     fn lock(&self) -> MutexGuard<'_, State> {
         self.0.state.lock().unwrap_or_else(PoisonError::into_inner)
     }
@@ -144,6 +145,10 @@ impl Backend {
     }
 
     /// Keeps a started backend and watches it for exiting.
+    #[allow(
+        clippy::disallowed_methods,
+        reason = "the backend's output is drained on a thread of its own"
+    )]
     fn keep(&self, spawned: Spawned) -> Result<(), String> {
         let Spawned {
             mut child,
@@ -261,6 +266,10 @@ fn pick_repo(mut args: impl Iterator<Item = String>, env: Option<String>) -> Opt
 }
 
 /// Runs `command` and waits for the `Ready` line it prints.
+#[allow(
+    clippy::disallowed_methods,
+    reason = "the Ready line is read on a thread of its own, so the wait can time out"
+)]
 pub fn spawn_command(mut command: Command, binary: &str, report: &dyn Fn(Step)) -> Result<Spawned, String> {
     command
         .stdin(Stdio::piped())

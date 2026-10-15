@@ -11,6 +11,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use vet_core::content::{FileEntry, RepoPath};
 
 use crate::clock::unix_secs;
+use crate::sync::lock;
 
 /// What identifies a file's content without reading it. `index_mode` is part of
 /// it because the recorded mode depends on the index when the filesystem cannot
@@ -80,7 +81,7 @@ impl StatCache {
     /// Take the records for a scan. They are dropped if the git configuration
     /// changed since they were made.
     pub(super) fn take(&self, config: Vec<Option<(u64, (i64, u32))>>) -> HashMap<RepoPath, Record> {
-        let mut state = self.state.lock().expect("not poisoned");
+        let mut state = lock(&self.state);
         if state.config != config {
             state.records.clear();
             state.config = config;
@@ -91,7 +92,7 @@ impl StatCache {
     /// Replace the records with those of the finished scan, which also drops
     /// paths that no longer exist.
     pub(super) fn put(&self, records: HashMap<RepoPath, Record>) {
-        self.state.lock().expect("not poisoned").records = records;
+        lock(&self.state).records = records;
     }
 }
 

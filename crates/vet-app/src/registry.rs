@@ -6,7 +6,7 @@ use std::fmt;
 use std::ops::Deref;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU32, Ordering};
-use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
+use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::Duration;
 
 use crate::mutex::lock;
@@ -49,7 +49,7 @@ impl<S: Subscriber> Subscribers<S> {
 
     /// The connections still open.
     fn live(&self) -> MutexGuard<'_, Vec<S>> {
-        let mut subscribers = self.0.lock().unwrap_or_else(PoisonError::into_inner);
+        let mut subscribers = lock(&self.0);
         subscribers.retain(|s| !s.is_closed());
         subscribers
     }

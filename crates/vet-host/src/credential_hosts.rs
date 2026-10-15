@@ -42,6 +42,7 @@ impl CredentialHosts {
         })
     }
 
+    #[allow(clippy::disallowed_methods, reason = "the one place that locks the host index")]
     fn update(&self, change: impl FnOnce(Vec<String>) -> Vec<String>) -> Result<(), String> {
         let _held = INDEX.lock().unwrap_or_else(PoisonError::into_inner);
         let text = serde_json::to_string_pretty(&change(read_hosts(&self.file))).map_err(|e| e.to_string())?;

@@ -35,6 +35,7 @@ use crate::paths::hash_of_file;
 use crate::restore::record::Digest;
 use crate::schemas;
 use crate::servers::{capture, probe_version};
+use crate::sync::lock;
 
 /// Bumped when what the fingerprint is made of changes, so no old fingerprint equals a new one.
 const FORMAT: u32 = 2;
@@ -85,15 +86,13 @@ fn stamp(path: &Path) -> io::Result<(u64, Option<SystemTime>)> {
 }
 
 fn remembered<T: Clone>(memo: &Memo<T>, path: &Path, size: u64, modified: Option<SystemTime>) -> Option<T> {
-    let memo = memo.lock().expect("not poisoned");
+    let memo = lock(memo);
     let seen = memo.get(path)?;
     (seen.size == size && seen.modified == modified).then(|| seen.value.clone())
 }
 
 fn remember<T>(memo: &Memo<T>, path: &Path, size: u64, modified: Option<SystemTime>, value: T) {
-    memo.lock()
-        .expect("not poisoned")
-        .insert(path.to_owned(), Stamped { size, modified, value });
+    lock(memo).insert(path.to_owned(), Stamped { size, modified, value });
 }
 
 /// What a toolchain program printed in a root, observed once per generation of
@@ -175,12 +174,7 @@ impl Identities {
 
     /// The servers of `backend` are replaced: its toolchain is probed anew by the next identity.
     pub fn renewed(&self, backend: &BackendId) {
-        *self
-            .generations
-            .lock()
-            .expect("not poisoned")
-            .entry(backend.clone())
-            .or_default() += 1;
+        *lock(&self.generations).entry(backend.clone()).or_default() += 1;
     }
 
     /// The identity of the server `command` starts for `backend` on `root`.
@@ -353,13 +347,7 @@ impl Identities {
     /// generation of the backend, and shared by concurrent callers. A probe that failed
     /// is not remembered: the next one may succeed.
     async fn toolchain(&self, backend: &BackendId, program: &str, args: Vec<String>, root: &Path) -> String {
-        let generation = self
-            .generations
-            .lock()
-            .expect("not poisoned")
-            .get(backend)
-            .copied()
-            .unwrap_or(0);
+        let generation = lock(&self.generations).get(backend).copied().unwrap_or(0);
         let key = Toolchain {
             backend: backend.clone(),
             program: program.to_owned(),

@@ -2,6 +2,9 @@
 //! so ordering guarantees are plain awaits: settling reconciles before it
 //! declares a snapshot settled.
 
+// Tests build their fixtures with locks of their own.
+#![cfg_attr(test, allow(clippy::disallowed_methods))]
+
 pub mod acquisition;
 pub mod base;
 pub mod changeset;

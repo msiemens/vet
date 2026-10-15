@@ -2,13 +2,14 @@
 //! wanted while one does, and not while the window is on the queue, where moving over the rows
 //! puts one changeset after the other on view.
 
-use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
+use std::sync::{Arc, Mutex, MutexGuard};
 
 use vet_app::registry::Subscriber;
 use vet_protocol::{ProjectId, Response};
 
 use crate::error::Result;
 use crate::events::Connection;
+use crate::mutex::lock;
 use crate::{Open, Orchestrator, start_servers_in_background};
 
 /// The connections that show the review screen of one project.
@@ -18,7 +19,7 @@ pub(crate) struct ReviewScreens(Mutex<Vec<Connection>>);
 impl ReviewScreens {
     fn connections(&self) -> MutexGuard<'_, Vec<Connection>> {
         // A list of connections is never left half-written.
-        self.0.lock().unwrap_or_else(PoisonError::into_inner)
+        lock(&self.0)
     }
 
     pub(crate) fn set(&self, connection: &Connection, shown: bool) {

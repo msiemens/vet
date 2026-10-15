@@ -29,6 +29,7 @@ impl Capture {
     }
 
     /// The buffer, whether or not a thread panicked while holding it.
+    #[allow(clippy::disallowed_methods, reason = "the one place that locks this std mutex")]
     fn bytes(&self) -> MutexGuard<'_, Vec<u8>> {
         self.0.lock().unwrap_or_else(PoisonError::into_inner)
     }

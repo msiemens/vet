@@ -34,6 +34,7 @@ use vet_core::content::{BlobId, RepoPath, SnapshotId};
 use vet_engine::{self as engine, Engine, Kind, Limits, Retention};
 
 use crate::gate::Gate;
+use crate::mutex::lock;
 use crate::policy::AnalysisPolicy;
 use crate::ports::{
     Answered, At, Backend, BackendId, Detach, Diagnostic, Features, LanguageServer, LaunchError, Location,
@@ -162,7 +163,7 @@ struct Indexing<M: Materializer, L: ServerLauncher> {
 impl<M: Materializer, L: ServerLauncher> StartProgress for Indexing<M, L> {
     fn indexing(&self, done_of_total: Option<(u32, u32)>, detail: Option<String>) {
         {
-            let mut last = self.last.lock().expect("not poisoned");
+            let mut last = lock(&self.last);
             if last.is_some_and(|at| at.elapsed() < PROGRESS_INTERVAL) {
                 return;
             }
@@ -1411,7 +1412,7 @@ impl<M: Materializer, L: ServerLauncher> Inner<M, L> {
     }
 
     fn lock(&self) -> std::sync::MutexGuard<'_, State<L::Server, M::Guard>> {
-        self.state.lock().expect("pool state is never held across a panic")
+        lock(&self.state)
     }
 }
 

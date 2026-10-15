@@ -3,7 +3,9 @@
 //! same, most recent, state of it.
 
 use std::collections::HashMap;
-use std::sync::{Mutex, PoisonError};
+use std::sync::Mutex;
+
+use crate::mutex::lock;
 
 use super::discussion::Discussion;
 use super::model::{PullRequest, PullRequestHead};
@@ -71,7 +73,7 @@ pub struct PullRequestCache {
 
 impl PullRequestCache {
     fn entries(&self) -> std::sync::MutexGuard<'_, Entries> {
-        self.entries.lock().unwrap_or_else(PoisonError::into_inner)
+        lock(&self.entries)
     }
 
     /// Notes how the platform names `pull_request` now. An answer older than what is known (a list

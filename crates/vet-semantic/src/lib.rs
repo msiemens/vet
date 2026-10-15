@@ -6,9 +6,13 @@
 //! names everything it depends on (I2, `reuse`). It has no async runtime: IO
 //! happens behind the ports.
 
+// Tests build their fixtures with locks of their own.
+#![cfg_attr(test, allow(clippy::disallowed_methods))]
+
 pub mod derived;
 pub mod gate;
 pub mod join;
+mod mutex;
 pub mod policy;
 pub mod pool;
 pub mod ports;

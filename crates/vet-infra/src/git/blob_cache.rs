@@ -9,6 +9,7 @@ use vet_app::ports::GitError;
 use vet_core::content::BlobId;
 
 use super::err;
+use crate::sync::lock;
 
 #[derive(Default)]
 pub(crate) struct BlobCache {
@@ -27,19 +28,19 @@ impl BlobCache {
     /// The `BlobId` of a submodule entry pinned at `commit`.
     pub(crate) fn submodule_id(&self, commit: gix::ObjectId) -> BlobId {
         let id = BlobId::of(commit.as_bytes());
-        self.ids.lock().expect("not poisoned").submodules.insert(id, commit);
+        lock(&self.ids).submodules.insert(id, commit);
         id
     }
 
     pub(crate) fn submodule_commit(&self, blob: BlobId) -> Option<String> {
-        let ids = self.ids.lock().expect("not poisoned");
+        let ids = lock(&self.ids);
         ids.submodules.get(&blob).map(|c| c.to_string())
     }
 
     /// The `BlobId` of the git blob `oid`, reading it from the object database
     /// on a miss.
     pub(crate) fn blob_id(&self, repo: &gix::Repository, oid: gix::ObjectId) -> Result<BlobId, GitError> {
-        if let Some(id) = self.ids.lock().expect("not poisoned").by_oid.get(&oid) {
+        if let Some(id) = lock(&self.ids).by_oid.get(&oid) {
             return Ok(*id);
         }
         let mut buf = Vec::new();
@@ -48,7 +49,7 @@ impl BlobCache {
             .map_err(err)?
             .ok_or_else(|| GitError::failed(format!("missing object {oid}")))?;
         let id = BlobId::of(&buf);
-        let mut ids = self.ids.lock().expect("not poisoned");
+        let mut ids = lock(&self.ids);
         ids.by_oid.insert(oid, id);
         ids.by_blob.insert(id, oid);
         Ok(id)
@@ -56,7 +57,7 @@ impl BlobCache {
 
     /// Size of `blob` if git has it, from the object header.
     pub(crate) fn odb_size(&self, repo: &gix::Repository, blob: BlobId) -> Result<Option<u64>, GitError> {
-        let oid = self.ids.lock().expect("not poisoned").by_blob.get(&blob).copied();
+        let oid = lock(&self.ids).by_blob.get(&blob).copied();
         let Some(oid) = oid else { return Ok(None) };
         Ok(repo.objects.try_header(&oid).map_err(err)?.map(|h| h.size))
     }
@@ -68,7 +69,7 @@ impl BlobCache {
         blob: BlobId,
         cap: u64,
     ) -> Result<Option<Vec<u8>>, GitError> {
-        let oid = self.ids.lock().expect("not poisoned").by_blob.get(&blob).copied();
+        let oid = lock(&self.ids).by_blob.get(&blob).copied();
         let Some(oid) = oid else { return Ok(None) };
         let mut buf = Vec::new();
         let found = repo.objects.try_find(&oid, &mut buf).map_err(err)?.is_some();

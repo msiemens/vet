@@ -62,6 +62,7 @@ use crate::git::list_files;
 use crate::language::{self, Language, Restore};
 use crate::lsp::dotnet;
 use crate::materialize::kept::Layout;
+use crate::sync::lock;
 use record::{Digest, Outcome, Record, StepRecord};
 use reuse::Reused;
 use tools::{Programs, Tools};
@@ -662,20 +663,12 @@ impl ToolRestorer {
         }
         let mut versions = Vec::new();
         for program in programs {
-            let known = self
-                .versions
-                .lock()
-                .unwrap_or_else(|p| p.into_inner())
-                .get(program)
-                .cloned();
+            let known = lock(&self.versions).get(program).cloned();
             let version = match known {
                 Some(version) => version,
                 None => {
                     let version = self.tools.version(program).await;
-                    self.versions
-                        .lock()
-                        .unwrap_or_else(|p| p.into_inner())
-                        .insert(program.to_owned(), version.clone());
+                    lock(&self.versions).insert(program.to_owned(), version.clone());
                     version
                 }
             };

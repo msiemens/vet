@@ -18,6 +18,7 @@ mod events;
 mod fetch;
 mod highlight;
 mod hosting;
+mod mutex;
 mod open;
 mod problems;
 mod projects;
@@ -246,10 +247,7 @@ impl Orchestrator {
     /// debug build has it.
     #[cfg(debug_assertions)]
     pub fn with_analysis_failing(self, path: &str, failures: Vec<Injected>) -> Self {
-        self.analysis_failures
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .insert(path.to_owned(), failures.into());
+        crate::mutex::lock(&self.analysis_failures).insert(path.to_owned(), failures.into());
         self
     }
 

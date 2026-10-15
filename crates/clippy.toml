@@ -7,4 +7,5 @@ disallowed-methods = [
     { path = "std::thread::spawn", reason = "blocking work goes through vet_infra::budget::Budget::blocking" },
     { path = "std::process::Command::new", reason = "processes are spawned by vet_infra::exec" },
     { path = "tokio::process::Command::new", reason = "processes are spawned by vet_infra::exec" },
+    { path = "std::sync::Mutex::lock", reason = "go through the crate's lock helper, which recovers from poisoning" },
 ]

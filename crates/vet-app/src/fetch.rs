@@ -4,11 +4,12 @@
 //! harmless: the review does not wait for it or depend on it.
 
 use std::collections::{HashMap, HashSet};
-use std::sync::{Mutex as StdMutex, PoisonError};
+use std::sync::Mutex as StdMutex;
 use std::time::Duration;
 
 use tokio::sync::Mutex;
 
+use crate::mutex::lock;
 use crate::platform::{Credential, PlatformKind, parse_remote};
 use crate::ports::{FetchAuth, Fetcher, GitError, RefTip, RefUpdate, RemoteInfo};
 use crate::progress::{TaskKind, Tasks};
@@ -51,7 +52,7 @@ impl<G: Fetcher> Fetch<G> {
     }
 
     fn fetched(&self) -> std::sync::MutexGuard<'_, (u64, HashMap<String, u64>)> {
-        self.fetched.lock().unwrap_or_else(PoisonError::into_inner)
+        lock(&self.fetched)
     }
 
     /// Now, for [`Fetch::delete_refs`] to keep what is fetched after it.
@@ -153,18 +154,12 @@ impl<G: Fetcher> Fetch<G> {
 
     /// Remembers that the remote refused the ref `destination` when asked for it alone.
     pub fn refused(&self, destination: &str) {
-        self.lost
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .insert(destination.to_owned());
+        lock(&self.lost).insert(destination.to_owned());
     }
 
     /// The remote refused the ref `destination` when asked for it alone before.
     pub fn lost(&self, destination: &str) -> bool {
-        self.lost
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .contains(destination)
+        lock(&self.lost).contains(destination)
     }
 
     /// Fetches every remote, one after the other, as one task; a remote that fails does not

@@ -50,7 +50,7 @@ impl Gate {
     }
 
     fn lock(&self) -> MutexGuard<'_, State> {
-        self.state.lock().expect("a gate is never held across a panic")
+        crate::mutex::lock(&self.state)
     }
 
     /// A permit, once all those asked for before are given out and one is free.

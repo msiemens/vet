@@ -27,6 +27,7 @@ use vet_semantic::ports::Readiness;
 
 use super::uri::path_of;
 use crate::exec::{Tail, command};
+use crate::sync::lock;
 
 pub(super) const REQUEST_TIMEOUT: Duration = Duration::from_secs(60);
 /// No server message for this long, none in progress: the server is done with what it was at.
@@ -165,7 +166,7 @@ struct Shared {
 
 impl Shared {
     fn describe(&self, error: String) -> String {
-        let tail = self.stderr.lock().expect("not poisoned");
+        let tail = lock(&self.stderr);
         if tail.is_empty() {
             error
         } else {
@@ -200,7 +201,7 @@ struct InFlight<'a> {
 impl Drop for InFlight<'_> {
     fn drop(&mut self) {
         // An answer takes the entry out first, and then there is nothing to cancel.
-        let unanswered = self.shared.pending.lock().expect("not poisoned").remove(&self.id);
+        let unanswered = lock(&self.shared.pending).remove(&self.id);
         if unanswered.is_some() {
             let _ = self
                 .outbox
@@ -276,7 +277,7 @@ impl Connection {
         let params = serde_json::to_value(params).map_err(|e| RequestError::fatal(Ending::Rejected, e.to_string()))?;
         let id = self.next_id.fetch_add(1, Ordering::Relaxed);
         let (tx, rx) = oneshot::channel();
-        self.shared.pending.lock().expect("not poisoned").insert(id, tx);
+        lock(&self.shared.pending).insert(id, tx);
         let _in_flight = InFlight {
             shared: &self.shared,
             outbox: &self.outbox,
@@ -333,7 +334,7 @@ impl Connection {
                 let notified = shared.changed.notified();
                 tokio::pin!(notified);
                 notified.as_mut().enable();
-                if shared.state.lock().expect("not poisoned").exited {
+                if lock(&shared.state).exited {
                     break;
                 }
                 notified.await;
@@ -345,7 +346,7 @@ impl Connection {
     }
 
     pub(super) fn with_state<T>(&self, f: impl FnOnce(&mut State) -> T) -> T {
-        f(&mut self.shared.state.lock().expect("not poisoned"))
+        f(&mut lock(&self.shared.state))
     }
 
     /// Waits until `ready` holds for the state, re-checking on every server
@@ -357,7 +358,7 @@ impl Connection {
             tokio::pin!(notified);
             notified.as_mut().enable();
             {
-                let state = self.shared.state.lock().expect("not poisoned");
+                let state = lock(&self.shared.state);
                 if ready(&state) {
                     return true;
                 }
@@ -369,7 +370,7 @@ impl Connection {
             let wake = deadline.min(tokio::time::Instant::now() + Duration::from_millis(100));
             let _ = tokio::time::timeout_at(wake, notified).await;
             if tokio::time::Instant::now() >= deadline {
-                return ready(&self.shared.state.lock().expect("not poisoned"));
+                return ready(&lock(&self.shared.state));
             }
         }
     }
@@ -388,7 +389,7 @@ impl Connection {
             tokio::pin!(notified);
             notified.as_mut().enable();
             let (doing, exited) = {
-                let state = self.shared.state.lock().expect("not poisoned");
+                let state = lock(&self.shared.state);
                 (state.doing(), state.exited)
             };
             if shown.as_ref() != Some(&doing) {
@@ -412,7 +413,7 @@ impl Connection {
                 tokio::pin!(notified);
                 notified.as_mut().enable();
                 {
-                    let state = shared.state.lock().expect("not poisoned");
+                    let state = lock(&shared.state);
                     if state.readiness() != seen {
                         return Some(state.readiness());
                     }
@@ -433,10 +434,7 @@ impl Connection {
         let _ = self.notify::<lsp_types::notification::Exit>(());
         let mut child = self.child.lock().await;
         let Some(child) = child.as_mut() else { return };
-        if tokio::time::timeout(Duration::from_secs(3), child.wait())
-            .await
-            .is_err()
-        {
+        if tokio::time::timeout(Duration::from_secs(3), child.wait()).await.is_err() {
             let _ = child.kill().await;
         }
     }
@@ -605,7 +603,7 @@ async fn read_loop(reader: impl AsyncRead + Unpin, shared: Arc<Shared>, outbox: 
                     break;
                 }
                 if method == "workspace/configuration" {
-                    let mut state = shared.state.lock().expect("not poisoned");
+                    let mut state = lock(&shared.state);
                     state.configuration_pulled = true;
                     state.touch();
                     drop(state);
@@ -620,9 +618,7 @@ async fn read_loop(reader: impl AsyncRead + Unpin, shared: Arc<Shared>, outbox: 
                 };
                 // The answer to a cancelled request (`RequestCancelled`, or a result that
                 // got there first) finds no entry: nobody is waiting for it.
-                let sender = id
-                    .as_i64()
-                    .and_then(|id| shared.pending.lock().expect("not poisoned").remove(&id));
+                let sender = id.as_i64().and_then(|id| lock(&shared.pending).remove(&id));
                 if let Some(tx) = sender {
                     let _ = tx.send(result);
                 }
@@ -630,8 +626,8 @@ async fn read_loop(reader: impl AsyncRead + Unpin, shared: Arc<Shared>, outbox: 
             (None, None) => {}
         }
     }
-    shared.pending.lock().expect("not poisoned").clear();
-    shared.state.lock().expect("not poisoned").exited = true;
+    lock(&shared.pending).clear();
+    lock(&shared.state).exited = true;
     shared.changed.notify_waiters();
 }
 
@@ -700,7 +696,7 @@ fn server_request(shared: &Shared, method: &str, params: &Value) -> Result<Value
 }
 
 fn notification(shared: &Shared, method: &str, params: &Value) {
-    let mut state = shared.state.lock().expect("not poisoned");
+    let mut state = lock(&shared.state);
     match method {
         "$/progress" => {
             state.progress(params);
@@ -740,7 +736,7 @@ fn notification(shared: &Shared, method: &str, params: &Value) {
 async fn collect_stderr(stderr: tokio::process::ChildStderr, shared: Arc<Shared>) {
     let mut lines = BufReader::new(stderr).lines();
     while let Ok(Some(line)) = lines.next_line().await {
-        shared.stderr.lock().expect("not poisoned").push(line);
+        lock(&shared.stderr).push(line);
     }
 }
 

@@ -34,6 +34,7 @@ use vet_semantic::symbols::enclosing;
 use vet_semantic::trace;
 
 use crate::acquisition::Acquisition;
+use crate::mutex::lock;
 use crate::ports::{BlobRead, BlobReader, GitRepo, LiveStore, Retainer, Store};
 use crate::revisions::Revisions;
 use crate::session::{RevisionView, SemanticSides, SessionError};
@@ -387,11 +388,11 @@ impl<G: BlobReader + Send + Sync + 'static, S: Store + Send + Sync + 'static> Ov
     fn text(&self, file: &RepoPath) -> Pin<Box<dyn Future<Output = Option<String>> + Send + '_>> {
         let file = file.clone();
         Box::pin(async move {
-            if let Some(read) = self.texts.lock().expect("not poisoned").get(&file) {
+            if let Some(read) = lock(&self.texts).get(&file) {
                 return read.clone();
             }
             let read = self.read(&file).await;
-            self.texts.lock().expect("not poisoned").insert(file, read.clone());
+            lock(&self.texts).insert(file, read.clone());
             read
         })
     }
@@ -577,21 +578,21 @@ where
     /// restore steps limit their analysis, after every change.
     pub fn observing(self, runtimes: Arc<RuntimeSink>, failing: Arc<FailureSink>) -> Self {
         {
-            let mut watched = self.watched.lock().expect("not poisoned");
+            let mut watched = lock(&self.watched);
             watched.sink = Some(runtimes);
             watched.failing = Some(failing);
         }
         let watched = self.watched.clone();
         self.configured(|semantic| {
             semantic.observed(Arc::new(move |servers| {
-                watched.lock().expect("not poisoned").pooled(&servers);
+                lock(&watched).pooled(&servers);
             }))
         })
     }
 
     /// What the servers of the revision on view are doing now.
     pub fn runtimes(&self) -> ServerRuntimes {
-        let watched = self.watched.lock().expect("not poisoned");
+        let watched = lock(&self.watched);
         ServerRuntimes {
             serial: watched.serial,
             runtimes: watched.runtimes(&self.semantic.pool().servers()),
@@ -612,7 +613,7 @@ where
     /// as long as a server runs on a tree whose restore failed, its analysis is limited, whatever
     /// the other side's restore did.
     pub fn restore_failures(&self) -> Vec<RestoreFailure> {
-        let watched = self.watched.lock().expect("not poisoned");
+        let watched = lock(&self.watched);
         watched.failures(&self.semantic.pool().servers())
     }
 
@@ -647,7 +648,7 @@ where
     /// The servers of `base` and `target` are those whose state is reported, unless a newer
     /// revision is on view.
     fn view(&self, revision: u32, base: Served, target: Served) {
-        let mut watched = self.watched.lock().expect("not poisoned");
+        let mut watched = lock(&self.watched);
         match &watched.sides {
             Some((at, ..)) if *at > revision => return,
             Some((at, b, t)) if *at == revision && *b == base && *t == target => return,
@@ -888,7 +889,7 @@ where
     }
 
     async fn project_languages(&self, view: &RevisionView<G, S>, revision: u32) -> Fallible<Vec<BackendId>> {
-        if let Some((at, languages)) = &*self.languages.lock().expect("not poisoned")
+        if let Some((at, languages)) = &*lock(&self.languages)
             && *at == revision
         {
             return Ok(languages.clone());
@@ -899,7 +900,7 @@ where
             .into_iter()
             .map(|(language, _)| language)
             .collect();
-        *self.languages.lock().expect("not poisoned") = Some((revision, languages.clone()));
+        *lock(&self.languages) = Some((revision, languages.clone()));
         Ok(languages)
     }
 

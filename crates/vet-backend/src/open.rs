@@ -8,7 +8,7 @@
 use std::ops::Deref;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex, MutexGuard, OnceLock, PoisonError, Weak};
+use std::sync::{Arc, Mutex, OnceLock, Weak};
 use std::time::{Duration, SystemTime};
 
 #[cfg(debug_assertions)]
@@ -45,6 +45,7 @@ use crate::caches::PersistentAnswers;
 use crate::error::{Error, Result};
 use crate::events::{Connection, edits_pending, settled};
 use crate::hosting::{Announcer, Hosting, Platforms};
+use crate::mutex::lock;
 use crate::screens::ReviewScreens;
 use crate::{LanguageServers, Live, Open, Orchestrator, PlatformAccounts, Semantic, start_servers_in_background};
 
@@ -76,12 +77,6 @@ struct Plan {
     subscribers: Subscribers<Connection>,
     /// The entry this is part of, for the servers a settled snapshot starts.
     entry: Arc<OnceLock<Weak<Open>>>,
-}
-
-/// The guard of `mutex`, whether or not a thread panicked while holding it: what these locks guard
-/// is the handle of a task, never left half-written.
-fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
-    mutex.lock().unwrap_or_else(PoisonError::into_inner)
 }
 
 /// The platform of `remote`: the host Vet knows by name, or one the viewer has an account for (a

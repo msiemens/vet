@@ -1,8 +1,8 @@
 //! The logic of the Tauri host that needs no window, so that it is tested with the workspace.
 
 // The host is no part of the backend's budget and process rules: it runs one backend child with
-// threads of its own that wait on it.
-#![allow(clippy::disallowed_methods)]
+// threads of its own that wait on it. Tests are allowed those too.
+#![cfg_attr(test, allow(clippy::disallowed_methods))]
 
 pub mod backend;
 pub mod credential_hosts;

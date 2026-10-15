@@ -42,6 +42,7 @@ impl<K: Hash + Eq + Clone> Cache<K> {
         }
     }
 
+    #[allow(clippy::disallowed_methods, reason = "the one place that locks a std mutex")]
     fn lock(&self) -> std::sync::MutexGuard<'_, Inner<K>> {
         self.inner.lock().unwrap_or_else(PoisonError::into_inner)
     }

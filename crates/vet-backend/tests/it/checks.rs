@@ -2,6 +2,8 @@
 //! backend refreshes the checks of the changeset on view itself and pushes them, against a local
 //! server that answers as GitHub does.
 
+#![allow(clippy::disallowed_methods)] // The fake GitHub's requests are answered from a thread of its own.
+
 use std::path::Path;
 use std::sync::Mutex;
 use std::time::Duration;

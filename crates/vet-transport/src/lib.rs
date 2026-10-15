@@ -11,7 +11,7 @@ pub mod shell;
 
 use std::collections::HashMap;
 use std::io;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use std::time::{Duration, Instant};
 
 use futures_util::{SinkExt, StreamExt};
@@ -26,6 +26,13 @@ use vet_protocol::{
 };
 
 const HELLO_TIMEOUT: Duration = Duration::from_secs(5);
+
+/// The guard of `mutex`, whether or not a thread panicked while holding it: what these locks guard
+/// is the table of in-flight handlers, never left half-written.
+#[allow(clippy::disallowed_methods, reason = "the one place that locks a std mutex")]
+fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
+    mutex.lock().unwrap_or_else(PoisonError::into_inner)
+}
 
 /// Pushes events to the connection a request arrived on. A handler that opens a
 /// project keeps a clone and sends that project's events through it; sends after
@@ -239,7 +246,7 @@ impl Running {
         handler: impl FnOnce(Finish) -> F,
     ) {
         // Held across the spawn, so a task that ends at once finds its entry.
-        let mut table = self.0.lock().expect("not poisoned");
+        let mut table = lock(&self.0);
         let task = tokio::spawn(handler(Finish {
             table: self.0.clone(),
             id,
@@ -251,7 +258,7 @@ impl Running {
     /// Aborts the handler of `id`; whether it was still running.
     fn cancel(&self, id: u32) -> bool {
         // The lock is released before the abort: a handler's drop takes it too.
-        let handle = self.0.lock().expect("not poisoned").remove(&id);
+        let handle = lock(&self.0).remove(&id);
         match handle {
             Some(handle) => {
                 handle.abort();
@@ -264,7 +271,7 @@ impl Running {
 
 impl Drop for Running {
     fn drop(&mut self) {
-        let handles: Vec<_> = self.0.lock().expect("not poisoned").drain().map(|(_, h)| h).collect();
+        let handles: Vec<_> = lock(&self.0).drain().map(|(_, h)| h).collect();
         for handle in handles {
             handle.abort();
         }
@@ -290,7 +297,7 @@ impl Drop for Finish {
             });
         }
         // A panic must not turn into an abort here.
-        let mut table = self.table.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        let mut table = lock(&self.table);
         table.remove(&self.id);
     }
 }

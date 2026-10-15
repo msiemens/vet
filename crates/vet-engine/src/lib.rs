@@ -23,6 +23,9 @@
 //! Keys form a DAG: a computation may wait on flights of other keys, never on its
 //! own. That is a bug, and it panics instead of hanging.
 
+// Tests build their probes with locks of their own.
+#![cfg_attr(test, allow(clippy::disallowed_methods))]
+
 use std::collections::{BTreeMap, HashMap};
 use std::future::{Future, poll_fn};
 use std::hash::Hash;
@@ -150,6 +153,7 @@ type Observe<K> = Box<dyn Fn(&K) -> Option<Arc<dyn Task>> + Send + Sync>;
 type Outcome<K> = Result<Computed<<K as Kind>::Value>, <K as Kind>::Error>;
 type Work<K> = Pin<Box<dyn Future<Output = Outcome<K>> + Send>>;
 
+#[allow(clippy::disallowed_methods, reason = "the one place that locks a std mutex")]
 fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
     mutex.lock().unwrap_or_else(PoisonError::into_inner)
 }

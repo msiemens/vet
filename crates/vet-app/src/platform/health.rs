@@ -3,7 +3,9 @@
 //! request happened to meet its failure.
 
 use std::collections::HashMap;
-use std::sync::{Mutex, PoisonError};
+use std::sync::Mutex;
+
+use crate::mutex::lock;
 
 use super::host::PlatformKind;
 use super::model::PlatformError;
@@ -60,11 +62,7 @@ impl Health {
 
     /// How `account` stands, if it was called.
     pub fn standing(&self, account: &str) -> Option<Standing> {
-        self.standing
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .get(account)
-            .cloned()
+        lock(&self.standing).get(account).cloned()
     }
 
     /// `call`, a call to the platform of `account`, with its outcome noted. A pull request or a
@@ -82,11 +80,7 @@ impl Health {
             Err(e) => Some(Standing::Failing(e.clone())),
         };
         if let Some(now) = now {
-            let before = self
-                .standing
-                .lock()
-                .unwrap_or_else(PoisonError::into_inner)
-                .insert(account.to_owned(), now.clone());
+            let before = lock(&self.standing).insert(account.to_owned(), now.clone());
             (self.heard)(&Outcome {
                 account: account.to_owned(),
                 kind,
