@@ -17,7 +17,7 @@ use std::time::Duration;
 
 use crate::common::{git, handler, init, repo_with, write};
 use tempfile::TempDir;
-use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender, unbounded_channel};
+use tokio::sync::mpsc::{Receiver, UnboundedReceiver, UnboundedSender, unbounded_channel};
 use tokio::task::JoinHandle;
 use vet_app::ports::{Degraded, Dirty, Scanner, Store, WatchEvent, Watcher};
 use vet_app::progress::Tasks;
@@ -88,7 +88,7 @@ async fn fixture_of(repo: TempDir) -> Fixture {
 struct Client {
     handler: Arc<Orchestrator>,
     events: Events,
-    inbox: UnboundedReceiver<ServerMessage>,
+    inbox: Receiver<ServerMessage>,
 }
 
 impl Client {

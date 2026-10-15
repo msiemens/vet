@@ -250,7 +250,7 @@ mod tests {
     use std::path::Path;
     use std::time::Duration;
 
-    use tokio::sync::mpsc::UnboundedReceiver;
+    use tokio::sync::mpsc::Receiver;
     use vet_protocol::{
         AnchorState, BackendSettings, ChangesetKey, CommentAt, EditChoice, Lens, Manifest, NonTextKind, PipelineAction,
         ProjectId, Response, ReviewFilter, SearchPattern, SearchScope, SearchSide, Secret, ServerMessage, Side,
@@ -706,7 +706,7 @@ mod tests {
 
     struct Listener {
         connection: Connection,
-        inbox: UnboundedReceiver<ServerMessage>,
+        inbox: Receiver<ServerMessage>,
     }
 
     impl Listener {

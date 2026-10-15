@@ -12,7 +12,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use tokio::sync::Mutex;
-use tokio::sync::mpsc::UnboundedReceiver;
+use tokio::sync::mpsc::Receiver;
 use vet_backend::{Orchestrator, open_store};
 use vet_protocol::{
     Event, Notification, Request, Response, ServerMessage, ServerOutcome, ServerPhase, ServerRuntime, ServerRuntimes,
@@ -83,7 +83,7 @@ while True:
 struct Rig {
     client: Arc<Client>,
     /// What the backend told the client.
-    inbox: Mutex<UnboundedReceiver<ServerMessage>>,
+    inbox: Mutex<Receiver<ServerMessage>>,
     project: u32,
     /// While this file exists the server exits at once.
     broken: PathBuf,

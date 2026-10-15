@@ -9,7 +9,7 @@ use std::process::Command;
 use std::time::Duration;
 
 use base64::Engine;
-use tokio::sync::mpsc::UnboundedReceiver;
+use tokio::sync::mpsc::Receiver;
 use vet_app::ports::Store;
 use vet_backend::{Config, Orchestrator, open_store};
 use vet_protocol::{
@@ -72,7 +72,7 @@ fn text(n: usize, edited: &[usize]) -> String {
 struct Client {
     handler: std::sync::Arc<Orchestrator>,
     events: Events,
-    inbox: UnboundedReceiver<ServerMessage>,
+    inbox: Receiver<ServerMessage>,
     /// What `ReviewStarted` events said, which `event` and `no_event` skip.
     started: Vec<ReviewInfo>,
     /// What `EditsPending` events said, which `event` and `no_event` skip too.

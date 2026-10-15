@@ -8,7 +8,7 @@ use std::process::Command;
 use std::sync::Arc;
 use std::time::Duration;
 
-use tokio::sync::mpsc::UnboundedReceiver;
+use tokio::sync::mpsc::Receiver;
 use vet_backend::{Config, Orchestrator, open_store};
 use vet_protocol::{
     Diagnostic, Failure, LocationRows, Locations, ProjectId, Request, Response, ServerInfo, ServerMessage, ServerState,
@@ -86,7 +86,7 @@ pub fn find(text: &str, needle: &str, nth: usize, inside: u32) -> (u32, u32) {
 pub struct Client {
     pub handler: Arc<Orchestrator>,
     pub events: Events,
-    pub inbox: UnboundedReceiver<ServerMessage>,
+    pub inbox: Receiver<ServerMessage>,
 }
 
 impl Client {

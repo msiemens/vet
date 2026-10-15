@@ -240,7 +240,7 @@ mod tests {
     }
 
     /// How many announcements that threads changed are waiting for the connection.
-    fn threads_changed(inbox: &mut tokio::sync::mpsc::UnboundedReceiver<ServerMessage>) -> usize {
+    fn threads_changed(inbox: &mut tokio::sync::mpsc::Receiver<ServerMessage>) -> usize {
         std::iter::from_fn(|| inbox.try_recv().ok())
             .filter(|m| {
                 matches!(

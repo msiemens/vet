@@ -8,7 +8,7 @@ use std::path::Path;
 use std::sync::Mutex;
 use std::time::Duration;
 
-use tokio::sync::mpsc::UnboundedReceiver;
+use tokio::sync::mpsc::Receiver;
 use vet_backend::Config;
 use vet_protocol::{
     ChangesetKey, CiState, CommitChecks, Event, PipelineAction, ProjectId, Request, Response, ServerMessage,
@@ -54,7 +54,7 @@ async fn open_review(client: &Client, repo: &Path) -> ProjectId {
 
 /// The next `ChecksChanged` event of `project`, waiting up to `within`.
 async fn next_checks(
-    inbox: &mut UnboundedReceiver<ServerMessage>,
+    inbox: &mut Receiver<ServerMessage>,
     project: ProjectId,
     within: Duration,
 ) -> Option<(Vec<CommitChecks>, Option<String>, Option<u32>)> {

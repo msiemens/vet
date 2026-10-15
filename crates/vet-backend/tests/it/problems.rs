@@ -8,7 +8,7 @@ use std::process::Command;
 use std::sync::Arc;
 use std::time::Duration;
 
-use tokio::sync::mpsc::UnboundedReceiver;
+use tokio::sync::mpsc::Receiver;
 use vet_backend::{Orchestrator, open_store};
 use vet_protocol::{ChangesetKey, Diagnostic, DiagnosticOrigin, Event, ProjectId, Request, ServerMessage, Severity};
 
@@ -67,7 +67,7 @@ fn rust_repo() -> tempfile::TempDir {
 
 /// The next `FileDiagnostics` event of `project` that `want` accepts, waiting up to `within`.
 async fn next_diagnostics(
-    inbox: &mut UnboundedReceiver<ServerMessage>,
+    inbox: &mut Receiver<ServerMessage>,
     project: ProjectId,
     within: Duration,
     want: fn(&[Diagnostic], bool) -> bool,
@@ -129,7 +129,7 @@ fn has_new(diagnostics: &[Diagnostic], compared: bool) -> bool {
 
 /// Drains the inbox; whether no compared `FileDiagnostics` of `project` for `src/lib.rs` was
 /// waiting. The task that would push one has ended, so what is waiting is all there is.
-fn no_comparison(inbox: &mut UnboundedReceiver<ServerMessage>, project: ProjectId) -> bool {
+fn no_comparison(inbox: &mut Receiver<ServerMessage>, project: ProjectId) -> bool {
     let mut quiet = true;
     while let Ok(message) = inbox.try_recv() {
         if let ServerMessage::Event {

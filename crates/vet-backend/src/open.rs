@@ -691,7 +691,7 @@ mod tests {
     use crate::{Config, open_store};
 
     /// The announcements of task `id` that are waiting for the connection.
-    fn announced(inbox: &mut tokio::sync::mpsc::UnboundedReceiver<ServerMessage>, id: u32) -> Vec<vet_protocol::Task> {
+    fn announced(inbox: &mut tokio::sync::mpsc::Receiver<ServerMessage>, id: u32) -> Vec<vet_protocol::Task> {
         let mut found = Vec::new();
         while let Ok(message) = inbox.try_recv() {
             if let ServerMessage::Event {

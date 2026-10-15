@@ -8,7 +8,7 @@ use std::process::Command;
 use std::sync::Arc;
 use std::time::Duration;
 
-use tokio::sync::mpsc::UnboundedReceiver;
+use tokio::sync::mpsc::Receiver;
 #[cfg(debug_assertions)]
 use vet_backend::Injected;
 use vet_backend::{Orchestrator, open_store};
@@ -79,7 +79,7 @@ fn rust_repo() -> tempfile::TempDir {
 
 /// The next `FileSymbols` event of `project`, waiting up to `within`.
 async fn next_symbols(
-    inbox: &mut UnboundedReceiver<ServerMessage>,
+    inbox: &mut Receiver<ServerMessage>,
     project: ProjectId,
     within: Duration,
 ) -> Option<FileSymbols> {
@@ -106,7 +106,7 @@ async fn next_symbols(
 
 /// Drains the inbox; whether no `FileSymbols` of `project` for `path` was waiting. The task that
 /// would push one has ended, so what is waiting is all there is.
-fn no_more_symbols(inbox: &mut UnboundedReceiver<ServerMessage>, project: ProjectId, path: &str) -> bool {
+fn no_more_symbols(inbox: &mut Receiver<ServerMessage>, project: ProjectId, path: &str) -> bool {
     let mut quiet = true;
     while let Ok(message) = inbox.try_recv() {
         if let ServerMessage::Event {
@@ -126,7 +126,7 @@ fn no_more_symbols(inbox: &mut UnboundedReceiver<ServerMessage>, project: Projec
 /// The next `FileSymbols` event of `project` for `path`, waiting up to `within`.
 #[cfg(debug_assertions)]
 async fn next_symbols_for(
-    inbox: &mut UnboundedReceiver<ServerMessage>,
+    inbox: &mut Receiver<ServerMessage>,
     project: ProjectId,
     path: &str,
     within: Duration,

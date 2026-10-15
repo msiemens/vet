@@ -216,20 +216,20 @@ impl Platform for Client {
 
 #[cfg(test)]
 mod tests {
-    use tokio::sync::mpsc::UnboundedReceiver;
+    use tokio::sync::mpsc::Receiver;
     use vet_protocol::ServerMessage;
     use vet_transport::Events;
 
     use super::*;
 
-    fn listener() -> (Subscribers<Connection>, UnboundedReceiver<ServerMessage>) {
+    fn listener() -> (Subscribers<Connection>, Receiver<ServerMessage>) {
         let (events, inbox) = Events::channel();
         let subscribers = Subscribers::default();
         subscribers.subscribe(Connection(events));
         (subscribers, inbox)
     }
 
-    fn heard(inbox: &mut UnboundedReceiver<ServerMessage>) -> Vec<Event> {
+    fn heard(inbox: &mut Receiver<ServerMessage>) -> Vec<Event> {
         std::iter::from_fn(|| inbox.try_recv().ok())
             .filter_map(|m| match m {
                 ServerMessage::Event { event } => Some(event),
