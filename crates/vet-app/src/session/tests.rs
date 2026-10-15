@@ -4501,6 +4501,60 @@ async fn the_review_state_of_pull_requests_is_listed_for_the_sources_asked() {
     assert!(matches!(reviews[1], RowReview::Open { version: 1, .. }), "{reviews:?}");
 }
 
+#[tokio::test]
+async fn a_pull_request_no_longer_listed_keeps_its_refs_while_it_is_on_view_or_its_review_is_open() {
+    let fx = Fixture::open(&[("a.txt", "one\n")], &[("a.txt", "one\n")]).await;
+    fetch_pull_request_7(&fx.git, &[("a.txt", "one\n")], "pr1", &[("a.txt", "two\n")]);
+    let remote = RemoteKey {
+        host: "github.com".into(),
+        path: "acme/app".into(),
+    };
+    // A pull request that was never opened: nothing keeps it.
+    let other = (remote.clone(), 8);
+    assert_eq!(
+        fx.session.prunable(vec![other.clone()]).await.unwrap(),
+        [other.clone()],
+        "never opened"
+    );
+
+    // The changeset on view keeps its refs.
+    let revision = fx.session.open_changeset(pull_request_7()).await.unwrap().unwrap();
+    assert_eq!(
+        fx.session
+            .prunable(vec![(remote.clone(), 7), other.clone()])
+            .await
+            .unwrap(),
+        [other.clone()],
+        "on view"
+    );
+
+    // An open review keeps them while another changeset is on view.
+    fx.session.set_seen(revision, "a.txt", &[0], true).await.unwrap();
+    fx.session.open_changeset(Source::WorkingTree).await.unwrap();
+    assert_eq!(
+        fx.session
+            .prunable(vec![(remote.clone(), 7), other.clone()])
+            .await
+            .unwrap(),
+        [other.clone()],
+        "a review is open"
+    );
+
+    // Finished and off view, nothing keeps them.
+    fx.session.open_changeset(pull_request_7()).await.unwrap();
+    fx.session.finish_review().await.unwrap();
+    fx.session.open_changeset(Source::WorkingTree).await.unwrap();
+    assert_eq!(
+        fx.session
+            .prunable(vec![(remote.clone(), 7), other.clone()])
+            .await
+            .unwrap(),
+        [(remote.clone(), 7), other],
+        "the review is finished"
+    );
+}
+
+
 /// How far the working tree's review is, as the list says it.
 async fn tree_progress(session: &LiveSession<FakeGit, MemStore>) -> Option<ReviewSummary> {
     match session.changesets().await.unwrap().rows[0].review {

@@ -2,7 +2,7 @@
 //! branches and the remote ones worth reviewing, each with what Vet knows of its review.
 
 use super::{LiveSession, Result};
-use crate::changeset::{CommitId, Source};
+use crate::changeset::{CommitId, RemoteKey, Source};
 use crate::ports::{BranchInfo, GitRepo, LiveStore, SourceReview};
 use crate::review::ReviewSummary;
 
@@ -99,6 +99,12 @@ fn row_review(state: &SourceReview) -> RowReview {
     }
 }
 
+/// Whether a changeset is kept although nothing else asks for it: it is the one on view, or its
+/// review is open, so its commits and content may still be needed.
+fn kept(source: &Source, review: &RowReview, on_view: &Source) -> bool {
+    source == on_view || matches!(review, RowReview::Open { .. })
+}
+
 impl<G: GitRepo + Sync, S: LiveStore + Sync> LiveSession<G, S> {
     /// The working tree, every local branch, and the remote branches worth reviewing.
     pub async fn changesets(&self) -> Result<ChangesetList> {
@@ -156,7 +162,7 @@ impl<G: GitRepo + Sync, S: LiveStore + Sync> LiveSession<G, S> {
                 Some(state) => (row_review(state), state.open_threads),
                 None => (RowReview::None, 0),
             };
-            let keep = source == on_view || matches!(review, RowReview::Open { .. });
+            let keep = kept(&source, &review, &on_view);
             // The default branch holds what the others are compared with: it has something to
             // review only while it has commits that are not pushed yet.
             let unpushed = if !branch.remote && default_branch.as_deref() == Some(branch.name.as_str()) {
@@ -210,6 +216,28 @@ impl<G: GitRepo + Sync, S: LiveStore + Sync> LiveSession<G, S> {
             .source_reviews(self.repo.clone(), sources)
             .await?;
         Ok(states.iter().map(row_review).collect())
+    }
+
+    /// The pull requests of `unlisted`, which were fetched before and a listing no longer has,
+    /// whose refs may be dropped: neither the one on view nor one whose review is open, which may
+    /// still need their commits before the platform can be asked again.
+    pub async fn prunable(&self, unlisted: Vec<(RemoteKey, u64)>) -> Result<Vec<(RemoteKey, u64)>> {
+        let sources: Vec<Source> = unlisted
+            .iter()
+            .map(|(remote, number)| Source::PullRequest {
+                remote: remote.clone(),
+                number: *number,
+            })
+            .collect();
+        let reviews = self.reviews_of(&sources).await?;
+        let on_view = self.published.read().source.clone();
+        Ok(unlisted
+            .into_iter()
+            .zip(sources)
+            .zip(reviews)
+            .filter(|((_, source), review)| !kept(source, review, &on_view))
+            .map(|((pull_request, _), _)| pull_request)
+            .collect())
     }
 
     async fn divergence(&self, branch: &BranchInfo, default: &CommitId) -> Result<Divergence> {

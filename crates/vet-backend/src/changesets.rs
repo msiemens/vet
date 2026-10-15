@@ -12,7 +12,6 @@ use vet_app::platform::{
 };
 use vet_app::ports::{ChangesetStore, LiveStore, ReviewWrites};
 use vet_app::pull_request::{self, FetchError, PullRequestList, hosted_repositories, hosts_to_ask_about};
-use vet_app::session::RowReview;
 use vet_infra::clock::unix_now;
 use vet_infra::store::SqliteStore;
 use vet_mapping as mapping;
@@ -346,21 +345,7 @@ async fn prune_pull_request_refs(open: &Ready, list: &PullRequestList, since: Fe
     if unlisted.is_empty() {
         return Ok(());
     }
-    let sources: Vec<Source> = unlisted
-        .iter()
-        .map(|(remote, number)| Source::PullRequest {
-            remote: remote.clone(),
-            number: *number,
-        })
-        .collect();
-    let reviews = open.session.reviews_of(&sources).await?;
-    let on_view = open.session.source().await;
-    let doomed: Vec<_> = unlisted
-        .into_iter()
-        .zip(sources.iter().zip(reviews))
-        .filter(|(_, (source, review))| **source != on_view && !matches!(review, RowReview::Open { .. }))
-        .map(|(pull_request, _)| pull_request)
-        .collect();
+    let doomed = open.session.prunable(unlisted).await?;
     let deleted = pull_request::delete_pull_request_refs(&open.open.fetch, &doomed, since).await?;
     if !deleted.is_empty() {
         tracing::info!(
