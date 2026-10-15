@@ -78,6 +78,7 @@ mod views;
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::fmt;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use tokio::sync::Mutex;
 use vet_core::content::{EntryKind, RepoPath, Snapshot, SnapshotId, SnapshotStatus};
@@ -230,6 +231,9 @@ pub struct LiveSession<G, S: LiveStore> {
     /// What a copy ahead of a review reads and writes through: the session's acquisition over
     /// handles of their own, so that it draws on what nobody waits for.
     copying: Arc<Acquisition<G, S>>,
+    /// Whether `follow` is handling a settled result right now, read by whoever waits for the
+    /// session to go quiet.
+    settling_busy: Arc<AtomicBool>,
 }
 
 /// The commit that merged a tip into a branch, how many commits the merge brought in and how many
@@ -400,6 +404,7 @@ impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> L
             revisions: Arc::default(),
             exchange: Mutex::new(()),
             lines: Engine::new(Limits::entries(KEPT_LINE_DELTAS)),
+            settling_busy: Arc::default(),
         }
     }
 
@@ -915,6 +920,13 @@ impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> L
         self.revisions.clone()
     }
 
+    /// Whether the settle loop is handling a settled result right now: a client that waits for
+    /// the session to go quiet must not answer in the gap between the result and what it
+    /// announces.
+    pub fn settling_busy(&self) -> bool {
+        self.settling_busy.load(Ordering::SeqCst)
+    }
+
     fn set_degraded(&self, degraded: Option<Degraded>) {
         *lock(&self.degraded) = degraded;
     }
@@ -1098,7 +1110,12 @@ impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> L
     ) {
         self.set_degraded(settling.degraded());
         loop {
-            let scan = match settling.next_settled(&self.acquisition).await {
+            self.settling_busy.store(false, Ordering::SeqCst);
+            let settled = settling.next_settled(&self.acquisition).await;
+            // Handling what settled is work too, even when it is not a scan: a client waiting for
+            // quiet must not answer between the result and the event it announces.
+            self.settling_busy.store(true, Ordering::SeqCst);
+            let scan = match settled {
                 Ok(Settled::Tree(scan)) => scan,
                 Ok(Settled::Quiet) => {
                     on_quiet();

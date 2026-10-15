@@ -125,6 +125,11 @@ impl Tasks {
         tasks
     }
 
+    /// Whether any task is running now, without copying them.
+    pub fn any_running(&self) -> bool {
+        !self.running_map().is_empty()
+    }
+
     /// Runs `work` as a task: finished when it succeeds, failed with its error
     /// when it does not, and finished if it is dropped half-way.
     pub async fn track<T, E: Display>(

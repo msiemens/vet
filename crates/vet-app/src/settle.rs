@@ -5,12 +5,45 @@
 
 use std::collections::BTreeSet;
 use std::pin::pin;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::task::Poll;
 
+use tokio::sync::Notify;
 use vet_core::content::{RepoPath, SnapshotId};
 
 use crate::acquisition::Acquisition;
 use crate::ports::{Clock, Degraded, Dirty, GitError, Millis, Scan, Scanner, WatchEvent, Watcher};
+
+/// A request to reconcile the working tree now, for a client that must not miss an edit the
+/// watcher has not delivered yet. The settle loop takes it when it next looks for work.
+#[derive(Default)]
+pub struct SettleFlush {
+    requested: AtomicBool,
+    wake: Notify,
+}
+
+impl SettleFlush {
+    /// Asks the settle loop to reconcile now.
+    pub fn request(&self) {
+        self.requested.store(true, Ordering::SeqCst);
+        self.wake.notify_one();
+    }
+
+    /// Whether a reconcile was asked for and not taken yet.
+    pub fn requested(&self) -> bool {
+        self.requested.load(Ordering::SeqCst)
+    }
+
+    /// Takes the request; whether there was one.
+    fn take(&self) -> bool {
+        self.requested.swap(false, Ordering::SeqCst)
+    }
+
+    fn notified(&self) -> impl std::future::Future<Output = ()> + '_ {
+        self.wake.notified()
+    }
+}
 
 pub struct Settler {
     debounce_ms: u64,
@@ -94,6 +127,8 @@ pub struct Settling<W, C> {
     reporting_edits: bool,
     /// What [`Settled::Edits`] last said.
     edits_reported: bool,
+    /// A client's request to reconcile now, taken on the next look for work.
+    flush: Option<Arc<SettleFlush>>,
 }
 
 impl<W: Watcher, C: Clock> Settling<W, C> {
@@ -108,7 +143,15 @@ impl<W: Watcher, C: Clock> Settling<W, C> {
             untouched_since: None,
             reporting_edits: false,
             edits_reported: false,
+            flush: None,
         }
+    }
+
+    /// Takes [`SettleFlush`] requests: a client that must not miss an edit the watcher has not
+    /// delivered yet asks for a reconcile, and the next look for work makes one.
+    pub fn flushable(mut self, flush: Arc<SettleFlush>) -> Self {
+        self.flush = Some(flush);
+        self
     }
 
     /// Also resolves with [`Settled::Edits`] whenever edits start or stop waiting to settle.
@@ -212,7 +255,16 @@ impl<W: Watcher, C: Clock> Settling<W, C> {
             .deadline()
             .map(|deadline| Box::pin(self.clock.sleep_until(deadline)));
         let mut quiet = quiet_deadline.map(|deadline| Box::pin(self.clock.sleep_until(deadline)));
+        let flush = self.flush.clone();
+        let mut flushed = flush.as_ref().map(|flush| Box::pin(flush.notified()));
         std::future::poll_fn(|cx| {
+            if let Some(flushed) = flushed.as_mut()
+                && flushed.as_mut().poll(cx).is_ready()
+                && let Some(flush) = &flush
+                && flush.take()
+            {
+                return Poll::Ready(Wake::Event(WatchEvent::MustRescan));
+            }
             if let Poll::Ready(event) = event.as_mut().poll(cx) {
                 return Poll::Ready(Wake::Event(event));
             }

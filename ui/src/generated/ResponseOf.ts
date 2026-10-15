@@ -32,6 +32,7 @@ export const RESPONSE_TAG = {
   openChangeset: "done",
   finishReview: "reviewFinished",
   tasks: "tasks",
+  waitForQuiet: "done",
   versions: "versions",
   changedSince: "changedFiles",
   commits: "commits",

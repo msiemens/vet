@@ -159,6 +159,17 @@ impl Client {
         self.edits.clone()
     }
 
+    /// Waits until an `EditsPending` event says that an edit waits to settle.
+    async fn edits_wait(&mut self) {
+        for _ in 0..200 {
+            if self.edits_pending().last() == Some(&true) {
+                return;
+            }
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+        panic!("no edit ever waited to settle");
+    }
+
     /// The reviews that `ReviewStarted` events have announced so far.
     fn started(&mut self) -> Vec<ReviewInfo> {
         while let Ok(message) = self.inbox.try_recv() {
@@ -815,6 +826,30 @@ async fn binary_items_serve_the_bytes_of_either_side() {
         ErrorKind::Outdated
     );
     assert!(blob(0, "a.txt", Side::Base).await.is_err());
+}
+
+#[tokio::test]
+async fn waiting_for_quiet_waits_for_the_settle_that_is_pending() {
+    let fx = fixture(&[("a.txt", &text(40, &[]))], &[]).await;
+    let mut client = Client::new(&fx.handler);
+    let project = open(&client, fx.repo.path()).await;
+    client.manifest(project).await;
+
+    write(fx.repo.path(), "a.txt", &text(40, &[1]));
+    client.edits_wait().await;
+    let waiting = client.call(Request::WaitForQuiet { project });
+    tokio::pin!(waiting);
+    assert!(
+        tokio::time::timeout(Duration::from_millis(50), &mut waiting)
+            .await
+            .is_err(),
+        "answered while an edit still waited to settle"
+    );
+    let answer = tokio::time::timeout(Duration::from_secs(10), waiting)
+        .await
+        .expect("the wait never answered")
+        .unwrap();
+    assert!(matches!(answer, Response::Done));
 }
 
 #[tokio::test]

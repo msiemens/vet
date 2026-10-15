@@ -153,9 +153,8 @@ pub struct Orchestrator {
     /// so the retry can be exercised. A debug build only, and empty except in the tests' own builds.
     #[cfg(debug_assertions)]
     analysis_failures: Arc<analysis::Failures>,
-    /// For tests: how often each project's background tasks were started and how many run now, so a
-    /// test can wait for a task's end instead of for time to pass. A debug build only.
-    #[cfg(debug_assertions)]
+    /// How often each project's background tasks were started and how many run now: what
+    /// `Request::WaitForQuiet` waits on, and what the tests watch.
     background: Arc<open::Background>,
 }
 
@@ -221,7 +220,6 @@ impl Orchestrator {
             projects: Projects::default(),
             #[cfg(debug_assertions)]
             analysis_failures: Arc::default(),
-            #[cfg(debug_assertions)]
             background: Arc::default(),
         }
     }
@@ -440,6 +438,7 @@ impl Orchestrator {
             Request::ChangePipeline { project, action } => reply(self.change_pipeline(project, action)),
             Request::OpenChangeset { project, changeset } => reply(self.open_changeset(project, changeset)),
             Request::Tasks { project } => reply(self.tasks(project)),
+            Request::WaitForQuiet { project } => reply(self.wait_for_quiet(project)),
             Request::FinishReview { project } => reply(self.finish_review(project)),
             Request::Versions { project } => reply(self.versions(project)),
             Request::ChangedSince { project, from } => reply(self.changed_since(project, from)),
@@ -751,7 +750,6 @@ fn start_servers_in_background(open: Arc<Open>) {
             booted.start_servers().await;
         }
     };
-    #[cfg(debug_assertions)]
     let task = crate::open::tracked(&open, "servers", task);
     tokio::spawn(task);
 }

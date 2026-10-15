@@ -126,6 +126,7 @@ pub fn effect(request: &Request) -> Effect {
         | Request::CheckLog { .. }
         | Request::PipelineSteps { .. }
         | Request::Tasks { .. }
+        | Request::WaitForQuiet { .. }
         | Request::Versions { .. }
         | Request::ChangedSince { .. }
         | Request::Commits { .. }
@@ -384,6 +385,7 @@ mod tests {
             },
             Request::FinishReview { project },
             Request::Tasks { project },
+            Request::WaitForQuiet { project },
             Request::Versions { project },
             Request::ChangedSince { project, from: 1 },
             Request::Commits { project },

@@ -197,6 +197,14 @@ pub enum Request {
     Tasks {
         project: ProjectId,
     },
+    /// Waits until the project has no background work running or pending: no scan, diff, fetch,
+    /// restore, server start or indexing, no symbols, problems, checks or prefetch, and no edit
+    /// waiting to settle. The working tree is looked at as it is now, so an edit the watcher has
+    /// not delivered yet is part of what is waited for. The answer is a point in time: work a
+    /// later request or an edit starts is not waited for. Answers with `Response::Done`.
+    WaitForQuiet {
+        project: ProjectId,
+    },
     /// The versions of the open review, oldest first; none while browsing, as versions are
     /// recorded only while a review is open. Answers with `Response::Versions`.
     Versions {

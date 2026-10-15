@@ -11,7 +11,6 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, OnceLock, Weak};
 use std::time::{Duration, SystemTime};
 
-#[cfg(debug_assertions)]
 use std::collections::HashMap;
 
 use tokio::sync::OnceCell;
@@ -24,7 +23,7 @@ use vet_app::progress::Tasks;
 use vet_app::registry::{Resident, Subscribers};
 use vet_app::semantics::{Links, Semantics};
 use vet_app::session::RevisionView;
-use vet_app::settle::Settling;
+use vet_app::settle::{SettleFlush, Settling};
 use vet_core::content::RepoPath;
 use vet_infra::budget::{Budget, Budgets, FETCH_IO};
 use vet_infra::clock::{TokioClock, TokioDetach, unix_now};
@@ -111,18 +110,14 @@ impl TaskSlot {
     }
 }
 
-#[cfg(debug_assertions)]
 type Counts = HashMap<(ProjectId, &'static str), (usize, usize)>;
 
 /// How often each background task of each project was started, and how many of them are running
-/// now. For tests: the end of a task is the marker that the work it would have caused is over, and
-/// waiting for that marker is a barrier where waiting for time to pass would not be. A debug build
-/// only.
-#[cfg(debug_assertions)]
+/// now. The live count is what `Request::WaitForQuiet` waits on; the started count is for the
+/// tests that watch one kind end.
 #[derive(Default)]
 pub(crate) struct Background(Mutex<Counts>);
 
-#[cfg(debug_assertions)]
 impl Background {
     /// Counts a task of `kind` that is starting; dropping the guard says it ended, whether it
     /// returned or was aborted.
@@ -140,21 +135,29 @@ impl Background {
         }
     }
 
-    /// How often the task was started and how many are running now.
+    /// How many background tasks of the project are running now.
+    pub(crate) fn live(&self, project: ProjectId) -> usize {
+        lock(&self.0)
+            .iter()
+            .filter(|((at, _), _)| *at == project)
+            .map(|(_, (_, live))| live)
+            .sum()
+    }
+
+    /// How often the task was started and how many are running now. For tests only.
+    #[cfg(debug_assertions)]
     pub(crate) fn counts(&self, project: ProjectId, kind: &'static str) -> (usize, usize) {
         lock(&self.0).get(&(project, kind)).copied().unwrap_or_default()
     }
 }
 
 /// The end of one counted background task.
-#[cfg(debug_assertions)]
 pub(crate) struct LiveTask {
     background: Arc<Background>,
     project: ProjectId,
     kind: &'static str,
 }
 
-#[cfg(debug_assertions)]
 impl Drop for LiveTask {
     fn drop(&mut self) {
         if let Some(counts) = lock(&self.background.0).get_mut(&(self.project, self.kind)) {
@@ -163,9 +166,7 @@ impl Drop for LiveTask {
     }
 }
 
-/// `fut` as a background task of `kind` that the tests can see end. A debug build only; elsewhere
-/// the future is handed back as it is.
-#[cfg(debug_assertions)]
+/// `fut` as a background task of `kind` that `Request::WaitForQuiet`, and the tests, can see end.
 pub(crate) fn tracked<F: std::future::Future>(
     open: &Arc<Open>,
     kind: &'static str,
@@ -176,11 +177,6 @@ pub(crate) fn tracked<F: std::future::Future>(
         let _live = live;
         fut.await
     }
-}
-
-#[cfg(not(debug_assertions))]
-pub(crate) fn tracked<F: std::future::Future>(_: &Arc<Open>, _: &'static str, fut: F) -> F {
-    fut
 }
 
 /// What one open project runs on.
@@ -229,10 +225,10 @@ pub(crate) struct Wired {
     /// A debug build only.
     #[cfg(debug_assertions)]
     pub(crate) analysis_failures: Arc<crate::analysis::Failures>,
-    /// For tests: how often each background task of this project was started and how many run now.
-    /// A debug build only.
-    #[cfg(debug_assertions)]
+    /// How often each background task of this project was started and how many run now.
     pub(crate) background: Arc<Background>,
+    /// A client's request to reconcile the working tree now, taken by the settle loop.
+    pub(crate) settle_flush: Arc<SettleFlush>,
 }
 
 impl Wired {
@@ -250,6 +246,18 @@ impl Wired {
     /// Whether edits of the working tree wait to settle into a snapshot.
     pub(crate) fn edits_waiting(&self) -> bool {
         self.edits_waiting.load(Ordering::SeqCst)
+    }
+
+    /// Whether the project has no background work running or pending: no task of its own, no
+    /// progress task of the session, no edit waiting to settle, no settled result the session has
+    /// yet to announce, and no reconcile a client asked for and the settle loop has not made.
+    pub(crate) fn quiet(&self) -> bool {
+        let settling = self.booted_now().is_none_or(|booted| !booted.session.settling_busy());
+        !self.tasks.any_running()
+            && self.background.live(self.plan.id) == 0
+            && !self.edits_waiting()
+            && settling
+            && !self.settle_flush.requested()
     }
 
     /// The session if it has scanned successfully already.
@@ -392,7 +400,8 @@ impl Wired {
             Some(session.settled_snapshot().await),
         )
         .quiet_after(quiet.as_millis() as u64)
-        .reporting_edits();
+        .reporting_edits()
+        .flushable(self.settle_flush.clone());
         let task = {
             let (session, subscribers, entry) = (session.clone(), subscribers.clone(), entry.clone());
             let edit_subscribers = subscribers.clone();
@@ -581,6 +590,22 @@ impl Orchestrator {
         })
     }
 
+    /// Waits until the project has no background work running or pending, then answers. The answer
+    /// is a point in time: work a later request or an edit starts is not waited for.
+    pub(crate) async fn wait_for_quiet(&self, id: ProjectId) -> Result<Response> {
+        let open = self.find(id).await?;
+        // The first scan is background work too, and starting the watcher is what makes a later
+        // edit visible; wait for it before asking whether the project is quiet.
+        let _ = open.booted().await;
+        // An edit the watcher has not delivered yet is work the client would otherwise miss: have
+        // the settle loop look at the working tree as it is now.
+        open.settle_flush.request();
+        while !open.quiet() {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+        Ok(Response::Done)
+    }
+
     /// Unsubscribes the connection; the last one to leave closes the project.
     pub(crate) async fn close(&self, id: ProjectId, from: &Connection) -> Result<()> {
         if let Ok(open) = self.projects.find(id).await {
@@ -647,8 +672,8 @@ impl Orchestrator {
             answers: self.answers.clone(),
             #[cfg(debug_assertions)]
             analysis_failures: self.analysis_failures.clone(),
-            #[cfg(debug_assertions)]
             background: self.background.clone(),
+            settle_flush: Arc::default(),
         })
     }
 }
