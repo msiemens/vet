@@ -45,7 +45,7 @@ use vet_app::registry::{Entry, Registry, Subscribers};
 use vet_app::semantics::Semantics;
 use vet_app::servers::Servers;
 use vet_app::session::LiveSession;
-use vet_infra::budget::Budgets;
+use vet_infra::budget::{Budget, Budgets, REVIEW_IO};
 use vet_infra::clock::unix_now;
 use vet_infra::credentials::HttpValidator;
 use vet_infra::exec::TokioRunner;
@@ -181,12 +181,14 @@ impl Orchestrator {
         let store = store.budgeted(budgets.review_io.clone());
         let backends: Arc<[Backend]> = lsp_config::defaults().into();
         let languages = backends.iter().map(|b| b.config().backend.clone()).collect();
-        let resolver = ToolResolver::new(store.dir().to_owned())
-            .probing(budgets.probes.clone())
-            .reading(budgets.semantic_io.clone());
+        let resolver = ToolResolver::new(store.dir().to_owned(), &budgets);
         let referenced = Arc::new(StoreReferences(store.clone()));
-        let trees = KeptTrees::new(store.dir().join("materialized"), Limits::default(), referenced)
-            .budgeted(budgets.semantic_io.clone());
+        let trees = KeptTrees::new(
+            store.dir().join("materialized"),
+            Limits::default(),
+            referenced,
+            budgets.semantic_io.clone(),
+        );
         let process_subscribers = Subscribers::<Connection>::default();
         let needed = process_subscribers.clone();
         let accounts = Arc::new(Accounts::new(
@@ -759,9 +761,11 @@ fn scan_in_background(open: Arc<Open>) {
 }
 
 /// Opens the store and collects what its retention, as the settings in the store have it, no
-/// longer keeps. A failed collection only leaves the garbage for the next start.
+/// longer keeps. A failed collection only leaves the garbage for the next start. The collection
+/// runs before the orchestrator exists, so it draws on a budget of its own; the store is moved
+/// onto the orchestrator's shared review budget right after.
 pub async fn open_store(dir: &Path) -> std::result::Result<SqliteStore, String> {
-    let store = SqliteStore::open(dir).await.map_err(|e| e.0)?;
+    let store = SqliteStore::open(dir, Budget::new(REVIEW_IO)).await.map_err(|e| e.0)?;
     let retention = Retention {
         closed_changesets: store
             .backend_settings()

@@ -95,12 +95,12 @@ mod tests {
             finished_review_days: 7,
         };
         {
-            let store = SqliteStore::open(dir.path()).await.unwrap();
+            let store = SqliteStore::for_test(dir.path()).await.unwrap();
             assert_eq!(store.backend_settings().await.unwrap(), Settings::default());
             store.set_backend_settings(changed).await.unwrap();
             store.set_backend_settings(changed).await.unwrap();
         }
-        let store = SqliteStore::open(dir.path()).await.unwrap();
+        let store = SqliteStore::for_test(dir.path()).await.unwrap();
         assert_eq!(store.backend_settings().await.unwrap(), changed);
     }
 
@@ -115,7 +115,7 @@ mod tests {
     async fn preferences_are_kept_per_scope_replaced_forgotten_and_kept_across_opens() {
         let dir = tempfile::tempdir().unwrap();
         {
-            let store = SqliteStore::open(dir.path()).await.unwrap();
+            let store = SqliteStore::for_test(dir.path()).await.unwrap();
             assert!(store.preferences(None).await.unwrap().is_empty());
             set(&store, None, "theme", Some("\"dark\"")).await;
             set(&store, None, "theme", Some("\"light\"")).await;
@@ -125,7 +125,7 @@ mod tests {
             set(&store, None, "wrap", None).await;
             set(&store, None, "never kept", None).await;
         }
-        let store = SqliteStore::open(dir.path()).await.unwrap();
+        let store = SqliteStore::for_test(dir.path()).await.unwrap();
         let pairs = |list: Vec<(String, String)>| list.into_iter().map(|(k, v)| format!("{k}={v}")).collect::<Vec<_>>();
         assert_eq!(pairs(store.preferences(None).await.unwrap()), ["theme=\"light\""]);
         assert_eq!(

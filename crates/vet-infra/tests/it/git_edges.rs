@@ -88,7 +88,7 @@ impl Store for NoStore {
 async fn a_repository_without_a_commit_has_a_tree_to_scan_and_no_history() {
     let dir = repo();
     std::fs::write(dir.path().join("new.txt"), "n\n").unwrap();
-    let repo = GixRepo::new(dir.path());
+    let repo = GixRepo::for_test(dir.path());
 
     let scan = repo.scan(Dirty::All).await.unwrap();
     assert_eq!(scan.snapshot.entries.keys().collect::<Vec<_>>(), [&path("new.txt")]);
@@ -103,7 +103,7 @@ async fn a_repository_without_a_commit_has_a_tree_to_scan_and_no_history() {
 async fn a_repository_without_a_commit_or_a_file_scans_to_an_empty_snapshot() {
     let dir = repo();
 
-    let scan = GixRepo::new(dir.path()).scan(Dirty::All).await.unwrap();
+    let scan = GixRepo::for_test(dir.path()).scan(Dirty::All).await.unwrap();
 
     assert!(scan.snapshot.entries.is_empty());
 }
@@ -115,7 +115,7 @@ async fn a_detached_head_is_no_branch_and_still_has_a_history() {
     commit(p, "a.txt", "one");
     let two = commit(p, "a.txt", "two");
     git(p, &["checkout", "-q", "--detach"]);
-    let repo = GixRepo::new(p);
+    let repo = GixRepo::for_test(p);
 
     assert_eq!(repo.head().await.unwrap(), two);
     let branches = repo.branches().await.unwrap();
@@ -132,7 +132,7 @@ async fn a_branch_is_found_local_or_remote_tracking_and_otherwise_named_in_the_e
     let m2 = commit(p, "a.txt", "m2");
     git(p, &["update-ref", "refs/remotes/origin/feature", &m2.0]);
     git(p, &["update-ref", "refs/remotes/origin/only-remote", &m2.0]);
-    let repo = GixRepo::new(p);
+    let repo = GixRepo::for_test(p);
 
     assert_eq!(repo.branch_tip("feature").await.unwrap(), Some(m1));
     assert_eq!(repo.branch_tip("origin/feature").await.unwrap(), Some(m2.clone()));
@@ -151,7 +151,7 @@ async fn a_branch_whose_commit_cannot_be_read_is_a_git_failure_not_a_missing_bra
     let p = dir.path();
     commit(p, "a.txt", "m1");
     std::fs::write(p.join(".git/refs/heads/broken"), format!("{}\n", "ab".repeat(20))).unwrap();
-    let repo = GixRepo::new(p);
+    let repo = GixRepo::for_test(p);
 
     assert!(repo.branch_tip("broken").await.is_err());
     assert_eq!(repo.branch_tip("nope").await.unwrap(), None);
@@ -172,7 +172,7 @@ async fn remote_branches_are_listed_unless_a_local_branch_follows_them_at_the_sa
         p,
         &["symbolic-ref", "refs/remotes/origin/HEAD", "refs/remotes/origin/main"],
     );
-    let repo = GixRepo::new(p);
+    let repo = GixRepo::for_test(p);
 
     let branches = repo.branches().await.unwrap();
 
@@ -202,7 +202,7 @@ async fn a_dangling_origin_head_is_not_the_default_reference() {
         &["symbolic-ref", "refs/remotes/origin/HEAD", "refs/remotes/origin/gone"],
     );
 
-    let default = GixRepo::new(p).default_reference().await.unwrap();
+    let default = GixRepo::for_test(p).default_reference().await.unwrap();
 
     assert_eq!(default.as_deref(), Some("refs/heads/master"));
 }
@@ -220,7 +220,7 @@ async fn a_commit_message_with_crlf_has_a_clean_subject_and_a_body() {
     .unwrap();
     git(p, &["commit", "-q", "--cleanup=verbatim", "-F", "msg"]);
     let id = CommitId(git(p, &["rev-parse", "HEAD"]));
-    let repo = GixRepo::new(p);
+    let repo = GixRepo::for_test(p);
 
     let info = repo.commit_info(&id).await.unwrap();
     let detail = repo.commit_detail(&id).await.unwrap();
@@ -242,7 +242,7 @@ async fn a_subject_runs_to_the_end_of_the_first_paragraph_and_a_commit_without_a
     git(p, &["commit", "-q", "-m", "wrapped\nsubject", "-m", "the body"]);
     let wrapped = CommitId(git(p, &["rev-parse", "HEAD"]));
     let plain = commit(p, "b.txt", "plain");
-    let repo = GixRepo::new(p);
+    let repo = GixRepo::for_test(p);
 
     assert_eq!(repo.commit_info(&wrapped).await.unwrap().subject, "wrapped subject");
     assert_eq!(repo.commit_detail(&wrapped).await.unwrap().body.trim_end(), "the body");
@@ -306,7 +306,7 @@ async fn a_file_name_that_is_not_utf8_keeps_its_bytes_through_snapshots_diffs_an
     let first = commit_raw(p, b"d\xffir/old\xfe.txt", &content);
     remove_raw(p, b"d\xffir/old\xfe.txt");
     let second = commit_raw(p, b"d\xffir/new\xfd.txt", &content);
-    let repo = GixRepo::new(p);
+    let repo = GixRepo::for_test(p);
 
     let before = repo.commit_snapshot(&first).await.unwrap();
     let after = repo.commit_snapshot(&second).await.unwrap();
@@ -412,7 +412,7 @@ async fn a_conflicted_path_is_one_entry_with_what_the_worktree_holds() {
     let held = std::fs::read(p.join("a.txt")).unwrap();
     assert!(String::from_utf8_lossy(&held).contains("<<<<<<<"));
 
-    let scan = GixRepo::new(p).scan(Dirty::All).await.unwrap();
+    let scan = GixRepo::for_test(p).scan(Dirty::All).await.unwrap();
 
     assert_eq!(scan.snapshot.entries.len(), 1);
     assert_eq!(scan.snapshot.entries[&path("a.txt")].blob, BlobId::of(&held));

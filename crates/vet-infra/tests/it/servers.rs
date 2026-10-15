@@ -12,6 +12,7 @@ use tempfile::TempDir;
 use vet_app::ports::{ServerOrigin, ServerResolver, ServerState, Tsserver};
 use vet_app::servers::Servers;
 use vet_core::content::RepoPath;
+use vet_infra::budget::Budgets;
 use vet_infra::lsp::{LspLauncher, NoRestore, config};
 use vet_infra::restore::ToolRestorer;
 use vet_infra::servers::ToolResolver;
@@ -30,7 +31,7 @@ struct Setup {
 
 async fn setup() -> Setup {
     let data = tempfile::tempdir().unwrap();
-    let store = SqliteStore::open(data.path()).await.unwrap();
+    let store = SqliteStore::for_test(data.path()).await.unwrap();
     Setup { data, store }
 }
 
@@ -39,14 +40,14 @@ fn servers(setup: &Setup) -> Arc<Servers<ToolResolver, SqliteStore>> {
         .map(|l| BackendId(l.into()))
         .to_vec();
     Arc::new(Servers::new(
-        ToolResolver::new(setup.data.path().to_owned()),
+        ToolResolver::new(setup.data.path().to_owned(), &Budgets::default()),
         setup.store.clone(),
         languages,
     ))
 }
 
 async fn install(setup: &Setup, project: &Path, language: &str) -> Vec<String> {
-    let resolver = ToolResolver::new(setup.data.path().to_owned());
+    let resolver = ToolResolver::new(setup.data.path().to_owned(), &Budgets::default());
     let id = BackendId(language.into());
     let lines = Mutex::new(Vec::new());
     let progress = |line: &str| lines.lock().unwrap().push(line.to_owned());
@@ -86,7 +87,7 @@ async fn typescript_installs_and_uses_the_project_typescript() {
     let output = install(&setup, project.path(), "typescript").await;
     assert!(!output.is_empty());
     // The latest `typescript` is TypeScript 7, which has no tsserver.js: the fallback serves.
-    let resolver = ToolResolver::new(setup.data.path().to_owned());
+    let resolver = ToolResolver::new(setup.data.path().to_owned(), &Budgets::default());
     let ServerState::Found(found) = resolver
         .resolve(
             &BackendId("typescript".into()),
@@ -104,7 +105,7 @@ async fn typescript_installs_and_uses_the_project_typescript() {
         found.tsserver
     );
 
-    let launcher = LspLauncher::new(servers(&setup), NoRestore);
+    let launcher = LspLauncher::new(servers(&setup), NoRestore, &Budgets::default());
     let server = launcher
         .start(
             project.path(),
@@ -154,7 +155,7 @@ async fn the_projects_tsserver_runs_only_where_analysis_may_execute_project_code
     std::fs::write(project.path().join("tsconfig.json"), "{}").unwrap();
     std::fs::write(project.path().join("a.ts"), "export const x = 1;\n").unwrap();
 
-    let launcher = LspLauncher::new(servers(&setup), NoRestore);
+    let launcher = LspLauncher::new(servers(&setup), NoRestore, &Budgets::default());
     // The typescript beside the server on PATH serves, or none does and the start fails.
     let _ = launcher
         .start(
@@ -203,12 +204,12 @@ async fn the_projects_angular_language_service_runs_only_where_analysis_may_exec
     std::fs::write(project.path().join("angular.json"), "{}").unwrap();
     std::fs::write(project.path().join("tsconfig.json"), "{}").unwrap();
     std::fs::write(project.path().join("a.html"), "<p>{{ x }}</p>\n").unwrap();
-    ToolResolver::new(setup.data.path().to_owned())
+    ToolResolver::new(setup.data.path().to_owned(), &Budgets::default())
         .install(&BackendId("angular".into()), &|_| {})
         .await
         .expect("installs");
 
-    let launcher = LspLauncher::new(servers(&setup), NoRestore);
+    let launcher = LspLauncher::new(servers(&setup), NoRestore, &Budgets::default());
     // The service is loaded when a template is asked about; the project's one is no service, so
     // the answers do not matter.
     for (policy, runs) in [(AnalysisPolicy::LIMITED, false), (AnalysisPolicy::EXECUTING, true)] {
@@ -243,7 +244,7 @@ async fn csharp_installs_and_starts() {
     assert!(restore.status.success(), "{}", String::from_utf8_lossy(&restore.stdout));
     install(&setup, project.path(), "csharp").await;
 
-    let launcher = LspLauncher::new(servers(&setup), NoRestore);
+    let launcher = LspLauncher::new(servers(&setup), NoRestore, &Budgets::default());
     let server = launcher
         .start(
             project.path(),
@@ -322,7 +323,7 @@ async fn csharp_resolves_packages_in_a_copy_that_took_the_working_trees_restore_
     std::fs::write(copy.path().join("Program.cs"), program).unwrap();
     install(&setup, donor.path(), "csharp").await;
 
-    let restorer = ToolRestorer::new().reusing(donor.path().to_owned());
+    let restorer = ToolRestorer::new(&Budgets::default()).reusing(donor.path().to_owned());
     let policy = AnalysisPolicy::EXECUTING;
     let backend = config::roslyn();
     for dir in [donor.path(), copy.path()] {
@@ -331,7 +332,7 @@ async fn csharp_resolves_packages_in_a_copy_that_took_the_working_trees_restore_
     }
     assert!(copy.path().join("obj/project.assets.json").is_file());
 
-    let launcher = LspLauncher::new(servers(&setup), NoRestore);
+    let launcher = LspLauncher::new(servers(&setup), NoRestore, &Budgets::default());
     let server = launcher
         .start(copy.path(), Tree::Immutable, &backend, policy, &Unwatched)
         .await
@@ -368,7 +369,7 @@ async fn python_installs_and_starts() {
     .unwrap();
     install(&setup, project.path(), "python").await;
 
-    let launcher = LspLauncher::new(servers(&setup), NoRestore);
+    let launcher = LspLauncher::new(servers(&setup), NoRestore, &Budgets::default());
     let server = launcher
         .start(
             project.path(),

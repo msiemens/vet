@@ -28,7 +28,7 @@ use vet_semantic::ports::{Backend, BackendId, LaunchError, ServerIdentity};
 
 use super::client_capabilities;
 use super::setup;
-use crate::budget::{Budget, Budgets, PROBES, SEMANTIC_IO};
+use crate::budget::{Budget, Budgets};
 use crate::exec::{Host, is_file};
 use crate::language::{self, Install, Language, SchemaClient, UserFile};
 use crate::paths::hash_of_file;
@@ -147,24 +147,18 @@ pub struct Identities {
 const TOOLCHAINS_KEPT: usize = 256;
 
 impl Identities {
-    pub fn new(user: UserEnv) -> Self {
+    /// Reads files and runs probes on `budgets`.
+    pub fn new(user: UserEnv, budgets: &Budgets) -> Self {
         Self {
             user,
             binaries: Mutex::default(),
             versions: Mutex::default(),
             toolchains: Engine::new(Limits::entries(TOOLCHAINS_KEPT)),
             generations: Mutex::default(),
-            semantic_io: Budget::new(SEMANTIC_IO),
-            probes: Budget::new(PROBES),
+            semantic_io: budgets.semantic_io.clone(),
+            probes: budgets.probes.clone(),
             session: session(),
         }
-    }
-
-    /// Reads files and runs probes on `budgets`.
-    pub fn budgeted(mut self, budgets: &Budgets) -> Self {
-        self.semantic_io = budgets.semantic_io.clone();
-        self.probes = budgets.probes.clone();
-        self
     }
 
     /// Runs `work` on the semantic lane's blocking threads.
@@ -544,10 +538,13 @@ mod tests {
         }
 
         fn identities(&self) -> Identities {
-            Identities::new(UserEnv {
-                home: Some(self.world.path().join("home")),
-                vars: self.vars.clone(),
-            })
+            Identities::new(
+                UserEnv {
+                    home: Some(self.world.path().join("home")),
+                    vars: self.vars.clone(),
+                },
+                &Budgets::default(),
+            )
         }
 
         async fn fingerprint(&self) -> Hash {

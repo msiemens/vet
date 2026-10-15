@@ -26,7 +26,7 @@ use vet_app::semantics::{Links, Semantics};
 use vet_app::session::RevisionView;
 use vet_app::settle::Settling;
 use vet_core::content::RepoPath;
-use vet_infra::budget::Budgets;
+use vet_infra::budget::{Budget, Budgets, FETCH_IO};
 use vet_infra::clock::{TokioClock, TokioDetach, unix_now};
 use vet_infra::git::GixRepo;
 use vet_infra::language;
@@ -367,7 +367,7 @@ impl Wired {
         let id = *id;
         // Watching starts before the initial scan, so no edit falls between them.
         let watcher = FsWatcher::open(repo, *poll).map_err(|e| Error::Internal(e.to_string()))?;
-        let git = GixRepo::new(repo).budgeted(budgets.review_io.clone());
+        let git = GixRepo::new(repo, budgets.review_io.clone());
         // The copy ahead of a review is work nobody waits for: it draws on a budget of its own,
         // never on the review's.
         let session = Arc::new(
@@ -431,15 +431,12 @@ impl Wired {
             git.budgeted(budgets.semantic_io.clone()),
             store.budgeted(budgets.semantic_io.clone()),
         ));
-        let restorer = ToolRestorer::new()
-            .budgeted(budgets)
+        let restorer = ToolRestorer::new(budgets)
             .reusing(repo.clone())
             .reporting(self.tasks.clone());
         let mut semantics = Semantics::new(
             Materialize::new(reading.clone(), self.trees.clone()),
-            LspLauncher::new(servers.clone(), restorer)
-                .budgeted(budgets)
-                .reporting(self.tasks.clone()),
+            LspLauncher::new(servers.clone(), restorer, budgets).reporting(self.tasks.clone()),
             repo.clone(),
             backends.to_vec(),
             Links {
@@ -613,7 +610,7 @@ impl Orchestrator {
         Ok(Wired {
             // A fetch holds its thread for as long as the network takes, so it has a budget of
             // its own: it must not take the review's threads, nor the semantic lane's.
-            fetch: Fetch::new(GixRepo::new(&repo), tasks.clone()),
+            fetch: Fetch::new(GixRepo::new(&repo, Budget::new(FETCH_IO)), tasks.clone()),
             accounts: self.accounts.clone(),
             platforms: self.platforms.clone(),
             _announcer: announcer,

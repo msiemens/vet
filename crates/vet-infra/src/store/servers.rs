@@ -42,7 +42,7 @@ mod tests {
     async fn a_custom_path_is_per_language_replaced_removed_and_kept_across_opens() {
         let dir = tempfile::tempdir().unwrap();
         {
-            let store = SqliteStore::open(dir.path()).await.unwrap();
+            let store = SqliteStore::for_test(dir.path()).await.unwrap();
             store
                 .set_custom_server_path("rust".into(), Some("/a/ra".into()))
                 .await
@@ -56,7 +56,7 @@ mod tests {
                 .await
                 .unwrap();
         }
-        let store = SqliteStore::open(dir.path()).await.unwrap();
+        let store = SqliteStore::for_test(dir.path()).await.unwrap();
         assert_eq!(
             store.custom_server_path("rust".into()).await.unwrap().as_deref(),
             Some("/b/ra")

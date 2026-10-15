@@ -6,7 +6,7 @@ use std::path::Path;
 use std::pin::Pin;
 use std::time::Duration;
 
-use crate::budget::{Budget, PROBES, RESTORES};
+use crate::budget::Budget;
 use crate::exec::{Captured, capture};
 
 pub(super) type BoxFuture<'a, T> = Pin<Box<dyn Future<Output = T> + Send + 'a>>;
@@ -35,15 +35,6 @@ pub(super) trait Tools: Send + Sync {
 pub(super) struct Programs {
     pub probes: Budget,
     pub restores: Budget,
-}
-
-impl Default for Programs {
-    fn default() -> Self {
-        Self {
-            probes: Budget::new(PROBES),
-            restores: Budget::new(RESTORES),
-        }
-    }
 }
 
 impl Tools for Programs {

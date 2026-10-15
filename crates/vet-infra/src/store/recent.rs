@@ -52,7 +52,7 @@ mod tests {
     async fn the_list_keeps_its_order_and_times_across_opens() {
         let dir = tempfile::tempdir().unwrap();
         {
-            let store = SqliteStore::open(dir.path()).await.unwrap();
+            let store = SqliteStore::for_test(dir.path()).await.unwrap();
             assert!(store.recent_projects().await.unwrap().is_empty());
             store
                 .set_recent_projects(vec![project("/b", 3), project("/a", 2), project("/c", 1)])
@@ -63,7 +63,7 @@ mod tests {
                 .await
                 .unwrap();
         }
-        let store = SqliteStore::open(dir.path()).await.unwrap();
+        let store = SqliteStore::for_test(dir.path()).await.unwrap();
         assert_eq!(
             store.recent_projects().await.unwrap(),
             [project("/c", 9), project("/b", 3)]

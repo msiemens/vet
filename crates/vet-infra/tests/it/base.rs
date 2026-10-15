@@ -64,7 +64,7 @@ fn fixture() -> Fixture {
 #[tokio::test]
 async fn the_merge_base_is_where_the_branches_diverged() {
     let fx = fixture();
-    let repo = GixRepo::new(fx.dir.path());
+    let repo = GixRepo::for_test(fx.dir.path());
     assert_eq!(repo.merge_base("main", &fx.f2).await.unwrap(), fx.m1);
     assert_eq!(repo.merge_base("feature", &fx.f2).await.unwrap(), fx.f2);
     assert_eq!(
@@ -82,7 +82,7 @@ async fn the_merge_base_is_where_the_branches_diverged() {
 async fn the_first_parent_range_is_what_the_tip_has_beyond_the_base_oldest_first() {
     let fx = fixture();
     let p = fx.dir.path();
-    let repo = GixRepo::new(p);
+    let repo = GixRepo::for_test(p);
     let f1 = CommitId(git(p, &["rev-parse", "HEAD~1"]));
     assert_eq!(
         repo.first_parent_range(&fx.m1, &fx.f2).await.unwrap(),
@@ -102,7 +102,7 @@ async fn the_first_parent_range_is_what_the_tip_has_beyond_the_base_oldest_first
 async fn the_default_reference_is_origin_head_else_main_or_master_else_none() {
     let fx = fixture();
     let p = fx.dir.path();
-    let repo = GixRepo::new(p);
+    let repo = GixRepo::for_test(p);
     assert_eq!(
         repo.default_reference().await.unwrap().as_deref(),
         Some("refs/heads/main")
@@ -121,14 +121,14 @@ async fn the_default_reference_is_origin_head_else_main_or_master_else_none() {
     let bare = tempfile::tempdir().unwrap();
     git(bare.path(), &["init", "-q", "-b", "trunk"]);
     commit(bare.path(), "a.txt", "a");
-    assert_eq!(GixRepo::new(bare.path()).default_reference().await.unwrap(), None);
+    assert_eq!(GixRepo::for_test(bare.path()).default_reference().await.unwrap(), None);
 }
 
 #[tokio::test]
 async fn unresolvable_bases_have_user_facing_errors() {
     let fx = fixture();
     let p = fx.dir.path();
-    let repo = GixRepo::new(p);
+    let repo = GixRepo::for_test(p);
     assert_eq!(
         repo.merge_base("nope", &fx.f2).await.unwrap_err(),
         GitError::UnknownRevision("unknown branch or revision nope".into())
@@ -147,7 +147,7 @@ async fn unresolvable_bases_have_user_facing_errors() {
 #[tokio::test]
 async fn commits_resolve_by_full_id_abbreviation_and_revision() {
     let fx = fixture();
-    let repo = GixRepo::new(fx.dir.path());
+    let repo = GixRepo::for_test(fx.dir.path());
     assert_eq!(repo.resolve_commit(&fx.m2.0).await.unwrap(), Some(fx.m2.clone()));
     assert_eq!(repo.resolve_commit(&fx.m2.0[..8]).await.unwrap(), Some(fx.m2.clone()));
     assert_eq!(repo.resolve_commit("main").await.unwrap(), Some(fx.m2.clone()));
@@ -157,7 +157,7 @@ async fn commits_resolve_by_full_id_abbreviation_and_revision() {
 #[tokio::test]
 async fn the_branches_are_sorted_by_name_with_the_checked_out_one_marked() {
     let fx = fixture();
-    let repo = GixRepo::new(fx.dir.path());
+    let repo = GixRepo::for_test(fx.dir.path());
 
     let branches = repo.branches().await.unwrap();
 
@@ -178,7 +178,7 @@ async fn the_branches_are_sorted_by_name_with_the_checked_out_one_marked() {
 #[tokio::test]
 async fn commits_behind_follows_the_history() {
     let fx = fixture();
-    let repo = GixRepo::new(fx.dir.path());
+    let repo = GixRepo::for_test(fx.dir.path());
 
     assert_eq!(repo.commits_behind(&fx.f2, &fx.m1, 100).await.unwrap(), 2);
     assert_eq!(repo.commits_behind(&fx.f2, &fx.f2, 100).await.unwrap(), 0);
@@ -198,7 +198,7 @@ async fn commits_behind_follows_the_history() {
 async fn the_default_branch_is_the_one_origin_head_names_else_main_or_master() {
     let fx = fixture();
     let p = fx.dir.path();
-    let repo = GixRepo::new(p);
+    let repo = GixRepo::for_test(p);
     assert_eq!(repo.default_branch().await.unwrap().as_deref(), Some("main"));
 
     git(p, &["update-ref", "refs/remotes/origin/develop", "main"]);
@@ -226,5 +226,5 @@ async fn the_default_branch_is_the_one_origin_head_names_else_main_or_master() {
     let bare = tempfile::tempdir().unwrap();
     git(bare.path(), &["init", "-q", "-b", "trunk"]);
     commit(bare.path(), "a.txt", "a");
-    assert_eq!(GixRepo::new(bare.path()).default_branch().await.unwrap(), None);
+    assert_eq!(GixRepo::for_test(bare.path()).default_branch().await.unwrap(), None);
 }

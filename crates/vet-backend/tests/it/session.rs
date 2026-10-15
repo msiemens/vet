@@ -575,7 +575,7 @@ async fn mark_edit_settle_remap_and_revert() {
 
 /// Whether the content store in `data` holds `content`, waiting up to 10 s for it.
 async fn stored(data: &Path, content: &str) -> bool {
-    let store = vet_infra::store::SqliteStore::open(data).await.unwrap();
+    let store = vet_infra::store::SqliteStore::for_test(data).await.unwrap();
     let blob = vet_core::content::BlobId::of(content.as_bytes());
     for _ in 0..200 {
         if store.missing_blobs(vec![blob]).await.unwrap().is_empty() {

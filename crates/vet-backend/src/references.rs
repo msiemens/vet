@@ -57,7 +57,7 @@ mod tests {
     #[tokio::test]
     async fn the_tree_of_an_open_changesets_base_survives_a_collection_that_takes_the_idle_others() {
         let data = tempfile::tempdir().unwrap();
-        let store = SqliteStore::open(data.path()).await.unwrap();
+        let store = SqliteStore::for_test(data.path()).await.unwrap();
         let commit = CommitId("abc123".into());
         let version = Version {
             n: 1,
@@ -86,7 +86,7 @@ mod tests {
             max_idle: Duration::ZERO,
             ..Limits::default()
         };
-        let trees = KeptTrees::new(
+        let trees = KeptTrees::for_test(
             data.path().join("materialized"),
             limits,
             std::sync::Arc::new(StoreReferences(store)),

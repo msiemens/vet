@@ -63,9 +63,9 @@ impl Fixture {
     }
 
     async fn session(&self) -> Session {
-        let store = SqliteStore::open(self.data.path()).await.unwrap();
+        let store = SqliteStore::for_test(self.data.path()).await.unwrap();
         let root = self.repo.path().to_str().unwrap().to_owned();
-        LiveSession::open(GixRepo::new(self.repo.path()), store, root, clock)
+        LiveSession::open(GixRepo::for_test(self.repo.path()), store, root, clock)
             .await
             .unwrap()
     }

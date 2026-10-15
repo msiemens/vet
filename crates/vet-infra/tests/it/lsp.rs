@@ -11,6 +11,7 @@ use std::time::Duration;
 
 use tempfile::TempDir;
 use vet_core::content::RepoPath;
+use vet_infra::budget::Budgets;
 use vet_infra::exec::dotnet_env;
 use vet_infra::lsp::{BinaryLocator, LspLauncher, NoRestore, config};
 use vet_semantic::policy::AnalysisPolicy;
@@ -89,7 +90,7 @@ async fn rust_analyzer_answers_the_primitive_queries() {
     project(dir.path());
     let launcher = LspLauncher {
         ready_timeout: Duration::from_secs(120),
-        ..LspLauncher::new(BinaryLocator, NoRestore)
+        ..LspLauncher::new(BinaryLocator, NoRestore, &Budgets::default())
     };
     let server = launcher
         .start(
@@ -199,7 +200,7 @@ async fn typescript_language_server_answers_the_primitive_queries() {
     )
     .unwrap();
     std::fs::write(dir.path().join("a.ts"), src).unwrap();
-    let server = LspLauncher::new(BinaryLocator, NoRestore)
+    let server = LspLauncher::new(BinaryLocator, NoRestore, &Budgets::default())
         .start(
             dir.path(),
             Tree::Immutable,
@@ -285,7 +286,7 @@ export class Widget {
     )
     .unwrap();
     std::fs::write(dir.path().join("a.ts"), src).unwrap();
-    let server = LspLauncher::new(BinaryLocator, NoRestore)
+    let server = LspLauncher::new(BinaryLocator, NoRestore, &Budgets::default())
         .start(
             dir.path(),
             Tree::Immutable,
@@ -357,7 +358,7 @@ pub static VALUE: std::sync::LazyLock<u32> = std::sync::LazyLock::new(|| helper(
     std::fs::write(dir.path().join("src/lib.rs"), src).unwrap();
     let launcher = LspLauncher {
         ready_timeout: Duration::from_secs(120),
-        ..LspLauncher::new(BinaryLocator, NoRestore)
+        ..LspLauncher::new(BinaryLocator, NoRestore, &Budgets::default())
     };
     let server = launcher
         .start(
@@ -424,7 +425,7 @@ class K:
 handler = lambda: helper()
 ";
     std::fs::write(dir.path().join("m.py"), src).unwrap();
-    let server = LspLauncher::new(BinaryLocator, NoRestore)
+    let server = LspLauncher::new(BinaryLocator, NoRestore, &Budgets::default())
         .start(
             dir.path(),
             Tree::Immutable,
@@ -515,7 +516,7 @@ public class W
     std::fs::write(dir.path().join("W.cs"), src).unwrap();
     std::fs::write(dir.path().join("Program.cs"), "using App;\n\nvar top = W.Helper();\n").unwrap();
     dotnet_restore(dir.path());
-    let server = LspLauncher::new(BinaryLocator, NoRestore)
+    let server = LspLauncher::new(BinaryLocator, NoRestore, &Budgets::default())
         .start(
             dir.path(),
             Tree::Immutable,
@@ -573,7 +574,7 @@ async fn roslyn_answers_a_hover_on_a_newly_opened_file() {
     dotnet_restore(dir.path());
 
     for tree in [Tree::Immutable, Tree::Live] {
-        let server = LspLauncher::new(BinaryLocator, NoRestore)
+        let server = LspLauncher::new(BinaryLocator, NoRestore, &Budgets::default())
             .start(
                 dir.path(),
                 tree,
@@ -611,7 +612,7 @@ async fn typescript_pushed_diagnostics_are_found_for_a_path_the_server_spells_di
     std::fs::create_dir_all(project.join("[id]+x")).unwrap();
     std::fs::write(project.join("tsconfig.json"), "{\"compilerOptions\":{\"strict\":true}}").unwrap();
     std::fs::write(project.join("[id]+x/é@a.ts"), "const x: number = \"a\";\n").unwrap();
-    let server = LspLauncher::new(BinaryLocator, NoRestore)
+    let server = LspLauncher::new(BinaryLocator, NoRestore, &Budgets::default())
         .start(
             &project,
             Tree::Immutable,
@@ -658,7 +659,7 @@ async fn typescript_namespaces_are_counted_as_modules() {
         "export namespace Acme.Billing {\n  export class Invoice { merge() {} }\n}\nexport class Box { create() {} }\n",
     )
     .unwrap();
-    let server = LspLauncher::new(BinaryLocator, NoRestore)
+    let server = LspLauncher::new(BinaryLocator, NoRestore, &Budgets::default())
         .start(
             dir.path(),
             Tree::Immutable,
@@ -700,7 +701,7 @@ async fn rust_analyzer_modules_are_counted_as_modules() {
     .unwrap();
     let launcher = LspLauncher {
         ready_timeout: Duration::from_secs(120),
-        ..LspLauncher::new(BinaryLocator, NoRestore)
+        ..LspLauncher::new(BinaryLocator, NoRestore, &Budgets::default())
     };
     let server = launcher
         .start(
@@ -735,7 +736,7 @@ fn symbol_names(mut symbols: Vec<vet_semantic::ports::SymbolInfo>) -> Vec<String
 
 /// A server of `backend` on `dir` for the language servers without dependencies to restore.
 async fn start_server(dir: &Path, backend: &Backend, policy: AnalysisPolicy) -> vet_infra::lsp::LspServer {
-    LspLauncher::new(BinaryLocator, NoRestore)
+    LspLauncher::new(BinaryLocator, NoRestore, &Budgets::default())
         .start(dir, Tree::Immutable, backend, policy, &Unwatched)
         .await
         .unwrap_or_else(|e| panic!("{} starts: {e}", backend.config().binary))
@@ -1027,7 +1028,7 @@ async fn svelte_language_server_answers_through_typescript() {
     let dir = TempDir::new().unwrap();
     write(dir.path(), "tsconfig.json", "{\"compilerOptions\":{\"strict\":true}}");
     write(dir.path(), "App.svelte", COMPONENT);
-    let server = LspLauncher::new(BinaryLocator, NoRestore)
+    let server = LspLauncher::new(BinaryLocator, NoRestore, &Budgets::default())
         .start(
             dir.path(),
             Tree::Immutable,
@@ -1088,7 +1089,7 @@ async fn angular_language_server_checks_a_template() {
     write(dir.path(), "app.html", "<h1>{{ title }}</h1>\n<p>{{ missing }}</p>\n");
     let launcher = LspLauncher {
         ready_timeout: Duration::from_secs(120),
-        ..LspLauncher::new(BinaryLocator, NoRestore)
+        ..LspLauncher::new(BinaryLocator, NoRestore, &Budgets::default())
     };
     let server = launcher
         .start(

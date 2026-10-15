@@ -56,7 +56,7 @@ use vet_core::content::Hash;
 use vet_semantic::policy::AnalysisPolicy;
 use vet_semantic::ports::{Backend, RestoreFailure, RestoreFailureKind, Restored, Restorer};
 
-use crate::budget::{Budget, Budgets, SEMANTIC_IO};
+use crate::budget::{Budget, Budgets};
 use crate::exec::dotnet_env;
 use crate::git::list_files;
 use crate::language::{self, Language, Restore};
@@ -188,22 +188,20 @@ pub struct ToolRestorer {
     semantic_io: Budget,
 }
 
-impl Default for ToolRestorer {
-    fn default() -> Self {
+impl ToolRestorer {
+    /// Draws on `budgets`: version probes, restore steps and the reading of trees each on their own.
+    pub fn new(budgets: &Budgets) -> Self {
         Self {
             env: Vec::new(),
             donor: None,
-            tools: Arc::new(Programs::default()),
+            tools: Arc::new(Programs {
+                probes: budgets.probes.clone(),
+                restores: budgets.restores.clone(),
+            }),
             versions: Mutex::default(),
             tasks: Tasks::default(),
-            semantic_io: Budget::new(SEMANTIC_IO),
+            semantic_io: budgets.semantic_io.clone(),
         }
-    }
-}
-
-impl ToolRestorer {
-    pub fn new() -> Self {
-        Self::default()
     }
 
     /// A look at the record or the tree (`Record::read`, a check of a link, a venv
@@ -213,23 +211,16 @@ impl ToolRestorer {
         self.semantic_io.blocking(read).await.expect("a blocking task")
     }
 
-    pub fn with_env(env: Vec<(String, String)>) -> Self {
-        Self { env, ..Self::default() }
+    pub fn with_env(env: Vec<(String, String)>, budgets: &Budgets) -> Self {
+        Self {
+            env,
+            ..Self::new(budgets)
+        }
     }
 
     #[cfg(test)]
     fn with_tools(mut self, tools: Arc<dyn Tools>) -> Self {
         self.tools = tools;
-        self
-    }
-
-    /// Draws on `budgets`: version probes, steps and the reading of trees each on their own.
-    pub fn budgeted(mut self, budgets: &Budgets) -> Self {
-        self.tools = Arc::new(Programs {
-            probes: budgets.probes.clone(),
-            restores: budgets.restores.clone(),
-        });
-        self.semantic_io = budgets.semantic_io.clone();
         self
     }
 
@@ -906,7 +897,9 @@ mod tests {
         policy: AnalysisPolicy,
     ) -> (Vec<String>, Vec<RestoreFailure>) {
         let dir = tree(files);
-        let plan = ToolRestorer::new().plan(dir.path(), lang(language), policy).await;
+        let plan = ToolRestorer::new(&Budgets::default())
+            .plan(dir.path(), lang(language), policy)
+            .await;
         let steps = plan.steps.iter();
         (
             steps
@@ -1076,7 +1069,7 @@ mod tests {
     async fn a_yarn_release_checked_into_the_repository_counts_as_executing() {
         async fn executes(rc: &str, content: &str) -> bool {
             let dir = tree(&[("package.json", "{}"), ("yarn.lock", ""), (rc, content)]);
-            ToolRestorer::new()
+            ToolRestorer::new(&Budgets::default())
                 .plan(dir.path(), lang("typescript"), NO_EXEC)
                 .await
                 .steps[0]
@@ -1152,7 +1145,7 @@ mod tests {
         let dir = tree(&[]);
         let venv = dir.path().join(VENV);
         let venv = venv.to_str().unwrap();
-        let restorer = ToolRestorer::new();
+        let restorer = ToolRestorer::new(&Budgets::default());
         let steps = |plan: &Plan| plan.steps.iter().map(Step::describe).collect::<Vec<_>>();
         let create = format!("uv venv {venv} --allow-existing --no-python-downloads");
 
@@ -1207,14 +1200,16 @@ mod tests {
     #[tokio::test]
     async fn csharp_restores_what_the_server_loads_and_only_where_executing_is_allowed() {
         let dir = tree(&[("App.csproj", ""), ("Program.cs", "")]);
-        let plan = ToolRestorer::new().plan(dir.path(), lang("csharp"), NO_EXEC).await;
+        let plan = ToolRestorer::new(&Budgets::default())
+            .plan(dir.path(), lang("csharp"), NO_EXEC)
+            .await;
         assert_eq!(plan.steps.len(), 1);
         assert!(plan.steps[0].executes && plan.steps[0].args[0] == "restore");
 
         // Not allowed: nothing runs, so not even a missing `dotnet` is reported. Servers that
         // may execute project code do not make the restore one that may.
         for policy in [AnalysisPolicy::LIMITED, AnalysisPolicy::SERVERS] {
-            let restored = ToolRestorer::new()
+            let restored = ToolRestorer::new(&Budgets::default())
                 .restore(dir.path(), &backend("csharp"), policy)
                 .await;
             assert_eq!(restored, Restored::default());
@@ -1245,7 +1240,9 @@ mod tests {
         // Yarn berry's switch for scripts is an environment variable.
         let dir = tree(&[("package.json", "{}"), ("yarn.lock", "__metadata:")]);
         let berry = async |policy| {
-            let plan = ToolRestorer::new().plan(dir.path(), lang("typescript"), policy).await;
+            let plan = ToolRestorer::new(&Budgets::default())
+                .plan(dir.path(), lang("typescript"), policy)
+                .await;
             plan.steps[0]
                 .env
                 .contains(&("YARN_ENABLE_SCRIPTS".into(), "false".into()))
@@ -1393,7 +1390,7 @@ mod tests {
     const NO_EXEC: AnalysisPolicy = AnalysisPolicy::LIMITED;
 
     fn restorer(tools: &Arc<FakeTools>) -> ToolRestorer {
-        ToolRestorer::new().with_tools(tools.clone())
+        ToolRestorer::new(&Budgets::default()).with_tools(tools.clone())
     }
 
     #[tokio::test]

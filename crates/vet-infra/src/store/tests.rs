@@ -32,7 +32,7 @@ fn h(n: u8) -> Hash {
 }
 
 async fn open(dir: &TempDir) -> SqliteStore {
-    SqliteStore::open(dir.path()).await.unwrap()
+    SqliteStore::for_test(dir.path()).await.unwrap()
 }
 
 /// Collects with no grace period, so content is eligible as soon as it is unreferenced.
@@ -212,7 +212,7 @@ async fn a_database_of_a_newer_version_is_refused_and_left_as_it_is() {
         .unwrap();
     db.close().await.unwrap();
 
-    let Err(refused) = SqliteStore::open(dir.path()).await else {
+    let Err(refused) = SqliteStore::for_test(dir.path()).await else {
         panic!("a database of a newer version opened");
     };
     assert!(refused.0.contains("newer version"), "{}", refused.0);

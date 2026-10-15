@@ -122,7 +122,7 @@ async fn crlf_worktree_matches_head_under_autocrlf() {
     commit(dir.path());
     git(dir.path(), &["config", "core.autocrlf", "true"]);
     write(dir.path(), "a.txt", b"one\r\ntwo\r\n");
-    let repo = GixRepo::new(dir.path());
+    let repo = GixRepo::for_test(dir.path());
     let (base, scan) = head_and_scan(dir.path(), &repo).await;
     assert_eq!(
         scan.snapshot.entries[&path("a.txt")].blob,
@@ -140,7 +140,7 @@ async fn crlf_without_conversion_is_a_change() {
     write(dir.path(), "a.txt", b"one\ntwo\n");
     commit(dir.path());
     write(dir.path(), "a.txt", b"one\r\ntwo\r\n");
-    let repo = GixRepo::new(dir.path());
+    let repo = GixRepo::for_test(dir.path());
     let (base, scan) = head_and_scan(dir.path(), &repo).await;
     assert_ne!(scan.snapshot.id, base.id);
 }
@@ -155,7 +155,7 @@ async fn mode_comes_from_the_index_when_filemode_is_off() {
     git(dir.path(), &["config", "core.filemode", "false"]);
     std::fs::set_permissions(dir.path().join("run.sh"), std::fs::Permissions::from_mode(0o644)).unwrap();
     std::fs::set_permissions(dir.path().join("plain.txt"), std::fs::Permissions::from_mode(0o755)).unwrap();
-    let repo = GixRepo::new(dir.path());
+    let repo = GixRepo::for_test(dir.path());
     let (base, scan) = head_and_scan(dir.path(), &repo).await;
     assert_eq!(scan.snapshot.entries[&path("run.sh")].mode, 0o100755);
     assert_eq!(scan.snapshot.entries[&path("plain.txt")].mode, 0o100644);
@@ -171,7 +171,7 @@ async fn symlink_stays_a_symlink_when_symlinks_are_off() {
     git(dir.path(), &["config", "core.symlinks", "false"]);
     std::fs::remove_file(dir.path().join("link")).unwrap();
     write(dir.path(), "link", b"target.txt");
-    let repo = GixRepo::new(dir.path());
+    let repo = GixRepo::for_test(dir.path());
     let (base, scan) = head_and_scan(dir.path(), &repo).await;
     let entry = &scan.snapshot.entries[&path("link")];
     assert_eq!((entry.kind, entry.mode), (EntryKind::Symlink, 0o120000));
@@ -193,7 +193,7 @@ async fn case_only_differences_are_flagged() {
             &["update-index", "--add", "--info-only", "--cacheinfo", &entry],
         );
     }
-    let repo = GixRepo::new(dir.path());
+    let repo = GixRepo::for_test(dir.path());
     let scan = repo.scan(Dirty::All).await.unwrap();
     assert_eq!(scan.status.path_collisions, vec![path("Foo.txt"), path("foo.txt")]);
 }
@@ -207,7 +207,7 @@ async fn untracked_files_are_included_and_ignored_ones_are_not() {
     write(dir.path(), "untracked.txt", b"u\n");
     write(dir.path(), "ignored.txt", b"i\n");
     write(dir.path(), "target/out.bin", b"o\n");
-    let repo = GixRepo::new(dir.path());
+    let repo = GixRepo::for_test(dir.path());
     let scan = repo.scan(Dirty::All).await.unwrap();
     let paths: Vec<_> = scan.snapshot.entries.keys().cloned().collect();
     assert_eq!(
@@ -233,7 +233,7 @@ async fn custom_filter_paths_are_raw_and_never_run() {
         ],
     );
     write(dir.path(), "a.dat", b"edited\n");
-    let repo = GixRepo::new(dir.path());
+    let repo = GixRepo::for_test(dir.path());
     let scan = repo.scan(Dirty::All).await.unwrap();
     let entry = &scan.snapshot.entries[&path("a.dat")];
     assert!(entry.unfiltered);
@@ -248,7 +248,7 @@ async fn files_over_the_cap_are_hashed_but_not_retained() {
     commit(dir.path());
     let big = vec![b'x'; 100];
     write(dir.path(), "big.txt", &big);
-    let repo = GixRepo::new(dir.path()).with_cap(10);
+    let repo = GixRepo::for_test(dir.path()).with_cap(10);
     let acq = Acquisition::new(repo, MemStore::default());
     let opened = common::start_at_head(&acq).await;
     assert_eq!(opened.status.content_unavailable, vec![path("big.txt")]);
@@ -273,7 +273,7 @@ async fn capped_reads_refuse_large_tracked_blobs_and_large_worktree_files() {
     write(dir.path(), "big.txt", &big);
     commit(dir.path());
     write(dir.path(), "untracked.txt", &[b'y'; 100]);
-    let repo = GixRepo::new(dir.path()).with_cap(10);
+    let repo = GixRepo::for_test(dir.path()).with_cap(10);
     // The commit's tree maps its blobs to git objects.
     let tree = repo.commit_snapshot(&repo.head().await.unwrap()).await.unwrap();
     let scan = repo.scan(Dirty::All).await.unwrap();
@@ -299,7 +299,7 @@ async fn pin_copies_dirty_content_and_diff_survives_later_edits() {
     commit(dir.path());
     write(dir.path(), "a.txt", b"1\nTWO\n3\n");
     write(dir.path(), "new.txt", b"n\n");
-    let acq = Acquisition::new(GixRepo::new(dir.path()), MemStore::default());
+    let acq = Acquisition::new(GixRepo::for_test(dir.path()), MemStore::default());
     let opened = common::start_at_head(&acq).await;
     assert_eq!(opened.head, acq.git.head().await.unwrap());
     assert!(acq.store.blob(blob(b"1\nTWO\n3\n")).await.unwrap().is_some());
@@ -338,7 +338,7 @@ async fn renames_are_detected_with_their_edits() {
         body.replace("line 5\n", "line five\n").as_bytes(),
     );
     write(dir.path(), "dir/pure2.txt", b"pure rename content\nmore\n");
-    let repo = GixRepo::new(dir.path());
+    let repo = GixRepo::for_test(dir.path());
     let (base, scan) = head_and_scan(dir.path(), &repo).await;
     let diff = repo
         .diff(&MemStore::default(), &base, &scan.snapshot)
@@ -362,7 +362,7 @@ async fn rename_detection_between_commits_with_gitattributes() {
     let body: String = (0..20).map(|i| format!("line {i}\n")).collect();
     write(dir.path(), "old.md", body.as_bytes());
     commit(dir.path());
-    let repo = GixRepo::new(dir.path());
+    let repo = GixRepo::for_test(dir.path());
     let base = repo.commit_snapshot(&repo.head().await.unwrap()).await.unwrap();
     std::fs::remove_file(dir.path().join("old.md")).unwrap();
     write(
@@ -388,7 +388,7 @@ async fn binary_mode_and_symlink_changes_are_non_text_items() {
     std::fs::set_permissions(dir.path().join("run.sh"), std::fs::Permissions::from_mode(0o755)).unwrap();
     std::fs::remove_file(dir.path().join("link")).unwrap();
     std::os::unix::fs::symlink("b", dir.path().join("link")).unwrap();
-    let repo = GixRepo::new(dir.path());
+    let repo = GixRepo::for_test(dir.path());
     let (base, scan) = head_and_scan(dir.path(), &repo).await;
     let diff = repo
         .diff(&MemStore::default(), &base, &scan.snapshot)
@@ -418,7 +418,7 @@ async fn added_and_deleted_empty_files_are_items_and_text_to_empty_stays_a_text_
     write(dir.path(), "new.txt", b"");
     write(dir.path(), "emptied.txt", b"");
     write(dir.path(), "filled.txt", b"x\n");
-    let repo = GixRepo::new(dir.path());
+    let repo = GixRepo::for_test(dir.path());
     let (base, scan) = head_and_scan(dir.path(), &repo).await;
     let diff = repo
         .diff(&MemStore::default(), &base, &scan.snapshot)
@@ -451,7 +451,7 @@ async fn unchanged_tree_has_the_head_snapshot_id() {
     write(dir.path(), "a/b.txt", b"x\n");
     write(dir.path(), "c.txt", b"y\n");
     commit(dir.path());
-    let repo = GixRepo::new(dir.path());
+    let repo = GixRepo::for_test(dir.path());
     let (base, scan) = head_and_scan(dir.path(), &repo).await;
     assert_eq!(scan.snapshot, base);
 }
@@ -480,7 +480,7 @@ async fn submodule_commits_come_from_the_index_and_the_checked_out_head() {
     );
     commit(dir.path());
     let pinned = head_of(&dir.path().join("lib"));
-    let repo = GixRepo::new(dir.path());
+    let repo = GixRepo::for_test(dir.path());
 
     let (base, scan) = head_and_scan(dir.path(), &repo).await;
     let entry = |s: &Snapshot| s.entries[&path("lib")].clone();
@@ -509,7 +509,7 @@ async fn changeset_refs_are_set_per_version_and_deleted_with_the_changeset() {
     write(dir.path(), "a.txt", b"a\n");
     commit(dir.path());
     let head = head_of(dir.path());
-    let repo = GixRepo::new(dir.path());
+    let repo = GixRepo::for_test(dir.path());
     let commit_id = repo.head().await.unwrap();
     let refs = |dir: &Path| {
         let out = Command::new("git")
@@ -545,7 +545,7 @@ async fn tool_stores_are_neither_scanned_nor_watched() {
     write(dir.path(), ".pnpm-store/v11/files/ab/cd", b"x\n");
     write(dir.path(), "pkg/.pnpm-store/v11/x", b"x\n");
     write(dir.path(), "untracked.txt", b"u\n");
-    let repo = GixRepo::new(dir.path());
+    let repo = GixRepo::for_test(dir.path());
 
     let scan = repo.scan(Dirty::All).await.unwrap();
     let paths: Vec<_> = scan.snapshot.entries.keys().cloned().collect();
@@ -566,7 +566,7 @@ async fn ignore_rules_drop_ignored_paths_but_never_tracked_ones() {
     git(dir.path(), &["add", "-f", "target/keep.txt"]);
     git(dir.path(), &["commit", "-q", "-m", "c"]);
     write(dir.path(), "target/debug/x", b"x\n");
-    let repo = GixRepo::new(dir.path());
+    let repo = GixRepo::for_test(dir.path());
 
     let paths: Vec<_> = [
         "src/a.rs",
@@ -597,7 +597,7 @@ async fn repeated_scans_follow_edits_through_the_stat_cache() {
     // Older than the second the scan reads them in, so the next scans may reuse the records.
     age(dir.path(), "new.txt", 20);
     age(dir.path(), "tracked.txt", 20);
-    let repo = GixRepo::new(dir.path());
+    let repo = GixRepo::for_test(dir.path());
     let first = repo.scan(Dirty::All).await.unwrap().snapshot;
     assert_eq!(first, repo.scan(Dirty::All).await.unwrap().snapshot);
     assert_eq!(first, repo.scan(Dirty::All).await.unwrap().snapshot);
@@ -618,7 +618,7 @@ async fn a_read_waits_only_for_the_budget_of_the_handle_it_is_made_through() {
     write(dir.path(), "a.txt", b"one\n");
     commit(dir.path());
     let (review, semantic) = (Budget::new(2), Budget::new(2));
-    let on_review = GixRepo::new(dir.path()).budgeted(review.clone());
+    let on_review = GixRepo::for_test(dir.path()).budgeted(review.clone());
     let on_semantic = on_review.budgeted(semantic.clone());
     let read = |repo: &GixRepo| {
         let repo = repo.clone();

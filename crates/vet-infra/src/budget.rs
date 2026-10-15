@@ -23,6 +23,9 @@ pub const REVIEW_IO: usize = 4;
 pub const SEMANTIC_IO: usize = 4;
 /// Blocking tasks at once for work done ahead of a request.
 pub const BACKGROUND_IO: usize = 2;
+/// Blocking git work at once for a fetch, which takes as long as the network does and so must
+/// not take the review lane's threads. Each open project has a fetch budget of its own.
+pub const FETCH_IO: usize = 4;
 /// Probe processes (`--version`, toolchain captures) at once.
 pub const PROBES: usize = 2;
 /// Restore steps at once, over all trees.

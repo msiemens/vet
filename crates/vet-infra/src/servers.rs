@@ -16,7 +16,7 @@ use vet_app::ports::{
 use vet_semantic::policy::AnalysisPolicy;
 use vet_semantic::ports::BackendId;
 
-use crate::budget::{Budget, PROBES, SEMANTIC_IO};
+use crate::budget::{Budget, Budgets};
 use crate::exec::{
     Captured, Host, LineSplitter, OUTPUT_TAIL_LINES, Tail, TokioRunner, capture as run_to_end, dotnet_env, is_file,
 };
@@ -41,30 +41,18 @@ pub struct ToolResolver {
 }
 
 impl ToolResolver {
-    /// Installs go below `data_dir/servers`.
-    pub fn new(data_dir: PathBuf) -> Self {
-        Self::with_host(data_dir, Host::current())
+    /// Installs go below `data_dir/servers`; its probes and file lookups draw on `budgets`.
+    pub fn new(data_dir: PathBuf, budgets: &Budgets) -> Self {
+        Self::with_host(data_dir, Host::current(), budgets)
     }
 
-    pub fn with_host(data_dir: PathBuf, host: Host) -> Self {
+    pub fn with_host(data_dir: PathBuf, host: Host, budgets: &Budgets) -> Self {
         Self {
             data_dir,
             host,
-            probes: Budget::new(PROBES),
-            io: Budget::new(SEMANTIC_IO),
+            probes: budgets.probes.clone(),
+            io: budgets.semantic_io.clone(),
         }
-    }
-
-    /// Runs its probes on `probes`.
-    pub fn probing(mut self, probes: Budget) -> Self {
-        self.probes = probes;
-        self
-    }
-
-    /// Looks at files on `io`.
-    pub fn reading(mut self, io: Budget) -> Self {
-        self.io = io;
-        self
     }
 
     /// A look at files or directories (`host.find`, a check for an install): answered
@@ -504,7 +492,7 @@ mod tests {
         std::fs::create_dir_all(&package).unwrap();
         std::fs::write(package.join("package.json"), r#"{"version":"6.0.1"}"#).unwrap();
 
-        let resolver = ToolResolver::with_host(data.path().to_owned(), host(false, vec![]));
+        let resolver = ToolResolver::with_host(data.path().to_owned(), host(false, vec![]), &Budgets::default());
         let project = tempfile::tempdir().unwrap();
         let server = found(
             resolver
@@ -541,7 +529,7 @@ mod tests {
             .path()
             .join("servers/python/node_modules/.bin/pyright-langserver.CMD");
         touch(&shim);
-        let resolver = ToolResolver::with_host(data.path().to_owned(), host(true, vec![]));
+        let resolver = ToolResolver::with_host(data.path().to_owned(), host(true, vec![]), &Budgets::default());
         let project = tempfile::tempdir().unwrap();
         let server = found(
             resolver
@@ -564,7 +552,11 @@ mod tests {
         )
         .unwrap();
 
-        let resolver = ToolResolver::with_host(data.path().to_owned(), host(false, vec![path_dir.path().to_owned()]));
+        let resolver = ToolResolver::with_host(
+            data.path().to_owned(),
+            host(false, vec![path_dir.path().to_owned()]),
+            &Budgets::default(),
+        );
         let server = found(
             resolver
                 .resolve(&language("typescript"), project.path(), None, TRUSTED)
@@ -631,7 +623,11 @@ mod tests {
         touch(&path_dir.path().join("typescript-language-server"));
         let project = tempfile::tempdir().unwrap();
         touch(&project.path().join("node_modules/typescript/lib/tsserver.js"));
-        let resolver = ToolResolver::with_host(data.path().to_owned(), host(false, vec![path_dir.path().to_owned()]));
+        let resolver = ToolResolver::with_host(
+            data.path().to_owned(),
+            host(false, vec![path_dir.path().to_owned()]),
+            &Budgets::default(),
+        );
         let typescript = language("typescript");
 
         // With no typescript of Vet's own, the server would look for the project's itself.
@@ -669,7 +665,11 @@ mod tests {
         let project = tempfile::tempdir().unwrap();
         touch(&project.path().join("node_modules/typescript/lib/tsserver.js"));
         touch(&project.path().join("node_modules/@angular/language-service/index.js"));
-        let resolver = ToolResolver::with_host(data.path().to_owned(), host(false, vec![path_dir.path().to_owned()]));
+        let resolver = ToolResolver::with_host(
+            data.path().to_owned(),
+            host(false, vec![path_dir.path().to_owned()]),
+            &Budgets::default(),
+        );
         let angular = language("angular");
         let own = data.path().join("servers/angular/node_modules");
         touch(&own.join("typescript/lib/tsserver.js"));
@@ -706,7 +706,7 @@ mod tests {
         touch(&bin.join("typescript-language-server"));
         let project = tempfile::tempdir().unwrap();
         touch(&project.path().join("node_modules/typescript/lib/tsserver.js"));
-        let resolver = ToolResolver::with_host(data.path().to_owned(), host(false, vec![bin]));
+        let resolver = ToolResolver::with_host(data.path().to_owned(), host(false, vec![bin]), &Budgets::default());
 
         let typescript = language("typescript");
         let state = resolver
@@ -737,7 +737,11 @@ mod tests {
         touch(&tool);
         let path_dir = tempfile::tempdir().unwrap();
         touch(&path_dir.path().join("rust-analyzer"));
-        let resolver = ToolResolver::with_host(data.path().to_owned(), host(false, vec![path_dir.path().to_owned()]));
+        let resolver = ToolResolver::with_host(
+            data.path().to_owned(),
+            host(false, vec![path_dir.path().to_owned()]),
+            &Budgets::default(),
+        );
         let project = tempfile::tempdir().unwrap();
 
         let custom = tool.to_string_lossy().into_owned();
@@ -761,7 +765,7 @@ mod tests {
     #[tokio::test]
     async fn a_missing_server_says_where_it_looked_and_what_to_do() {
         let data = tempfile::tempdir().unwrap();
-        let resolver = ToolResolver::with_host(data.path().to_owned(), host(false, vec![]));
+        let resolver = ToolResolver::with_host(data.path().to_owned(), host(false, vec![]), &Budgets::default());
         let project = tempfile::tempdir().unwrap();
         let ServerState::Missing { reason } = resolver
             .resolve(&language("python"), project.path(), None, TRUSTED)
@@ -815,7 +819,11 @@ mod tests {
         touch(&project_ra);
         touch(&bin.path().join("rust-analyzer"));
         stub_rustup(bin.path(), Some(&project_ra));
-        let resolver = ToolResolver::with_host(data.path().to_owned(), host(false, vec![bin.path().to_owned()]));
+        let resolver = ToolResolver::with_host(
+            data.path().to_owned(),
+            host(false, vec![bin.path().to_owned()]),
+            &Budgets::default(),
+        );
         let project = tempfile::tempdir().unwrap();
 
         let server = found(resolver.resolve(&language("rust"), project.path(), None, TRUSTED).await);

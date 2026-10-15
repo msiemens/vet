@@ -98,7 +98,7 @@ async fn a_clean_merge_remerges_to_its_own_tree() {
     let fx = fixture(false);
     let p = fx.dir.path();
     let merged = merge(p);
-    let repo = GixRepo::new(p);
+    let repo = GixRepo::for_test(p);
 
     let remerged = repo.remerge(&merged).await.unwrap().expect("a two-parent merge");
 
@@ -114,7 +114,7 @@ async fn a_conflict_stays_in_the_remerge_as_markers_and_the_resolution_is_the_di
     git(p, &["add", "-A"]);
     git(p, &["commit", "-q", "--no-edit"]);
     let merged = head(p);
-    let repo = GixRepo::new(p);
+    let repo = GixRepo::for_test(p);
 
     let remerged = repo.remerge(&merged).await.unwrap().unwrap();
 
@@ -135,7 +135,7 @@ async fn a_change_made_in_the_merge_commit_is_not_in_the_remerge() {
     git(p, &["add", "-A"]);
     git(p, &["commit", "-q", "-m", "merge with an extra file"]);
     let merged = head(p);
-    let repo = GixRepo::new(p);
+    let repo = GixRepo::for_test(p);
 
     let remerged = repo.remerge(&merged).await.unwrap().unwrap();
     let actual = repo.commit_snapshot(&merged).await.unwrap();
@@ -151,7 +151,7 @@ async fn remerging_leaves_the_repository_as_it_was_and_only_merges_have_a_remerg
     let p = fx.dir.path();
     let before = git(p, &["count-objects", "-v"]);
     let tip = head(p);
-    let repo = GixRepo::new(p);
+    let repo = GixRepo::for_test(p);
     git_in(p, &["merge", "-q", "--no-ff", "-m", "merge", "main"], false);
     git(p, &["checkout", "--theirs", "a.txt"]);
     git(p, &["add", "-A"]);
@@ -190,7 +190,7 @@ async fn a_commit_has_its_message_split_into_subject_and_body() {
             "It is carried from the event.\nRetries reuse it.",
         ],
     );
-    let repo = GixRepo::new(p);
+    let repo = GixRepo::for_test(p);
 
     let detail = repo.commit_detail(&head(p)).await.unwrap();
 

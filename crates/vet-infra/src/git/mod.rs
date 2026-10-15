@@ -67,8 +67,7 @@ pub async fn list_files(io: &Budget, root: &Path) -> Result<Vec<PathBuf>, String
             .map_err(|e| e.to_string())?
     };
     if is_worktree {
-        let files = GixRepo::new(&root)
-            .budgeted(io.clone())
+        let files = GixRepo::new(&root, io.clone())
             .list_files()
             .await
             .map_err(|e| e.to_string())?;
@@ -136,12 +135,16 @@ impl Inner {
 }
 
 impl GixRepo {
-    /// A repository with a budget of its own.
-    pub fn new(root: impl Into<PathBuf>) -> Self {
-        Self(
-            Arc::new(Inner::new(root.into(), DEFAULT_CAP, false)),
-            Budget::new(REVIEW_IO),
-        )
+    /// A repository whose blocking work draws on `io`. The budget is required, so a caller
+    /// cannot end up on a private pool of its own by forgetting [`GixRepo::budgeted`].
+    pub fn new(root: impl Into<PathBuf>, io: Budget) -> Self {
+        Self(Arc::new(Inner::new(root.into(), DEFAULT_CAP, false)), io)
+    }
+
+    /// A repository with a budget of its own, for tests and one-off tools.
+    #[doc(hidden)]
+    pub fn for_test(root: impl Into<PathBuf>) -> Self {
+        Self::new(root, Budget::new(REVIEW_IO))
     }
 
     pub fn with_cap(self, cap: u64) -> Self {

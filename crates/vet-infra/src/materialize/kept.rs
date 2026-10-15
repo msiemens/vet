@@ -171,8 +171,8 @@ async fn blocking<T: Send + 'static>(io: &Budget, work: impl FnOnce() -> T + Sen
 }
 
 impl KeptTrees {
-    /// Trees below `base`, which is created on first use.
-    pub fn new(base: PathBuf, limits: Limits, referenced: Arc<dyn Referenced>) -> Self {
+    /// Trees below `base`, which is created on first use; their reads and writes draw on `io`.
+    pub fn new(base: PathBuf, limits: Limits, referenced: Arc<dyn Referenced>, io: Budget) -> Self {
         Self {
             base,
             limits,
@@ -180,14 +180,14 @@ impl KeptTrees {
             launch: OnceLock::new(),
             staged: AtomicU64::new(0),
             gates: Mutex::default(),
-            io: Budget::new(SEMANTIC_IO),
+            io,
         }
     }
 
-    /// Reads and writes the trees on `io`.
-    pub fn budgeted(mut self, io: Budget) -> Self {
-        self.io = io;
-        self
+    /// A tree set with a budget of its own, for tests.
+    #[doc(hidden)]
+    pub fn for_test(base: PathBuf, limits: Limits, referenced: Arc<dyn Referenced>) -> Self {
+        Self::new(base, limits, referenced, Budget::new(SEMANTIC_IO))
     }
 
     /// The directories, and this launch's lock, which a staging directory is judged dead by.
@@ -667,7 +667,7 @@ mod tests {
 
     fn trees_with(base: &Path, limits: Limits, referenced: &[u8]) -> KeptTrees {
         let referenced: HashSet<_> = referenced.iter().map(|n| snapshot(*n)).collect();
-        KeptTrees::new(base.to_owned(), limits, Arc::new(move || referenced.clone()))
+        KeptTrees::for_test(base.to_owned(), limits, Arc::new(move || referenced.clone()))
     }
 
     fn trees(base: &Path) -> KeptTrees {

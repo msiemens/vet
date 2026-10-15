@@ -126,7 +126,7 @@ async fn a_fetch_brings_new_remote_commits_and_moves_only_remote_tracking_refs()
     git(&fx.upstream_work, &["checkout", "-q", "-b", "extra"]);
     let extra = commit(&fx.upstream_work, "e.txt", "e1");
     git(&fx.upstream_work, &["push", "-q", "origin", "extra"]);
-    let repo = GixRepo::new(&fx.clone);
+    let repo = GixRepo::for_test(&fx.clone);
 
     let updated = repo.fetch("origin", None).await.unwrap();
 
@@ -155,7 +155,7 @@ async fn a_fetch_follows_the_refspecs_of_the_remote() {
         ],
     );
     let new_main = fx.advance_remote("m2");
-    let repo = GixRepo::new(&fx.clone);
+    let repo = GixRepo::for_test(&fx.clone);
 
     repo.fetch("origin", None).await.unwrap();
 
@@ -178,7 +178,7 @@ async fn a_refspec_that_would_write_a_local_branch_is_refused() {
     );
     let before = fx.outside_remotes();
     fx.advance_remote("m2");
-    let repo = GixRepo::new(&fx.clone);
+    let repo = GixRepo::for_test(&fx.clone);
 
     let error = repo.fetch("origin", None).await.unwrap_err();
 
@@ -233,7 +233,7 @@ async fn a_pull_requests_head_and_target_are_fetched_into_refs_of_vet_and_nothin
     let fx = Fixture::new();
     let head = fx.open_pull_request(7, "pr.txt", "p1");
     let before = fx.outside_remotes();
-    let repo = GixRepo::new(&fx.clone);
+    let repo = GixRepo::for_test(&fx.clone);
 
     repo.fetch_refs(
         "origin",
@@ -270,7 +270,7 @@ async fn a_pull_requests_head_and_target_are_fetched_into_refs_of_vet_and_nothin
 async fn a_force_pushed_pull_request_moves_its_ref_to_the_new_head() {
     let fx = Fixture::new();
     let first = fx.open_pull_request(7, "pr.txt", "p1");
-    let repo = GixRepo::new(&fx.clone);
+    let repo = GixRepo::for_test(&fx.clone);
     let updates = vec![update("refs/pull/7/head", "refs/vet/pr/7/head")];
     repo.fetch_refs("origin", updates.clone(), None).await.unwrap();
     assert_eq!(fx.rev("refs/vet/pr/7/head"), Some(first.clone()));
@@ -292,7 +292,7 @@ async fn refs_outside_vets_namespace_are_refused_and_so_is_a_ref_the_remote_lack
     let fx = Fixture::new();
     fx.open_pull_request(7, "pr.txt", "p1");
     let before = fx.outside_remotes();
-    let repo = GixRepo::new(&fx.clone);
+    let repo = GixRepo::for_test(&fx.clone);
 
     let local_branch = repo
         .fetch_refs("origin", vec![update("refs/pull/7/head", "refs/heads/pr-7")], None)
@@ -316,7 +316,7 @@ async fn refs_outside_vets_namespace_are_refused_and_so_is_a_ref_the_remote_lack
 async fn the_refs_of_fetched_pull_requests_are_listed_and_deleted_and_no_other_ref_is() {
     let fx = Fixture::new();
     fx.open_pull_request(7, "pr.txt", "p1");
-    let repo = GixRepo::new(&fx.clone);
+    let repo = GixRepo::for_test(&fx.clone);
     repo.fetch_refs(
         "origin",
         vec![
@@ -377,7 +377,7 @@ async fn the_remotes_are_listed_with_their_urls() {
         &["remote", "add", "mirror", "https://Git.Example.org:8443/x/y.git"],
     );
     git(&fx.clone, &["remote", "add", "ssh", "git@github.com:x/y.git"]);
-    let repo = GixRepo::new(&fx.clone);
+    let repo = GixRepo::for_test(&fx.clone);
 
     let remotes = repo.remotes().await.unwrap();
 
@@ -402,7 +402,7 @@ async fn a_remote_that_cannot_be_reached_fails_with_a_message_and_changes_nothin
     let before = fx.outside_remotes();
     let old_main = fx.remote_ref("main");
     std::fs::remove_dir_all(&fx.remote).unwrap();
-    let repo = GixRepo::new(&fx.clone);
+    let repo = GixRepo::for_test(&fx.clone);
 
     let error = repo.fetch("origin", None).await.unwrap_err();
 
@@ -434,7 +434,7 @@ async fn an_ssh_remote_that_refuses_the_key_says_so_in_every_kind_of_fetch() {
     .unwrap();
     std::fs::set_permissions(&ssh, std::fs::Permissions::from_mode(0o755)).unwrap();
     git(&fx.clone, &["config", "core.sshCommand", ssh.to_str().unwrap()]);
-    let repo = GixRepo::new(&fx.clone);
+    let repo = GixRepo::for_test(&fx.clone);
     let expected = "hosted: SSH authentication to git.example.invalid failed: Permission denied (publickey). \
                     If your key has a passphrase, add it to an agent (ssh-add) or use an agent such as \
                     1Password's; Vet runs ssh without prompting.";
@@ -463,7 +463,7 @@ async fn ref_updates_succeed_without_a_git_identity_and_the_reflog_names_the_fal
     git(&fx.clone, &["config", "--unset", "user.email"]);
     let new_main = fx.advance_remote("m2");
     let pr = fx.open_pull_request(7, "pr.txt", "p1");
-    let repo = GixRepo::new(&fx.clone).isolated();
+    let repo = GixRepo::for_test(&fx.clone).isolated();
 
     repo.fetch("origin", None).await.unwrap();
     repo.fetch_refs("origin", vec![update("refs/pull/7/head", "refs/vet/pr/7/head")], None)
@@ -485,7 +485,7 @@ async fn a_configured_identity_writes_the_reflog_and_the_fallback_does_not_repla
     git(&fx.clone, &["config", "user.name", "Rae"]);
     git(&fx.clone, &["config", "user.email", "rae@example.org"]);
     fx.advance_remote("m2");
-    let repo = GixRepo::new(&fx.clone).isolated();
+    let repo = GixRepo::for_test(&fx.clone).isolated();
 
     repo.fetch("origin", None).await.unwrap();
 

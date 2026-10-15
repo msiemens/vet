@@ -30,7 +30,7 @@ use vet_semantic::ports::{
     StartProgress, Started, Tree,
 };
 
-use crate::budget::{Budget, Budgets, SEMANTIC_IO};
+use crate::budget::{Budget, Budgets};
 use crate::git::list_files;
 use crate::language;
 use crate::paths;
@@ -67,22 +67,16 @@ pub struct LspLauncher<L, R> {
 }
 
 impl<L, R> LspLauncher<L, R> {
-    pub fn new(locator: L, restorer: R) -> Self {
+    /// Looks at files and runs probes on `budgets`.
+    pub fn new(locator: L, restorer: R, budgets: &Budgets) -> Self {
         Self {
             ready_timeout: READY_TIMEOUT,
             locator,
             restorer,
             tasks: Tasks::default(),
-            identities: Identities::new(UserEnv::current()),
-            semantic_io: Budget::new(SEMANTIC_IO),
+            identities: Identities::new(UserEnv::current(), budgets),
+            semantic_io: budgets.semantic_io.clone(),
         }
-    }
-
-    /// Looks at files and runs probes on `budgets`.
-    pub fn budgeted(mut self, budgets: &Budgets) -> Self {
-        self.identities = self.identities.budgeted(budgets);
-        self.semantic_io = budgets.semantic_io.clone();
-        self
     }
 
     /// `path` with links resolved, on the lane's blocking threads. Servers and the

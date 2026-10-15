@@ -119,14 +119,14 @@ const POLICY: AnalysisPolicy = AnalysisPolicy::LIMITED;
 
 fn trees(data: &Path) -> Arc<KeptTrees> {
     let none: Arc<dyn Referenced> = Arc::new(HashSet::<SnapshotId>::new);
-    Arc::new(KeptTrees::new(data.join("materialized"), Limits::default(), none))
+    Arc::new(KeptTrees::for_test(data.join("materialized"), Limits::default(), none))
 }
 
 #[tokio::test]
 async fn base_and_dirty_snapshots_materialize_from_git_plus_store() {
     let dir = fixture();
     let data = tempfile::tempdir().unwrap();
-    let acq = Arc::new(Acquisition::new(GixRepo::new(dir.path()), MemStore::default()));
+    let acq = Arc::new(Acquisition::new(GixRepo::for_test(dir.path()), MemStore::default()));
     let opened = common::start_at_head(&acq).await;
     let materializer = Materialize::new(acq.clone(), trees(data.path()));
     acq.store.put_snapshot(opened.target.clone(), opened.status.clone());
@@ -159,7 +159,7 @@ async fn base_and_dirty_snapshots_materialize_from_git_plus_store() {
 async fn a_tree_outlives_its_guard_and_a_new_launch_finds_it_without_the_snapshot_being_recorded() {
     let dir = fixture();
     let data = tempfile::tempdir().unwrap();
-    let acq = Arc::new(Acquisition::new(GixRepo::new(dir.path()), MemStore::default()));
+    let acq = Arc::new(Acquisition::new(GixRepo::for_test(dir.path()), MemStore::default()));
     let opened = common::start_at_head(&acq).await;
 
     let first = Materialize::new(acq, trees(data.path()))
@@ -171,7 +171,7 @@ async fn a_tree_outlives_its_guard_and_a_new_launch_finds_it_without_the_snapsho
     assert_eq!(read(&root, "a.txt"), b"committed\n");
 
     // A new launch: its acquisition knows nothing of the snapshot, and git is not asked.
-    let restarted = Arc::new(Acquisition::new(GixRepo::new(dir.path()), MemStore::default()));
+    let restarted = Arc::new(Acquisition::new(GixRepo::for_test(dir.path()), MemStore::default()));
     let again = Materialize::new(restarted, trees(data.path()))
         .materialize(opened.base.id, POLICY)
         .await
@@ -180,7 +180,7 @@ async fn a_tree_outlives_its_guard_and_a_new_launch_finds_it_without_the_snapsho
 
     // The policy is part of the key.
     let executing = Materialize::new(
-        Arc::new(Acquisition::new(GixRepo::new(dir.path()), MemStore::default())),
+        Arc::new(Acquisition::new(GixRepo::for_test(dir.path()), MemStore::default())),
         trees(data.path()),
     )
     .materialize(opened.base.id, AnalysisPolicy::EXECUTING)
@@ -192,7 +192,7 @@ async fn a_tree_outlives_its_guard_and_a_new_launch_finds_it_without_the_snapsho
 async fn unknown_snapshot_is_refused() {
     let dir = fixture();
     let data = tempfile::tempdir().unwrap();
-    let acq = Acquisition::new(GixRepo::new(dir.path()), MemStore::default());
+    let acq = Acquisition::new(GixRepo::for_test(dir.path()), MemStore::default());
     let result = Materialize::new(Arc::new(acq), trees(data.path()))
         .materialize(SnapshotId(vet_core::content::Hash([9; 32])), POLICY)
         .await;
@@ -203,7 +203,7 @@ async fn unknown_snapshot_is_refused() {
 async fn snapshot_with_unavailable_blobs_is_refused_naming_them() {
     let dir = fixture();
     // Not pinned: the dirty blobs were never copied into the store.
-    let acq = Arc::new(Acquisition::new(GixRepo::new(dir.path()), MemStore::default()));
+    let acq = Arc::new(Acquisition::new(GixRepo::for_test(dir.path()), MemStore::default()));
     let scan = acq.git.scan(vet_app::ports::Dirty::All).await.unwrap();
     acq.store.put_snapshot(scan.snapshot.clone(), scan.status);
     acq.record_commit(scan.snapshot.id, acq.git.head().await.unwrap());
@@ -227,7 +227,7 @@ async fn snapshot_with_unavailable_blobs_is_refused_naming_them() {
 #[tokio::test]
 async fn checkout_refuses_paths_that_escape_the_root() {
     let dir = fixture();
-    let repo = GixRepo::new(dir.path());
+    let repo = GixRepo::for_test(dir.path());
     let head = repo.head().await.unwrap();
     for bad in ["../escape", "a/../../escape", ".git/hooks/pre-commit", "x//y"] {
         let blob = BlobId::of(b"x");
@@ -272,7 +272,7 @@ async fn checkout_never_runs_filter_drivers() {
             &format!("touch {}; cat", marker.display()),
         ],
     );
-    let repo = GixRepo::new(dir.path());
+    let repo = GixRepo::for_test(dir.path());
     let head = repo.head().await.unwrap();
     let snapshot = repo.commit_snapshot(&head).await.unwrap();
     let out = TempDir::new().unwrap();

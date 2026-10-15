@@ -661,7 +661,7 @@ fn colliding_repo() -> TempDir {
 async fn collision_session(repo: &Path) -> (LiveSession<GixRepo, SqliteStore>, SqliteStore, TempDir) {
     let data = tempfile::tempdir().unwrap();
     let store = open_store(data.path()).await.unwrap();
-    let session = LiveSession::open(GixRepo::new(repo), store.clone(), "/repo".into(), || 0)
+    let session = LiveSession::open(GixRepo::for_test(repo), store.clone(), "/repo".into(), || 0)
         .await
         .unwrap();
     session
@@ -692,7 +692,7 @@ const POLICY: AnalysisPolicy = AnalysisPolicy::LIMITED;
 
 fn kept_trees(data: &Path) -> Arc<KeptTrees> {
     let none: Arc<dyn Referenced> = Arc::new(HashSet::<SnapshotId>::new);
-    Arc::new(KeptTrees::new(data.join("materialized"), Limits::default(), none))
+    Arc::new(KeptTrees::for_test(data.join("materialized"), Limits::default(), none))
 }
 
 /// Only where files can differ in case alone; `..._in_a_commit_...` covers the other filesystems.
@@ -1002,7 +1002,7 @@ impl Live {
         let data = tempfile::tempdir().unwrap();
         let store = open_store(data.path()).await.unwrap();
         let session = Arc::new(
-            Session::open(GixRepo::new(repo.path()), store, "/repo".into(), || 0)
+            Session::open(GixRepo::for_test(repo.path()), store, "/repo".into(), || 0)
                 .await
                 .unwrap(),
         );
@@ -1086,7 +1086,12 @@ impl Live {
 
     /// What a from-scratch scan of the tree says the snapshot is.
     async fn oracle(&self) -> vet_core::content::SnapshotId {
-        GixRepo::new(self.path()).scan(Dirty::All).await.unwrap().snapshot.id
+        GixRepo::for_test(self.path())
+            .scan(Dirty::All)
+            .await
+            .unwrap()
+            .snapshot
+            .id
     }
 
     async fn assert_correct(&self) {

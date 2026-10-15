@@ -10,6 +10,7 @@ use std::path::Path;
 use std::process::Command;
 
 use vet_core::content::RepoPath;
+use vet_infra::budget::Budgets;
 use vet_infra::lsp::{BinaryLocator, LspLauncher, NoRestore, config};
 use vet_infra::restore::ToolRestorer;
 use vet_semantic::policy::AnalysisPolicy;
@@ -62,7 +63,7 @@ async fn cargo_fetches_into_cargo_home_without_running_build_scripts() {
         "fn main() { std::fs::write(\"build-ran\", \"\").unwrap(); }\n",
     );
 
-    let restorer = ToolRestorer::with_env(env("CARGO_HOME", home.path()));
+    let restorer = ToolRestorer::with_env(env("CARGO_HOME", home.path()), &Budgets::default());
     restore(&restorer, project.path(), &config::rust_analyzer(), false).await;
     assert!(!project.path().join("build-ran").exists());
     // Everything is in Cargo home now: an offline fetch succeeds there and fails in an empty one.
@@ -96,7 +97,7 @@ async fn npm_installs_from_the_lockfile_without_running_scripts() {
     );
     assert!(project.path().join("package-lock.json").is_file());
 
-    let restorer = ToolRestorer::with_env(env("npm_config_cache", cache.path()));
+    let restorer = ToolRestorer::with_env(env("npm_config_cache", cache.path()), &Budgets::default());
     restore(&restorer, project.path(), &config::typescript(), false).await;
     assert!(project.path().join("node_modules/picocolors/package.json").is_file());
     assert!(!project.path().join("script-ran").exists());
@@ -135,10 +136,13 @@ async fn npm_installs_what_an_out_of_sync_lockfile_lacks_and_leaves_the_lockfile
     );
     let locked = std::fs::read_to_string(project.path().join("package-lock.json")).unwrap();
 
-    let restorer = ToolRestorer::with_env(vec![
-        ("npm_config_cache".into(), cache.path().to_string_lossy().into_owned()),
-        ("npm_config_offline".into(), "true".into()),
-    ]);
+    let restorer = ToolRestorer::with_env(
+        vec![
+            ("npm_config_cache".into(), cache.path().to_string_lossy().into_owned()),
+            ("npm_config_offline".into(), "true".into()),
+        ],
+        &Budgets::default(),
+    );
     let restored = restorer
         .restore(project.path(), &config::typescript(), AnalysisPolicy::LIMITED)
         .await;
@@ -179,7 +183,7 @@ async fn an_executing_npm_restore_runs_the_install_scripts() {
         &["install", "--package-lock-only", "--ignore-scripts"],
     );
 
-    let restorer = ToolRestorer::with_env(env("npm_config_cache", cache.path()));
+    let restorer = ToolRestorer::with_env(env("npm_config_cache", cache.path()), &Budgets::default());
     restore(&restorer, project.path(), &config::typescript(), true).await;
     assert!(project.path().join("node_modules/picocolors/package.json").is_file());
     assert!(project.path().join("script-ran").is_file());
@@ -200,7 +204,7 @@ async fn a_copy_with_the_same_lockfile_links_the_working_trees_node_modules_and_
         "npm",
         &["install", "--package-lock-only", "--ignore-scripts"],
     );
-    let restorer = ToolRestorer::with_env(env("npm_config_cache", cache.path()));
+    let restorer = ToolRestorer::with_env(env("npm_config_cache", cache.path()), &Budgets::default());
     restore(&restorer, donor.path(), &config::typescript(), false).await;
 
     // The copy has other sources, and the same lockfile and dependencies.
@@ -220,7 +224,8 @@ async fn a_copy_with_the_same_lockfile_links_the_working_trees_node_modules_and_
 
     // Not installed here: a cache that does not exist would make an install fail.
     let missing = tempfile::tempdir().unwrap().path().join("none");
-    let reusing = ToolRestorer::with_env(env("npm_config_cache", &missing)).reusing(donor.path().to_owned());
+    let reusing =
+        ToolRestorer::with_env(env("npm_config_cache", &missing), &Budgets::default()).reusing(donor.path().to_owned());
     let restored = restore(&reusing, copy.path(), &config::typescript(), false).await;
     assert_eq!(restored.failures, []);
     let linked = copy.path().join("node_modules");
@@ -228,7 +233,7 @@ async fn a_copy_with_the_same_lockfile_links_the_working_trees_node_modules_and_
     assert!(linked.join("picocolors/package.json").is_file());
     assert!(!missing.exists());
 
-    let server = LspLauncher::new(BinaryLocator, NoRestore)
+    let server = LspLauncher::new(BinaryLocator, NoRestore, &Budgets::default())
         .start(
             copy.path(),
             Tree::Immutable,
@@ -260,7 +265,8 @@ async fn a_copy_with_the_same_lockfile_links_the_working_trees_node_modules_and_
         "{\"lockfileVersion\":3,\"packages\":{}}",
     );
     std::fs::remove_file(&linked).unwrap();
-    let reusing = ToolRestorer::with_env(env("npm_config_cache", cache.path())).reusing(donor.path().to_owned());
+    let reusing = ToolRestorer::with_env(env("npm_config_cache", cache.path()), &Budgets::default())
+        .reusing(donor.path().to_owned());
     let restored = reusing
         .restore(copy.path(), &config::typescript(), AnalysisPolicy::LIMITED)
         .await;
@@ -298,7 +304,7 @@ async fn pnpm_installs_from_the_lockfile_without_running_scripts() {
         "require('fs').writeFileSync('pnpmfile-ran', '');\nmodule.exports = { hooks: {} };\n",
     );
 
-    let restorer = ToolRestorer::with_env(env("npm_config_store_dir", store.path()));
+    let restorer = ToolRestorer::with_env(env("npm_config_store_dir", store.path()), &Budgets::default());
     restore(&restorer, project.path(), &config::typescript(), false).await;
     assert!(project.path().join("node_modules/picocolors/package.json").is_file());
     assert!(!project.path().join("script-ran").exists());
@@ -320,7 +326,7 @@ async fn uv_installs_the_locked_dependencies_into_a_venv_the_server_gets() {
     );
     run(project.path(), "uv", &["lock"]);
 
-    let restorer = ToolRestorer::with_env(env("UV_CACHE_DIR", cache.path()));
+    let restorer = ToolRestorer::with_env(env("UV_CACHE_DIR", cache.path()), &Budgets::default());
     let restored = restore(&restorer, project.path(), &config::pyright(), false).await;
     let venv = project.path().join(".venv");
     let value = |key: &str| restored.env.iter().find(|(k, _)| k == key).map(|(_, v)| v.clone());
@@ -370,7 +376,7 @@ async fn npm_restores_a_workspace_once_at_its_root_and_a_project_in_a_subdirecto
         &["install", "--package-lock-only", "--ignore-scripts"],
     );
 
-    let restorer = ToolRestorer::with_env(env("npm_config_cache", cache.path()));
+    let restorer = ToolRestorer::with_env(env("npm_config_cache", cache.path()), &Budgets::default());
     restore(&restorer, project.path(), &config::typescript(), false).await;
     // The workspace root's install hoists the member's dependency; the member is not installed on its own.
     assert!(project.path().join("node_modules/picocolors/package.json").is_file());
@@ -393,7 +399,7 @@ async fn yarn_classic_installs_from_the_lockfile_without_running_scripts() {
         r#"{"name":"p","version":"1.0.0","dependencies":{"picocolors":"1.1.1"},"scripts":{"postinstall":"node -e \"require('fs').writeFileSync('script-ran','')\""}}"#,
     );
     let cache_env = env("YARN_CACHE_FOLDER", cache.path());
-    let restorer = ToolRestorer::with_env(cache_env.clone());
+    let restorer = ToolRestorer::with_env(cache_env.clone(), &Budgets::default());
     // Writes the lockfile; the install itself is thrown away.
     Command::new("yarn")
         .args(["install", "--ignore-scripts", "--non-interactive"])
@@ -413,7 +419,7 @@ async fn yarn_classic_installs_from_the_lockfile_without_running_scripts() {
 #[ignore = "downloads packages; needs uv"]
 async fn uv_installs_requirements_txt_into_a_venv_and_never_builds_a_source_package() {
     let (project, cache) = (tempfile::tempdir().unwrap(), tempfile::tempdir().unwrap());
-    let restorer = ToolRestorer::with_env(env("UV_CACHE_DIR", cache.path()));
+    let restorer = ToolRestorer::with_env(env("UV_CACHE_DIR", cache.path()), &Budgets::default());
     write(project.path(), "requirements.txt", "iniconfig==2.1.0\n");
     let restored = restore(&restorer, project.path(), &config::pyright(), false).await;
     let venv = project.path().join(".venv");
@@ -456,7 +462,7 @@ async fn uv_installs_a_pyproject_without_a_lockfile_from_its_subdirectory() {
         "pyproject.toml",
         "[project]\nname = \"p\"\nversion = \"0\"\nrequires-python = \">=3.9\"\ndependencies = [\"iniconfig==2.1.0\"]\n",
     );
-    let restorer = ToolRestorer::with_env(env("UV_CACHE_DIR", cache.path()));
+    let restorer = ToolRestorer::with_env(env("UV_CACHE_DIR", cache.path()), &Budgets::default());
     let restored = restore(&restorer, project.path(), &config::pyright(), false).await;
     let venv = project.path().join("svc/.venv");
     assert!(venv.is_dir());
@@ -487,7 +493,8 @@ async fn a_copy_with_the_same_projects_takes_the_working_trees_restore_output() 
     write(donor.path(), "Program.cs", "// working tree");
     write(copy.path(), "Program.cs", "// base");
 
-    let restorer = ToolRestorer::with_env(env("NUGET_PACKAGES", packages.path())).reusing(donor.path().to_owned());
+    let restorer = ToolRestorer::with_env(env("NUGET_PACKAGES", packages.path()), &Budgets::default())
+        .reusing(donor.path().to_owned());
     restore(&restorer, donor.path(), &config::roslyn(), true).await;
     assert!(donor.path().join("restore-ran").exists());
 
@@ -521,7 +528,7 @@ async fn dotnet_restores_only_where_executing_is_allowed() {
         "<configuration>\n  <packageSources>\n    <clear />\n    <add key=\"nuget.org\" value=\"https://api.nuget.org/v3/index.json\" />\n  </packageSources>\n</configuration>\n",
     );
 
-    let restorer = ToolRestorer::with_env(env("NUGET_PACKAGES", packages.path()));
+    let restorer = ToolRestorer::with_env(env("NUGET_PACKAGES", packages.path()), &Budgets::default());
     let denied = restore(&restorer, project.path(), &config::roslyn(), false).await;
     assert_eq!(denied, Restored::default());
     assert!(!project.path().join("obj").exists());

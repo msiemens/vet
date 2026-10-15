@@ -24,5 +24,5 @@ async fn the_real_store_satisfies_the_contract() {
 
 /// A database that has run its migrations, and nothing else.
 async fn fresh(dir: &Path) -> SqliteStore {
-    SqliteStore::open(dir).await.unwrap()
+    SqliteStore::for_test(dir).await.unwrap()
 }

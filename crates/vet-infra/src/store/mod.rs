@@ -219,8 +219,8 @@ impl SqliteStore {
 
     /// Brings the database up to date by its migrations. One that a release wrote before there
     /// were migrations is deleted and created anew, losing its contents; one written by a newer
-    /// Vet is left alone and fails to open.
-    pub async fn open(dir: &Path) -> Result<Self, StoreError> {
+    /// Vet is left alone and fails to open. Its content is read and written on `io`.
+    pub async fn open(dir: &Path, io: Budget) -> Result<Self, StoreError> {
         std::fs::create_dir_all(dir)?;
         let mut writer = ReviewWriter::connect(dir).await?;
         match migration::origin(&writer.db).await? {
@@ -246,13 +246,19 @@ impl SqliteStore {
             reader,
             content: Arc::new(content),
             dir: dir.to_owned(),
-            io: Budget::new(REVIEW_IO),
+            io,
         })
     }
 
     /// The same store, its content read and written on `io`.
     pub fn budgeted(&self, io: Budget) -> Self {
         Self { io, ..self.clone() }
+    }
+
+    /// A store with a budget of its own, for tests.
+    #[doc(hidden)]
+    pub async fn for_test(dir: &Path) -> Result<Self, StoreError> {
+        Self::open(dir, Budget::new(REVIEW_IO)).await
     }
 
     /// The data directory the store lives in.
