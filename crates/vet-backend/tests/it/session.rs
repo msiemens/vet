@@ -109,6 +109,12 @@ impl Client {
         }
     }
 
+    /// Waits until the project has no background work running or pending: the barrier that the
+    /// work a change would have caused is over, where a sleep would only hope that it is.
+    async fn wait_quiet(&self, project: ProjectId) {
+        self.call(Request::WaitForQuiet { project }).await.unwrap();
+    }
+
     async fn toggle_hunk(&self, project: ProjectId, revision: u32, hunk: u32) -> ReviewUpdate {
         let request = Request::ToggleHunk {
             view: vet_protocol::View::Changeset,
@@ -860,7 +866,7 @@ async fn ignored_paths_do_not_settle_snapshots() {
 
     write(fx.repo.path(), "target/debug/out", "build output\n");
     write(fx.repo.path(), "target/debug/more", "more\n");
-    tokio::time::sleep(Duration::from_millis(800)).await;
+    client.wait_quiet(project).await;
     assert!(client.no_event(), "ignored writes must not produce snapshots");
 
     write(fx.repo.path(), "a.txt", &text(5, &[1]));
@@ -1825,7 +1831,7 @@ async fn a_commit_to_another_branch_leaves_the_branch_on_view_alone() {
     let scratch = tempfile::tempdir().unwrap();
     commit_elsewhere(p, &scratch.path().join("wt"), "other", &text(30, &[9]));
 
-    tokio::time::sleep(Duration::from_millis(900)).await;
+    client.wait_quiet(project).await;
     assert!(client.no_event());
     assert_eq!(version_count(&client, project).await, 1);
     assert_eq!(client.manifest(project).await.revision, revision);

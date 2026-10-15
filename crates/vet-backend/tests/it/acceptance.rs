@@ -12,6 +12,7 @@ use std::collections::HashSet;
 use std::os::unix::fs::PermissionsExt;
 use std::path::Path;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::time::Duration;
 
 use crate::common::{git, handler, init, repo_with, write};
@@ -19,6 +20,7 @@ use tempfile::TempDir;
 use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender, unbounded_channel};
 use tokio::task::JoinHandle;
 use vet_app::ports::{Degraded, Dirty, Scanner, Store, WatchEvent, Watcher};
+use vet_app::progress::Tasks;
 use vet_app::session::{FileStatus as AppFileStatus, LiveSession};
 use vet_app::settle::Settling;
 use vet_backend::{Orchestrator, open_store};
@@ -221,10 +223,12 @@ impl Client {
         }
     }
 
-    /// Waits until the watcher has been quiet for a while, after something
-    /// outside the protocol (git, the filesystem) changed the repository.
-    async fn quiet(&mut self) {
-        while let Ok(Some(_)) = tokio::time::timeout(Duration::from_millis(900), self.inbox.recv()).await {}
+    /// Waits until the project has no background work running or pending, after something outside
+    /// the protocol (git, the filesystem) changed the repository, and drains what it sent before it
+    /// went quiet.
+    async fn quiet(&mut self, project: ProjectId) {
+        self.call(Request::WaitForQuiet { project }).await.unwrap();
+        while self.inbox.try_recv().is_ok() {}
     }
 }
 
@@ -272,7 +276,7 @@ async fn criterion1_amend_keeps_marks_and_comments() {
     git(p, &["commit", "-q", "-a", "--amend", "--no-edit"]);
     git(p, &["reflog", "expire", "--expire=now", "--all"]);
     git(p, &["gc", "-q", "--prune=now"]);
-    client.quiet().await;
+    client.quiet(project).await;
 
     assert_ne!(git(p, &["rev-parse", "HEAD"]), pinned);
     let m = client.manifest(project).await;
@@ -318,7 +322,7 @@ async fn criterion1_rebase_moves_hunks_and_marks_and_comments_follow() {
 
     advance_main(p, &[("a.txt", &format!("header\n{}", text(40, &[])))]);
     git(p, &["rebase", "-q", "main"]);
-    client.quiet().await;
+    client.quiet(project).await;
 
     // The base is where the branch left main now: only the feature's own changes are left, and
     // the marks and the comment moved down by one line.
@@ -346,7 +350,7 @@ async fn criterion1_a_rebase_that_changes_the_base_side_marks_seen_against_old_b
     advance_main(p, &[("a.txt", &text(40, &[]).replace("line 8\n", ""))]);
     git(p, &["rebase", "-q", "-X", "theirs", "main"]);
     assert_eq!(std::fs::read_to_string(p.join("a.txt")).unwrap(), text(40, &[7, 8, 9]));
-    client.quiet().await;
+    client.quiet(project).await;
 
     let m = client.manifest(project).await;
     assert_eq!(hunks(&m, "a.txt"), [HunkState::SeenAgainstOldBase]);
@@ -386,7 +390,7 @@ async fn criterion1_a_seen_deletion_survives_an_unrelated_rebase() {
     // Main changes the file elsewhere: a header on top and an edit far below.
     advance_main(p, &[("a.txt", &format!("header\n{}", text(40, &[30])))]);
     git(p, &["rebase", "-q", "main"]);
-    client.quiet().await;
+    client.quiet(project).await;
 
     // The base is where the branch left main now: the deletion stays seen.
     let m = client.manifest(project).await;
@@ -568,7 +572,7 @@ async fn criterion1_windows_filesystem_mode_comes_from_the_index_when_filemode_i
         set("run.sh", 0o644).unwrap();
         set("plain.txt", 0o755).unwrap();
     }
-    client.quiet().await;
+    client.quiet(project).await;
     assert!(client.manifest(project).await.files.is_empty());
 
     git(p, &["update-index", "--chmod=-x", "run.sh"]);
@@ -862,7 +866,7 @@ async fn criterion1_moved_content_in_another_changed_file_is_inferred_across_fil
 
     write(fx.repo.path(), "a.txt", &a);
     write(fx.repo.path(), "b.txt", &insert(&b, "b 7"));
-    client.quiet().await;
+    client.quiet(project).await;
 
     let thread = client.thread(project, comment.id).await;
     assert!(
@@ -936,7 +940,7 @@ async fn criterion1_a_rewritten_file_leaves_its_thread_stale_for_changed_context
     let comment = client.comment(project, "rewritten.txt", 10, 3).await;
 
     write(fx.repo.path(), "rewritten.txt", "completely\ndifferent\n");
-    client.quiet().await;
+    client.quiet(project).await;
 
     let thread = client.thread(project, comment.id).await;
     assert_eq!(
@@ -964,6 +968,10 @@ async fn criterion1_a_rewritten_file_leaves_its_thread_stale_for_changed_context
 struct Scripted {
     events: UnboundedReceiver<WatchEvent>,
     degraded: Option<Degraded>,
+    /// Whether the settle loop has taken an event and not asked for the next one yet.
+    processing: Arc<AtomicBool>,
+    /// Events sent to the loop but not taken yet.
+    queued: Arc<AtomicUsize>,
 }
 
 impl Watcher for Scripted {
@@ -972,11 +980,15 @@ impl Watcher for Scripted {
     }
 
     async fn next(&mut self) -> WatchEvent {
+        // Asking for an event means the one before it is done.
+        self.processing.store(false, Ordering::SeqCst);
         match self.events.recv().await {
             Some(event) => {
+                self.queued.fetch_sub(1, Ordering::SeqCst);
                 if let WatchEvent::Degraded(reason) = &event {
                     self.degraded = Some(*reason);
                 }
+                self.processing.store(true, Ordering::SeqCst);
                 event
             }
             // A watcher that died silently: nothing more is ever reported.
@@ -994,6 +1006,14 @@ struct Live {
     watch: UnboundedSender<WatchEvent>,
     revisions: UnboundedReceiver<u32>,
     follower: JoinHandle<()>,
+    /// The scans and diffs the session reports.
+    tasks: Tasks,
+    /// Whether an edit waits to settle.
+    pending: Arc<AtomicBool>,
+    /// Whether the settle loop has taken an event and not asked for the next one yet.
+    processing: Arc<AtomicBool>,
+    /// Events sent to the settle loop but not taken yet.
+    queued: Arc<AtomicUsize>,
 }
 
 impl Live {
@@ -1001,14 +1021,32 @@ impl Live {
         let repo = repo_with(base, dirty);
         let data = tempfile::tempdir().unwrap();
         let store = open_store(data.path()).await.unwrap();
+        let tasks = Tasks::default();
         let session = Arc::new(
-            Session::open(GixRepo::for_test(repo.path()), store, "/repo".into(), || 0)
-                .await
-                .unwrap(),
+            Session::open_reporting(
+                GixRepo::for_test(repo.path()),
+                store,
+                "/repo".into(),
+                || 0,
+                tasks.clone(),
+            )
+            .await
+            .unwrap(),
         );
         let (watch, events) = unbounded_channel();
         let (revisions_tx, revisions) = unbounded_channel();
-        let follower = Self::follow(&session, events, revisions_tx).await;
+        let pending = Arc::new(AtomicBool::new(false));
+        let processing = Arc::new(AtomicBool::new(false));
+        let queued = Arc::new(AtomicUsize::new(0));
+        let follower = Self::follow(
+            &session,
+            events,
+            revisions_tx,
+            pending.clone(),
+            processing.clone(),
+            queued.clone(),
+        )
+        .await;
         Self {
             repo,
             _data: data,
@@ -1016,6 +1054,10 @@ impl Live {
             watch,
             revisions,
             follower,
+            tasks,
+            pending,
+            processing,
+            queued,
         }
     }
 
@@ -1023,9 +1065,18 @@ impl Live {
         session: &Arc<Session>,
         events: UnboundedReceiver<WatchEvent>,
         revisions: UnboundedSender<u32>,
+        pending: Arc<AtomicBool>,
+        processing: Arc<AtomicBool>,
+        queued: Arc<AtomicUsize>,
     ) -> JoinHandle<()> {
-        let watcher = Scripted { events, degraded: None };
-        let settling = Settling::new(watcher, TokioClock::new(), 100, Some(session.settled_snapshot().await));
+        let watcher = Scripted {
+            events,
+            degraded: None,
+            processing,
+            queued,
+        };
+        let settling =
+            Settling::new(watcher, TokioClock::new(), 100, Some(session.settled_snapshot().await)).reporting_edits();
         let session = session.clone();
         tokio::spawn(async move {
             session
@@ -1035,7 +1086,7 @@ impl Live {
                         let _ = revisions.send(revision);
                     },
                     || {},
-                    |_| {},
+                    |waiting| pending.store(waiting, Ordering::SeqCst),
                 )
                 .await;
         })
@@ -1046,6 +1097,7 @@ impl Live {
     }
 
     fn send(&self, event: WatchEvent) {
+        self.queued.fetch_add(1, Ordering::SeqCst);
         self.watch.send(event).unwrap();
     }
 
@@ -1054,6 +1106,7 @@ impl Live {
     async fn kill_watcher(&mut self) {
         self.follower.abort();
         let _ = (&mut self.follower).await;
+        self.processing.store(false, Ordering::SeqCst);
     }
 
     async fn restart_watcher(&mut self) {
@@ -1061,7 +1114,17 @@ impl Live {
         let (revisions_tx, revisions) = unbounded_channel();
         self.watch = watch;
         self.revisions = revisions;
-        self.follower = Self::follow(&self.session, events, revisions_tx).await;
+        self.queued.store(0, Ordering::SeqCst);
+        self.processing.store(false, Ordering::SeqCst);
+        self.follower = Self::follow(
+            &self.session,
+            events,
+            revisions_tx,
+            self.pending.clone(),
+            self.processing.clone(),
+            self.queued.clone(),
+        )
+        .await;
     }
 
     async fn revision(&mut self) -> u32 {
@@ -1071,8 +1134,21 @@ impl Live {
             .expect("follower stopped")
     }
 
-    async fn silent(&mut self, wait: Duration) -> bool {
-        tokio::time::timeout(wait, self.revisions.recv()).await.is_err()
+    /// Waits until the settle loop has no work pending: nothing queued to it, nothing it is
+    /// processing, no edit waiting to settle, and no scan or diff running. The barrier that a
+    /// change was reconciled is over, where a sleep would only hope that it is.
+    async fn quiet(&self) {
+        for _ in 0..6000 {
+            if !self.processing.load(Ordering::SeqCst)
+                && self.queued.load(Ordering::SeqCst) == 0
+                && !self.pending.load(Ordering::SeqCst)
+                && !self.tasks.any_running()
+            {
+                return;
+            }
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+        panic!("the session never went quiet");
     }
 
     /// Settled revisions until nothing more arrives; the last one.
@@ -1139,7 +1215,7 @@ async fn criterion4_dropped_events_are_caught_up_by_the_next_rescan() {
     write(live.path(), "a.txt", &text(40, &[30]).replace("line 5\n", "agent 5\n"));
     write(live.path(), "new.txt", "new\n");
     std::fs::remove_file(live.path().join("gone.txt")).unwrap();
-    assert!(live.silent(Duration::from_millis(500)).await);
+    live.quiet().await;
     // Late, not wrong: the old revision still describes the old snapshot.
     assert_eq!(live.session.revision().await, 0);
     assert_eq!(live.hunks("a.txt").await, [CoreHunk::Seen, CoreHunk::Unseen]);
@@ -1157,7 +1233,8 @@ async fn criterion4_dropped_events_are_caught_up_by_the_next_rescan() {
     );
     // The mark was on content that is gone, so it is gone too.
     assert_eq!(live.hunks("a.txt").await, [CoreHunk::Unseen, CoreHunk::Unseen]);
-    assert!(live.silent(Duration::from_millis(500)).await, "settled once");
+    live.quiet().await;
+    assert_eq!(live.session.revision().await, 1, "settled once");
 }
 
 #[tokio::test]
@@ -1286,7 +1363,7 @@ async fn criterion4_a_watch_limit_fallback_rescans_and_is_reported() {
 async fn criterion4_a_git_state_change_without_worktree_events_is_reconciled() {
     // `git commit` moves HEAD and the index but touches no worktree file; the
     // snapshot must stay the same and the review state must not move.
-    let mut live = Live::open(&[("a.txt", &text(10, &[]))], &[("a.txt", &text(10, &[1]))]).await;
+    let live = Live::open(&[("a.txt", &text(10, &[]))], &[("a.txt", &text(10, &[1]))]).await;
     live.session
         .toggle_hunk(0, vet_app::session::View::Changeset, "a.txt", 0)
         .await
@@ -1294,10 +1371,9 @@ async fn criterion4_a_git_state_change_without_worktree_events_is_reconciled() {
     git(live.path(), &["commit", "-q", "-a", "-m", "agent commits"]);
 
     live.send(WatchEvent::MustRescan);
-    assert!(
-        live.silent(Duration::from_millis(600)).await,
-        "same tree, same snapshot"
-    );
+    live.quiet().await;
+    // Same tree, same snapshot: the commit moved HEAD, not the files.
+    assert_eq!(live.session.revision().await, 0);
     live.assert_correct().await;
     assert_eq!(live.hunks("a.txt").await, [CoreHunk::Seen]);
 }
@@ -1337,7 +1413,7 @@ async fn criterion4_a_write_storm_through_the_real_watcher_settles_on_the_final_
     expected.sort_by(|a, b| a.0.cmp(&b.0));
     let deadline = tokio::time::Instant::now() + Duration::from_secs(20);
     let m = loop {
-        client.quiet().await;
+        client.quiet(project).await;
         let m = client.manifest(project).await;
         let mut got: Vec<_> = m.files.iter().map(|f| (f.path.clone(), f.status)).collect();
         got.sort_by(|a, b| a.0.cmp(&b.0));
