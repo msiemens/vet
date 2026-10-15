@@ -1,6 +1,7 @@
 // How the platform of the pull request on view is doing, what it said of the pull request, and
 // what the backend asked the viewer to hear. Syncing the threads is the backend's (SPEC I5); this
-// holds the answers and the notifications.
+// holds the answers and the notifications, and none of the Comments tool window's or the outgoing
+// popover's own flags (`features/comments/commentsUi.svelte.ts`).
 
 import type { ChangesetKey } from "../generated/ChangesetKey";
 import type { Notification } from "../generated/Notification";
@@ -36,24 +37,8 @@ class PlatformStore {
   status = $state.raw<PlatformStatus>();
   /** Newest first: what the bell lists. */
   notified = $state.raw<Notified[]>([]);
-  /** The Submit review form, kept here so that switching tool windows does not empty it. */
-  review = $state({
-    open: false,
-    verdict: undefined as Verdict | undefined,
-    body: "",
-  });
-  /** The toolbar's list of the outgoing comments and the vote, with the button that posts them, is open. */
-  outgoingOpen = $state(false);
-  /** While that popover is open it lists the votes to pick from instead. */
-  votePicking = $state(false);
-  /** The comment on the changeset as a whole that is being written in the Comments tool window. */
-  changesetComment = $state({ composing: false, body: "" });
   /** What the platform of the last pull request on view lets the viewer do; kept while another changeset is on view. */
   traits = $state.raw<PlatformTraits>();
-  /** The viewer's comments are being posted. */
-  sending = $state(false);
-  /** The tab the Comments tool window shows. */
-  commentsTab = $state<"review" | "conversation">("review");
   /** The changeset the last `changesetOpened` put on view. */
   private opened?: ChangesetKey;
   private backend?: Backend;
@@ -82,7 +67,6 @@ class PlatformStore {
       opening: (opening) => {
         if (opening.type !== "opened") return;
         this.opened = opening.changeset;
-        Object.assign(this.changesetComment, { composing: false, body: "" });
       },
     });
     // A credential given or removed, here or in another window, changes what the platform answers.
@@ -97,7 +81,6 @@ class PlatformStore {
       this.info = undefined;
       this.status = undefined;
       this.traits = undefined;
-      this.outgoingOpen = false;
     };
   }
 
@@ -234,22 +217,6 @@ class PlatformStore {
   /** The viewer's comments and staged vote that wait to be posted. */
   get outgoingCount(): number {
     return this.info?.outgoing.count ?? 0;
-  }
-
-  /** Shows the outgoing comments and the vote, with the button that posts them; `picking` lists the votes to pick from instead. */
-  openOutgoing(picking: boolean) {
-    this.votePicking = picking;
-    this.outgoingOpen = true;
-  }
-
-  /** Shows the Comments tool window's Conversation tab. */
-  showConversation() {
-    this.commentsTab = "conversation";
-  }
-
-  /** Opens the form for a comment on the changeset as a whole. */
-  composeChangesetComment() {
-    this.changesetComment.composing = true;
   }
 
   private notify(notification: Notification) {

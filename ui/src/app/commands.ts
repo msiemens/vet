@@ -3,7 +3,7 @@
 // and the screen the project opens on. `App` registers them once before its first render.
 
 import { focusFind, focusPipelines, focusProblems, shell } from "../features/chrome";
-import { threadCommands, voteBlocked } from "../features/comments";
+import { commentsUi, threadCommands, voteBlocked } from "../features/comments";
 import { palette, paletteCommands } from "../features/palette";
 import { copyText } from "../features/platform";
 import { queueCommands } from "../features/queue";
@@ -73,11 +73,11 @@ export function registerCommands(): () => void {
       commentOnChangeset,
       postComments: () => {
         shell.show("review");
-        platform.openOutgoing(false);
+        commentsUi.openOutgoing(false);
       },
       pickVote: () => {
         shell.show("review");
-        platform.openOutgoing(true);
+        commentsUi.openOutgoing(true);
       },
       stageVote: (verdict) => void platform.stageVote(verdict),
       clearSemanticCaches: () => void clearSemanticCaches(),

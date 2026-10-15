@@ -2,6 +2,7 @@
   import type { PullRequestInfo } from "../../generated/PullRequestInfo";
   import { verdictId, verdictLabel, verdictOf } from "../../lib/verdicts";
   import { platform } from "../../state/platform.svelte";
+  import { commentsUi } from "./commentsUi.svelte";
   import { chosenVerdict } from "./posting";
 
   /** What goes with the viewer's comments: the review's verdict and summary, or the vote where it is set apart (staged, and sent with the comments). */
@@ -12,7 +13,7 @@
   }: { info: PullRequestInfo; part: "review" | "vote"; disabled?: boolean } = $props();
 
   // The form's state is the store's, so the Comments tool window and the toolbar's popover share it.
-  const form = platform.review;
+  const form = commentsUi.review;
   const shown = $derived(info.pendingVote?.verdict ?? info.viewerVerdict);
   const chosen = $derived(chosenVerdict(info));
   const value = $derived(chosen === undefined ? "" : verdictId(chosen));

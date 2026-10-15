@@ -15,6 +15,7 @@
   import PanelTabs from "../../lib/ui/PanelTabs.svelte";
   import { platform } from "../../state/platform.svelte";
   import { attachMenu } from "./commentCommands";
+  import { commentsUi, type CommentsTab } from "./commentsUi.svelte";
   import { changesetThreads, draftComments, reviewThreads } from "./conversation";
   import ConversationList from "./ConversationList.svelte";
   import { RESOLVED_SHOWN, candidates, detachedReason, draftCount, groupThreads, preview, shown } from "./groups";
@@ -41,10 +42,9 @@
   const conversationCount = $derived(
     info?.traits.conversationFeed ? info.conversation.length + drafts.length : onWhole.length,
   );
-  type Tab = typeof platform.commentsTab;
-  const pick = (id: Tab) => (platform.commentsTab = id);
+  const pick = (id: CommentsTab) => commentsUi.showTab(id);
   // A changeset that is no pull request has no conversation to switch to.
-  const showing = $derived(info ? platform.commentsTab : "review");
+  const showing = $derived(info ? commentsUi.commentsTab : "review");
 
   type GroupId = "conflicts" | "open" | "resolved";
   let folded = $state<GroupId[]>([]);
@@ -52,7 +52,7 @@
   const fold = (id: GroupId) => (folded = folded.includes(id) ? folded.filter((f) => f !== id) : [...folded, id]);
 
   // The draft is the store's, so the Comment on Changeset command can open it and switching tool windows keeps it.
-  const draft = platform.changesetComment;
+  const draft = commentsUi.changesetComment;
   let sending = $state(false);
   /** A comment on the changeset is written below its conversation, where it will be; without a pull request, below the threads. */
   const composeHere = $derived(draft.composing && showing === (info ? "conversation" : "review"));
@@ -64,7 +64,7 @@
     sending = true;
     const sent = await threads.create(onScreen, { type: "changeset" }, draft.body.trim());
     sending = false;
-    if (sent) [draft.body, draft.composing] = ["", false];
+    if (sent) commentsUi.sentChangesetComment();
   }
 </script>
 
@@ -219,10 +219,10 @@
               if (isSubmitKey(e)) {
                 e.preventDefault();
                 void post();
-              } else if (e.key === "Escape") draft.composing = false;
+              } else if (e.key === "Escape") commentsUi.cancelChangesetComment();
             }}></textarea>
           <div class="buttons">
-            <button class="ctl" type="button" onclick={() => (draft.composing = false)}>Cancel</button>
+            <button class="ctl" type="button" onclick={() => commentsUi.cancelChangesetComment()}>Cancel</button>
             <button
               class="ctl primary"
               type="button"

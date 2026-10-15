@@ -1,5 +1,6 @@
 export { default as CommentsPanel } from "./CommentsPanel.svelte";
 export { default as OutgoingButton } from "./OutgoingButton.svelte";
+export { commentsUi } from "./commentsUi.svelte";
 export { threadCommands, threadMenu } from "./commentCommands";
 export { default as ThreadPlace } from "./ThreadPlace.svelte";
 export { default as ThreadCards } from "./ThreadCards.svelte";

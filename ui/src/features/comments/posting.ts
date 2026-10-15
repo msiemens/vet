@@ -6,23 +6,24 @@ import type { PullRequestInfo } from "../../generated/PullRequestInfo";
 import type { Verdict } from "../../generated/Verdict";
 import { notices } from "../../state/notices.svelte";
 import { platform } from "../../state/platform.svelte";
+import { commentsUi } from "./commentsUi.svelte";
 import { postedNote, waitingNote } from "./pullRequest";
 
 /** The verdict the form has chosen, else the platform's first. */
 export const chosenVerdict = (info: PullRequestInfo): Verdict | undefined =>
-  platform.review.verdict ?? info.traits.verdicts.at(0);
+  commentsUi.review.verdict ?? info.traits.verdicts.at(0);
 
 /** Posts the outgoing comments; resolves whether all of them went through. What stopped it is told by the backend's notification. */
 export async function sendComments(info: PullRequestInfo): Promise<boolean> {
-  if (platform.sending) return false;
-  platform.sending = true;
+  if (commentsUi.sending) return false;
+  commentsUi.sending = true;
   try {
     if (info.traits.batchedReview) {
       const verdict = chosenVerdict(info);
       if (verdict === undefined) return false;
-      const done = await platform.submit(verdict, platform.review.body);
+      const done = await platform.submit(verdict, commentsUi.review.body);
       if (done?.problem !== null) return false;
-      [platform.review.open, platform.review.body] = [false, ""];
+      commentsUi.sentReview();
       notices.show(done.skipped > 0 ? `Review submitted. ${waitingNote(done.skipped)}` : "Review submitted");
     } else {
       const done = await platform.post();
@@ -31,6 +32,6 @@ export async function sendComments(info: PullRequestInfo): Promise<boolean> {
     }
     return true;
   } finally {
-    platform.sending = false;
+    commentsUi.sending = false;
   }
 }

@@ -15,7 +15,6 @@ import { keyId } from "../state/changesetKey";
 import { commands } from "../state/commands";
 import { canShowFolder, showFolder } from "../state/host";
 import { notices } from "../state/notices.svelte";
-import { platform } from "../state/platform.svelte";
 import { queue } from "../state/queue.svelte";
 import { serverList } from "../state/serverList.svelte";
 import { session } from "../state/session.svelte";
@@ -24,6 +23,7 @@ import { defaultRange } from "../state/timelineRange";
 import { threads } from "../state/threads.svelte";
 import { versions } from "../state/versions.svelte";
 import { shell } from "../features/chrome";
+import { commentsUi } from "../features/comments";
 import { appState } from "./appState.svelte";
 
 /** Opens the folder of the log files in the file manager; a plain browser says where it is. */
@@ -88,8 +88,8 @@ export async function goToFirstFlagged() {
 export function commentOnChangeset() {
   shell.show("review");
   shell.showLeft("comments");
-  platform.showConversation();
-  platform.composeChangesetComment();
+  commentsUi.showConversation();
+  commentsUi.composeChangesetComment();
 }
 
 /** Shows a thread where it is: at its code, or in the Comments tool window's Conversation tab. */
@@ -97,7 +97,7 @@ export function openThread(thread: Thread) {
   shell.show("review");
   if (thread.kind !== "changeset") return void appState.controller?.goToThread(thread);
   shell.showLeft("comments");
-  platform.showConversation();
+  commentsUi.showConversation();
 }
 
 /** Opens a place of a result set where it was found. */

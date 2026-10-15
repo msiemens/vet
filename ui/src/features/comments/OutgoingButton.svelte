@@ -11,6 +11,7 @@
   import { commands } from "../../state/commands";
   import { platform } from "../../state/platform.svelte";
   import { threads } from "../../state/threads.svelte";
+  import { commentsUi } from "./commentsUi.svelte";
   import { firstLine } from "./groups";
   import {
     canPost,
@@ -34,27 +35,24 @@
   let { onopen }: { onopen: (thread: Thread) => void } = $props();
 
   // The list is open in the store, so the Post Comments command can open it.
-  onDestroy(() => (platform.outgoingOpen = false));
-  $effect(() => {
-    if (!platform.outgoingOpen) platform.votePicking = false;
-  });
+  onDestroy(() => commentsUi.closeOutgoing());
   const info = $derived(platform.info);
   const list = $derived(outgoingComments(threads.items));
   const vote = $derived(info?.pendingVote ?? null);
   const summary = $derived(info?.outgoing ?? NOTHING_OUTGOING);
-  const busy = $derived(platform.sending || summary.posting);
+  const busy = $derived(commentsUi.sending || summary.posting);
   const comments = $derived(summary.comments);
   const ready = $derived(comments + (summary.vote ? 1 : 0));
   const blocked = $derived(info && submitBlock(info.platform.connection));
   const title = $derived(outgoingTitle(summary, vote !== null));
 
   function show(thread: Thread) {
-    platform.outgoingOpen = false;
+    commentsUi.closeOutgoing();
     onopen(thread);
   }
 
   async function pick(id: string) {
-    platform.outgoingOpen = false;
+    commentsUi.closeOutgoing();
     const verdict = verdictOf(id);
     if (verdict) await platform.stageVote(verdict);
   }
@@ -62,11 +60,11 @@
   const postable = $derived(canPost(ready, busy, blocked));
 
   async function send() {
-    if (info && (await sendComments(info))) platform.outgoingOpen = false;
+    if (info && (await sendComments(info))) commentsUi.closeOutgoing();
   }
 
   function onkeydown(e: KeyboardEvent) {
-    if (outgoingKey(e, platform.votePicking) !== "post") return;
+    if (outgoingKey(e, commentsUi.votePicking) !== "post") return;
     e.preventDefault();
     if (postable) void send();
   }
@@ -76,17 +74,17 @@
   let scope: FocusScope | undefined;
   // Before the list renders: the vote picker's menu takes the focus as it mounts.
   $effect.pre(() => {
-    if (platform.outgoingOpen) scope ??= focusScope();
+    if (commentsUi.outgoingOpen) scope ??= focusScope();
   });
   $effect(() => {
-    if (!platform.outgoingOpen) {
+    if (!commentsUi.outgoingOpen) {
       // A focus that moved on by itself (to a thread that was opened) stays there.
       scope?.leave();
       scope = undefined;
       return;
     }
     // The vote picker's menu takes the focus itself.
-    if (untrack(() => platform.votePicking)) return;
+    if (untrack(() => commentsUi.votePicking)) return;
     void tick().then(() => {
       const target = sheet?.querySelector<HTMLElement>("textarea, button.primary:enabled") ?? sheet;
       target?.focus();
@@ -94,14 +92,14 @@
   });
 </script>
 
-<Popover bind:open={platform.outgoingOpen} align="right">
+<Popover bind:open={commentsUi.outgoingOpen} align="right">
   {#snippet trigger(toggle)}
     <button
       class="ctl status"
       class:failed={summary.failed > 0}
       type="button"
       disabled={summary.count === 0}
-      aria-expanded={platform.outgoingOpen}
+      aria-expanded={commentsUi.outgoingOpen}
       {title}
       aria-label={title}
       onclick={toggle}
@@ -110,7 +108,7 @@
       <span class="mono">{summary.failed > 0 ? summary.failed : summary.count}</span>
     </button>
   {/snippet}
-  {#if platform.votePicking}
+  {#if commentsUi.votePicking}
     {#if info}<Menu items={voteChoices(info)} onselect={(verdict) => void pick(verdict)} />{/if}
   {:else}
     <div class="outgoing" role="presentation" tabindex="-1" bind:this={sheet} {onkeydown}>

@@ -1,7 +1,7 @@
 <script lang="ts">
   import type { PullRequestInfo } from "../../generated/PullRequestInfo";
   import { commands } from "../../state/commands";
-  import { platform } from "../../state/platform.svelte";
+  import { commentsUi } from "./commentsUi.svelte";
   import PostingControls from "./PostingControls.svelte";
   import { sendComments } from "./posting";
   import { submitBlock } from "./pullRequest";
@@ -11,7 +11,7 @@
   // The staged vote is posted with the comments, so it counts among them.
   const drafts = $derived(info.outgoing.comments + (info.outgoing.vote ? 1 : 0));
   const blocked = $derived(submitBlock(info.platform.connection));
-  const form = platform.review;
+  const form = commentsUi.review;
 </script>
 
 <div class="submit">
@@ -22,7 +22,7 @@
       disabled={blocked !== undefined}
       title={blocked}
       aria-expanded={form.open}
-      onclick={() => (form.open = !form.open)}
+      onclick={() => commentsUi.toggleReviewForm()}
     >
       Submit review{#if drafts > 0}<span class="drafts">{drafts}</span>{/if}
     </button>
@@ -30,7 +30,7 @@
     <button
       class="ctl primary"
       type="button"
-      disabled={blocked !== undefined || drafts === 0 || platform.sending}
+      disabled={blocked !== undefined || drafts === 0 || commentsUi.sending}
       title={blocked}
       onclick={() => void sendComments(info)}
     >
@@ -45,8 +45,8 @@
     <div class="form">
       <PostingControls {info} part="review" />
       <div class="buttons">
-        <button class="ctl" type="button" onclick={() => (form.open = false)}>Cancel</button>
-        <button class="ctl primary" type="button" disabled={platform.sending} onclick={() => void sendComments(info)}
+        <button class="ctl" type="button" onclick={() => commentsUi.closeReviewForm()}>Cancel</button>
+        <button class="ctl primary" type="button" disabled={commentsUi.sending} onclick={() => void sendComments(info)}
           >Submit</button
         >
       </div>
