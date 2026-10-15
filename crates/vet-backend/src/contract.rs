@@ -20,6 +20,7 @@ pub enum Kind {
     SnapshotSettled,
     EditsPending,
     ChangesetOpened,
+    ChangesetLinesChanged,
     ReviewChanged,
     LensChanged,
     TargetChanged,
@@ -49,6 +50,7 @@ impl Kind {
             Event::SnapshotSettled { .. } => Self::SnapshotSettled,
             Event::EditsPending { .. } => Self::EditsPending,
             Event::ChangesetOpened { .. } => Self::ChangesetOpened,
+            Event::ChangesetLinesChanged { .. } => Self::ChangesetLinesChanged,
             Event::ReviewChanged { .. } => Self::ReviewChanged,
             Event::LensChanged { .. } => Self::LensChanged,
             Event::TargetChanged { .. } => Self::TargetChanged,
@@ -73,7 +75,9 @@ impl Kind {
 #[derive(Debug)]
 pub enum Effect {
     /// Reads. It may subscribe the connection, keep what it computed, or ask for a credential
-    /// (`CredentialsNeeded`); nothing another store shows changes.
+    /// (`CredentialsNeeded`); nothing another store shows changes. A query whose answer is long
+    /// may push it in parts (`ChangesetLinesChanged`): that is the answer arriving early, not a
+    /// change another store must hear.
     Query,
     /// Changes what the backend keeps, but nothing a store keeps; why.
     Unannounced(#[expect(dead_code, reason = "read by whoever reads the classification")] &'static str),

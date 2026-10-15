@@ -1582,7 +1582,7 @@ async fn review_branch(client: &mut Client, project: ProjectId, name: &str) {
     let revision = loop {
         match client.event().await {
             Event::ChangesetOpened { revision, .. } => break revision,
-            Event::ChangesetsChanged { .. } => {}
+            Event::ChangesetsChanged { .. } | Event::ChangesetLinesChanged { .. } => {}
             other => panic!("not told which changeset is on view: {other:?}"),
         }
     };
@@ -1591,7 +1591,7 @@ async fn review_branch(client: &mut Client, project: ProjectId, name: &str) {
     loop {
         match client.event().await {
             Event::ReviewChanged { .. } => break,
-            Event::ChangesetsChanged { .. } => {}
+            Event::ChangesetsChanged { .. } | Event::ChangesetLinesChanged { .. } => {}
             other => panic!("{other:?}"),
         }
     }
@@ -1653,6 +1653,38 @@ async fn a_row_of_the_list_has_its_lines_asked_for_and_the_progress_of_its_revie
     };
     let progress = progress.expect("measured with the first mark");
     assert_eq!((progress.seen_percent, progress.old_base_percent), (100.0, 0.0));
+}
+
+#[tokio::test]
+async fn the_lines_of_a_row_are_pushed_as_they_are_counted_before_the_answer() {
+    let fx = fixture_with_feature().await;
+    let mut client = Client::new(&fx.handler);
+    let project = open(&client, fx.repo.path()).await;
+    let changesets = vec![
+        ChangesetKey::Branch { name: "feature".into() },
+        ChangesetKey::WorkingTree,
+    ];
+    let response = client
+        .call(Request::ChangesetLines {
+            project,
+            changesets: changesets.clone(),
+        })
+        .await
+        .unwrap();
+
+    // One pushed row per changeset, in the request's order, each before the answer.
+    for expected in &changesets {
+        loop {
+            if let Event::ChangesetLinesChanged { changesets: pushed, .. } = client.event().await {
+                assert_eq!(pushed, vec![expected.clone()]);
+                break;
+            }
+        }
+    }
+    let Response::ChangesetLines { lines } = response else {
+        panic!("{response:?}");
+    };
+    assert_eq!(lines, vec![Some(LineDelta { added: 1, removed: 1 }), None]);
 }
 
 #[tokio::test]

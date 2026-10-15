@@ -411,6 +411,19 @@ pub fn changeset_lines(lines: Vec<Option<LineDelta>>) -> p::Response {
     }
 }
 
+/// A chunk of a `ChangesetLines` answer, as the pushed event: one or more rows as they are counted.
+pub fn changeset_lines_changed(
+    project: p::ProjectId,
+    changesets: Vec<p::ChangesetKey>,
+    lines: Vec<Option<LineDelta>>,
+) -> p::Event {
+    p::Event::ChangesetLinesChanged {
+        project,
+        changesets,
+        lines: lines.into_iter().map(|lines| lines.map(line_delta)).collect(),
+    }
+}
+
 fn queue_status(status: QueueStatus) -> p::QueueStatus {
     match status {
         QueueStatus::Draft => p::QueueStatus::Draft,

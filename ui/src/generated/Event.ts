@@ -4,6 +4,7 @@ import type { CommitChecks } from "./CommitChecks";
 import type { Diagnostic } from "./Diagnostic";
 import type { FileSymbols } from "./FileSymbols";
 import type { Lens } from "./Lens";
+import type { LineDelta } from "./LineDelta";
 import type { Notification } from "./Notification";
 import type { PlatformStatus } from "./PlatformStatus";
 import type { RestoreFailure } from "./RestoreFailure";
@@ -19,7 +20,7 @@ import type { Unavailable } from "./Unavailable";
  * the requester included: of the requester's stores only the one that asked reads
  * the answer.
  */
-export type Event = { "type": "credentialsNeeded", host: string, } | { "type": "accountsChanged" } | { "type": "recentProjectsChanged" } | { "type": "settingsChanged" } | { "type": "preferenceChanged", scope: string | null, key: string, value: string | null, } | { "type": "snapshotSettled", project: number, revision: number, } | { "type": "editsPending", project: number, pending: boolean, } | { "type": "changesetOpened", project: number, revision: number, changeset: ChangesetKey, } | { "type": "reviewChanged", project: number, revision: number, update: ReviewUpdate, } | { "type": "lensChanged", project: number, lens: Lens, } | { "type": "targetChanged", project: number, } | { "type": "changesetsChanged", project: number, } | { "type": "reviewStarted", project: number, review: ReviewInfo, } | { "type": "threadsChanged", project: number, revision: number, } | { "type": "fileSymbols", project: number, symbols: FileSymbols, done: number, total: number, } | { "type": "fileDiagnostics", project: number, revision: number, path: string, diagnostics: Array<Diagnostic>, 
+export type Event = { "type": "credentialsNeeded", host: string, } | { "type": "accountsChanged" } | { "type": "recentProjectsChanged" } | { "type": "settingsChanged" } | { "type": "preferenceChanged", scope: string | null, key: string, value: string | null, } | { "type": "snapshotSettled", project: number, revision: number, } | { "type": "editsPending", project: number, pending: boolean, } | { "type": "changesetOpened", project: number, revision: number, changeset: ChangesetKey, } | { "type": "reviewChanged", project: number, revision: number, update: ReviewUpdate, } | { "type": "lensChanged", project: number, lens: Lens, } | { "type": "targetChanged", project: number, } | { "type": "changesetsChanged", project: number, } | { "type": "changesetLinesChanged", project: number, changesets: Array<ChangesetKey>, lines: Array<LineDelta | null>, } | { "type": "reviewStarted", project: number, review: ReviewInfo, } | { "type": "threadsChanged", project: number, revision: number, } | { "type": "fileSymbols", project: number, symbols: FileSymbols, done: number, total: number, } | { "type": "fileDiagnostics", project: number, revision: number, path: string, diagnostics: Array<Diagnostic>, 
 /**
  * How many of `diagnostics` to tell the viewer about: hints are not counted.
  */

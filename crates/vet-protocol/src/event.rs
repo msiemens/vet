@@ -4,8 +4,8 @@ use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
 use crate::{
-    ChangesetKey, CommitChecks, Diagnostic, FileSymbols, Lens, Notification, PlatformStatus, ProjectId, RestoreFailure,
-    ReviewInfo, ReviewUpdate, ServerRuntimes, Task, Unavailable,
+    ChangesetKey, CommitChecks, Diagnostic, FileSymbols, Lens, LineDelta, Notification, PlatformStatus, ProjectId,
+    RestoreFailure, ReviewInfo, ReviewUpdate, ServerRuntimes, Task, Unavailable,
 };
 
 /// Events are invalidations or small state updates; the client re-requests
@@ -71,6 +71,15 @@ pub enum Event {
     /// What `ListChangesets` and `ListPullRequests` list may have changed: a fetch moved
     /// branches or pull request heads, or a review finished. List again.
     ChangesetsChanged { project: ProjectId },
+    /// A chunk of a `ChangesetLines` answer, pushed in the request's order while the backend
+    /// counts the rest (A16), so the first rows show before the last is counted. `changesets`
+    /// are at `lines`, in the same order. The request's answer settles the whole list, so a
+    /// client may apply this as it arrives and let the answer overwrite it.
+    ChangesetLinesChanged {
+        project: ProjectId,
+        changesets: Vec<ChangesetKey>,
+        lines: Vec<Option<LineDelta>>,
+    },
     /// The first review action started a review. Sent to every subscriber,
     /// the requester included; a finished review is `SnapshotSettled`.
     ReviewStarted { project: ProjectId, review: ReviewInfo },

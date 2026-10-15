@@ -71,6 +71,8 @@ class QueueStore {
         if (event.type === "changesetOpened" || event.type === "reviewStarted") void this.loadAll();
         else if (event.type === "changesetsChanged") void this.load();
         else if (event.type === "threadsChanged") void this.load(false);
+        // A chunk of a `changesetLines` answer: show those rows as they are counted.
+        else if (event.type === "changesetLinesChanged") this.takeLines(event.changesets, event.lines);
         // A new version or a mark changes the version, the last reviewed version and the progress of the row on view.
         else if (event.type === "snapshotSettled" || event.type === "reviewChanged") this.follow();
       });
@@ -249,7 +251,12 @@ class QueueStore {
     if (!wanted.length) return;
     const lines = await changeset.changesetLines(wanted);
     if (!isLatest() || !lines) return;
-    wanted.forEach((key, at) => this.lines.set(keyId(key), lines[at] ?? null));
+    this.takeLines(wanted, lines);
+  }
+
+  /** Shows the counted lines of `changesets`, in order: a pushed chunk, or the request's answer. */
+  private takeLines(changesets: readonly ChangesetKey[], lines: readonly (LineDelta | null | undefined)[]) {
+    changesets.forEach((key, at) => this.lines.set(keyId(key), lines[at] ?? null));
   }
 }
 

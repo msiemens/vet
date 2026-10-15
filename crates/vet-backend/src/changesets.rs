@@ -115,19 +115,21 @@ impl Orchestrator {
 
     pub(crate) async fn changeset_lines(&self, project: ProjectId, changesets: Vec<ChangesetKey>) -> Result<Response> {
         let sources = changesets
-            .into_iter()
-            .map(mapping::core_changeset_key)
+            .iter()
+            .map(|c| mapping::core_changeset_key(c.clone()))
             .collect::<std::result::Result<Vec<_>, _>>()
             .map_err(Error::Invalid)?;
-        let lines = self
-            .asking(project, async |session| {
-                let mut lines = Vec::with_capacity(sources.len());
-                for source in &sources {
-                    lines.push(session.lines_of(source).await?);
-                }
-                Ok::<_, vet_app::session::SessionError>(lines)
-            })
-            .await?;
+        let open = self.ready(project).await?;
+        let mut lines = Vec::with_capacity(sources.len());
+        for (source, changeset) in sources.iter().zip(&changesets) {
+            lines.push(open.session.lines_of(source).await?);
+            // Each row as it is counted, in order, so an early row shows before the last is.
+            open.subscribers.broadcast(mapping::changeset_lines_changed(
+                project,
+                vec![changeset.clone()],
+                vec![lines.last().copied().flatten()],
+            ));
+        }
         Ok(mapping::changeset_lines(lines))
     }
 
