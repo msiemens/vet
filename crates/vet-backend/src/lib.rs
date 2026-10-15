@@ -740,8 +740,8 @@ impl Orchestrator {
 fn start_servers_in_background(open: Arc<Open>) {
     checks::refresh_checks_in_background(open.clone());
     // A new revision or a change of trust can put a policy on view that a running server may not
-    // execute project code under (§7.5). Retire those before anything starts, whether or not the
-    // review screen is shown: a question the viewer asks can have started a server on any screen.
+    // execute project code under (§7.5). Retire those whether or not the review screen is shown: a
+    // question the viewer asks can have started a server on any screen.
     let retiring = open.clone();
     let retire = async move {
         if let Ok(booted) = retiring.booted().await {
