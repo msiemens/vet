@@ -13,7 +13,9 @@ use vet_core::content::RepoPath;
 use vet_infra::lsp::{BinaryLocator, LspLauncher, NoRestore, config};
 use vet_infra::restore::ToolRestorer;
 use vet_semantic::policy::AnalysisPolicy;
-use vet_semantic::ports::{At, Backend, LanguageServer, Pos, Restored, Restorer, ServerLauncher, Tree, Unwatched};
+use vet_semantic::ports::{
+    At, Backend, LanguageServer, Pos, RestoreFailureKind, Restored, Restorer, ServerLauncher, Tree, Unwatched,
+};
 
 fn write(dir: &Path, name: &str, content: &str) {
     std::fs::write(dir.join(name), content).unwrap();
@@ -249,7 +251,9 @@ async fn a_copy_with_the_same_lockfile_links_the_working_trees_node_modules_and_
     assert!(hover.contains("red"), "{hover}");
     server.shutdown().await;
 
-    // Another lockfile: the install runs, here failing on the lockfile that does not match `package.json`.
+    // A lockfile that does not match `package.json`: `npm ci` refuses it and `npm install
+    // --no-save` stands in for it (§7.2): it installs the dependencies and leaves the lock
+    // file alone, and the restore is reported as stood in for, not failed.
     write(
         copy.path(),
         "package-lock.json",
@@ -261,8 +265,15 @@ async fn a_copy_with_the_same_lockfile_links_the_working_trees_node_modules_and_
         .restore(copy.path(), &config::typescript(), AnalysisPolicy::LIMITED)
         .await;
     assert_eq!(restored.failures.len(), 1, "{restored:?}");
+    assert_eq!(restored.failures[0].kind, RestoreFailureKind::StoodIn, "{restored:?}");
     assert_eq!(restored.failures[0].tool, "npm");
-    assert!(!linked.exists());
+    assert!(
+        restored.failures[0].message.contains("lock file out of sync"),
+        "{}",
+        restored.failures[0].message
+    );
+    // `npm ci` left nothing, the stand-in installs: the locked dependencies are there.
+    assert!(linked.join("picocolors/package.json").is_file());
 }
 
 #[tokio::test]

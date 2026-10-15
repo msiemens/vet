@@ -55,7 +55,10 @@ async fn install(setup: &Setup, project: &Path, language: &str) -> Vec<String> {
         panic!("not found after the install");
     };
     assert_eq!(found.origin, ServerOrigin::Installed);
-    assert_eq!(found.version, resolver.pinned(&id), "{found:?}");
+    // The version is not part of what a start looks up: `resolve` leaves it empty and
+    // `status` learns it through the resolver's `version`, which reads the fresh install.
+    assert_eq!(found.version, None, "{found:?}");
+    assert_eq!(resolver.version(&id, &found).await, resolver.pinned(&id), "{found:?}");
     lines.into_inner().unwrap()
 }
 
