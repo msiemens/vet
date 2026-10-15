@@ -4,7 +4,7 @@
 import type { Driver, Probe } from "./browserHarness.ts";
 
 /** The sessions whose script starts on the queue, before the review screen is shown. */
-export const startOnQueue = new Set<string>(["hidden", "many"]);
+export const startOnQueue = new Set<string>(["hidden", "many", "allFiles"]);
 
 /** A step that sends one review request. */
 const ONE = { marks: 1 };
@@ -13,6 +13,26 @@ const call = (method: string, path: string, hunk?: number) =>
   `__t.changeset.${method}(__t.changeset.currentShown(), ${JSON.stringify(path)}${hunk === undefined ? "" : `, ${hunk}`})`;
 
 export const sessions: Record<string, (d: Driver) => Promise<void>> = {
+  /**
+   * The All files tree lists the target snapshot; while the review screen is away on the queue it
+   * lists nothing, a revision that settles there waits, and the tree loads when the screen comes up.
+   */
+  async allFiles(d) {
+    await d.until(`!!__t.changeset.layout`, "the changeset");
+    await d.page(`__t.commands.run("view.tool.all")`);
+    await d.page(`__t.session.backend.waitForQuiet()`);
+    await d.sleep(500);
+    const listed = async () => (await d.page(`__wire.listDirectory`)) as number;
+    if ((await listed()) !== 0)
+      throw new Error("the hidden All files tree listed a directory while the queue was on screen");
+    await d.revise("b.txt", "wt2", [7, 25, 33]);
+    await d.page(`__t.session.backend.waitForQuiet()`);
+    await d.sleep(500);
+    if ((await listed()) !== 0) throw new Error("a revision while the queue was on screen listed a directory");
+    await d.page(`__t.commands.run("view.review")`);
+    await d.until(`__wire.listDirectory > 0`, "the All files tree to load when the review screen is shown");
+  },
+
   /**
    * The review screen stays mounted behind the queue and loads nothing there; a revision that settles
    * while it is away waits too, and the files load when the screen comes up.

@@ -92,7 +92,7 @@ export async function runBrowserSession(
 
   // Counts the requests that reach the backend from the very first one, before the app can send any.
   await page.addInitScript(`(() => {
-    const wire = { fileContents: 0, fileText: 0, itemBlob: 0, targetLine: 0, filePaths: [] };
+    const wire = { fileContents: 0, fileText: 0, itemBlob: 0, targetLine: 0, listDirectory: 0, filePaths: [] };
     window.__wire = wire;
     const send = WebSocket.prototype.send;
     WebSocket.prototype.send = function (data) {
