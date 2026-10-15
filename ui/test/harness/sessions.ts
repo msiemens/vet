@@ -72,6 +72,18 @@ export const sessions: Record<string, (h: Harness) => Promise<void>> = {
     );
   },
 
+  /** A push to the branch on view: what was seen before it is remapped onto the lines it left. */
+  async push(h) {
+    await changeset.openChangeset({ type: "branch", name: "feature" });
+    await h.until(() => changeset.facts?.target.changeset.type === "branch", "the branch");
+    await h.step("a file seen before the push", () => file(h, "a.txt"), ONE);
+    await h.step("the branch is pushed to", async () => {
+      const before = changeset.layout?.shown.revision ?? -1;
+      h.fixture.push("a.txt", "p1", [2, 10]);
+      await h.until(() => (changeset.layout?.shown.revision ?? -1) > before, "the new revision");
+    });
+  },
+
   /** A new version, the range since the last review, marks in it, and back. */
   async range(h) {
     await h.step("hunk seen", () => hunk(h, "b.txt", 0), ONE);

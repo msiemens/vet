@@ -12,6 +12,7 @@ mod preferences;
 mod prefetch;
 mod problems;
 mod progress;
+mod pushes;
 mod python;
 mod recent;
 mod restart;

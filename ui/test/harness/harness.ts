@@ -92,6 +92,12 @@ export class Fixture {
     this.git(this.repo, "commit", "-qam", "c4: the working tree");
   }
 
+  /** The branch on view is pushed to: an edit of `path` committed on `feature`. */
+  push(path: string, tag: string, edited: number[]) {
+    this.write(path, tag, edited);
+    this.git(this.repo, "commit", "-qam", `push: ${path}`);
+  }
+
   private git(cwd: string, ...args: string[]) {
     const env = {
       ...process.env,

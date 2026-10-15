@@ -69,6 +69,8 @@ interface Driver {
   manyThreads(count: number): Promise<void>;
   /** An agent edits a file of the working tree; resolves once the page has a version for it. */
   edit(path: string, tag: string, edited: number[]): Promise<void>;
+  /** A push to the branch on view: a commit of `path`; resolves once the page has a new revision. */
+  pushBranch(path: string, tag: string, edited: number[]): Promise<void>;
   /** An agent moves `HEAD` to `ref` and keeps the files; resolves once the page says it left the base. */
   leaveBase(ref: string): Promise<void>;
   /** The working tree is committed and the page opens the branch, reviewed by its four commits. */
@@ -122,6 +124,20 @@ const sessions: Record<string, (d: Driver) => Promise<void>> = {
       await back;
     });
     await d.step("hunk seen after reconnecting", () => d.page(call("toggleHunk", "b.txt", 1)), ONE);
+  },
+
+  /** A new version changes lines that were seen: the editor draws them unseen, not as they were. */
+  async push(d) {
+    await d.step("a file seen", () => d.page(call("toggleFileSeen", "b.txt")), ONE);
+    await d.step("a version that changes its lines", () => d.edit("b.txt", "p1", [5, 7, 25]));
+  },
+
+  /** A push to the branch on view changes lines that were seen: the editor draws them unseen. */
+  async pushed(d) {
+    await d.openBranch();
+    await d.openText("a.txt");
+    await d.step("a file seen", () => d.page(call("toggleFileSeen", "a.txt")), ONE);
+    await d.step("the branch is pushed to", () => d.pushBranch("a.txt", "p1", [2, 10]));
   },
 
   /** A change that no notification announced is still drawn once the view is looked at again. */
@@ -406,6 +422,11 @@ async function runSession(
     async edit(path, tag, edited) {
       fixture.write(path, tag, edited);
       await until(() => ready(`__t.versions.items.length >= 2`), "a version for the edit");
+    },
+    async pushBranch(path, tag, edited) {
+      const before = (await page(`__t.changeset.layout?.shown.revision ?? -1`)) as number;
+      fixture.push(path, tag, edited);
+      await until(() => ready(`(__t.changeset.layout?.shown.revision ?? -1) > ${before}`), "a revision for the push");
     },
     async leaveBase(ref) {
       fixture.resetHeadTo(ref);
