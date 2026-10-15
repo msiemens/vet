@@ -13,7 +13,7 @@ use vet_core::content::{LineDelta, SnapshotId, SnapshotStatus};
 use super::derived::{CommitUnit, CommitsBetween, UnitKind};
 use super::manifest::{excluded_groups, file_completion, file_views, review_of, target_view, update_from};
 use super::state::{Commits, Remapped, State, View, acknowledged, lifecycle_of};
-use super::views::{BaseView, ManifestView, ReviewUpdateView, ReviewView};
+use super::views::{BaseView, ManifestView, ReviewUpdateView, ReviewView, ViewKind, empty_reason};
 use super::{LiveSession, Result, SessionError};
 use crate::changeset::{CommitId, Lens, Source};
 use crate::ports::{BranchInfo, CommitInfo, GitRepo, LiveStore, ReviewWrites};
@@ -202,6 +202,8 @@ impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> L
         let branches = git.branches().await?;
         let facts = self.lens_facts(st, &branches).await?;
         let base = BaseView::of_commit(self.commit_info(parent).await?);
+        let excluded = excluded_groups(&unit.diffed, st);
+        let empty = empty_reason(!excluded.is_empty(), ViewKind::Commit, None, false, None);
         Ok(ManifestView {
             revision: st.revision,
             seq: st.seq,
@@ -213,7 +215,7 @@ impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> L
             narrowing: st.narrowing(),
             completion: remapped.completion,
             delta: files.iter().map(|f| f.delta).sum(),
-            excluded: excluded_groups(&unit.diffed, st),
+            excluded,
             files,
             degraded: None,
             interdiff: None,
@@ -222,6 +224,7 @@ impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> L
             changeset_base: facts.base,
             changeset_files: facts.files,
             changeset_completion: facts.completion,
+            empty,
         })
     }
 }

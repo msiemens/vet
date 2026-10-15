@@ -1782,6 +1782,23 @@ async fn a_complete_review_is_recorded_as_complete_when_finished() {
 }
 
 #[tokio::test]
+async fn a_manifest_says_why_it_shows_nothing() {
+    // The working tree, nothing changed and no review: watching.
+    let fx = Fixture::open(&[("a.txt", "one\n")], &[("a.txt", "one\n")]).await;
+    assert_eq!(
+        fx.session.manifest(View::Changeset).await.unwrap().empty,
+        EmptyReason::Watching
+    );
+    // A review whose edits were taken back: undone.
+    let fx = Fixture::reviewing(&[("a.txt", "one\n")], &[("a.txt", "two\n")]).await;
+    fx.settle(&[("a.txt", "one\n")]).await;
+    assert_eq!(
+        fx.session.manifest(View::Changeset).await.unwrap().empty,
+        EmptyReason::Undone
+    );
+}
+
+#[tokio::test]
 async fn manifest_lists_changes_with_unseen_hunks() {
     let a = numbered(10, &[]);
     let fx = Fixture::open(

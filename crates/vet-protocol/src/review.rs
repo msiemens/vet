@@ -238,6 +238,33 @@ pub struct ReviewUpdate {
     pub changeset: Completion,
 }
 
+/// Why a view of a changeset shows no file. Decided by the backend from what it knows of the view
+/// and the changeset (SPEC I5); the shell only words it.
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub enum EmptyReason {
+    /// The review filter leaves out every changed file.
+    Filtered,
+    /// The commit on view changes no files.
+    Commit,
+    /// The pushes on view changed nothing.
+    Range,
+    /// The source branch is at the same commit as the branch that already holds it: no commit of
+    /// its own.
+    SameTip,
+    /// The pull request is merged.
+    Merged,
+    /// Every commit is already in the branch the changeset is contained in.
+    Contained,
+    /// The working tree matches what it was when the review opened.
+    Undone,
+    /// The working tree has no changes yet.
+    Watching,
+    /// Nothing differs from the base.
+    NoChanges,
+}
+
 /// The changeset as displayed through the repository's review filter.
 #[derive(Clone, PartialEq, Debug, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
@@ -300,6 +327,8 @@ pub struct Manifest {
     pub changeset_files: u32,
     /// The completion of the changeset as a whole, whatever view this manifest is of.
     pub changeset_completion: Completion,
+    /// Why this view shows no file; the shell words it. Always set, whether or not it shows one.
+    pub empty: EmptyReason,
 }
 
 /// What may execute project code when the changeset on view is analysed (§7.5).

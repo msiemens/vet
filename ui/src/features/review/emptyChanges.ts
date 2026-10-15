@@ -5,6 +5,7 @@
 import type { Base } from "../../generated/Base";
 import type { ChangesetKey } from "../../generated/ChangesetKey";
 import type { CommitUnit } from "../../generated/CommitUnit";
+import type { EmptyReason } from "../../generated/EmptyReason";
 import type { ExcludedBy } from "../../generated/ExcludedBy";
 import type { ExcludedGroup } from "../../generated/ExcludedGroup";
 import type { InterdiffInfo } from "../../generated/InterdiffInfo";
@@ -82,6 +83,8 @@ export interface EmptyView {
 export interface EmptyInput {
   key: ChangesetKey;
   target: Target;
+  /** Why the backend says the view shows no file; the screen only words it (SPEC I5). */
+  reason: EmptyReason;
   /** Which view is empty. */
   view: "changeset" | "commit" | "range";
   /** The shown view's base: a commit's parent, an interdiff's base, or the changeset's. */
@@ -110,13 +113,29 @@ const OTHER: Action = { id: "other", label: "Open another changeset" };
 const BACK: Action = { id: "back", label: "Back to all changes" };
 const TIMELINE: Action = { id: "timeline", label: "Open timeline", primary: true };
 
-/** What a view without a file says. The backend's reasons are tried from the most specific: the filter, then the view, then the changeset. */
+/** What a view without a file says. The backend says why (`reason`); here it is only worded (SPEC I5). */
 export function emptyView(input: EmptyInput): EmptyView {
-  if (input.excluded.length) return filtered(input);
-  if (input.view === "commit") return emptyCommit(input);
-  if (input.view === "range") return emptyRange(input);
-  if (input.changesetBase.containedIn) return contained(input);
-  if (input.key.type === "workingTree") return emptyWorkingTree(input);
+  switch (input.reason) {
+    case "filtered":
+      return filtered(input);
+    case "commit":
+      return emptyCommit(input);
+    case "range":
+      return emptyRange(input);
+    case "sameTip":
+    case "merged":
+    case "contained":
+      return contained(input);
+    case "undone":
+    case "watching":
+      return emptyWorkingTree(input);
+    case "noChanges":
+      return noChanges(input);
+  }
+}
+
+/** Nothing differs from the base. */
+function noChanges(input: EmptyInput): EmptyView {
   const base = input.changesetBase.commit;
   return {
     glyph: "emptyMinus",
@@ -324,7 +343,7 @@ function emptyRange(input: EmptyInput): EmptyView {
 // ---- the changeset itself is empty ----
 
 function emptyWorkingTree(input: EmptyInput): EmptyView {
-  const undone = input.review.state === "open" && input.versions.length > 1;
+  const undone = input.reason === "undone";
   if (undone) {
     const rows: Row[] = [...input.versions].reverse().map((v) => {
       const total = sumDelta(v.files.map((f) => f.delta));
@@ -367,7 +386,7 @@ function emptyWorkingTree(input: EmptyInput): EmptyView {
 
 function contained(input: EmptyInput): EmptyView {
   const held = input.changesetBase.containedIn;
-  if (!held) return emptyWorkingTree(input);
+  if (!held) return noChanges(input);
   const pr = input.pullRequest;
   const isPr = input.key.type === "pullRequest";
   const provider: Action[] = pr
@@ -376,7 +395,7 @@ function contained(input: EmptyInput): EmptyView {
   const name = input.target.name;
   const head = input.target.head?.slice(0, 7);
 
-  if (held.sameTip) {
+  if (input.reason === "sameTip") {
     const tip = input.changesetBase.commit;
     const rows: Row[] = [
       {
@@ -397,7 +416,7 @@ function contained(input: EmptyInput): EmptyView {
     };
   }
 
-  if (pr?.state === "merged") {
+  if (input.reason === "merged" && pr) {
     const rows: Row[] = [
       {
         label: "Source",

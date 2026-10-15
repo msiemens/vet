@@ -2,6 +2,7 @@
 import type { AnalysisTrust } from "./AnalysisTrust";
 import type { Base } from "./Base";
 import type { Completion } from "./Completion";
+import type { EmptyReason } from "./EmptyReason";
 import type { ExcludedGroup } from "./ExcludedGroup";
 import type { FileChange } from "./FileChange";
 import type { InterdiffInfo } from "./InterdiffInfo";
@@ -98,4 +99,8 @@ changesetFiles: number,
 /**
  * The completion of the changeset as a whole, whatever view this manifest is of.
  */
-changesetCompletion: Completion, };
+changesetCompletion: Completion, 
+/**
+ * Why this view shows no file; the shell words it. Always set, whether or not it shows one.
+ */
+empty: EmptyReason, };

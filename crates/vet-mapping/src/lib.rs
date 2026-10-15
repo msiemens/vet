@@ -15,10 +15,10 @@ use vet_app::pull_request::PullRequestList;
 use vet_app::search::{FoundLine, LineKind, SearchFilters, SearchPattern, SearchSide};
 use vet_app::session::{
     BaseDiffKind, BaseDiffView, BaseView, Blocker, ChangesSince, ChangesetList, CommentAt, CommentSpot, CommitKind,
-    CommitsView, DirEntryKind, DirListing, DiscussionView, EntryInfo, ExcludedBy, ExcludedGroup, FileListing,
-    FileStatus, FileView, ItemBlob, ItemView, Lifecycle, ManifestView, ModeChange, NewThread, NoText, PatternMatch,
-    PatternMatches, ReviewUpdateView, ReviewView, RowReview, SearchResult, SearchScope, SubmitReport, SyncNotice,
-    TargetText, ThreadView, ThreadsView, VersionView, View, VoteSent,
+    CommitsView, DirEntryKind, DirListing, DiscussionView, EmptyReason, EntryInfo, ExcludedBy, ExcludedGroup,
+    FileListing, FileStatus, FileView, ItemBlob, ItemView, Lifecycle, ManifestView, ModeChange, NewThread, NoText,
+    PatternMatch, PatternMatches, ReviewUpdateView, ReviewView, RowReview, SearchResult, SearchScope, SubmitReport,
+    SyncNotice, TargetText, ThreadView, ThreadsView, VersionView, View, VoteSent,
 };
 use vet_app::trust::{Origin, Trust};
 use vet_core::completion::{Completion, HunkState};
@@ -741,6 +741,21 @@ pub fn manifest(
         commits: m.commits,
         changeset_files: m.changeset_files,
         changeset_completion: completion(&m.changeset_completion),
+        empty: empty_reason(m.empty),
+    }
+}
+
+fn empty_reason(r: EmptyReason) -> p::EmptyReason {
+    match r {
+        EmptyReason::Filtered => p::EmptyReason::Filtered,
+        EmptyReason::Commit => p::EmptyReason::Commit,
+        EmptyReason::Range => p::EmptyReason::Range,
+        EmptyReason::SameTip => p::EmptyReason::SameTip,
+        EmptyReason::Merged => p::EmptyReason::Merged,
+        EmptyReason::Contained => p::EmptyReason::Contained,
+        EmptyReason::Undone => p::EmptyReason::Undone,
+        EmptyReason::Watching => p::EmptyReason::Watching,
+        EmptyReason::NoChanges => p::EmptyReason::NoChanges,
     }
 }
 

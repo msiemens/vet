@@ -6,6 +6,7 @@
 import type { AnalysisTrust } from "../generated/AnalysisTrust";
 import type { Base } from "../generated/Base";
 import type { Completion } from "../generated/Completion";
+import type { EmptyReason } from "../generated/EmptyReason";
 import type { ExcludedGroup } from "../generated/ExcludedGroup";
 import type { FileChange } from "../generated/FileChange";
 import type { FileReview } from "../generated/FileReview";
@@ -46,6 +47,8 @@ export interface ViewLayout {
   /** The files the review leaves out, by the reason. */
   readonly excluded: readonly ExcludedGroup[];
   readonly degraded?: WatchDegraded;
+  /** Why this view shows no file; the backend's decision, which the screen words. */
+  readonly empty: EmptyReason;
 }
 
 /** What is true of the changeset as a whole, whatever view is shown. */
@@ -115,6 +118,7 @@ export function partsOf(manifest: Manifest, commit: number | undefined): Parts {
       excludedItems: manifest.excludedItems,
       excluded: manifest.excluded,
       degraded: manifest.degraded,
+      empty: manifest.empty,
     },
     facts: {
       target: manifest.target,

@@ -224,6 +224,77 @@ pub struct ManifestView {
     pub changeset_files: u32,
     /// The completion of the changeset as a whole, whatever view the manifest is of.
     pub changeset_completion: Completion,
+    /// Why this view shows no file; the shell words it (SPEC I5).
+    pub empty: EmptyReason,
+}
+
+/// Why a view of a changeset shows no file. The backend decides it; the shell only words it (SPEC I5).
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum EmptyReason {
+    /// The review filter leaves out every changed file.
+    Filtered,
+    /// The commit on view changes no files.
+    Commit,
+    /// The pushes on view changed nothing.
+    Range,
+    /// The source branch is at the same commit as the branch that already holds it.
+    SameTip,
+    /// The pull request is merged.
+    Merged,
+    /// Every commit is already in the branch the changeset is contained in.
+    Contained,
+    /// The working tree matches what it was when the review opened.
+    Undone,
+    /// The working tree has no changes yet.
+    Watching,
+    /// Nothing differs from the base.
+    NoChanges,
+}
+
+/// What kind of view a manifest is of, as [`empty_reason`] needs it.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(super) enum ViewKind {
+    Changeset,
+    Commit,
+    Range,
+}
+
+/// Why a view shows no file, from what was read of it (SPEC I5: the backend decides, the shell
+/// words). `excluded` is whether the review filter leaves out every changed file; `contained` is
+/// the branch that already holds the tip, as (its tip is the branch's tip, the pull request is
+/// merged); `open_version` is the open review's latest version, none while browsing.
+pub(super) fn empty_reason(
+    excluded: bool,
+    view: ViewKind,
+    contained: Option<(bool, bool)>,
+    working_tree: bool,
+    open_version: Option<u32>,
+) -> EmptyReason {
+    if excluded {
+        return EmptyReason::Filtered;
+    }
+    match view {
+        ViewKind::Commit => return EmptyReason::Commit,
+        ViewKind::Range => return EmptyReason::Range,
+        ViewKind::Changeset => {}
+    }
+    if let Some((same_tip, merged)) = contained {
+        if same_tip {
+            return EmptyReason::SameTip;
+        }
+        return if merged {
+            EmptyReason::Merged
+        } else {
+            EmptyReason::Contained
+        };
+    }
+    if working_tree {
+        return match open_version {
+            Some(version) if version > 1 => EmptyReason::Undone,
+            _ => EmptyReason::Watching,
+        };
+    }
+    EmptyReason::NoChanges
 }
 
 /// What differs between one version of a review and the current one, as the interdiff of the two
@@ -290,5 +361,59 @@ impl<T> std::ops::Deref for Outcome<T> {
 
     fn deref(&self) -> &T {
         &self.value
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{EmptyReason, ViewKind, empty_reason};
+
+    /// What leaves files out, the view, the branch that holds the tip as (its tip, merged), the
+    /// working tree, and the open review's version.
+    type Case = (bool, ViewKind, Option<(bool, bool)>, bool, Option<u32>);
+
+    /// One fixture per reason.
+    fn cases() -> Vec<(Case, EmptyReason)> {
+        vec![
+            ((true, ViewKind::Changeset, None, true, None), EmptyReason::Filtered),
+            ((false, ViewKind::Commit, None, true, None), EmptyReason::Commit),
+            ((false, ViewKind::Range, None, true, None), EmptyReason::Range),
+            (
+                (false, ViewKind::Changeset, Some((true, false)), false, None),
+                EmptyReason::SameTip,
+            ),
+            (
+                (false, ViewKind::Changeset, Some((false, true)), false, None),
+                EmptyReason::Merged,
+            ),
+            (
+                (false, ViewKind::Changeset, Some((false, false)), false, None),
+                EmptyReason::Contained,
+            ),
+            ((false, ViewKind::Changeset, None, true, Some(3)), EmptyReason::Undone),
+            ((false, ViewKind::Changeset, None, true, Some(1)), EmptyReason::Watching),
+            ((false, ViewKind::Changeset, None, true, None), EmptyReason::Watching),
+            ((false, ViewKind::Changeset, None, false, None), EmptyReason::NoChanges),
+        ]
+    }
+
+    #[test]
+    fn every_reason_is_decided_from_the_views_own_facts() {
+        for ((excluded, view, contained, working_tree, open_version), expected) in cases() {
+            assert_eq!(
+                empty_reason(excluded, view, contained, working_tree, open_version),
+                expected,
+                "({excluded}, {view:?}, {contained:?}, {working_tree}, {open_version:?})"
+            );
+        }
+    }
+
+    #[test]
+    fn a_filter_that_leaves_files_out_wins_over_the_view() {
+        // Even a commit view says the filter is why, as the shell words it first.
+        assert_eq!(
+            empty_reason(true, ViewKind::Commit, None, false, None),
+            EmptyReason::Filtered
+        );
     }
 }

@@ -104,9 +104,9 @@ pub use self::threads::{CommentAt, CommentSpot, NewThread, ThreadView, ThreadsVi
 pub use self::versions::VersionView;
 use self::versions::first_change;
 pub use self::views::{
-    BaseView, ChangesSince, Contained, EntryInfo, ExcludedBy, ExcludedFile, ExcludedGroup, FileStatus, FileView,
-    InterdiffView, ItemView, Lifecycle, ManifestView, ModeChange, Outcome, ReviewUpdateView, ReviewView, SemanticSides,
-    TargetView,
+    BaseView, ChangesSince, Contained, EmptyReason, EntryInfo, ExcludedBy, ExcludedFile, ExcludedGroup, FileStatus,
+    FileView, InterdiffView, ItemView, Lifecycle, ManifestView, ModeChange, Outcome, ReviewUpdateView, ReviewView,
+    SemanticSides, TargetView,
 };
 use crate::acquisition::{Acquisition, BlobError};
 use crate::base;

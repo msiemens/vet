@@ -27,6 +27,7 @@ function input(over: Partial<EmptyInput> = {}): EmptyInput {
   return {
     key: { type: "branch", name: "feature" },
     target: { changeset: { type: "branch", name: "feature" }, name: "feature", branch: "feature", draft: false },
+    reason: "noChanges",
     view: "changeset",
     base: base(),
     changesetBase: base(),
@@ -61,13 +62,16 @@ const group = (by: ExcludedGroup["by"], paths: string[], folders: ExcludedGroup[
 
 void test("a branch the default branch holds names the merge that brought it in, and only when git could say", () => {
   const merged = input({
+    reason: "contained",
     changesetBase: base({ branch: "main", sameTip: false, mergedBy: commit("a1b2c3d", "Merge pull request #7") }),
   });
   const view = emptyView(merged);
   assert.equal(view.title, "Already in main");
   assert.deepEqual(labels(view.panels), ["Merged by", "When"]);
 
-  const fastForward = emptyView(input({ changesetBase: base({ branch: "main", sameTip: false }) }));
+  const fastForward = emptyView(
+    input({ reason: "contained", changesetBase: base({ branch: "main", sameTip: false }) }),
+  );
   assert.equal(fastForward.title, "Already in main");
   assert.deepEqual(labels(fastForward.panels), []);
 });
@@ -75,6 +79,7 @@ void test("a branch the default branch holds names the merge that brought it in,
 void test("a merge that carried commits says how many and how far the branch has gone since", () => {
   const view = emptyView(
     input({
+      reason: "contained",
       target: { ...input().target, head: "7c8d9e0aaaa" },
       changesetBase: base({
         branch: "main",
@@ -98,7 +103,7 @@ void test("a merge that carried commits says how many and how far the branch has
 });
 
 void test("a branch at the default branch's tip has no commits yet, not a merge", () => {
-  const view = emptyView(input({ changesetBase: base({ branch: "main", sameTip: true }) }));
+  const view = emptyView(input({ reason: "sameTip", changesetBase: base({ branch: "main", sameTip: true }) }));
   assert.equal(view.title, "No commits yet");
   assert.deepEqual(labels(view.panels), ["Branch", "Target"]);
 });
@@ -106,6 +111,7 @@ void test("a branch at the default branch's tip has no commits yet, not a merge"
 void test("a pull request at the target's tip has no commits to review yet", () => {
   const view = emptyView(
     input({
+      reason: "sameTip",
       key: { type: "pullRequest", remote: "github.com/acme/app", number: 7 },
       changesetBase: base({ branch: "main", sameTip: true }),
       pullRequest: pullRequest("open"),
@@ -125,6 +131,7 @@ void test("a merged pull request keeps the viewer's review only while there are 
   const merged = (threads: EmptyInput["threads"]) =>
     emptyView(
       input({
+        reason: "merged",
         key: { type: "pullRequest", remote: "github.com/acme/app", number: 7 },
         changesetBase: held,
         pullRequest: pullRequest("merged"),
@@ -155,7 +162,9 @@ void test("a workspace that was edited and put back lists its versions, newest f
   ];
   const versions = [version(1, []), version(2, edit(6, 0)), version(3, edit(0, 6))];
   const key = { type: "workingTree" } as const;
-  const view = emptyView(input({ key, review: { state: "open", version: 3, updatedAt: 0 }, versions }));
+  const view = emptyView(
+    input({ reason: "undone", key, review: { state: "open", version: 3, updatedAt: 0 }, versions }),
+  );
   assert.equal(view.title, "No changes left");
   const rows = view.panels[0].rows;
   assert.deepEqual(
@@ -168,21 +177,31 @@ void test("a workspace that was edited and put back lists its versions, newest f
   );
 
   const fresh = emptyView(
-    input({ key, review: { state: "open", version: 1, updatedAt: 0 }, versions: versions.slice(0, 1) }),
+    input({
+      reason: "watching",
+      key,
+      review: { state: "open", version: 1, updatedAt: 0 },
+      versions: versions.slice(0, 1),
+    }),
   );
   assert.equal(fresh.title, "No changes yet");
 });
 
 void test("a watched workspace names its folder only when the folder is known", () => {
   const key = { type: "workingTree" } as const;
-  assert.deepEqual(labels(emptyView(input({ key, repo: "/code/app" })).panels), ["Watching", "HEAD", "Compared with"]);
-  assert.deepEqual(labels(emptyView(input({ key })).panels), ["HEAD", "Compared with"]);
+  assert.deepEqual(labels(emptyView(input({ reason: "watching", key, repo: "/code/app" })).panels), [
+    "Watching",
+    "HEAD",
+    "Compared with",
+  ]);
+  assert.deepEqual(labels(emptyView(input({ reason: "watching", key })).panels), ["HEAD", "Compared with"]);
 });
 
 void test("when the filter hides every file each rule's files are listed and its link brings back just those", () => {
   const filter: ReviewFilter = { ...NO_FILTER, roots: ["src"], exclude: ["**/*.snap", "gen/**"] };
   const view = emptyView(
     input({
+      reason: "filtered",
       filter,
       excluded: [
         group([{ kind: "outsideRoots" }], ["docs/a.md", "README.md"]),
@@ -204,7 +223,11 @@ void test("when the filter hides every file each rule's files are listed and its
 void test("a file that two rules leave out is in one panel, and its link brings back both", () => {
   const filter: ReviewFilter = { ...NO_FILTER, roots: ["src"], reviewGenerated: false };
   const view = emptyView(
-    input({ filter, excluded: [group([{ kind: "outsideRoots" }, { kind: "generated" }], ["Cargo.lock"])] }),
+    input({
+      reason: "filtered",
+      filter,
+      excluded: [group([{ kind: "outsideRoots" }, { kind: "generated" }], ["Cargo.lock"])],
+    }),
   );
   assert.equal(view.panels[0].heading, "Outside review roots, Generated");
   assert.deepEqual(view.panels[0].link?.filter, { ...filter, roots: [], reviewGenerated: true });
@@ -212,7 +235,7 @@ void test("a file that two rules leave out is in one panel, and its link brings 
 
 void test("a long group lists its first files and counts the rest", () => {
   const paths = Array.from({ length: 8 }, (_, i) => `lock/${i}.lock`);
-  const view = emptyView(input({ excluded: [group([{ kind: "generated" }], paths)] }));
+  const view = emptyView(input({ reason: "filtered", excluded: [group([{ kind: "generated" }], paths)] }));
   const rows = view.panels[0].rows;
   assert.equal(rows.length, 6);
   assert.deepEqual(rows.at(-1)?.value, ["+ 3 more"]);
@@ -229,6 +252,7 @@ void test("a narrowed review offers the folders its narrowing left out and no wa
   });
   const view = emptyView(
     input({
+      reason: "filtered",
       narrowing,
       excluded: [
         group(
@@ -261,6 +285,7 @@ void test("a narrowed review offers the folders its narrowing left out and no wa
 void test("a narrowing whose left-out files are all the project's still offers to reset it", () => {
   const view = emptyView(
     input({
+      reason: "filtered",
       narrowing: { ...NO_FILTER, roots: ["src/legacy"] },
       excluded: [group([{ kind: "generated" }], ["Cargo.lock"])],
     }),
@@ -284,7 +309,12 @@ void test("a push that changed nothing says whether the base moved, and shows th
   });
   const versions = [version(1, "m1"), version(2, "m1"), version(3, "m1"), version(4, "m2")];
   const view = emptyView(
-    input({ view: "range", versions, interdiff: { from: 3, to: 4, rebased: true, markable: true, limits: [] } }),
+    input({
+      reason: "range",
+      view: "range",
+      versions,
+      interdiff: { from: 3, to: 4, rebased: true, markable: true, limits: [] },
+    }),
   );
   assert.equal(view.title, "Push v4 changed nothing");
   assert.deepEqual(
@@ -297,7 +327,12 @@ void test("a push that changed nothing says whether the base moved, and shows th
   );
   assert.match(view.lead, /base moved/);
   const several = emptyView(
-    input({ view: "range", versions, interdiff: { from: 1, to: 3, rebased: false, markable: true, limits: [] } }),
+    input({
+      reason: "range",
+      view: "range",
+      versions,
+      interdiff: { from: 1, to: 3, rebased: false, markable: true, limits: [] },
+    }),
   );
   assert.equal(several.title, "Pushes v2–v3 changed nothing");
   assert.doesNotMatch(several.lead, /base moved/);
@@ -306,7 +341,7 @@ void test("a push that changed nothing says whether the base moved, and shows th
 void test("an empty commit leads to its parent only when the parent is one of the commits, and on to the next", () => {
   const unit = (id: string) => ({ commit: commit(id) }) as EmptyInput["commits"][number];
   const parent = commit("p1");
-  const common = { view: "commit", base: { ...base(), commit: parent }, commitIndex: 1 } as const;
+  const common = { reason: "commit", view: "commit", base: { ...base(), commit: parent }, commitIndex: 1 } as const;
   const inside = emptyView(input({ ...common, commits: [unit("p1"), unit("c2"), unit("c3")] }));
   assert.equal(inside.panels[0].rows[0].action?.n, 0);
   assert.deepEqual(
@@ -319,4 +354,30 @@ void test("an empty commit leads to its parent only when the parent is one of th
     last.actions.map((a) => a.id),
     ["back"],
   );
+});
+
+void test("each typed reason reads as the sentence it did", () => {
+  const held = base({ branch: "main", sameTip: false, mergedBy: commit("a1b2c3d", "Merge") });
+  const key = { type: "workingTree" } as const;
+  const title = (reason: EmptyInput["reason"], over: Partial<EmptyInput> = {}) =>
+    emptyView(input({ reason, ...over })).title;
+  assert.equal(
+    title("filtered", { excluded: [group([{ kind: "generated" }], ["Cargo.lock"])] }),
+    "Everything is filtered out",
+  );
+  assert.equal(title("commit"), "This commit changes no files");
+  assert.equal(title("range"), "These pushes changed nothing");
+  assert.equal(title("sameTip", { changesetBase: base({ branch: "main", sameTip: true }) }), "No commits yet");
+  assert.equal(
+    title("merged", {
+      key: { type: "pullRequest", remote: "github.com/acme/app", number: 7 },
+      changesetBase: held,
+      pullRequest: pullRequest("merged"),
+    }),
+    "Merged",
+  );
+  assert.equal(title("contained", { changesetBase: held }), "Already in main");
+  assert.equal(title("undone", { key }), "No changes left");
+  assert.equal(title("watching", { key }), "No changes yet");
+  assert.equal(title("noChanges"), "No changes");
 });

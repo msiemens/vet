@@ -14,7 +14,7 @@ use vet_core::review::{ReviewedSpan, Side};
 use super::derived::{Compared, Interdiff};
 use super::manifest::{excluded_groups, file_views, target_view};
 use super::state::{Interdiffed, Shown, State, ack_of, find_diff, find_non_text, lifecycle_of, shown_items};
-use super::views::{ChangesSince, InterdiffView, ManifestView, ReviewUpdateView, ReviewView};
+use super::views::{ChangesSince, InterdiffView, ManifestView, ReviewUpdateView, ReviewView, ViewKind, empty_reason};
 use super::{LiveSession, Result, SessionError};
 use crate::changeset::{Snapshots, Version, VersionChange};
 use crate::ports::{GitRepo, LiveStore};
@@ -149,6 +149,8 @@ impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> L
         let branches = git.branches().await?;
         let base = super::BaseView::of_commit(self.commit_info(&id.to.base_commit).await?);
         let facts = self.lens_facts(st, &branches).await?;
+        let excluded = excluded_groups(&id.compared.diffed, st);
+        let empty = empty_reason(!excluded.is_empty(), ViewKind::Range, None, false, None);
         let conflicts = (id.compared.hunks.values().flatten()).any(|h| h.flags.conflict);
         let old = if id.from.n == 0 {
             "the base".to_owned()
@@ -184,7 +186,7 @@ impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> L
             narrowing: st.narrowing(),
             completion: files.iter().map(|f| f.completion).sum(),
             delta: files.iter().map(|f| f.delta).sum(),
-            excluded: excluded_groups(&id.compared.diffed, st),
+            excluded,
             files,
             degraded: self.degraded_for(&st.source),
             lens: facts.lens,
@@ -199,6 +201,7 @@ impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> L
                 markable: id.markable,
                 limits,
             }),
+            empty,
         })
     }
 }

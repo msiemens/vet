@@ -125,6 +125,7 @@
     return emptyView({
       key: facts.target.changeset,
       target: facts.target,
+      reason: layout.empty,
       view: view === "commit" ? "commit" : view === "interdiff" ? "range" : "changeset",
       base: layout.base,
       changesetBase: facts.base,

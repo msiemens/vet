@@ -11,8 +11,8 @@ use vet_core::filter::{CompiledFilter, Exclusion, ReviewFilter};
 use super::derived::Diffed;
 use super::state::{Remapped, Shown, State, View, acknowledged, find_diff, lifecycle_of, shown_items};
 use super::views::{
-    ExcludedBy, ExcludedFile, ExcludedFolder, ExcludedGroup, FileStatus, FileView, ManifestView, ReviewUpdateView,
-    ReviewView, TargetView,
+    ExcludedBy, ExcludedFile, ExcludedFolder, ExcludedGroup, FileStatus, FileView, Lifecycle, ManifestView,
+    ReviewUpdateView, ReviewView, TargetView, ViewKind, empty_reason,
 };
 use super::{LiveSession, Result, SessionError};
 use crate::changeset::{CommitId, Source};
@@ -46,6 +46,22 @@ impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> L
                 file_completion(&cov, &compiled, diff, items, &acked),
             )
         });
+        let excluded = excluded_groups(&changes.diffed, st);
+        // A merged pull request is one the platform says so of, as the shell's wording needs (SPEC I5).
+        let merged = matches!(
+            self.discussion().await.map(|d| d.discussion.state),
+            Some(crate::platform::PullRequestState::Merged)
+        );
+        let empty = empty_reason(
+            !excluded.is_empty(),
+            ViewKind::Changeset,
+            facts.base.contained_in.as_ref().map(|c| (c.same_tip, merged)),
+            matches!(st.source, Source::WorkingTree),
+            match lifecycle_of(st) {
+                Lifecycle::Open { version, .. } => Some(version),
+                Lifecycle::Browsing => None,
+            },
+        );
         Ok(ManifestView {
             revision: st.revision,
             seq: st.seq,
@@ -57,7 +73,7 @@ impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> L
             narrowing: st.narrowing(),
             completion: changes.remapped.completion,
             delta: files.iter().map(|f| f.delta).sum(),
-            excluded: excluded_groups(&changes.diffed, st),
+            excluded,
             files,
             degraded: self.degraded_for(&st.source),
             interdiff: None,
@@ -66,6 +82,7 @@ impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> L
             changeset_base: facts.base,
             changeset_files: facts.files,
             changeset_completion: facts.completion,
+            empty,
         })
     }
 
