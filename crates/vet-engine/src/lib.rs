@@ -23,7 +23,7 @@
 //! Keys form a DAG: a computation may wait on flights of other keys, never on its
 //! own. That is a bug, and it panics instead of hanging.
 
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::future::{Future, poll_fn};
 use std::hash::Hash;
 use std::pin::Pin;
@@ -227,13 +227,25 @@ struct Flight<K: Kind> {
 
 enum Slot<K: Kind> {
     Flying(Arc<Flight<K>>),
-    Kept { value: K::Value, weight: usize, used: u64 },
+    Kept {
+        /// The key, shared with [`Map::recency`], which a use of the value moves
+        /// it in: a use does not copy the key.
+        key: Arc<K>,
+        value: K::Value,
+        /// What the value weighs against [`Limits::weight`].
+        weight: usize,
+        /// The tick of the last use, by which [`Map::recency`] is ordered.
+        used: u64,
+    },
 }
 
 struct Map<K: Kind> {
     limits: Limits,
     tick: u64,
     slots: HashMap<K, Slot<K>>,
+    /// The kept slots by the tick of their last use, least recently used first.
+    /// The ticks are unique, so a slot has one place here.
+    recency: BTreeMap<u64, Arc<K>>,
     kept: usize,
     weight: usize,
     /// The newest generation seen of each sampled observation.
@@ -242,10 +254,36 @@ struct Map<K: Kind> {
 
 impl<K: Kind> Map<K> {
     fn drop_kept(&mut self, key: &K) {
-        if let Some(Slot::Kept { weight, .. }) = self.slots.remove(key) {
-            self.kept -= 1;
-            self.weight -= weight;
-        }
+        let Some(Slot::Kept { weight, used, .. }) = self.slots.remove(key) else {
+            return;
+        };
+        self.recency.remove(&used);
+        self.kept -= 1;
+        self.weight -= weight;
+    }
+
+    /// Marks the kept value under `key` used again, at the engine's `tick`: it moves
+    /// from the tick of its last use, at which the recency index has it ordered,
+    /// and its value is given. A flight is looked for first, so a key flying is
+    /// never mistaken for one kept.
+    fn use_of(&mut self, key: &K, tick: u64) -> Option<K::Value> {
+        let (older, shared, value) = {
+            let Some(Slot::Kept {
+                key: shared,
+                value,
+                used,
+                ..
+            }) = self.slots.get_mut(key)
+            else {
+                return None;
+            };
+            let older = *used;
+            *used = tick;
+            (older, shared.clone(), value.clone())
+        };
+        self.recency.remove(&older);
+        self.recency.insert(tick, shared);
+        Some(value)
     }
 
     /// Notes the generation of a sampled key; a newer one drops the older values.
@@ -273,13 +311,19 @@ impl<K: Kind> Map<K> {
 
     fn insert(&mut self, key: K, value: K::Value) {
         self.tick += 1;
+        let tick = self.tick;
         let weight = K::weight(&value);
-        let slot = Slot::Kept {
-            value,
-            weight,
-            used: self.tick,
-        };
-        self.slots.insert(key, slot);
+        let shared = Arc::new(key);
+        self.slots.insert(
+            (*shared).clone(),
+            Slot::Kept {
+                key: shared.clone(),
+                value,
+                weight,
+                used: tick,
+            },
+        );
+        self.recency.insert(tick, shared);
         self.kept += 1;
         self.weight += weight;
         self.evict();
@@ -316,19 +360,13 @@ impl<K: Kind> Map<K> {
     fn evict(&mut self) {
         let limits = self.limits;
         while self.kept > limits.entries || self.weight > limits.weight {
-            let oldest = self
-                .slots
-                .iter()
-                .filter_map(|(key, slot)| match slot {
-                    Slot::Kept { used, .. } => Some((key, *used)),
-                    Slot::Flying(_) => None,
-                })
-                .min_by_key(|(_, used)| *used)
-                .map(|(key, _)| key.clone());
-            match oldest {
-                Some(oldest) => self.drop_kept(&oldest),
-                None => break,
-            }
+            // The first place is the least recently used, so the order waits on
+            // the values' uses, not on how they got in. Flights have no place
+            // here: none is evicted.
+            let Some((_, key)) = self.recency.pop_first() else {
+                break;
+            };
+            self.drop_kept(&key);
         }
     }
 }
@@ -360,6 +398,7 @@ impl<K: Kind> Engine<K> {
                 limits,
                 tick: 0,
                 slots: HashMap::new(),
+                recency: BTreeMap::new(),
                 kept: 0,
                 weight: 0,
                 latest: HashMap::new(),
@@ -410,16 +449,17 @@ impl<K: Kind> Engine<K> {
         {
             map.observe(subject, generation);
         }
-        match map.slots.get_mut(key) {
-            Some(Slot::Kept { value, used, .. }) => {
-                *used = tick;
-                return Entered::Hit(value.clone());
-            }
-            Some(Slot::Flying(flight)) => {
-                flight.waiting.fetch_add(1, Ordering::SeqCst);
-                return Entered::Flight(flight.clone());
-            }
-            None => {}
+        // A flight under way is joined; a kept value is used again, what the
+        // recency index moves to this tick. A miss starts a flight.
+        if let Some(flight) = map.slots.get(key).and_then(|slot| match slot {
+            Slot::Flying(flight) => Some(flight.clone()),
+            Slot::Kept { .. } => None,
+        }) {
+            flight.waiting.fetch_add(1, Ordering::SeqCst);
+            return Entered::Flight(flight);
+        }
+        if let Some(value) = map.use_of(key, tick) {
+            return Entered::Hit(value);
         }
         let task = self.observe.as_ref().and_then(|observe| observe(key));
         let work: Work<K> = Box::pin(compute(Progress(task.clone())));
@@ -438,13 +478,7 @@ impl<K: Kind> Engine<K> {
         let mut map = self.map();
         map.tick += 1;
         let tick = map.tick;
-        match map.slots.get_mut(key) {
-            Some(Slot::Kept { value, used, .. }) => {
-                *used = tick;
-                Some(value.clone())
-            }
-            _ => None,
-        }
+        map.use_of(key, tick)
     }
 
     /// Keeps `value` under `key` unless the key has a value or is being computed.
@@ -460,6 +494,7 @@ impl<K: Kind> Engine<K> {
     pub fn clear(&self) {
         let mut map = self.map();
         map.slots.retain(|_, slot| matches!(slot, Slot::Flying(_)));
+        map.recency.clear();
         map.kept = 0;
         map.weight = 0;
     }

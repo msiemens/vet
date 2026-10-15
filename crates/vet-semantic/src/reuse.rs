@@ -87,7 +87,11 @@ pub enum Value {
 /// A type of answer that can be kept.
 pub trait Reused: Clone {
     fn kept(self) -> Value;
-    fn from_kept(value: Value) -> Option<Self>;
+    /// The kept form is shared with the answers in memory ([`Held`]), and `Value`
+    /// has no cheaper way into a type of its own than its parts: an answer of one's
+    /// own is a clone out of it. So a caller gets its own copy of an answer, as
+    /// before, but no copy is made for the engine to keep one.
+    fn from_kept(value: &Value) -> Option<Self>;
 }
 
 macro_rules! reused {
@@ -97,9 +101,9 @@ macro_rules! reused {
                 Value::$variant(self)
             }
 
-            fn from_kept(value: Value) -> Option<Self> {
+            fn from_kept(value: &Value) -> Option<Self> {
                 match value {
-                    Value::$variant(inner) => Some(inner),
+                    Value::$variant(inner) => Some(inner.clone()),
                     _ => None,
                 }
             }
@@ -124,7 +128,10 @@ pub struct Computed<V> {
 /// the callers that were waiting for it, and for none that come later.
 #[derive(Clone, Debug)]
 pub struct Held {
-    value: Value,
+    /// The answer, shared: the engine keeps one and hands it out however many
+    /// times it is asked for, so every ask of it, a hit, a waiter of the flight
+    /// or the kept copy, holds it without copying what it carries.
+    value: Arc<Value>,
     complete: bool,
 }
 
@@ -208,12 +215,18 @@ impl Answers {
     /// asked and nothing is computed. An answer from the store is kept in memory too.
     pub async fn recall<T: Reused>(&self, key: &Key) -> Option<T> {
         if let Some(held) = self.engine.peek(key) {
-            return T::from_kept(held.value);
+            return T::from_kept(&held.value);
         }
         let store = self.store.as_deref().filter(|_| key.persists())?;
         let value = store.get(key).await?;
-        let recalled = T::from_kept(value.clone())?;
-        self.engine.keep(key, Held { value, complete: true });
+        let recalled = T::from_kept(&value)?;
+        self.engine.keep(
+            key,
+            Held {
+                value: Arc::new(value),
+                complete: true,
+            },
+        );
         Some(recalled)
     }
 
@@ -242,10 +255,10 @@ impl Answers {
             .engine
             .get(key.clone(), move |_| async move {
                 if let Some(store) = &store
-                    && let Some(found) = store.get(&owned).await.and_then(T::from_kept)
+                    && let Some(found) = store.get(&owned).await.and_then(|value| T::from_kept(&value))
                 {
                     let held = Held {
-                        value: found.kept(),
+                        value: Arc::new(found.kept()),
                         complete: true,
                     };
                     return Ok(engine::Computed::restored(held));
@@ -255,10 +268,16 @@ impl Answers {
                 if let (true, Some(store)) = (complete, &store) {
                     store.put(&owned, &value);
                 }
-                Ok(engine::Computed::new(Held { value, complete }, complete))
+                Ok(engine::Computed::new(
+                    Held {
+                        value: Arc::new(value),
+                        complete,
+                    },
+                    complete,
+                ))
             })
             .await?;
-        match T::from_kept(got.value.value) {
+        match T::from_kept(&got.value.value) {
             Some(value) => Ok(Given {
                 value,
                 from_cache: got.reused,

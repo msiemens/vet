@@ -396,6 +396,33 @@ fn values_beyond_the_weight_limit_go_oldest_first() {
 }
 
 #[test]
+fn the_least_recently_used_value_goes_whatever_its_retention() {
+    let engine = engine(2);
+    let probe = Arc::new(Probe::default());
+    probe.open();
+    let kept = |n: u8| {
+        let mut call = call(&engine, Key::Kept(n), &probe, u32::from(n), true);
+        finished(poll(&mut call)).unwrap()
+    };
+    let sample = |value: u32| {
+        let mut call = call(&engine, Key::Sampled { id: 1, generation: 7 }, &probe, value, true);
+        finished(poll(&mut call)).unwrap()
+    };
+    // A kept value, then a sampled one kept for its generation.
+    assert!(!kept(1).reused);
+    assert!(!sample(20).reused);
+    // The kept value used again is no longer the one used least.
+    assert!(kept(1).reused);
+    // A third value comes, and the sampled one goes: it is least recently used,
+    // though its retention keeps it and no newer generation has been observed.
+    assert!(!kept(3).reused);
+    assert!(kept(1).reused);
+    assert!(kept(3).reused);
+    assert!(!sample(21).reused, "the evicted sample is computed again");
+    assert_eq!(probe.runs(), 4, "kept 1, the sample, kept 3 and the sample again");
+}
+
+#[test]
 fn a_flight_is_never_evicted_and_shares_even_where_nothing_is_kept() {
     let engine = engine(0);
     let probe = Arc::new(Probe::default());
