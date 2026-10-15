@@ -64,3 +64,6 @@ workspace = true
 
 [dev-dependencies]
 tempfile.workspace = true
+# Runs the contract of `vet-app`'s store ports against `SqliteStore` (T4); no cycle: the
+# feature is compiled out of everything but the test.
+vet-app = { workspace = true, features = ["contract"] }

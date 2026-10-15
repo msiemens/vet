@@ -169,7 +169,7 @@ async fn a_filter_change_a_started_and_a_finished_review_do_not_diff_again() {
     assert_eq!(filtered.files.len(), 1);
     assert_eq!(filtered.completion.seen_hunks, 1);
     assert_eq!(browsed.completion.seen_hunks, 0, "the finished review's marks are gone");
-    let versions = fx.store.0.lock().unwrap().versions.clone();
+    let versions = fx.store.reviewed_versions();
     let first: Vec<_> = versions[0]
         .change
         .files

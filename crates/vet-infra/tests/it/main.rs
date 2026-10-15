@@ -15,5 +15,6 @@ mod remerge;
 mod restore;
 mod semantic_cache;
 mod servers;
+mod store_contract;
 mod versions;
 mod windows_shim;

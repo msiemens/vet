@@ -166,7 +166,7 @@ async fn a_review_comes_back_after_a_restart_whatever_its_pushes_were() {
         .remember_pushes(&pull_request_7(), vec![push("pr1"), push("pr3")]);
     fx.session.open_changeset(pull_request_7()).await.unwrap();
     fx.begin().await;
-    let kept = fx.store.0.lock().unwrap().versions.clone();
+    let kept = fx.store.reviewed_versions();
     assert_eq!(
         kept.iter().map(|v| v.snapshots.is_some()).collect::<Vec<_>>(),
         [false, true]

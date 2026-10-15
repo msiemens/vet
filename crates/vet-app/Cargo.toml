@@ -28,5 +28,10 @@ percent-encoding.workspace = true
 tempfile.workspace = true
 tokio = { workspace = true, features = ["macros", "rt", "time"] }
 
+[features]
+# The store-port contract (`store_contract.rs`): not needed in the product, compiled for the
+# tests that run it and by `vet-infra`'s tests through its dev-dependency.
+contract = []
+
 [lints]
 workspace = true

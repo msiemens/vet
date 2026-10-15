@@ -24,3 +24,8 @@ pub mod servers;
 pub mod session;
 pub mod settle;
 pub mod trust;
+
+/// The contract of the store ports (T4): run against the fake from here and against
+/// `SqliteStore` from `vet-infra`'s tests, which enable the `contract` feature for it.
+#[cfg(any(test, feature = "contract"))]
+pub mod store_contract;

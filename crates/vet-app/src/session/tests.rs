@@ -1,4 +1,4 @@
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::Path;
 use std::sync::atomic::{AtomicBool, AtomicI64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
@@ -510,46 +510,124 @@ impl Differ for FakeGit {
     }
 }
 
-/// One changeset (`ChangesetId(1)`) and its newest review; starting a review forgets the marks
-/// of the one before, as there is nothing to read them back for.
+/// The pull request rows the store keeps; the copies read longest ago go, as `SqliteStore`
+/// reads its rows. `load_discussions` writes within it.
+const KEPT_PULL_REQUESTS: usize = 256;
+
+/// One repository's changesets and their reviews, each review of the changesets it was started
+/// for; starting a review starts a new one and leaves the rest of the store as it was, like
+/// `SqliteStore` reads its rows back. `ChangesetId(n)` is the nth changeset stored, `ReviewId(n)`
+/// the nth review started, both per store.
+struct MemReview {
+    id: ReviewId,
+    changeset: ChangesetId,
+    base: BaseChoice,
+    spans: Vec<(SpanId, ReviewedSpan)>,
+    origins: HashMap<SpanId, SpanOrigin>,
+    acks: Vec<NonTextAck>,
+    last_reviewed: Option<u32>,
+    summary: Option<ReviewSummary>,
+    opened_at: i64,
+    closed_at: Option<i64>,
+    complete: Option<bool>,
+}
+
+impl MemReview {
+    /// A review that has marked nothing yet.
+    fn fresh(id: ReviewId, changeset: ChangesetId, base: BaseChoice, opened_at: i64) -> Self {
+        Self {
+            id,
+            changeset,
+            base,
+            spans: Vec::new(),
+            origins: HashMap::new(),
+            acks: Vec::new(),
+            last_reviewed: None,
+            summary: None,
+            opened_at,
+            closed_at: None,
+            complete: None,
+        }
+    }
+}
+
 #[derive(Default)]
 struct Mem {
     blobs: HashMap<BlobId, Vec<u8>>,
     /// Every blob given to `put_blobs`, in order.
     put: Vec<BlobId>,
     snapshots: HashMap<SnapshotId, (Snapshot, SnapshotStatus)>,
-    /// The repository and source of the changeset, once a review started.
-    changeset: Option<(String, Source)>,
-    versions: Vec<Version>,
-    /// How many reviews were started; the newest one's id.
+    /// The stored changesets, in the order they were first stored.
+    changesets: Vec<(String, Source)>,
+    /// The changeset's versions, numbered as they were appended and read by their numbers.
+    versions: HashMap<u64, Vec<Version>>,
+    /// Every review ever started of any changeset, newest last.
+    reviews: Vec<MemReview>,
+    /// The threads of each changeset, which outlive any review of it.
+    threads: HashMap<u64, Vec<ChangesetThread>>,
+    lens: HashMap<u64, Lens>,
+    heads: HashMap<(String, Source), PullRequestHead>,
+    pins: HashMap<(String, Source), CommitId>,
+    votes: HashMap<(String, Source), PendingVote>,
+    trusted_heads: HashMap<(String, Source), CommitId>,
+    /// What a platform last said of a pull request, by remote and number, numbered by the
+    /// order it was written in, and how many rows are kept (the copies read longest ago go).
+    discussions: HashMap<(RemoteKey, u64), (StoredDiscussion, u64)>,
+    next_row: u64,
+    filters: HashMap<String, ReviewFilter>,
+    trusted: HashSet<String>,
+    /// How many reviews were started; the ids run on.
     started: u64,
-    spans: Vec<(SpanId, ReviewedSpan)>,
-    origins: HashMap<SpanId, SpanOrigin>,
-    lens: Option<Lens>,
-    heads: HashMap<Source, PullRequestHead>,
-    votes: HashMap<Source, PendingVote>,
-    next_span: u64,
-    acks: Vec<NonTextAck>,
-    base: Option<BaseChoice>,
-    last_reviewed: Option<u32>,
-    closed: bool,
-    /// Whether the review was complete when it was closed.
-    complete: Option<bool>,
-    summary: Option<ReviewSummary>,
-    threads: Vec<ChangesetThread>,
     next_message: u64,
-    filter: Option<ReviewFilter>,
-    project_trusted: bool,
-    trusted_heads: HashMap<Source, CommitId>,
-    pins: HashMap<Source, CommitId>,
-    /// What a platform last said of a pull request, by remote and number.
-    discussions: HashMap<(RemoteKey, u64), StoredDiscussion>,
+    next_span: u64,
 }
 
 impl Mem {
-    fn thread(&mut self, id: ThreadId) -> &mut Thread {
-        let found = self.threads.iter_mut().find(|t| t.thread.id == id);
-        &mut found.expect("a stored thread").thread
+    /// The changeset of a repository and source, stored if it was not.
+    fn changeset_id(&mut self, repo: &str, source: &Source) -> u64 {
+        match self
+            .changesets
+            .iter()
+            .position(|(r, s)| r.as_str() == repo && s == source)
+        {
+            Some(index) => index as u64 + 1,
+            None => {
+                self.changesets.push((repo.to_owned(), source.clone()));
+                self.changesets.len() as u64
+            }
+        }
+    }
+
+    fn review_of(&self, id: ReviewId) -> Option<&MemReview> {
+        self.reviews.iter().find(|r| r.id == id)
+    }
+
+    fn review_of_mut(&mut self, id: ReviewId) -> Option<&mut MemReview> {
+        self.reviews.iter_mut().find(|r| r.id == id)
+    }
+
+    /// The threads of `id`-th changeset; nothing for a changeset that was never stored.
+    fn thread_of(&mut self, id: ThreadId) -> Option<&mut Thread> {
+        let found = self.threads.values_mut().flatten().find(|t| t.thread.id == id);
+        found.map(|t| &mut t.thread)
+    }
+
+    /// The versions of `id`, by their numbers.
+    fn versions_of(&self, id: u64) -> Vec<Version> {
+        let mut versions = self.versions.get(&id).cloned().unwrap_or_default();
+        versions.sort_by_key(|v| v.n);
+        versions
+    }
+
+    fn threads_of(&self, id: u64) -> Vec<ChangesetThread> {
+        let mut threads = self.threads.get(&id).cloned().unwrap_or_default();
+        // As the store reads them: what the platform has first, then the drafts.
+        for t in threads.iter_mut() {
+            if t.thread.platform.is_some() {
+                t.thread.messages.sort_by_key(|m| (m.remote.is_none(), m.at, m.id));
+            }
+        }
+        threads
     }
 }
 
@@ -591,135 +669,176 @@ impl Store for MemStore {
 }
 
 impl ChangesetStore for MemStore {
+    /// The nth stored changeset, `None` when this repository and source were never stored.
     async fn changeset(&self, repo: String, source: Source) -> StoreResult<Option<ChangesetId>> {
         let mem = self.0.lock().unwrap();
-        Ok((mem.changeset == Some((repo, source))).then_some(ChangesetId(1)))
+        Ok(Self::index(&mem, &repo, &source).map(|index| ChangesetId(index as u64 + 1)))
     }
-    async fn lens(&self, _: String, _: Source) -> StoreResult<Option<Lens>> {
-        Ok(self.0.lock().unwrap().lens)
-    }
-    async fn pull_request_head(&self, _: String, source: Source) -> StoreResult<Option<PullRequestHead>> {
-        Ok(self.0.lock().unwrap().heads.get(&source).cloned())
-    }
-    async fn pull_request_trust(&self, _: String, source: Source) -> StoreResult<Option<PullRequestTrust>> {
+    async fn source_reviews(&self, repo: String, sources: &[Source]) -> StoreResult<Vec<SourceReview>> {
         let mem = self.0.lock().unwrap();
-        Ok(mem.heads.get(&source).map(|head| PullRequestTrust {
+        Ok(sources
+            .iter()
+            .map(|source| {
+                let changeset = Self::index(&mem, &repo, source).map(|index| ChangesetId(index as u64 + 1));
+                let open_threads = changeset.map_or(0, |id| {
+                    mem.threads.get(&id.0).map_or(0, |threads| {
+                        threads.iter().filter(|t| t.thread.status == ThreadStatus::Open).count()
+                    }) as u32
+                });
+                let latest =
+                    changeset.and_then(|id| mem.reviews.iter().rfind(|r| r.changeset == id).map(review_row_of));
+                let latest_version =
+                    changeset.map_or(0, |id| mem.versions_of(id.0).iter().map(|v| v.n).max().unwrap_or(0));
+                SourceReview {
+                    source: source.clone(),
+                    changeset,
+                    open_threads,
+                    latest,
+                    latest_version,
+                }
+            })
+            .collect())
+    }
+    async fn lens(&self, repo: String, source: Source) -> StoreResult<Option<Lens>> {
+        let mem = self.0.lock().unwrap();
+        Ok(Self::index(&mem, &repo, &source).and_then(|index| mem.lens.get(&(index as u64 + 1)).copied()))
+    }
+    async fn pull_request_head(&self, repo: String, source: Source) -> StoreResult<Option<PullRequestHead>> {
+        Ok(self.0.lock().unwrap().heads.get(&(repo, source)).cloned())
+    }
+    async fn pull_request_trust(&self, repo: String, source: Source) -> StoreResult<Option<PullRequestTrust>> {
+        let mem = self.0.lock().unwrap();
+        let head = mem.heads.get(&(repo.clone(), source.clone())).cloned();
+        Ok(head.map(|head| PullRequestTrust {
             fork: head.fork,
-            trusted_head: mem.trusted_heads.get(&source).cloned(),
+            trusted_head: mem.trusted_heads.get(&(repo, source)).cloned(),
         }))
     }
-    async fn pinned_base(&self, _: String, source: Source) -> StoreResult<Option<CommitId>> {
-        Ok(self.0.lock().unwrap().pins.get(&source).cloned())
+    async fn pinned_base(&self, repo: String, source: Source) -> StoreResult<Option<CommitId>> {
+        Ok(self.0.lock().unwrap().pins.get(&(repo, source)).cloned())
     }
-    async fn pending_vote(&self, _: String, source: Source) -> StoreResult<Option<PendingVote>> {
-        Ok(self.0.lock().unwrap().votes.get(&source).cloned())
+    async fn pending_vote(&self, repo: String, source: Source) -> StoreResult<Option<PendingVote>> {
+        Ok(self.0.lock().unwrap().votes.get(&(repo, source)).cloned())
     }
     async fn open_changesets(&self) -> StoreResult<Vec<ChangesetId>> {
         let mem = self.0.lock().unwrap();
-        Ok((mem.started > 0 && !mem.closed)
-            .then_some(ChangesetId(1))
-            .into_iter()
-            .collect())
+        let mut open: Vec<ChangesetId> = mem
+            .reviews
+            .iter()
+            .filter(|r| r.closed_at.is_none())
+            .map(|r| r.changeset)
+            .collect();
+        open.sort_by_key(|id| id.0);
+        open.dedup();
+        Ok(open)
     }
     async fn stored_discussion(&self, remote: RemoteKey, number: u64) -> StoreResult<Option<StoredDiscussion>> {
-        Ok(self.0.lock().unwrap().discussions.get(&(remote, number)).cloned())
+        Ok(self
+            .0
+            .lock()
+            .unwrap()
+            .discussions
+            .get(&(remote, number))
+            .map(|(kept, _)| kept.clone()))
     }
-    async fn versions(&self, _: ChangesetId) -> StoreResult<Vec<Version>> {
-        Ok(self.0.lock().unwrap().versions.clone())
+    async fn versions(&self, changeset: ChangesetId) -> StoreResult<Vec<Version>> {
+        Ok(self.0.lock().unwrap().versions_of(changeset.0))
     }
-    async fn source_reviews(&self, repo: String, sources: &[Source]) -> StoreResult<Vec<SourceReview>> {
-        let mut states = Vec::with_capacity(sources.len());
-        for source in sources {
-            let changeset = self.changeset(repo.clone(), source.clone()).await?;
-            let open_threads = match changeset {
-                Some(id) => self
-                    .threads(id)
-                    .await?
-                    .iter()
-                    .filter(|t| t.thread.status == vet_core::review::ThreadStatus::Open)
-                    .count() as u32,
-                None => 0,
-            };
-            let latest = match changeset {
-                Some(_) => match self.latest_review(ChangesetId(1)).await? {
-                    Some(id) => self.review(id).await?.map(|review| ReviewRow {
-                        opened_at: review.opened_at,
-                        closed_at: review.closed_at,
-                        complete: review.complete.unwrap_or(false),
-                        last_reviewed: review.last_reviewed,
-                        summary: review.summary,
-                    }),
-                    None => None,
-                },
-                None => None,
-            };
-            let latest_version = match changeset {
-                Some(_) => self.versions(ChangesetId(1)).await?.last().map_or(0, |v| v.n),
-                None => 0,
-            };
-            states.push(SourceReview {
-                source: source.clone(),
-                changeset,
-                open_threads,
-                latest,
-                latest_version,
-            });
-        }
-        Ok(states)
+}
+
+impl MemStore {
+    /// The index of the changeset's row among the stored ones.
+    fn index(mem: &Mem, repo: &str, source: &Source) -> Option<usize> {
+        mem.changesets.iter().position(|(r, s)| r == repo && s == source)
+    }
+}
+
+/// The listing row of a review, of the marks it does not need.
+fn review_row_of(review: &MemReview) -> ReviewRow {
+    ReviewRow {
+        opened_at: review.opened_at,
+        closed_at: review.closed_at,
+        complete: review.complete.unwrap_or(false),
+        last_reviewed: review.last_reviewed,
+        summary: review.summary,
+    }
+}
+
+/// The fake of the session tests. Its changesets and reviews are real-keyed (by repository and
+/// source, by id), so tests that read what their session stored name the changeset their
+/// review is on, not the first row the store got.
+impl MemStore {
+    /// The changeset of the newest review, the one every session test's session is on; none
+    /// while no review has started, so what is read of it is empty.
+    fn reviewed_changeset_of(mem: &Mem) -> Option<u64> {
+        mem.reviews.last().map(|review| review.changeset.0)
+    }
+
+    /// The versions of the changeset of the newest review.
+    pub(crate) fn reviewed_versions(&self) -> Vec<Version> {
+        let mem = self.0.lock().unwrap();
+        Self::reviewed_changeset_of(&mem).map_or(Vec::new(), |id| mem.versions_of(id))
+    }
+
+    /// The threads of the changeset of the newest review.
+    pub(crate) fn reviewed_threads(&self) -> Vec<ChangesetThread> {
+        let mem = self.0.lock().unwrap();
+        Self::reviewed_changeset_of(&mem).map_or(Vec::new(), |id| mem.threads_of(id))
+    }
+}
+
+/// The review of `id`, as a reader has it.
+fn review_of(review: &MemReview) -> Review {
+    Review {
+        id: review.id,
+        changeset: review.changeset,
+        base: review.base.clone(),
+        spans: review
+            .spans
+            .iter()
+            .map(|(id, span)| RecordedSpan {
+                id: *id,
+                span: span.clone(),
+                origin: review.origins.get(id).cloned().unwrap_or(SpanOrigin::Squash),
+            })
+            .collect(),
+        acks: review.acks.clone(),
+        last_reviewed: review.last_reviewed,
+        opened_at: review.opened_at,
+        closed_at: review.closed_at,
+        complete: review.closed_at.map(|_| review.complete.unwrap_or(false)),
+        summary: review.summary,
     }
 }
 
 impl ReviewStore for MemStore {
-    async fn open_review(&self, _: ChangesetId) -> StoreResult<Option<ReviewId>> {
+    async fn open_review(&self, changeset: ChangesetId) -> StoreResult<Option<ReviewId>> {
         let mem = self.0.lock().unwrap();
-        Ok((mem.started > 0 && !mem.closed).then_some(ReviewId(mem.started)))
+        Ok(mem
+            .reviews
+            .iter()
+            .rfind(|r| r.changeset == changeset && r.closed_at.is_none())
+            .map(|r| r.id))
     }
-    async fn latest_review(&self, _: ChangesetId) -> StoreResult<Option<ReviewId>> {
+    async fn latest_review(&self, changeset: ChangesetId) -> StoreResult<Option<ReviewId>> {
         let mem = self.0.lock().unwrap();
-        Ok((mem.started > 0).then_some(ReviewId(mem.started)))
+        Ok(mem.reviews.iter().rfind(|r| r.changeset == changeset).map(|r| r.id))
     }
     async fn review(&self, id: ReviewId) -> StoreResult<Option<Review>> {
         let mem = self.0.lock().unwrap();
-        if mem.started == 0 {
-            return Ok(None);
-        }
-        Ok(Some(Review {
-            id,
-            changeset: ChangesetId(1),
-            base: mem.base.clone().expect("set when the review was started"),
-            spans: mem
-                .spans
-                .iter()
-                .map(|(id, span)| RecordedSpan {
-                    id: *id,
-                    span: span.clone(),
-                    origin: mem.origins.get(id).cloned().unwrap_or(SpanOrigin::Squash),
-                })
-                .collect(),
-            acks: mem.acks.clone(),
-            last_reviewed: mem.last_reviewed,
-            opened_at: 0,
-            closed_at: mem.closed.then_some(0),
-            complete: mem.complete,
-            summary: mem.summary,
-        }))
+        Ok(mem.review_of(id).map(review_of))
     }
-    async fn filter(&self, _: String) -> StoreResult<ReviewFilter> {
-        Ok(self.0.lock().unwrap().filter.clone().unwrap_or_default())
+    async fn filter(&self, repo: String) -> StoreResult<ReviewFilter> {
+        Ok(self.0.lock().unwrap().filters.get(&repo).cloned().unwrap_or_default())
     }
-    async fn project_trusted(&self, _: String) -> StoreResult<bool> {
-        Ok(self.0.lock().unwrap().project_trusted)
+    async fn project_trusted(&self, repo: String) -> StoreResult<bool> {
+        Ok(self.0.lock().unwrap().trusted.contains(&repo))
     }
 }
 
 impl ThreadStore for MemStore {
-    async fn threads(&self, _: ChangesetId) -> StoreResult<Vec<ChangesetThread>> {
-        let mut threads = self.0.lock().unwrap().threads.clone();
-        // As the store reads them: what the platform has first, then the drafts.
-        for t in threads.iter_mut().filter(|t| t.thread.platform.is_some()) {
-            t.thread.messages.sort_by_key(|m| (m.remote.is_none(), m.at, m.id));
-        }
-        Ok(threads)
+    async fn threads(&self, changeset: ChangesetId) -> StoreResult<Vec<ChangesetThread>> {
+        Ok(self.0.lock().unwrap().threads_of(changeset.0))
     }
 }
 
@@ -732,18 +851,31 @@ impl LiveStore for MemStore {
 }
 
 impl ReviewWrites for MemStore {
+    /// Stored once under its id; a snapshot whose id is not what its entries build is refused,
+    /// as `SqliteStore` refuses it.
     async fn put_snapshot(&self, snapshot: Snapshot, status: SnapshotStatus, _: i64) -> StoreResult<()> {
+        if merkle::build(&snapshot.entries).0 != snapshot.id {
+            return Err(StoreError("snapshot id does not match its entries".into()));
+        }
         self.0.lock().unwrap().snapshots.insert(snapshot.id, (snapshot, status));
         Ok(())
     }
-    async fn set_lens(&self, _: String, _: Source, lens: Lens) -> StoreResult<()> {
-        self.0.lock().unwrap().lens = Some(lens);
+    /// The lens of the changeset, stored first if it was not.
+    async fn set_lens(&self, repo: String, source: Source, lens: Lens) -> StoreResult<()> {
+        let mut mem = self.0.lock().unwrap();
+        let id = mem.changeset_id(&repo, &source);
+        mem.lens.insert(id, lens);
         Ok(())
     }
-    async fn set_pull_request_head(&self, _: String, source: Source, head: PullRequestHead) -> StoreResult<()> {
-        self.0.lock().unwrap().heads.insert(source, head);
+    async fn set_pull_request_head(&self, repo: String, source: Source, head: PullRequestHead) -> StoreResult<()> {
+        let mut mem = self.0.lock().unwrap();
+        mem.changeset_id(&repo, &source);
+        mem.heads.insert((repo, source), head);
         Ok(())
     }
+    /// A copy older than what is kept replaces nothing newer, and over the kept bound the
+    /// copies read longest ago go, like `SqliteStore` reads its rows (the reads are the times
+    /// it was synced).
     async fn set_discussion(
         &self,
         remote: RemoteKey,
@@ -753,38 +885,73 @@ impl ReviewWrites for MemStore {
         synced_at: i64,
         discussion: &Discussion,
     ) -> StoreResult<()> {
-        self.0.lock().unwrap().discussions.insert(
+        let mut mem = self.0.lock().unwrap();
+        if let Some((kept, _)) = mem.discussions.get(&(remote.clone(), number))
+            && kept.updated_at > updated_at
+        {
+            // What is kept is newer: what the platform says replaces nothing newer.
+            return Ok(());
+        }
+        mem.next_row += 1;
+        let row = mem.next_row;
+        mem.discussions.insert(
             (remote, number),
-            StoredDiscussion {
-                updated_at,
-                synced_at,
-                discussion: discussion.clone(),
-            },
+            (
+                StoredDiscussion {
+                    updated_at,
+                    synced_at,
+                    discussion: discussion.clone(),
+                },
+                row,
+            ),
         );
+        if mem.discussions.len() > KEPT_PULL_REQUESTS {
+            // The copies with the greatest (read time, row) stay; the rest go.
+            let read_last: Vec<((RemoteKey, u64), (StoredDiscussion, u64))> =
+                mem.discussions.clone().into_iter().collect();
+            let mut read_last = read_last;
+            read_last.sort_by_key(|(_, (kept, row))| (kept.synced_at, *row));
+            let doomed: Vec<(RemoteKey, u64)> = read_last
+                .iter()
+                .take(read_last.len() - KEPT_PULL_REQUESTS)
+                .map(|(key, _)| key.clone())
+                .collect();
+            for key in doomed {
+                mem.discussions.remove(&key);
+            }
+        }
         Ok(())
     }
-    async fn set_pinned_base(&self, _: String, source: Source, base: Option<CommitId>) -> StoreResult<()> {
+    async fn set_pinned_base(&self, repo: String, source: Source, base: Option<CommitId>) -> StoreResult<()> {
         let mut mem = self.0.lock().unwrap();
+        mem.changeset_id(&repo, &source);
         match base {
-            Some(base) => mem.pins.insert(source, base),
-            None => mem.pins.remove(&source),
+            Some(base) => mem.pins.insert((repo, source), base),
+            None => mem.pins.remove(&(repo, source)),
         };
         Ok(())
     }
-    async fn set_pending_vote(&self, _: String, source: Source, vote: Option<PendingVote>) -> StoreResult<()> {
+    async fn set_pending_vote(&self, repo: String, source: Source, vote: Option<PendingVote>) -> StoreResult<()> {
         let mut mem = self.0.lock().unwrap();
+        mem.changeset_id(&repo, &source);
         match vote {
-            Some(vote) => mem.votes.insert(source, vote),
-            None => mem.votes.remove(&source),
+            Some(vote) => mem.votes.insert((repo, source), vote),
+            None => mem.votes.remove(&(repo, source)),
         };
         Ok(())
     }
     async fn ensure_changeset(&self, repo: String, source: Source) -> StoreResult<ChangesetId> {
-        self.0.lock().unwrap().changeset.get_or_insert((repo, source));
-        Ok(ChangesetId(1))
+        let mut mem = self.0.lock().unwrap();
+        Ok(ChangesetId(mem.changeset_id(&repo, &source)))
     }
-    async fn append_version(&self, _: ChangesetId, version: Version) -> StoreResult<()> {
-        self.0.lock().unwrap().versions.push(version);
+    async fn append_version(&self, changeset: ChangesetId, version: Version) -> StoreResult<()> {
+        self.0
+            .lock()
+            .unwrap()
+            .versions
+            .entry(changeset.0)
+            .or_default()
+            .push(version);
         Ok(())
     }
     async fn start_review(
@@ -793,95 +960,113 @@ impl ReviewWrites for MemStore {
         source: Source,
         choice: BaseChoice,
         versions: Vec<Version>,
-        _: i64,
+        now: i64,
     ) -> StoreResult<(ChangesetId, ReviewId)> {
         let mut mem = self.0.lock().unwrap();
-        *mem = Mem {
-            blobs: std::mem::take(&mut mem.blobs),
-            put: std::mem::take(&mut mem.put),
-            snapshots: std::mem::take(&mut mem.snapshots),
-            threads: std::mem::take(&mut mem.threads),
-            next_message: mem.next_message,
-            filter: mem.filter.take(),
-            lens: mem.lens.take(),
-            heads: std::mem::take(&mut mem.heads),
-            votes: std::mem::take(&mut mem.votes),
-            project_trusted: mem.project_trusted,
-            trusted_heads: std::mem::take(&mut mem.trusted_heads),
-            pins: std::mem::take(&mut mem.pins),
-            discussions: std::mem::take(&mut mem.discussions),
-            started: mem.started + 1,
-            base: Some(choice),
-            changeset: Some((repo, source)),
-            versions,
-            ..Default::default()
-        };
-        Ok((ChangesetId(1), ReviewId(mem.started)))
+        let changeset = mem.changeset_id(&repo, &source);
+        // A new review starts over instead of keeping the last versions.
+        mem.versions.insert(changeset, versions);
+        mem.started += 1;
+        let id = ReviewId(mem.started);
+        mem.reviews
+            .push(MemReview::fresh(id, ChangesetId(changeset), choice, now));
+        Ok((ChangesetId(changeset), id))
     }
-    async fn close_review(&self, _: ReviewId, _: i64, complete: bool) -> StoreResult<()> {
+    async fn close_review(&self, id: ReviewId, now: i64, complete: bool) -> StoreResult<()> {
         let mut mem = self.0.lock().unwrap();
-        mem.closed = true;
-        mem.complete = Some(complete);
+        let Some(review) = mem.review_of_mut(id) else {
+            return Err(StoreError(format!("review {} is not stored", id.0)));
+        };
+        review.closed_at = Some(now);
+        review.complete = Some(complete);
         Ok(())
     }
-    async fn set_filter(&self, _: String, filter: ReviewFilter) -> StoreResult<()> {
-        self.0.lock().unwrap().filter = Some(filter);
+    async fn set_filter(&self, repo: String, filter_to_hold: ReviewFilter) -> StoreResult<()> {
+        self.0.lock().unwrap().filters.insert(repo, filter_to_hold);
         Ok(())
     }
-    async fn set_project_trusted(&self, _: String, trusted: bool) -> StoreResult<()> {
-        self.0.lock().unwrap().project_trusted = trusted;
+    async fn set_project_trusted(&self, repo: String, trusted: bool) -> StoreResult<()> {
+        if trusted {
+            self.0.lock().unwrap().trusted.insert(repo);
+        } else {
+            self.0.lock().unwrap().trusted.remove(&repo);
+        }
         Ok(())
     }
     async fn set_pull_request_trusted_head(
         &self,
-        _: String,
+        repo: String,
         source: Source,
         head: Option<CommitId>,
     ) -> StoreResult<()> {
         let mut mem = self.0.lock().unwrap();
+        mem.changeset_id(&repo, &source);
         match head {
-            Some(head) => mem.trusted_heads.insert(source, head),
-            None => mem.trusted_heads.remove(&source),
+            Some(head) => mem.trusted_heads.insert((repo, source), head),
+            None => mem.trusted_heads.remove(&(repo, source)),
         };
         Ok(())
     }
-    async fn set_last_reviewed(&self, _: ReviewId, version: u32) -> StoreResult<()> {
-        self.0.lock().unwrap().last_reviewed = Some(version);
+    async fn set_last_reviewed(&self, id: ReviewId, version: u32) -> StoreResult<()> {
+        let mut mem = self.0.lock().unwrap();
+        let Some(review) = mem.review_of_mut(id) else {
+            return Err(StoreError(format!("review {} is not stored", id.0)));
+        };
+        review.last_reviewed = Some(version);
         Ok(())
     }
-    async fn set_review_summary(&self, _: ReviewId, summary: ReviewSummary) -> StoreResult<()> {
-        self.0.lock().unwrap().summary = Some(summary);
+    async fn set_review_summary(&self, id: ReviewId, summary: ReviewSummary) -> StoreResult<()> {
+        let mut mem = self.0.lock().unwrap();
+        let Some(review) = mem.review_of_mut(id) else {
+            return Err(StoreError(format!("review {} is not stored", id.0)));
+        };
+        review.summary = Some(summary);
         Ok(())
     }
     async fn edit_spans(
         &self,
-        _: ReviewId,
+        id: ReviewId,
         remove: Vec<SpanId>,
         add: Vec<(ReviewedSpan, SpanOrigin)>,
     ) -> StoreResult<Vec<SpanId>> {
         let mut mem = self.0.lock().unwrap();
-        mem.spans.retain(|(id, _)| !remove.contains(id));
-        let mut ids = Vec::new();
-        for (span, origin) in add {
-            mem.next_span += 1;
-            let id = SpanId(mem.next_span);
-            mem.spans.push((id, span));
-            mem.origins.insert(id, origin);
-            ids.push(id);
+        let added = add
+            .into_iter()
+            .map(|(span, origin)| {
+                mem.next_span += 1;
+                (SpanId(mem.next_span), span, origin.clone())
+            })
+            .collect::<Vec<_>>();
+        let Some(review) = mem.review_of_mut(id) else {
+            return Err(StoreError(format!("review {} is not stored", id.0)));
+        };
+        let ids = added.iter().map(|(id, _, _)| *id).collect();
+        review.spans.retain(|(held, _)| !remove.contains(held));
+        for (id, span, origin) in added {
+            review.spans.push((id, span));
+            review.origins.insert(id, origin);
         }
         Ok(ids)
     }
-    async fn acknowledge(&self, _: ReviewId, ack: NonTextAck) -> StoreResult<()> {
-        self.0.lock().unwrap().acks.push(ack);
+    async fn acknowledge(&self, id: ReviewId, ack: NonTextAck) -> StoreResult<()> {
+        let mut mem = self.0.lock().unwrap();
+        let Some(review) = mem.review_of_mut(id) else {
+            return Err(StoreError(format!("review {} is not stored", id.0)));
+        };
+        if !review.acks.contains(&ack) {
+            review.acks.push(ack);
+        }
         Ok(())
     }
-    async fn unacknowledge(&self, _: ReviewId, ack: NonTextAck) -> StoreResult<()> {
-        self.0.lock().unwrap().acks.retain(|a| *a != ack);
+    async fn unacknowledge(&self, id: ReviewId, ack: NonTextAck) -> StoreResult<()> {
+        if let Some(review) = self.0.lock().unwrap().review_of_mut(id) {
+            review.acks.retain(|held| *held != ack);
+        }
         Ok(())
     }
     async fn add_thread(
         &self,
-        _: ChangesetId,
+        changeset: ChangesetId,
         review: Option<ReviewId>,
         target: CommentTarget,
         opener: Message,
@@ -889,10 +1074,18 @@ impl ReviewWrites for MemStore {
         status: ThreadStatus,
     ) -> StoreResult<(ThreadId, MessageId)> {
         let mut mem = self.0.lock().unwrap();
-        let id = ThreadId(mem.threads.iter().map(|t| t.thread.id.0).max().unwrap_or(0) + 1);
+        if changeset.0 as usize > mem.changesets.len() || changeset.0 == 0 {
+            return Err(StoreError(format!("changeset {} is not stored", changeset.0)));
+        }
+        if let Some(review) = review
+            && mem.review_of(review).is_none()
+        {
+            return Err(StoreError(format!("review {} is not stored", review.0)));
+        }
+        let id = ThreadId(mem.threads.values().flatten().map(|t| t.thread.id.0).max().unwrap_or(0) + 1);
         mem.next_message += 1;
         let message = MessageId(mem.next_message);
-        mem.threads.push(ChangesetThread {
+        mem.threads.entry(changeset.0).or_default().push(ChangesetThread {
             thread: Thread {
                 id,
                 target,
@@ -908,39 +1101,66 @@ impl ReviewWrites for MemStore {
         let mut mem = self.0.lock().unwrap();
         mem.next_message += 1;
         let id = MessageId(mem.next_message);
-        mem.thread(thread).messages.push(Message { id, ..message });
+        let Some(held) = mem.thread_of(thread) else {
+            return Err(StoreError(format!("thread {} is not stored", thread.0)));
+        };
+        held.messages.push(Message { id, ..message });
         Ok(id)
     }
     async fn replace_message(&self, message: Message) -> StoreResult<()> {
         let mut mem = self.0.lock().unwrap();
-        let found = mem
+        let held = mem
             .threads
-            .iter_mut()
+            .values_mut()
+            .flatten()
             .flat_map(|t| t.thread.messages.iter_mut())
             .find(|m| m.id == message.id);
-        *found.expect("a stored message") = message;
+        let Some(held) = held else {
+            return Err(StoreError(format!("message {} is not stored", message.id.0)));
+        };
+        *held = message;
         Ok(())
     }
     async fn delete_message(&self, message: MessageId) -> StoreResult<()> {
-        for t in &mut self.0.lock().unwrap().threads {
+        let mut mem = self.0.lock().unwrap();
+        for t in mem.threads.values_mut().flatten() {
             t.thread.messages.retain(|m| m.id != message);
         }
         Ok(())
     }
     async fn set_thread_status(&self, thread: ThreadId, status: ThreadStatus) -> StoreResult<()> {
-        self.0.lock().unwrap().thread(thread).status = status;
+        let mut mem = self.0.lock().unwrap();
+        let Some(held) = mem.thread_of(thread) else {
+            return Err(StoreError(format!("thread {} is not stored", thread.0)));
+        };
+        held.status = status;
         Ok(())
     }
     async fn set_thread_platform(&self, thread: ThreadId, platform: PlatformThread) -> StoreResult<()> {
-        self.0.lock().unwrap().thread(thread).platform = Some(platform);
+        let mut mem = self.0.lock().unwrap();
+        let Some(held) = mem.thread_of(thread) else {
+            return Err(StoreError(format!("thread {} is not stored", thread.0)));
+        };
+        held.platform = Some(platform);
         Ok(())
     }
     async fn set_thread_target(&self, thread: ThreadId, target: CommentTarget) -> StoreResult<()> {
-        self.0.lock().unwrap().thread(thread).target = target;
+        let mut mem = self.0.lock().unwrap();
+        let Some(held) = mem.thread_of(thread) else {
+            return Err(StoreError(format!("thread {} is not stored", thread.0)));
+        };
+        held.target = target;
         Ok(())
     }
     async fn delete_thread(&self, thread: ThreadId) -> StoreResult<()> {
-        self.0.lock().unwrap().threads.retain(|t| t.thread.id != thread);
+        let mut mem = self.0.lock().unwrap();
+        let before: usize = mem.threads.values().map(Vec::len).sum();
+        for threads in mem.threads.values_mut() {
+            threads.retain(|t| t.thread.id != thread);
+        }
+        if mem.threads.values().map(Vec::len).sum::<usize>() == before {
+            return Err(StoreError(format!("thread {} is not stored", thread.0)));
+        }
         Ok(())
     }
 }
@@ -1071,7 +1291,12 @@ async fn browsing_keeps_nothing_and_settling_does_not_start_a_review() {
     assert_eq!((m.revision, m.lifecycle), (1, Lifecycle::Browsing));
     assert_eq!(m.files.len(), 1);
     let mem = fx.store.0.lock().unwrap();
-    assert!(mem.changeset.is_none() && mem.snapshots.is_empty() && mem.versions.is_empty());
+    assert_eq!(
+        mem.changesets,
+        [(REPO.to_owned(), Source::WorkingTree)],
+        "browsing stores the working tree's changeset, for the base it was pinned at"
+    );
+    assert!(mem.snapshots.is_empty() && mem.versions.is_empty() && mem.reviews.is_empty());
     assert!(mem.blobs.is_empty());
     assert!(fx.git.refs.lock().unwrap().is_empty());
 }
@@ -1110,9 +1335,10 @@ async fn the_first_mark_starts_the_review_at_version_1_and_retains_dirty_content
         "HEAD content stays in git"
     );
     assert_eq!(mem.snapshots.len(), 2);
-    assert_eq!(mem.spans.len(), 1);
+    assert_eq!(mem.reviews.last().expect("the started review").spans.len(), 1);
     assert_eq!(fx.git.refs.lock().unwrap().len(), 2);
-    let [first] = &mem.versions[..] else {
+    let stored_versions = mem.versions_of(1);
+    let [first] = stored_versions.as_slice() else {
         panic!("{:?}", mem.versions)
     };
     assert_eq!(
@@ -1131,7 +1357,7 @@ async fn the_first_mark_starts_the_review_at_version_1_and_retains_dirty_content
             VersionOrigin::Settled
         )
     );
-    assert_eq!(mem.base, Some(detached_head()));
+    assert_eq!(mem.reviews.last().expect("the started review").base, detached_head());
 }
 
 #[tokio::test]
@@ -1193,7 +1419,7 @@ async fn each_settled_snapshot_of_an_open_review_is_the_next_version() {
         }
     );
     let target = fx.session.target_snapshot().await.id;
-    let versions = fx.store.0.lock().unwrap().versions.clone();
+    let versions = fx.store.reviewed_versions();
     assert_eq!(
         versions.iter().map(|v| (v.n, v.origin, v.at)).collect::<Vec<_>>(),
         [
@@ -1214,7 +1440,7 @@ async fn each_settled_snapshot_of_an_open_review_is_the_next_version() {
     );
     // A filter change is not a version.
     fx.session.set_filter(ReviewFilter::default()).await.unwrap();
-    assert_eq!(fx.store.0.lock().unwrap().versions.len(), 3);
+    assert_eq!(fx.store.reviewed_versions().len(), 3);
 }
 
 /// The files `version` changed with their added and removed lines.
@@ -1238,7 +1464,7 @@ async fn a_version_records_what_it_changed_against_the_one_before_it() {
         .await;
     fx.settle(&[("a.txt", &a2), ("keep.txt", "k\n")]).await;
 
-    let versions = fx.store.0.lock().unwrap().versions.clone();
+    let versions = fx.store.reviewed_versions();
     assert_eq!(
         changed(&versions[0]),
         [("a.txt".to_string(), 1, 1), ("new.txt".to_string(), 1, 0)],
@@ -1273,7 +1499,7 @@ async fn a_version_that_only_moves_the_base_changed_nothing_the_author_did() {
     move_base_of_pull_request_7(&fx.git, "c1-full", &[("a.txt", "one\n"), ("upstream.txt", "u\n")]);
     fx.session.observe().await.unwrap().expect("head and base moved");
 
-    let versions = fx.store.0.lock().unwrap().versions.clone();
+    let versions = fx.store.reviewed_versions();
     assert_eq!(versions[1].origin, VersionOrigin::Observed);
     assert_eq!(
         changed(&versions[0]),
@@ -1362,7 +1588,7 @@ async fn a_version_made_after_the_agent_committed_is_at_the_new_head_and_keeps_i
 
     let n = fx.settle(&[("a.txt", "three\n")]).await;
 
-    let versions = fx.store.0.lock().unwrap().versions.clone();
+    let versions = fx.store.reviewed_versions();
     assert_eq!(versions.last().unwrap().tip, CommitId("h2".into()));
     let refs = fx.git.refs.lock().unwrap().clone();
     assert!(
@@ -1437,7 +1663,8 @@ async fn finishing_returns_to_browsing_and_a_later_action_starts_a_new_review() 
     assert!(fx.git.refs.lock().unwrap().is_empty());
     {
         let mem = fx.store.0.lock().unwrap();
-        assert_eq!((mem.closed, mem.complete), (true, Some(false)));
+        let review = mem.reviews.last().expect("the finished review");
+        assert_eq!((review.closed_at.is_some(), review.complete), (true, Some(false)));
     }
     let m = fx.session.manifest(View::Changeset).await.unwrap();
     assert_eq!((m.revision, m.lifecycle), (2, Lifecycle::Browsing));
@@ -1453,7 +1680,16 @@ async fn finishing_returns_to_browsing_and_a_later_action_starts_a_new_review() 
         Lifecycle::Open { version: 1, .. }
     ));
     let mem = fx.store.0.lock().unwrap();
-    assert_eq!((mem.closed, mem.versions.len(), mem.spans.len()), (false, 1, 1));
+    let review = mem.reviews.last().expect("the restarted review");
+    assert_eq!(
+        (
+            review.closed_at.is_none(),
+            mem.versions_of(MemStore::reviewed_changeset_of(&mem).expect("the restarted review"))
+                .len(),
+            review.spans.len()
+        ),
+        (true, 1, 1)
+    );
 }
 
 #[tokio::test]
@@ -1463,7 +1699,17 @@ async fn a_review_closed_in_the_store_is_closed_in_the_session_even_if_its_refs_
 
     fx.session.finish_review().await.unwrap();
 
-    assert!(fx.store.0.lock().unwrap().closed);
+    assert!(
+        fx.store
+            .0
+            .lock()
+            .unwrap()
+            .reviews
+            .last()
+            .expect("the finished review")
+            .closed_at
+            .is_some()
+    );
     assert_eq!(fx.session.lifecycle().await, Lifecycle::Browsing);
     assert_eq!(fx.session.revision().await, 1);
 }
@@ -1474,7 +1720,17 @@ async fn a_complete_review_is_recorded_as_complete_when_finished() {
     fx.session.set_seen(0, "a.txt", &[0], true).await.unwrap();
 
     assert!(fx.session.finish_review().await.unwrap());
-    assert_eq!(fx.store.0.lock().unwrap().complete, Some(true));
+    assert_eq!(
+        fx.store
+            .0
+            .lock()
+            .unwrap()
+            .reviews
+            .last()
+            .expect("the finished review")
+            .complete,
+        Some(true)
+    );
 }
 
 #[tokio::test]
@@ -1563,7 +1819,17 @@ async fn unmarking_removes_the_hunks_spans() {
 
     let update = fx.session.set_seen(0, "a.txt", &[1], false).await.unwrap();
     assert_eq!(update.review.hunks, [HunkState::Unseen, HunkState::Unseen]);
-    assert!(fx.store.0.lock().unwrap().spans.is_empty());
+    assert!(
+        fx.store
+            .0
+            .lock()
+            .unwrap()
+            .reviews
+            .last()
+            .expect("the open review")
+            .spans
+            .is_empty()
+    );
 }
 
 #[tokio::test]
@@ -1608,6 +1874,9 @@ async fn unmarking_cuts_a_hunk_out_of_a_larger_span() {
     assert_eq!(update.completion.seen_lines, 0);
     let mem = fx.store.0.lock().unwrap();
     let left: Vec<_> = mem
+        .reviews
+        .last()
+        .expect("the open review")
         .spans
         .iter()
         .flat_map(|(_, s)| s.base.iter().chain(&s.target))
@@ -1650,7 +1919,17 @@ async fn requests_for_an_old_revision_are_rejected() {
     assert!(matches!(err, SessionError::Stale { current: 1 }));
     let err = fx.session.set_seen(1, "a.txt", &[5], true).await.unwrap_err();
     assert!(matches!(err, SessionError::NotFound(_)));
-    assert!(fx.store.0.lock().unwrap().spans.is_empty());
+    assert!(
+        fx.store
+            .0
+            .lock()
+            .unwrap()
+            .reviews
+            .last()
+            .expect("the open review")
+            .spans
+            .is_empty()
+    );
 }
 
 #[tokio::test]
@@ -1701,14 +1980,26 @@ async fn toggling_a_file_marks_all_of_it_and_toggling_again_takes_it_back() {
     assert_eq!(update.review.hunks, [HunkState::Seen, HunkState::Seen]);
     assert_eq!(update.review.acknowledged, [NonTextKind::Mode]);
     assert!(update.completion.is_complete() && update.changeset.is_complete());
-    assert_eq!(store.0.lock().unwrap().acks.len(), 1);
+    assert_eq!(
+        store
+            .0
+            .lock()
+            .unwrap()
+            .reviews
+            .last()
+            .expect("the open review")
+            .acks
+            .len(),
+        1
+    );
 
     let update = session.toggle_file_seen(0, View::Changeset, "run.sh").await.unwrap();
     assert_eq!(update.review.hunks, [HunkState::Unseen, HunkState::Unseen]);
     assert!(update.review.acknowledged.is_empty());
     assert!(!update.completion.is_complete());
     let mem = store.0.lock().unwrap();
-    assert!(mem.spans.is_empty() && mem.acks.is_empty());
+    let review = mem.reviews.last().expect("the open review");
+    assert!(review.spans.is_empty() && review.acks.is_empty());
 }
 
 #[tokio::test]
@@ -1754,14 +2045,35 @@ async fn toggling_an_item_flips_its_acknowledgement() {
         .unwrap();
     assert_eq!(update.review.acknowledged, [NonTextKind::Mode]);
     assert!(matches!(update.started, Some(Lifecycle::Open { .. })));
-    assert_eq!(store.0.lock().unwrap().acks.len(), 1);
+    assert_eq!(
+        store
+            .0
+            .lock()
+            .unwrap()
+            .reviews
+            .last()
+            .expect("the open review")
+            .acks
+            .len(),
+        1
+    );
 
     let update = session
         .toggle_item(0, View::Changeset, "run.sh", NonTextKind::Mode)
         .await
         .unwrap();
     assert!(update.review.acknowledged.is_empty());
-    assert!(store.0.lock().unwrap().acks.is_empty());
+    assert!(
+        store
+            .0
+            .lock()
+            .unwrap()
+            .reviews
+            .last()
+            .expect("the open review")
+            .acks
+            .is_empty()
+    );
 }
 
 #[tokio::test]
@@ -1881,7 +2193,17 @@ async fn the_commits_are_held_while_the_review_is_open() {
     fx.session.finish_review().await.unwrap();
 
     assert!(held(&fx).is_empty());
-    assert!(fx.store.0.lock().unwrap().closed);
+    assert!(
+        fx.store
+            .0
+            .lock()
+            .unwrap()
+            .reviews
+            .last()
+            .expect("the finished review")
+            .closed_at
+            .is_some()
+    );
 }
 
 impl Fixture {
@@ -1931,7 +2253,7 @@ async fn reopening_resumes_the_open_review_and_remaps_edits_made_while_closed() 
     assert_eq!(threads.len(), 1);
     assert_eq!(threads[0].messages[0].body, "why");
     assert_eq!(threads[0].location.as_ref().map(|l| l.range), Some(range));
-    assert_eq!(fx.store.0.lock().unwrap().versions.len(), 2);
+    assert_eq!(fx.store.reviewed_versions().len(), 2);
 }
 
 #[tokio::test]
@@ -1941,7 +2263,7 @@ async fn resuming_an_unchanged_tree_does_not_settle_again() {
 
     assert_eq!(session.revision().await, 0);
     assert!(matches!(session.lifecycle().await, Lifecycle::Open { version: 1, .. }));
-    assert_eq!(fx.store.0.lock().unwrap().versions.len(), 1);
+    assert_eq!(fx.store.reviewed_versions().len(), 1);
 }
 
 #[tokio::test]
@@ -1983,7 +2305,7 @@ async fn a_session_opens_with_the_repository_filter_and_keeps_it_across_reviews(
         ..Default::default()
     };
     let store = MemStore::default();
-    store.0.lock().unwrap().filter = Some(filter.clone());
+    store.0.lock().unwrap().filters.insert(REPO.into(), filter.clone());
 
     let session = LiveSession::open(git, store.clone(), REPO.into(), clock).await.unwrap();
 
@@ -1992,7 +2314,7 @@ async fn a_session_opens_with_the_repository_filter_and_keeps_it_across_reviews(
     session.set_seen(0, "a.txt", &[0], true).await.unwrap();
     session.finish_review().await.unwrap();
     assert_eq!(session.manifest(View::Changeset).await.unwrap().filter, filter);
-    assert_eq!(store.0.lock().unwrap().filter, Some(filter));
+    assert_eq!(store.0.lock().unwrap().filters.get(REPO).cloned(), Some(filter));
 }
 
 #[tokio::test]
@@ -2003,12 +2325,15 @@ async fn a_filter_set_while_browsing_is_stored_and_applies_to_the_review() {
         ..Default::default()
     };
     fx.session.set_filter(filter.clone()).await.unwrap();
-    assert_eq!(fx.store.0.lock().unwrap().filter, Some(filter.clone()));
+    assert_eq!(
+        fx.store.0.lock().unwrap().filters.get(REPO).cloned(),
+        Some(filter.clone())
+    );
 
     fx.session.set_seen(1, "a.txt", &[0], true).await.unwrap();
 
     assert_eq!(fx.session.manifest(View::Changeset).await.unwrap().filter, filter);
-    assert_eq!(fx.store.0.lock().unwrap().filter, Some(filter));
+    assert_eq!(fx.store.0.lock().unwrap().filters.get(REPO).cloned(), Some(filter));
 }
 
 #[tokio::test]
@@ -2030,7 +2355,17 @@ async fn a_review_whose_snapshots_are_gone_is_closed_and_browsing_starts() {
     let session = fx.reopen(&[("a.txt", "two\n")]).await;
 
     assert_eq!(session.lifecycle().await, Lifecycle::Browsing);
-    assert!(fx.store.0.lock().unwrap().closed);
+    assert!(
+        fx.store
+            .0
+            .lock()
+            .unwrap()
+            .reviews
+            .last()
+            .expect("the finished review")
+            .closed_at
+            .is_some()
+    );
 }
 
 #[tokio::test]
@@ -2093,7 +2428,7 @@ async fn a_pull_request_into_a_branch_other_than_the_default_says_so() {
         .lock()
         .unwrap()
         .heads
-        .insert(pull_request_7(), pull_request("release/2.1"));
+        .insert((REPO.into(), pull_request_7()), pull_request("release/2.1"));
     fx.session.open_changeset(pull_request_7()).await.unwrap();
     assert_eq!(
         into(fx.session.manifest(View::Changeset).await.unwrap()).as_deref(),
@@ -2105,7 +2440,7 @@ async fn a_pull_request_into_a_branch_other_than_the_default_says_so() {
         .lock()
         .unwrap()
         .heads
-        .insert(pull_request_7(), pull_request("main"));
+        .insert((REPO.into(), pull_request_7()), pull_request("main"));
     assert_eq!(into(fx.session.manifest(View::Changeset).await.unwrap()), None);
 }
 
@@ -2125,7 +2460,7 @@ async fn a_pull_request_is_headed_with_the_title_the_platform_last_named_it_and_
 
     // What the platform named it last is what it is headed with.
     fx.store.0.lock().unwrap().heads.insert(
-        pull_request_7(),
+        (REPO.into(), pull_request_7()),
         PullRequestHead {
             title: "Add idempotency keys".into(),
             draft: true,
@@ -2152,7 +2487,7 @@ async fn a_pull_request_its_target_branch_holds_is_empty_even_when_git_cannot_sa
     // target branch itself.
     fetch_pull_request_7(&fx.git, &[("a.txt", "one\n")], "m1", &[("a.txt", "one\n")]);
     fx.store.0.lock().unwrap().heads.insert(
-        pull_request_7(),
+        (REPO.into(), pull_request_7()),
         PullRequestHead {
             title: "Fix".into(),
             draft: false,
@@ -2557,7 +2892,10 @@ async fn setting_the_filter_persists_it_and_moves_the_counts() {
         (m.files.len(), m.completion.lines, m.completion.excluded_lines),
         (1, 2, 2)
     );
-    assert_eq!(fx.store.0.lock().unwrap().filter, Some(filter.clone()));
+    assert_eq!(
+        fx.store.0.lock().unwrap().filters.get(REPO).cloned(),
+        Some(filter.clone())
+    );
 
     // The same filter again changes nothing.
     assert_eq!(fx.session.set_filter(filter).await.unwrap(), 1);
@@ -2608,7 +2946,7 @@ async fn excluding_a_path_hides_exactly_that_file_or_everything_below_that_folde
 
     // Excluding it again changes nothing; the filter is stored.
     assert_eq!(fx.session.exclude_path("src/gen", true).await.unwrap(), 2);
-    let stored = fx.store.0.lock().unwrap().filter.clone().unwrap();
+    let stored = fx.store.0.lock().unwrap().filters.get(REPO).cloned().unwrap();
     assert_eq!(stored.exclude, ["/src/a[[]1[]].rs", "/src/gen/**"]);
 }
 
@@ -2625,7 +2963,7 @@ async fn filter_roots_are_taken_as_directories_without_slashes() {
     assert_eq!(m.filter.roots, [path("docs")]);
     assert_eq!(m.files.len(), 1);
     assert_eq!(
-        fx.store.0.lock().unwrap().filter.as_ref().unwrap().roots,
+        fx.store.0.lock().unwrap().filters.get(REPO).unwrap().roots,
         [path("docs")]
     );
 }
@@ -2768,7 +3106,7 @@ async fn a_thread_whose_anchor_cannot_be_placed_is_not_created() {
     fx.git.reads_fail.store(false, Ordering::Relaxed);
 
     assert!(created.is_err());
-    assert!(fx.store.0.lock().unwrap().threads.is_empty());
+    assert!(fx.store.0.lock().unwrap().threads_of(1).is_empty());
     assert!(fx.session.threads(View::Changeset).await.unwrap().threads.is_empty());
     assert_eq!(fx.session.lifecycle().await, Lifecycle::Browsing);
 }
@@ -3005,7 +3343,7 @@ async fn an_edit_inside_the_range_is_inferred_until_confirmed() {
         (confirmed.state, confirmed.location),
         (Some(EXACT), at("a.txt", 10, 13))
     );
-    let stored = fx.store.0.lock().unwrap().threads[0].thread.target.clone();
+    let stored = fx.store.0.lock().unwrap().threads_of(1)[0].thread.target.clone();
     let CommentTarget::Range(anchor) = stored else { panic!() };
     assert_eq!(anchor.snapshot, fx.session.hold().await.target.id);
     // An exact anchor cannot be confirmed again.
@@ -3259,7 +3597,7 @@ async fn replies_status_and_deletion_are_persisted() {
     assert_eq!(view.status, ThreadStatus::Resolved);
     fx.session.delete_thread(&FakeHosting::default(), other).await.unwrap();
 
-    let stored = fx.store.0.lock().unwrap().threads.clone();
+    let stored = fx.store.0.lock().unwrap().threads_of(1);
     assert_eq!(stored.len(), 1);
     assert_eq!(stored[0].thread.status, ThreadStatus::Resolved);
     assert_eq!(
@@ -3355,7 +3693,16 @@ async fn open_threads_of_a_finished_review_are_on_view_when_the_repository_is_op
 #[tokio::test]
 async fn marking_records_the_version_last_reviewed_in() {
     let fx = Fixture::reviewing(&[("a.txt", "one\n")], &[("a.txt", "two\n")]).await;
-    let last_reviewed = || fx.store.0.lock().unwrap().last_reviewed;
+    let last_reviewed = || {
+        fx.store
+            .0
+            .lock()
+            .unwrap()
+            .reviews
+            .last()
+            .expect("the open review")
+            .last_reviewed
+    };
     assert_eq!(last_reviewed(), None);
 
     fx.settle(&[("a.txt", "three\n")]).await;
@@ -3412,7 +3759,7 @@ async fn threads_need_text_inside_the_current_revision() {
     assert!(matches!(new(on("nope", 0, 1)).await, Err(SessionError::NotFound(_))));
     fx.settle(&[("a.txt", "one\n")]).await;
     assert!(matches!(new(on("a.txt", 0, 1)).await, Err(SessionError::Stale { .. })));
-    assert!(fx.store.0.lock().unwrap().threads.is_empty());
+    assert!(fx.store.0.lock().unwrap().threads_of(1).is_empty());
 }
 
 fn feature() -> Source {
@@ -3478,7 +3825,7 @@ async fn a_new_commit_on_a_reviewed_branch_is_the_next_version_and_keeps_the_mar
         Lifecycle::Open { version: 2, .. }
     ));
     assert_eq!(fx.hunks("a.txt").await, [HunkState::Seen, HunkState::Unseen]);
-    let versions = fx.store.0.lock().unwrap().versions.clone();
+    let versions = fx.store.reviewed_versions();
     assert_eq!(
         versions
             .iter()
@@ -3517,7 +3864,7 @@ async fn a_rebase_is_a_version_with_the_new_base() {
         [HunkState::Seen],
         "the mark is on the same lines"
     );
-    let versions = fx.store.0.lock().unwrap().versions.clone();
+    let versions = fx.store.reviewed_versions();
     let (before, after) = (&versions[0], &versions[1]);
     assert_eq!(after.origin, VersionOrigin::Observed);
     assert_ne!(before.base_commit, after.base_commit);
@@ -3657,7 +4004,7 @@ async fn a_moved_branch_that_is_only_browsed_follows_the_tip_and_stores_nothing(
         fx.view.semantic_sides(moved).await.unwrap().head,
         CommitId("tip2".into())
     );
-    assert!(fx.store.0.lock().unwrap().versions.is_empty());
+    assert!(fx.store.reviewed_versions().is_empty());
 }
 
 #[tokio::test]
@@ -3983,7 +4330,7 @@ async fn a_new_push_to_a_pull_request_is_the_next_version_and_a_force_push_too()
     fetch_pull_request_7(&fx.git, &[("a.txt", &base)], "pr3", &[("a.txt", &rewritten)]);
     fx.session.observe().await.unwrap().expect("force-pushed");
 
-    let versions = fx.store.0.lock().unwrap().versions.clone();
+    let versions = fx.store.reviewed_versions();
     assert_eq!(
         versions
             .iter()

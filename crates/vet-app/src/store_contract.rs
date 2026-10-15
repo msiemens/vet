@@ -1,0 +1,1120 @@
+//! The contract of the store ports ([`crate::ports`]: `Store`, `ChangesetStore`,
+//! `ReviewStore`, `ThreadStore`, written through `ReviewWrites`), checked once and generic over
+//! the store, so that the in-memory fake of `session/tests.rs` and `vet-infra`'s `SqliteStore`
+//! cannot drift apart (audit T4): what one satisfies, the other must satisfy too. The fake runs
+//! it from this module's tests; the real store runs it from `vet-infra/tests/it`, which enables
+//! the `contract` feature to reach this module, without `vet-app` depending on `vet-infra`
+//! (`ci/check-deps.sh` forbids that).
+//!
+//! Every case opens its own store empty: the fake models one repository's changesets at a time,
+//! and the checks that tell the two apart are those the ports phrase as "per repository",
+//! "per changeset", "per review".
+
+use std::collections::BTreeMap;
+
+use vet_core::content::{
+    BlobId, EntryKind, FileEntry, Hash, LineDelta, LineRange, NonTextKind, RepoPath, Snapshot, SnapshotId,
+    SnapshotStatus,
+};
+use vet_core::filter::ReviewFilter;
+use vet_core::merkle;
+use vet_core::review::{
+    Anchor, CommentTarget, EditConflict, Message, Outgoing, PendingVote, PlatformThread, RemoteComment, ReviewedSpan,
+    Side, SpanState, ThreadStatus, Verdict,
+};
+
+use crate::changeset::{
+    BaseChoice, ChangedFile, ChangesetId, CommitId, Lens, RemoteKey, Snapshots, Source, Version, VersionChange,
+    VersionOrigin,
+};
+use crate::platform::{Discussion, PullRequestHead, PullRequestState};
+use crate::ports::{LiveStore, ReviewRow, ReviewWrites, Store};
+use crate::review::{NonTextAck, ReviewId, ReviewSummary, SpanOrigin};
+use crate::trust::PullRequestTrust;
+
+/// The pull request rows the store keeps; the copy read longest ago goes first (the finding's
+/// "eviction bounds like the kept pull requests").
+const KEPT_PULL_REQUESTS: usize = 256;
+const T0: i64 = 1_700_000_000;
+const REPO: &str = "/contract/repo";
+const OTHER_REPO: &str = "/contract/other";
+const PLATFORM_HEAD: &str = "platform-head-1";
+
+/// Runs every case against a store each case opens empty.
+pub async fn store_contract<S: LiveStore>(mut open: impl AsyncFnMut() -> S) {
+    {
+        let store = open().await;
+        keeps_its_blobs_and_snapshots(&store).await;
+    }
+    {
+        let store = open().await;
+        finds_changesets_by_their_repository_and_source(&store).await;
+    }
+    {
+        let store = open().await;
+        replaces_the_versions_at_a_new_review(&store).await;
+    }
+    {
+        let store = open().await;
+        a_review_owns_its_marks_and_reads_end_to_end(&store).await;
+    }
+    {
+        let store = open().await;
+        threads_have_their_messages_and_belong_to_their_changeset(&store).await;
+    }
+    {
+        let store = open().await;
+        keeps_a_newest_copy_of_pull_request_details_up_to_the_bound(&store).await;
+    }
+    {
+        let store = open().await;
+        holds_a_repositorys_settings_apart(&store).await;
+    }
+    {
+        let store = open().await;
+        what_the_store_was_never_told_of_reads_empty(&store).await;
+    }
+}
+
+// The values of the cases.
+
+fn tree(n: u8) -> SnapshotId {
+    SnapshotId(Hash([n; 32]))
+}
+
+fn commit(id: &str) -> CommitId {
+    CommitId(id.into())
+}
+
+fn entry_of(text: &[u8], mode: u32) -> FileEntry {
+    FileEntry {
+        blob: BlobId::of(text),
+        mode,
+        kind: EntryKind::File,
+        unfiltered: false,
+    }
+}
+
+fn entry(blob: u8) -> FileEntry {
+    entry_of(&[blob], 0o100644)
+}
+
+fn snapshot(files: &[(&str, u8)]) -> Snapshot {
+    let entries: BTreeMap<RepoPath, FileEntry> = files.iter().map(|(p, b)| (RepoPath::from(*p), entry(*b))).collect();
+    Snapshot {
+        id: merkle::snapshot_id(&entries),
+        entries,
+    }
+}
+
+/// A snapshot whose id claims another's content: `put_snapshot` must not keep it.
+fn mismarked_snapshot() -> Snapshot {
+    let entries: BTreeMap<RepoPath, FileEntry> = [(RepoPath::from("a.txt"), entry(4))].into_iter().collect();
+    Snapshot { id: tree(5), entries }
+}
+
+fn version_of(n: u32) -> Version {
+    Version {
+        n,
+        snapshots: Some(Snapshots {
+            base: tree(1),
+            target: tree(11),
+        }),
+        base_commit: commit("abc123"),
+        tip: commit("def456"),
+        at: T0 + i64::from(n) * 10,
+        origin: VersionOrigin::Settled,
+        change: VersionChange {
+            files: vec![ChangedFile {
+                path: RepoPath::from("src/lib.rs"),
+                delta: LineDelta { added: n, removed: 1 },
+            }],
+        },
+    }
+}
+
+/// A version whose commits Vet could not fetch: listed, but with nothing to show.
+fn version_without_snapshots(n: u32) -> Version {
+    Version {
+        snapshots: None,
+        ..version_of(n)
+    }
+}
+
+fn message(body: &str) -> Message {
+    Message::written("me".into(), body.into(), T0)
+}
+
+fn posted(id: &str, body: &str) -> Message {
+    Message {
+        mine: false,
+        avatar: Some("https://avatars.example/lena".into()),
+        remote: Some(RemoteComment {
+            id: id.into(),
+            synced: body.into(),
+            conflict: None,
+        }),
+        ..message(body)
+    }
+}
+
+fn anchor(side: Side, snapshot: u8) -> Anchor {
+    Anchor {
+        side,
+        snapshot: tree(snapshot),
+        file: RepoPath::from("src/lib.rs"),
+        range: LineRange { start: 3, end: 9 },
+        content_hash_raw: Hash([10u8; 32]),
+        content_hash_norm: Hash([11u8; 32]),
+        context_hashes: vec![Hash([12u8; 32]), Hash([13u8; 32])],
+    }
+}
+
+fn seen_both() -> ReviewedSpan {
+    ReviewedSpan {
+        base: Some(anchor(Side::Base, 21)),
+        target: Some(anchor(Side::Target, 22)),
+        state: SpanState::Seen,
+    }
+}
+
+fn seen_against_the_old_base() -> ReviewedSpan {
+    ReviewedSpan {
+        base: None,
+        target: Some(anchor(Side::Target, 23)),
+        state: SpanState::SeenAgainstOldBase,
+    }
+}
+
+fn flagged() -> ReviewedSpan {
+    ReviewedSpan {
+        base: Some(anchor(Side::Base, 24)),
+        target: None,
+        state: SpanState::Flagged,
+    }
+}
+
+fn summary() -> ReviewSummary {
+    ReviewSummary {
+        total: 9,
+        seen: 3,
+        old_base: 1,
+    }
+}
+
+fn mode_change() -> NonTextAck {
+    NonTextAck {
+        kind: NonTextKind::Mode,
+        before: Some((RepoPath::from("run.sh"), entry_of(b"echo", 0o100644))),
+        after: Some((RepoPath::from("run.sh"), entry_of(b"echo", 0o100755))),
+    }
+}
+
+fn binary_change() -> NonTextAck {
+    NonTextAck {
+        kind: NonTextKind::Binary,
+        before: Some((RepoPath::from("x"), entry(5))),
+        after: None,
+    }
+}
+
+fn filter() -> ReviewFilter {
+    ReviewFilter {
+        roots: vec![RepoPath::from("crates")],
+        include: vec!["*.rs".into()],
+        exclude: vec!["gen/**".into()],
+        hide_binary: true,
+        review_generated: true,
+    }
+}
+
+fn other_filter() -> ReviewFilter {
+    ReviewFilter {
+        roots: vec![RepoPath::from("tools")],
+        hide_binary: true,
+        ..ReviewFilter::default()
+    }
+}
+
+fn discussion(name: &str) -> Discussion {
+    Discussion {
+        title: format!("the change of {name}"),
+        url: format!("https://host.example/{name}/1"),
+        description: String::new(),
+        draft: false,
+        source_branch: "feature".into(),
+        target_branch: "main".into(),
+        state: PullRequestState::Open,
+        author: "ann".into(),
+        author_name: "Ann".into(),
+        author_avatar: None,
+        reviewers: Vec::new(),
+        viewer_verdict: Some(Verdict::Approve),
+        labels: vec!["ui".into()],
+        ci: None,
+        conversation: Vec::new(),
+        threads: Vec::new(),
+        complete: true,
+    }
+}
+
+fn head(title: &str) -> PullRequestHead {
+    PullRequestHead {
+        title: title.into(),
+        draft: true,
+        fork: true,
+        target_branch: "main".into(),
+    }
+}
+
+// The sources: a changeset is named by a repository and its source.
+
+fn tree_of_repo() -> Source {
+    Source::WorkingTree
+}
+
+fn branch_of(name: &str) -> Source {
+    Source::Branch { name: name.to_owned() }
+}
+
+fn pull(number: u64) -> Source {
+    Source::PullRequest {
+        remote: RemoteKey {
+            host: "host.example".into(),
+            path: "maker/base".into(),
+        },
+        number,
+    }
+}
+
+fn row_of(host: &str, number: u64) -> (RemoteKey, u64) {
+    (
+        RemoteKey {
+            host: host.into(),
+            path: "contract/repo".into(),
+        },
+        number,
+    )
+}
+
+// The cases.
+
+/// `Store`: blobs keep their identity, what the store lacks reads as absent, and a snapshot
+/// keeps what it was put with; its stored id must be the one its entries build.
+async fn keeps_its_blobs_and_snapshots<S: Store + LiveStore>(store: &S) {
+    let ids = store.put_blobs(vec![b"one".to_vec(), b"two".to_vec()]).await.unwrap();
+    let mut read = Vec::with_capacity(ids.len());
+    for id in &ids {
+        read.push(store.blob(*id).await.unwrap());
+    }
+    assert_eq!(read, [Some(b"one".to_vec()), Some(b"two".to_vec())]);
+    assert_eq!(store.missing_blobs(ids.clone()).await.unwrap(), []);
+    let again = store
+        .put_blobs(vec![b"two".to_vec(), b"one".to_vec(), b"three".to_vec()])
+        .await
+        .unwrap();
+    assert_eq!(
+        (again[0], again[1]),
+        (ids[1], ids[0]),
+        "blobs the store holds are not written again and answer the same ids"
+    );
+    assert_eq!(store.blob(again[2]).await.unwrap().as_deref(), Some(&b"three"[..]));
+    assert_eq!(store.missing_blobs(ids.clone()).await.unwrap(), []);
+
+    assert_eq!(
+        store.blobs(vec![ids[0], BlobId::of(b"gone")]).await.unwrap(),
+        BTreeMap::from([(ids[0], b"one".to_vec())]),
+        "the reads of a batch answer only what is held"
+    );
+    assert_eq!(store.blob(BlobId::of(b"gone")).await.unwrap(), None);
+    assert_eq!(store.snapshot(tree(255)).await.unwrap(), None);
+
+    let kept = snapshot(&[("a.txt", 21)]);
+    store
+        .writes()
+        .put_snapshot(kept.clone(), SnapshotStatus::default(), T0)
+        .await
+        .unwrap();
+    assert_eq!(
+        store.snapshot(kept.id).await.unwrap(),
+        Some((kept, SnapshotStatus::default()))
+    );
+
+    let mistook = mismarked_snapshot();
+    assert!(
+        store
+            .writes()
+            .put_snapshot(mistook, SnapshotStatus::default(), T0)
+            .await
+            .is_err(),
+        "its id is not what its entries build"
+    );
+}
+
+/// Writes about a changeset store the changeset itself, so that what was last written is read
+/// back by the repository and source it belongs to, and nothing of another one reads as ours.
+async fn finds_changesets_by_their_repository_and_source<S: LiveStore>(store: &S) {
+    let writes = store.writes();
+    writes
+        .set_lens(REPO.into(), tree_of_repo(), Lens::PerCommit)
+        .await
+        .unwrap();
+    assert_ne!(store.changeset(REPO.into(), tree_of_repo()).await.unwrap(), None);
+    assert_eq!(
+        store.lens(REPO.into(), tree_of_repo()).await.unwrap(),
+        Some(Lens::PerCommit)
+    );
+    assert_eq!(store.lens(REPO.into(), branch_of("feature")).await.unwrap(), None);
+    assert_eq!(store.lens(OTHER_REPO.into(), tree_of_repo()).await.unwrap(), None);
+
+    writes
+        .set_pull_request_head(REPO.into(), branch_of("pr"), head("the change"))
+        .await
+        .unwrap();
+    assert_ne!(store.changeset(REPO.into(), branch_of("pr")).await.unwrap(), None);
+    assert_eq!(
+        store.pull_request_head(REPO.into(), branch_of("pr")).await.unwrap(),
+        Some(head("the change"))
+    );
+    assert_eq!(
+        store.pull_request_head(REPO.into(), branch_of("other")).await.unwrap(),
+        None
+    );
+    assert_eq!(
+        store
+            .pull_request_head(OTHER_REPO.into(), branch_of("pr"))
+            .await
+            .unwrap(),
+        None,
+        "another repository is not this pull request's place"
+    );
+
+    writes
+        .set_pull_request_trusted_head(REPO.into(), branch_of("pr"), Some(commit("trusted")))
+        .await
+        .unwrap();
+    assert_eq!(
+        store.pull_request_trust(REPO.into(), branch_of("pr")).await.unwrap(),
+        Some(PullRequestTrust {
+            fork: true,
+            trusted_head: Some(commit("trusted")),
+        })
+    );
+    writes
+        .set_pull_request_trusted_head(REPO.into(), branch_of("pr"), None)
+        .await
+        .unwrap();
+    assert_eq!(
+        store.pull_request_trust(REPO.into(), branch_of("pr")).await.unwrap(),
+        Some(PullRequestTrust {
+            fork: true,
+            trusted_head: None,
+        })
+    );
+
+    writes
+        .set_pinned_base(REPO.into(), branch_of("pinned"), Some(commit("pinned-base")))
+        .await
+        .unwrap();
+    assert_ne!(store.changeset(REPO.into(), branch_of("pinned")).await.unwrap(), None);
+    assert_eq!(
+        store.pinned_base(REPO.into(), branch_of("pinned")).await.unwrap(),
+        Some(commit("pinned-base"))
+    );
+    assert_eq!(
+        store.pinned_base(REPO.into(), branch_of("feature")).await.unwrap(),
+        None
+    );
+    writes
+        .set_pinned_base(REPO.into(), branch_of("pinned"), None)
+        .await
+        .unwrap();
+    assert_eq!(store.pinned_base(REPO.into(), branch_of("pinned")).await.unwrap(), None);
+
+    let vote = PendingVote {
+        verdict: Verdict::Approve,
+        outgoing: Outgoing::Posting { since: T0 },
+    };
+    writes
+        .set_pending_vote(REPO.into(), pull(9), Some(vote.clone()))
+        .await
+        .unwrap();
+    assert_ne!(store.changeset(REPO.into(), pull(9)).await.unwrap(), None);
+    assert_eq!(store.pending_vote(REPO.into(), pull(9)).await.unwrap(), Some(vote));
+    assert_eq!(store.pending_vote(REPO.into(), pull(8)).await.unwrap(), None);
+    writes.set_pending_vote(REPO.into(), pull(9), None).await.unwrap();
+    assert_eq!(store.pending_vote(REPO.into(), pull(9)).await.unwrap(), None);
+}
+
+/// A review starts with the versions it names, which replace the changeset's; the versions are
+/// read by their numbers, and a version whose content could not be had is listed without it.
+async fn replaces_the_versions_at_a_new_review<S: LiveStore>(store: &S) {
+    let writes = store.writes();
+    let (cid, rid) = writes
+        .start_review(
+            REPO.into(),
+            tree_of_repo(),
+            BaseChoice::Commit { id: commit("base0") },
+            vec![version_of(1), version_without_snapshots(2)],
+            T0,
+        )
+        .await
+        .unwrap();
+    assert_eq!(store.open_review(cid).await.unwrap(), Some(rid));
+    let listed = store
+        .versions(cid)
+        .await
+        .unwrap()
+        .iter()
+        .map(|v| (v.n, v.snapshots))
+        .collect::<Vec<_>>();
+    assert_eq!(
+        listed,
+        vec![
+            (
+                1,
+                Some(Snapshots {
+                    base: tree(1),
+                    target: tree(11)
+                })
+            ),
+            (2, None),
+        ],
+        "the versions in order of their numbers, the unavailable one without content"
+    );
+    writes.append_version(cid, version_of(3)).await.unwrap();
+    assert_eq!(store.versions(cid).await.unwrap().len(), 3);
+
+    writes.close_review(rid, T0 + 10, false).await.unwrap();
+    assert_eq!(store.open_review(cid).await.unwrap(), None);
+    assert_ne!(
+        store.latest_review(cid).await.unwrap(),
+        None,
+        "the newest review is still read once the open one is closed"
+    );
+
+    let (again, _rid) = writes
+        .start_review(
+            REPO.into(),
+            tree_of_repo(),
+            BaseChoice::MergeBase {
+                reference: "main".into(),
+            },
+            vec![version_of(1), version_of(2)],
+            T0 + 20,
+        )
+        .await
+        .unwrap();
+    assert_eq!(again, cid);
+    let listed = store
+        .versions(cid)
+        .await
+        .unwrap()
+        .iter()
+        .map(|v| (v.n, v.at))
+        .collect::<Vec<_>>();
+    assert_eq!(
+        listed,
+        vec![(1, T0 + 10), (2, T0 + 20)],
+        "a new review starts over instead of keeping the last versions"
+    );
+    writes.append_version(cid, version_of(3)).await.unwrap();
+    assert_eq!(store.versions(cid).await.unwrap().len(), 3);
+}
+
+/// The review of a changeset carries the marking of exactly one review, reads back with what was
+/// set on it, and the listing row of each source's newest review sums its review up.
+async fn a_review_owns_its_marks_and_reads_end_to_end<S: LiveStore>(store: &S) {
+    let writes = store.writes();
+    let (cid, rid) = writes
+        .start_review(
+            REPO.into(),
+            tree_of_repo(),
+            BaseChoice::MergeBase {
+                reference: "main".into(),
+            },
+            vec![version_of(1)],
+            T0,
+        )
+        .await
+        .unwrap();
+    let added = vec![
+        (seen_both(), SpanOrigin::Squash),
+        (seen_against_the_old_base(), SpanOrigin::Commit(commit("c1"))),
+        (flagged(), SpanOrigin::Squash),
+    ];
+    let ids = writes.edit_spans(rid, vec![], added.clone()).await.unwrap();
+    assert_eq!(ids.len(), 3);
+    writes.set_last_reviewed(rid, 1).await.unwrap();
+    writes.set_review_summary(rid, summary()).await.unwrap();
+    writes.acknowledge(rid, mode_change()).await.unwrap();
+    writes.acknowledge(rid, mode_change()).await.unwrap();
+    writes.acknowledge(rid, binary_change()).await.unwrap();
+
+    let loaded = store.review(rid).await.unwrap().expect("the open review reads");
+    assert_eq!(loaded.id, rid);
+    assert_eq!(loaded.changeset, cid);
+    assert_eq!(
+        loaded.base,
+        BaseChoice::MergeBase {
+            reference: "main".into()
+        }
+    );
+    assert_eq!(loaded.spans.iter().map(|r| r.id).collect::<Vec<_>>(), ids);
+    assert_ne!(loaded.spans[0].id, loaded.spans[2].id);
+    assert_eq!(
+        loaded.spans.iter().map(|r| r.span.clone()).collect::<Vec<_>>(),
+        added.iter().map(|(span, _)| span.clone()).collect::<Vec<_>>(),
+        "the spans as they were added"
+    );
+    assert_eq!(
+        loaded.spans.iter().map(|r| r.origin.clone()).collect::<Vec<_>>(),
+        [SpanOrigin::Squash, SpanOrigin::Commit(commit("c1")), SpanOrigin::Squash]
+    );
+    assert_eq!(
+        loaded.acks,
+        vec![mode_change(), binary_change()],
+        "an equal acknowledgement is not stored again"
+    );
+    assert_eq!(loaded.last_reviewed, Some(1));
+    assert_eq!(loaded.summary, Some(summary()));
+    assert_eq!(loaded.opened_at, T0);
+    assert_eq!(loaded.closed_at, None);
+    assert_eq!(loaded.complete, None);
+
+    // A second review of another source holds none of the first review's marks.
+    let (next_cid, next_rid) = writes
+        .start_review(
+            REPO.into(),
+            branch_of("other"),
+            BaseChoice::MergeBase {
+                reference: "other".into(),
+            },
+            vec![version_of(1)],
+            T0,
+        )
+        .await
+        .unwrap();
+    let other = store.review(next_rid).await.unwrap().unwrap();
+    assert_ne!(other.id, rid);
+    assert_eq!(other.changeset, next_cid);
+    assert_ne!(next_cid, cid, "another source is not the first changeset");
+    assert_ne!(
+        other.base,
+        BaseChoice::MergeBase {
+            reference: "main".into()
+        }
+    );
+    assert_eq!(
+        (other.spans.is_empty(), other.acks.is_empty()),
+        (true, true),
+        "another review starts without the marks of the one before"
+    );
+    assert_eq!(other.last_reviewed, None, "it has marked nothing yet");
+    assert_eq!(other.summary, None, "it has not been measured");
+    assert_eq!(other.opened_at, T0);
+
+    writes.close_review(rid, T0 + 60, true).await.unwrap();
+    let ended = store.review(rid).await.unwrap().unwrap();
+    assert_eq!(ended.closed_at, Some(T0 + 60));
+    assert_eq!(ended.complete, Some(true));
+    assert_ne!(ended.spans.len(), 0, "the marks are read to the end of a review");
+    assert_eq!(ended.last_reviewed, Some(1));
+    assert_eq!(ended.summary, Some(summary()));
+
+    assert_eq!(
+        store.open_review(cid).await.unwrap(),
+        None,
+        "of the first changeset no review is open"
+    );
+    writes.close_review(next_rid, T0 + 70, false).await.unwrap();
+    let elsewhere = store.review(next_rid).await.unwrap().unwrap();
+    assert_eq!(elsewhere.closed_at, Some(T0 + 70));
+    assert_eq!(elsewhere.complete, Some(false));
+    assert_eq!(store.open_changesets().await.unwrap(), [], "no review is open any more");
+    let rows = store
+        .source_reviews(REPO.into(), &[tree_of_repo(), branch_of("other")])
+        .await
+        .unwrap();
+    let listed = rows
+        .iter()
+        .map(|r| {
+            (
+                r.source.clone(),
+                r.changeset,
+                r.open_threads,
+                r.latest.map(ending_of),
+                r.latest_version,
+            )
+        })
+        .collect::<Vec<_>>();
+    let (source_of, on_of, threads_of, ending_of_one, version_of_one) = &listed[0];
+    assert_eq!(source_of, &tree_of_repo(), "the sources in the order asked for");
+    assert_eq!(on_of, &Some(cid));
+    assert_eq!(threads_of, &0);
+    assert_eq!(ending_of_one, &Some((Some(T0 + 60), true, Some(1), Some(summary()))));
+    assert_eq!(version_of_one, &1);
+    let (_, on_of_2, _, ending_of_2, version_of_2) = &listed[1];
+    assert_eq!(on_of_2, &Some(next_cid));
+    assert_eq!(
+        ending_of_2,
+        &Some((Some(T0 + 70), false, None, None)),
+        "the newest review of each source"
+    );
+    assert_eq!(version_of_2, &1);
+}
+
+/// How a listing row spells its newest review.
+fn ending_of(row: ReviewRow) -> (Option<i64>, bool, Option<u32>, Option<ReviewSummary>) {
+    (row.closed_at, row.complete, row.last_reviewed, row.summary)
+}
+
+/// Threads belong to the changeset they are opened on; a thread keeps its messages' updates, its
+/// anchor and its platform's state, and its messages lie in the platform's text first, the
+/// viewer's after it, a thread outside a platform in the order it was written in. A deleted
+/// thread's messages go with it.
+async fn threads_have_their_messages_and_belong_to_their_changeset<S: LiveStore>(store: &S) {
+    let writes = store.writes();
+    let (cid, rid) = writes
+        .start_review(
+            REPO.into(),
+            tree_of_repo(),
+            BaseChoice::MergeBase {
+                reference: "main".into(),
+            },
+            vec![version_of(1)],
+            T0,
+        )
+        .await
+        .unwrap();
+    let platform = PlatformThread {
+        remote_id: Some("T1".into()),
+        resolvable: true,
+        resolved_by: Some("lena".into()),
+        status_pending: false,
+    };
+    let (range, _) = writes
+        .add_thread(
+            cid,
+            Some(rid),
+            CommentTarget::Range(anchor(Side::Target, 2)),
+            posted("C1", "why?"),
+            Some(platform.clone()),
+            ThreadStatus::Open,
+        )
+        .await
+        .unwrap();
+    let (file, _) = writes
+        .add_thread(
+            cid,
+            Some(rid),
+            CommentTarget::File {
+                side: Side::Base,
+                path: RepoPath::from("a/b"),
+            },
+            message("file body"),
+            None,
+            ThreadStatus::Open,
+        )
+        .await
+        .unwrap();
+    let (whole, _) = writes
+        .add_thread(
+            cid,
+            None,
+            CommentTarget::Changeset,
+            message("over everything"),
+            None,
+            ThreadStatus::Open,
+        )
+        .await
+        .unwrap();
+    writes.add_message(range, posted("C2", "no")).await.unwrap();
+    writes
+        .add_message(
+            range,
+            Message {
+                at: T0 - 100,
+                ..message("mine, although an earlier at than the platform's")
+            },
+        )
+        .await
+        .unwrap();
+    writes
+        .add_message(
+            file,
+            Message {
+                at: T0 - 5,
+                ..message("written later, though a smaller at")
+            },
+        )
+        .await
+        .unwrap();
+
+    let read = store.threads(cid).await.unwrap();
+    assert_eq!(
+        read.iter().map(|t| t.thread.id).collect::<Vec<_>>(),
+        [range, file, whole],
+        "the threads in the order they were opened in"
+    );
+    assert_eq!(
+        read.iter().map(|t| t.review).collect::<Vec<_>>(),
+        [Some(rid), Some(rid), None],
+        "a thread keeps the review it came from"
+    );
+    assert_eq!(read[0].thread.platform, Some(platform));
+    assert_eq!(read[1].thread.platform, None);
+    assert_eq!(read[2].thread.platform, None);
+    assert_eq!(
+        read[0]
+            .thread
+            .messages
+            .iter()
+            .map(|m| m.body.as_str())
+            .collect::<Vec<_>>(),
+        ["why?", "no", "mine, although an earlier at than the platform's"],
+        "the platform's text first (an earlier `at` of the drafts keeps it), then the drafts by their record"
+    );
+    assert_eq!(
+        read[1].thread.messages.iter().map(|m| m.at).collect::<Vec<_>>(),
+        [T0, T0 - 5],
+        "outside a platform, the messages are in the order they were written in"
+    );
+    let opener = read[0].thread.messages[0].id;
+    let mine = read[0]
+        .thread
+        .messages
+        .iter()
+        .find(|m| m.mine)
+        .expect("the viewer's draft on the thread")
+        .id;
+
+    writes
+        .replace_message(Message {
+            id: opener,
+            body: "why not?".into(),
+            edited_at: Some(T0 + 5),
+            remote: Some(RemoteComment {
+                id: "C1".into(),
+                synced: "why?".into(),
+                conflict: Some(EditConflict {
+                    remote_body: "why so?".into(),
+                    remote_at: T0 + 9,
+                }),
+            }),
+            ..posted("C1", "why?")
+        })
+        .await
+        .unwrap();
+    writes
+        .replace_message(Message {
+            id: mine,
+            outgoing: Outgoing::Posting { since: T0 + 20 },
+            ..message("mine, although an earlier at than the platform's")
+        })
+        .await
+        .unwrap();
+    writes.set_thread_status(range, ThreadStatus::Resolved).await.unwrap();
+    writes
+        .set_thread_platform(
+            file,
+            PlatformThread {
+                remote_id: None,
+                resolvable: true,
+                resolved_by: None,
+                status_pending: true,
+            },
+        )
+        .await
+        .unwrap();
+    let moved = CommentTarget::Range(Anchor {
+        range: LineRange { start: 20, end: 25 },
+        ..anchor(Side::Target, 2)
+    });
+    writes.set_thread_target(range, moved.clone()).await.unwrap();
+
+    let read = store.threads(cid).await.unwrap();
+    assert_eq!(read[0].thread.status, ThreadStatus::Resolved);
+    assert_eq!(read[1].thread.status, ThreadStatus::Open);
+    assert_eq!(
+        read[0].thread.target, moved,
+        "the thread was re-anchored to what was set"
+    );
+    assert_eq!(
+        read[1].thread.platform,
+        Some(PlatformThread {
+            remote_id: None,
+            resolvable: true,
+            resolved_by: None,
+            status_pending: true,
+        }),
+        "the platform's state as it was replaced"
+    );
+    assert_eq!(read[2].thread.platform, None);
+    let updated = read[0].thread.messages[0].clone();
+    assert_eq!(updated.id, opener, "the message keeps its place in the thread");
+    assert_eq!(updated.body, "why not?");
+    assert_eq!(
+        updated.remote,
+        Some(RemoteComment {
+            id: "C1".into(),
+            synced: "why?".into(),
+            conflict: Some(EditConflict {
+                remote_body: "why so?".into(),
+                remote_at: T0 + 9,
+            }),
+        })
+    );
+    let of_mine = read[0].thread.messages.iter().find(|m| m.id == mine).unwrap();
+    assert_eq!(
+        of_mine.outgoing,
+        Outgoing::Posting { since: T0 + 20 },
+        "its way to the platform, kept"
+    );
+    assert_eq!(
+        read[2]
+            .thread
+            .messages
+            .iter()
+            .map(|m| m.body.as_str())
+            .collect::<Vec<_>>(),
+        ["over everything"]
+    );
+
+    // The threads of another changeset are none of these; deleting a thread deletes its
+    // messages.
+    let elsewhere = writes
+        .ensure_changeset(REPO.into(), branch_of("somewhere-else"))
+        .await
+        .unwrap();
+    assert_eq!(
+        store.threads(elsewhere).await.unwrap(),
+        [],
+        "the later changeset holds none of these"
+    );
+    writes.delete_thread(range).await.unwrap();
+    let read = store.threads(cid).await.unwrap();
+    assert_eq!(read.iter().map(|t| t.thread.id).collect::<Vec<_>>(), [file, whole]);
+    let left = read
+        .iter()
+        .flat_map(|t| t.thread.messages.iter().map(|m| m.body.clone()))
+        .collect::<Vec<_>>();
+    assert_eq!(
+        left,
+        [
+            "written later, though a smaller at".to_string(),
+            "file body".to_string(),
+            "over everything".to_string()
+        ],
+        "the deleted thread's messages went with it; the file thread's own are in the store's order \
+         (a platform thread now, what the viewer wrote first reads first)"
+    );
+}
+
+/// A pull request's details are kept as one copy per request: a newer copy replaces it, an older
+/// one replaces nothing newer, and over the kept bound the ones read longest ago go.
+async fn keeps_a_newest_copy_of_pull_request_details_up_to_the_bound<S: LiveStore>(store: &S) {
+    let writes = store.writes();
+    let (remote, number) = row_of("revisited.example", 1);
+    assert_eq!(
+        store.stored_discussion(remote.clone(), number).await.unwrap(),
+        None,
+        "nothing was stored of the pull request yet"
+    );
+    writes
+        .set_discussion(
+            remote.clone(),
+            number,
+            PLATFORM_HEAD.into(),
+            T0 + 30,
+            T0 - 1000,
+            &discussion("first"),
+        )
+        .await
+        .unwrap();
+    let kept = store.stored_discussion(remote.clone(), number).await.unwrap().unwrap();
+    assert_eq!(
+        (kept.updated_at, kept.synced_at, kept.discussion,),
+        (T0 + 30, T0 - 1000, discussion("first"))
+    );
+
+    // A copy newer than what is kept replaces it; an older one replaces nothing newer.
+    writes
+        .set_discussion(
+            remote.clone(),
+            number,
+            PLATFORM_HEAD.into(),
+            T0 + 20,
+            T0 + 50,
+            &discussion("older"),
+        )
+        .await
+        .unwrap();
+    let kept = store.stored_discussion(remote.clone(), number).await.unwrap().unwrap();
+    assert_eq!(kept.updated_at, T0 + 30, "the older copy wrote nothing");
+    assert_eq!(kept.synced_at, T0 - 1000);
+    assert_eq!(kept.discussion, discussion("first"));
+    writes
+        .set_discussion(
+            remote.clone(),
+            number,
+            PLATFORM_HEAD.into(),
+            T0 + 80,
+            T0 + 40,
+            &discussion("newer"),
+        )
+        .await
+        .unwrap();
+    let kept = store.stored_discussion(remote.clone(), number).await.unwrap().unwrap();
+    assert_eq!(
+        (kept.updated_at, kept.synced_at, kept.discussion),
+        (T0 + 80, T0 + 40, discussion("newer"))
+    );
+
+    // Over the kept bound, the copies read longest ago go.
+    for n in 1..=KEPT_PULL_REQUESTS as u64 + 1 {
+        let (host, number) = row_of("bound.invalid", n);
+        writes
+            .set_discussion(
+                host,
+                number,
+                PLATFORM_HEAD.into(),
+                T0 + 100_000 + i64::from(n as u32),
+                T0 + 100_000 + i64::from(n as u32),
+                &discussion(&format!("pr{n}")),
+            )
+            .await
+            .unwrap();
+    }
+    let record_of = |host: String, number: u64| async move {
+        let (remote, number) = row_of(&host, number);
+        store
+            .stored_discussion(remote, number)
+            .await
+            .unwrap()
+            .map(|kept| kept.updated_at)
+    };
+    assert_eq!(
+        (
+            record_of("revisited.example".into(), 1).await,
+            record_of("bound.invalid".into(), 1).await
+        ),
+        (None, None),
+        "the two longest-ago reads were evicted"
+    );
+    assert_eq!(
+        record_of("bound.invalid".into(), 2).await,
+        Some(T0 + 100_002),
+        "the newest 256 of 258 are kept"
+    );
+    assert_eq!(record_of("bound.invalid".into(), 257).await, Some(T0 + 100_257));
+}
+
+/// A repository's filter and trust are its own; every other repository reads its default.
+async fn holds_a_repositorys_settings_apart<S: LiveStore>(store: &S) {
+    let writes = store.writes();
+    assert_eq!(store.filter(REPO.into()).await.unwrap(), ReviewFilter::default());
+    assert!(!store.project_trusted(REPO.into()).await.unwrap());
+    let kept = filter();
+    writes.set_filter(REPO.into(), kept.clone()).await.unwrap();
+    assert_eq!(
+        store.filter(REPO.into()).await.unwrap(),
+        kept,
+        "the filter as it was set"
+    );
+    assert_eq!(
+        store.filter(OTHER_REPO.into()).await.unwrap(),
+        ReviewFilter::default(),
+        "another repository reads its own, not the one set here"
+    );
+    writes.set_project_trusted(REPO.into(), true).await.unwrap();
+    assert!(store.project_trusted(REPO.into()).await.unwrap());
+    assert!(!store.project_trusted(OTHER_REPO.into()).await.unwrap());
+
+    let other = other_filter();
+    writes.set_filter(OTHER_REPO.into(), other.clone()).await.unwrap();
+    assert_eq!(store.filter(OTHER_REPO.into()).await.unwrap(), other);
+    assert_eq!(
+        store.filter(REPO.into()).await.unwrap(),
+        kept,
+        "a filter set elsewhere does not replace this one"
+    );
+    writes.set_filter(REPO.into(), ReviewFilter::default()).await.unwrap();
+    assert_eq!(
+        store.filter(REPO.into()).await.unwrap(),
+        ReviewFilter::default(),
+        "a whole replacement, without what the filter had before"
+    );
+    writes.set_project_trusted(REPO.into(), false).await.unwrap();
+    assert!(
+        !store.project_trusted(REPO.into()).await.unwrap(),
+        "the trust `false` clears"
+    );
+    assert!(!store.project_trusted(OTHER_REPO.into()).await.unwrap());
+}
+
+/// What the store was never told of reads as empty, even with a store that has things.
+async fn what_the_store_was_never_told_of_reads_empty<S: LiveStore>(store: &S) {
+    let writes = store.writes();
+    let (cid, rid) = writes
+        .start_review(
+            REPO.into(),
+            tree_of_repo(),
+            BaseChoice::MergeBase {
+                reference: "main".into(),
+            },
+            vec![version_of(1)],
+            T0,
+        )
+        .await
+        .unwrap();
+    assert!(
+        store.review(rid).await.unwrap().is_some(),
+        "what was written is read back"
+    );
+    let other_changeset = ChangesetId(cid.0 + 1_000_000);
+    assert_eq!(
+        store
+            .changeset(OTHER_REPO.into(), branch_of("never-stored"))
+            .await
+            .unwrap(),
+        None
+    );
+    assert_eq!(store.open_review(other_changeset).await.unwrap(), None);
+    assert_eq!(store.latest_review(other_changeset).await.unwrap(), None);
+    assert_eq!(store.versions(other_changeset).await.unwrap(), [], "no versions");
+    assert_eq!(store.threads(other_changeset).await.unwrap(), [], "no threads");
+    assert_eq!(
+        store.review(ReviewId(rid.0 + 1_000_000)).await.unwrap().map(|r| r.id),
+        None,
+        "no review the store never started"
+    );
+    let rows = store
+        .source_reviews(REPO.into(), &[tree_of_repo(), branch_of("never-stored")])
+        .await
+        .unwrap();
+    let listed = rows
+        .iter()
+        .map(|r| (r.source.clone(), r.changeset, r.open_threads, r.latest_version))
+        .collect::<Vec<_>>();
+    assert_eq!(
+        listed,
+        [
+            (tree_of_repo(), Some(cid), 0, 1),
+            (branch_of("never-stored"), None, 0, 0),
+        ],
+        "each source as its own, the one answered the way one written is, the other empty"
+    );
+    assert_eq!(store.open_changesets().await.unwrap(), [cid]);
+}
+
+/// The fake of the session tests satisfies the contract as `SqliteStore` does.
+#[cfg(test)]
+mod fake {
+    use crate::session::tests::MemStore;
+
+    #[tokio::test]
+    async fn the_fake_satisfies_the_contract() {
+        super::store_contract(|| async { MemStore::default() }).await;
+    }
+}

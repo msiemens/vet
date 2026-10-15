@@ -714,8 +714,8 @@ async fn outgoing(fx: &Fixture) -> Vec<(String, Outgoing)> {
 
 /// The same, as the store has them.
 fn stored_outgoing(fx: &Fixture) -> Vec<(String, Outgoing)> {
-    let mem = fx.store.0.lock().unwrap();
-    mem.threads
+    fx.store
+        .reviewed_threads()
         .iter()
         .flat_map(|t| t.thread.messages.iter().filter(|m| m.remote.is_none()))
         .map(|m| (m.body.clone(), m.outgoing.clone()))
@@ -752,7 +752,13 @@ async fn a_review_the_platform_refuses_posts_nothing_and_fails_each_draft_with_t
         ("and this".to_owned(), failed("token expired")),
     ];
     assert_eq!(outgoing(&fx).await, expected);
-    assert_eq!(stored_outgoing(&fx), expected, "kept across a restart");
+    // The store reads each platform thread's messages as the store sorts them: what the
+    // platform has first, then the drafts by their record — not the in-memory order.
+    let mut stored = stored_outgoing(&fx);
+    stored.sort_by(|a, b| a.0.cmp(&b.0));
+    let mut expected = expected;
+    expected.sort_by(|a, b| a.0.cmp(&b.0));
+    assert_eq!(stored, expected, "kept across a restart");
     assert!(hosting.thread_ids().is_empty());
 
     // A failed draft is posted with the next review.
