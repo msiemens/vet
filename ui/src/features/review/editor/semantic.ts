@@ -3,34 +3,17 @@
 // snapshot its positions are in (the target editor, or the base editor of a side-by-side view).
 // Diagnostics exist for the target side only.
 
-import {
-  type Diagnostic as LintDiagnostic,
-  forEachDiagnostic,
-  linter,
-  setDiagnostics,
-  setDiagnosticsEffect,
-} from "@codemirror/lint";
+import { linter } from "@codemirror/lint";
 import { type Extension, Facet, StateEffect, StateField } from "@codemirror/state";
-import {
-  Decoration,
-  type DecorationSet,
-  EditorView,
-  GutterMarker,
-  ViewPlugin,
-  type ViewUpdate,
-  gutter,
-  tooltips,
-} from "@codemirror/view";
+import { Decoration, type DecorationSet, EditorView, tooltips } from "@codemirror/view";
 import type { Diagnostic } from "../../../generated/Diagnostic";
 import type { Position } from "../../../generated/Position";
-import type { Severity } from "../../../generated/Severity";
 import type { Side } from "../../../generated/Side";
 import type { TextSpan } from "../../../generated/TextSpan";
-import { severitySvg } from "../../../lib/ui/severity";
 import type { HoverAnswer } from "../../../state/backend";
 import type { CaretRect, PickerKind } from "../../../state/pickerTypes";
+import { diagnosticGutter, diagnosticList, diagnosticMarks } from "./diagnostics";
 import { gotoLinks, isGotoModifier } from "./gotoLinkDom";
-import { type Span, collapsedRegions, outsideHidden } from "./hiddenRanges";
 import { hoverContent } from "./hoverContent";
 import { type HoverAnchor, hoverPopups } from "./hoverDom";
 import { wordRange } from "./hoverPopup";
@@ -157,123 +140,6 @@ export function revealSpan(view: EditorView, span: TextSpan, select: boolean) {
     if (view.dom.isConnected) view.dispatch({ effects: setTarget.of(null) });
   }, MARK_MS);
 }
-
-const setDiagnosticList = StateEffect.define<readonly Diagnostic[]>();
-/** The diagnostics the server gave, whole: the ones drawn are those outside the collapsed regions of the moment. */
-const diagnosticList = StateField.define<readonly Diagnostic[]>({
-  create: () => [],
-  update(list, tr) {
-    for (const e of tr.effects) if (e.is(setDiagnosticList)) return e.value;
-    return list;
-  },
-});
-
-/** The regions hidden behind an "N unchanged lines" bar. */
-export function hiddenRegions(view: EditorView): Span[] {
-  const sets = view.state
-    .facet(EditorView.decorations)
-    .map((source) => (typeof source === "function" ? source(view) : source));
-  return collapsedRegions(sets, view.state.doc.length);
-}
-
-/** Draws the stored diagnostics: gutter markers and underlines, with the message in a tooltip, but nothing in or on a collapsed region. */
-function drawDiagnostics(view: EditorView, stored: readonly Diagnostic[], store: boolean) {
-  const { doc } = view.state;
-  const hidden = hiddenRegions(view);
-  const lint = stored.flatMap((d): LintDiagnostic[] => {
-    const from = offsetAt(doc, d.span.start);
-    const span = { from, to: Math.max(from, offsetAt(doc, d.span.end)) };
-    return outsideHidden(span, hidden).map((piece) => ({
-      ...piece,
-      severity: d.severity,
-      message: d.message,
-      source: [d.source, d.code].filter(Boolean).join(" ") || undefined,
-      markClass: d.origin === "existing" ? EXISTING : undefined,
-    }));
-  });
-  view.dispatch(setDiagnostics(view.state, lint), store ? { effects: setDiagnosticList.of(stored) } : {});
-}
-
-/** The class of the mark of a diagnostic that was already there on the base. */
-const EXISTING = "vet-existing";
-
-/** The gutter's mark for a line's worst diagnostic, in the shape of its severity: strong for one the change introduced, faded for one already there. */
-class DiagnosticDot extends GutterMarker {
-  constructor(
-    private readonly severity: Severity,
-    private readonly existing: boolean,
-  ) {
-    super();
-  }
-
-  eq(other: GutterMarker) {
-    return other instanceof DiagnosticDot && other.severity === this.severity && other.existing === this.existing;
-  }
-
-  toDOM() {
-    const mark = document.createElement("span");
-    mark.className = `vet-diag-dot${this.existing ? " existing" : ""}`;
-    mark.innerHTML = severitySvg(this.severity);
-    return mark;
-  }
-}
-
-const SEVERITY_RANK: Record<Severity, number> = { error: 0, warning: 1, info: 2, hint: 3 };
-
-interface Found {
-  severity: Severity;
-  existing: boolean;
-}
-
-const diagnosticGutter = gutter({
-  class: "vet-diag-gutter",
-  lineMarker(view, line) {
-    let worst: Found | undefined;
-    forEachDiagnostic(view.state, (d, from) => {
-      if (from < line.from || from > line.to) return;
-      const found: Found = { severity: d.severity, existing: d.markClass === EXISTING };
-      const rank = (x: Found) => SEVERITY_RANK[x.severity] * 2 + (x.existing ? 1 : 0);
-      if (!worst || rank(found) < rank(worst)) worst = found;
-    });
-    const dot: Found | undefined = worst;
-    return dot ? new DiagnosticDot(dot.severity, dot.existing) : null;
-  },
-  lineMarkerChange: (update) => update.transactions.some((tr) => tr.effects.some((e) => e.is(setDiagnosticsEffect))),
-});
-
-/** Replaces the editor's diagnostics. */
-export function showDiagnostics(view: EditorView, diagnostics: readonly Diagnostic[]) {
-  drawDiagnostics(view, diagnostics, true);
-}
-
-/** Draws the diagnostics again when a region collapses or expands. */
-const diagnosticsFollowCollapse = ViewPlugin.fromClass(
-  class {
-    private key: string;
-
-    constructor(view: EditorView) {
-      this.key = this.keyOf(view);
-    }
-
-    private keyOf(view: EditorView) {
-      return hiddenRegions(view)
-        .map((r) => `${r.from}-${r.to}`)
-        .join();
-    }
-
-    update(u: ViewUpdate) {
-      if (!u.transactions.length) return;
-      const key = this.keyOf(u.view);
-      if (key === this.key) return;
-      this.key = key;
-      u.view.requestMeasure({
-        read: () => null,
-        write: (_, view) => drawDiagnostics(view, view.state.field(diagnosticList), false),
-        key: this,
-      });
-    }
-  },
-);
 
 /** What an editor shows and who answers for it, so commands can act on the editor that has the focus. */
 interface SemanticTarget {
@@ -425,7 +291,7 @@ export function semanticExtensions(path: string, side: Side, hooks: SemanticHook
     semanticTarget.of({ side, path, hooks }),
     // The hover popup shows the diagnostics at its symbol, so the squiggles have no tooltip of their own.
     ...(side === "target"
-      ? [diagnosticGutter, linter(null, { tooltipFilter: () => [] }), diagnosticList, diagnosticsFollowCollapse]
+      ? [diagnosticGutter, linter(null, { tooltipFilter: () => [] }), diagnosticList, diagnosticMarks]
       : []),
   ];
 }

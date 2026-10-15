@@ -46,14 +46,8 @@ import type { Loaded } from "./mount";
 import { lineOf, lineStart } from "./positions";
 import type { RenderedText } from "./rendered";
 import { TICK_ROWS, markKind } from "./scrollMarks";
-import {
-  type SemanticHooks,
-  type TextPosition,
-  caretPosition,
-  revealSpan,
-  semanticExtensions,
-  showDiagnostics,
-} from "./semantic";
+import { showDiagnostics } from "./diagnostics";
+import { type SemanticHooks, type TextPosition, caretPosition, revealSpan, semanticExtensions } from "./semantic";
 import { readMetrics } from "./sectionHeights";
 import { softWrap, wraps } from "./softWrap";
 import { TextThreads } from "./textThreads";

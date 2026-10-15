@@ -1,27 +1,10 @@
-// Analysis hints (diagnostics) are drawn only where the editor shows text: a region collapsed behind
-// an "N unchanged lines" bar shows none, and neither does the bar. This is the pure part: where the
-// collapsed regions are, and which pieces of a range lie outside them.
-
-import type { DecorationSet } from "@codemirror/view";
+// The parts of a range that lie outside the regions the editor hides behind an "N unchanged lines" bar.
+// This is the pure part; where the bars are is the collapse field of `collapse.ts`.
 
 /** A document range `[from, to]`, positions in UTF-16 units. */
 export interface Span {
   from: number;
   to: number;
-}
-
-/** `type` of the bar `@codemirror/merge` puts over a collapsed region. */
-const COLLAPSED_BAR = "collapsed-unchanged-code";
-
-/** The regions of a document of `length` that `decorations` hide behind an "N unchanged lines" bar. */
-export function collapsedRegions(decorations: readonly DecorationSet[], length: number): Span[] {
-  const regions: Span[] = [];
-  for (const set of decorations)
-    set.between(0, length, (from, to, deco) => {
-      const widget = (deco.spec as { widget?: { type?: string } }).widget;
-      if (widget?.type === COLLAPSED_BAR) regions.push({ from, to });
-    });
-  return regions;
 }
 
 /**

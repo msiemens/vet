@@ -1,7 +1,7 @@
 // One file's CodeMirror editor(s): unified (`unifiedMergeView`) or side by side
 // (`MergeView`), with the review decorations of `reviewState.ts` (SPEC §10).
 
-import { MergeView, uncollapseUnchanged, unifiedMergeView } from "@codemirror/merge";
+import { MergeView, unifiedMergeView } from "@codemirror/merge";
 import { Compartment, EditorState, type Extension, type StateEffect, type StateField } from "@codemirror/state";
 import { standardKeymap } from "@codemirror/commands";
 import { EditorView, drawSelection, highlightSpecialChars, keymap, lineNumbers } from "@codemirror/view";
@@ -20,7 +20,9 @@ import { deletedLines } from "./deletedLines";
 import { backendDiff } from "./backendDiff";
 import type { BarActions } from "./hunkBar";
 import { baseLineOfTarget, lineStart } from "./positions";
-import { type SemanticHooks, hiddenRegions, revealSpan, semanticExtensions, showDiagnostics } from "./semantic";
+import { type Collapse, collapsedField, expandCollapsed, hiddenRegions, initialCollapse } from "./collapse";
+import { showDiagnostics } from "./diagnostics";
+import { type SemanticHooks, revealSpan, semanticExtensions } from "./semantic";
 import { deletedHighlights } from "./deletedHighlights";
 import { findMarks, setFindMarks } from "./findMarks";
 import type { EditorMarks } from "./findView";
@@ -64,12 +66,7 @@ export interface Handle {
   destroy(): void;
 }
 
-/** Unchanged regions collapse to a bar that expands on click: `margin` lines of context stay around each hunk, and a bar hides at least `minSize` lines. */
-export interface Collapse {
-  margin: number;
-  minSize: number;
-}
-
+/** The text of an "N unchanged lines" bar. */
 const barText = EditorState.phrases.of({ "$ unchanged lines": "⋯ $ unchanged lines" });
 
 const drawnSelection = new Compartment();
@@ -144,6 +141,7 @@ export function mountFile(
     EditorState.readOnly.of(true),
     ...extra,
     openOnDoubleClick("target", loaded.hunks, (line) => hooks.openLine(line)),
+    collapsedField,
     ...semanticExtensions(path, "target", hooks),
   ];
   if (mode === "unified") {
@@ -158,7 +156,6 @@ export function mountFile(
           gutter: true,
           highlightChanges: true,
           syntaxHighlightDeletions: false,
-          collapseUnchanged,
           diffConfig,
         }),
         deletedHighlights(loaded.baseHighlights),
@@ -166,6 +163,7 @@ export function mountFile(
         deletedLines(path, hooks),
       ],
     });
+    if (collapseUnchanged) initialCollapse(view, collapseUnchanged);
     return handle(view, [view], loaded.hunks, targetField);
   }
   const baseField = reviewField(sideConfig(loaded.hunks, "base", null, barMetrics), review, baseDiffs);
@@ -180,6 +178,7 @@ export function mountFile(
     barText,
     EditorState.readOnly.of(true),
     openOnDoubleClick("base", loaded.hunks, (line) => hooks.openLine(line)),
+    collapsedField,
     ...semanticExtensions(path, "base", hooks),
   ];
   const merge = new MergeView({
@@ -188,18 +187,21 @@ export function mountFile(
     b: { doc: loaded.target, extensions: target },
     gutter: true,
     highlightChanges: true,
-    collapseUnchanged,
     diffConfig,
   });
+  if (collapseUnchanged) {
+    initialCollapse(merge.a, collapseUnchanged);
+    initialCollapse(merge.b, collapseUnchanged);
+  }
   return handle(merge.b, [merge.a, merge.b], loaded.hunks, targetField, () => merge.destroy());
 }
 
 /** Expands the collapsed region of `view` that hides the 0-based `line`; answers whether there was one. */
 function expandAt(view: EditorView, line: number): boolean {
   const pos = lineStart(view.state.doc, line);
-  const region = hiddenRegions(view).find((r) => r.from <= pos && pos <= r.to);
+  const region = hiddenRegions(view.state).find((r) => r.from <= pos && pos <= r.to);
   if (!region) return false;
-  view.dispatch({ effects: uncollapseUnchanged.of(region.from) });
+  view.dispatch({ effects: expandCollapsed.of(region.from) });
   return true;
 }
 

@@ -75,6 +75,8 @@ interface Driver {
   openBranch(): Promise<void>;
   /** Where the active file tab's first line in view below the pinned header is, as `lineAt` of the probe. */
   probe(): Promise<Probe>;
+  /** The errors the page logged or threw since the session started, oldest first. */
+  errors(): Promise<string[]>;
 }
 
 /** The first line whose number is in view below the pinned header, and where its top is below the pane's top. */
@@ -131,6 +133,40 @@ const sessions: Record<string, (d: Driver) => Promise<void>> = {
     await d.step("the view is scrolled", () =>
       d.page(`document.querySelector(".pane.active .scroll").dispatchEvent(new Event("scroll"))`),
     );
+  },
+
+  /** An "N unchanged lines" bar expands on click without an error from the editor's update cycle. */
+  async collapse(d) {
+    await d.step("a collapsed region is expanded", async () => {
+      await d.until(`document.querySelector(".pane.active .cm-collapsedLines") !== null`, "a collapsed region");
+      await d.page(
+        `(() => { window.__bar = document.querySelector(".pane.active .cm-collapsedLines"); return true; })()`,
+      );
+      const before = (await d.errors()).length;
+      await d.click(".pane.active .cm-collapsedLines");
+      await sleep(200);
+      const gone = (await d.page(`window.__bar.isConnected !== true`)) as boolean;
+      const thrown = (await d.errors()).slice(before);
+      if (thrown.length) throw new Error(`expanding a collapsed region threw: ${thrown.join("; ")}`);
+      if (!gone) throw new Error("the collapsed region did not expand");
+      await d.page(`(() => { delete window.__bar; return true; })()`);
+    });
+    await d.step("a collapsed region is expanded with the sides side by side", async () => {
+      await d.page(`__t.commands.run("view.mode.split")`);
+      await d.until(`document.querySelector(".pane.active .cm-mergeView") !== null`, "the side by side view");
+      await d.until(`document.querySelector(".pane.active .cm-collapsedLines") !== null`, "a collapsed region");
+      await d.page(
+        `(() => { window.__bar = document.querySelector(".pane.active .cm-collapsedLines"); return true; })()`,
+      );
+      const before = (await d.errors()).length;
+      await d.click(".pane.active .cm-collapsedLines");
+      await sleep(200);
+      const gone = (await d.page(`window.__bar.isConnected !== true`)) as boolean;
+      const thrown = (await d.errors()).slice(before);
+      if (thrown.length) throw new Error(`expanding a collapsed region threw: ${thrown.join("; ")}`);
+      if (!gone) throw new Error("the collapsed region did not expand");
+      await d.page(`(() => { delete window.__bar; return true; })()`);
+    });
   },
 
   /** Search Everywhere gives the focus back to where it was after Escape and a choice, never after a click elsewhere. */
@@ -397,6 +433,10 @@ async function runSession(
           if (/^[0-9]+$/.test(el.textContent) && y >= ${PROBE_Y}) return { line: Number(el.textContent), y, bar };
         }
       })()`)) as Probe;
+    },
+    errors() {
+      const logged = tab.console.filter((c) => c.type === "error").map((c) => c.text);
+      return Promise.resolve([...tab.exceptions, ...logged]);
     },
     async openText(path) {
       const at = (await page(`(() => {

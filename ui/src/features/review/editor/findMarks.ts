@@ -9,7 +9,7 @@ import { Decoration, type DecorationSet, EditorView, ViewPlugin, type ViewUpdate
 import { plural } from "../../../lib/format.ts";
 import { NO_MARKS, type ViewMarks } from "./findView";
 import { lineStart } from "./positions";
-import { hiddenRegions } from "./semantic";
+import { hiddenRegions } from "./collapse";
 
 export const setFindMarks = StateEffect.define<ViewMarks>();
 
@@ -135,7 +135,7 @@ const gapBadges = ViewPlugin.fromClass(
         read: () => null,
         write: (_, view) => {
           const { spans } = view.state.field(findField);
-          const regions = hiddenRegions(view);
+          const regions = hiddenRegions(view.state);
           for (const bar of view.dom.querySelectorAll(".cm-collapsedLines")) {
             bar.querySelector(`.${GAP}`)?.remove();
             const region = regions.find((r) => r.from === view.posAtDOM(bar));
