@@ -2,15 +2,11 @@
 //! `vet_app::semantics`; this maps requests to them and their results to the
 //! protocol, turning a language without a usable server into `unavailable`.
 
-use std::collections::HashMap;
-
 use vet_app::semantics::Answer;
 use vet_app::session::{SessionError, View};
 use vet_core::content::RepoPath;
-use vet_core::text::Lines;
 use vet_infra::language;
 use vet_protocol::{Response, Side};
-use vet_semantic::derived::Reference;
 use vet_semantic::ports::{At, BackendId, Location};
 use vet_semantic::query::SemanticError;
 
@@ -19,28 +15,8 @@ use vet_mapping::{core_side, core_view};
 
 use super::error::{Error, Result};
 use super::highlight;
-use super::highlight::Highlighter;
+use super::highlight::Sources;
 use super::open::Booted;
-
-/// The largest file outside the repository whose lines are shown.
-const MAX_OUTSIDE_FILE: u64 = 8 * 1024 * 1024;
-
-/// The text of a file outside the repository (a dependency or toolchain source), which is
-/// named by its absolute path; `None` if it cannot be read. A language server names the place,
-/// and a repository can steer it, so only a source file of the language `answerer` that named
-/// it is read: library and toolchain sources have the extension of their language, a key, a
-/// dotfile or another tool's configuration does not.
-async fn read_outside(answerer: Option<&str>, file: &RepoPath) -> Option<String> {
-    if !answerer.is_some_and(|language| language::is_source_of(language, file)) {
-        return None;
-    }
-    let path = std::path::PathBuf::from(file.to_string_lossy());
-    if tokio::fs::metadata(&path).await.ok()?.len() > MAX_OUTSIDE_FILE {
-        return None;
-    }
-    let bytes = tokio::fs::read(&path).await.ok()?;
-    Some(String::from_utf8_lossy(&bytes).into_owned())
-}
 
 /// Why an answer of the server of `language` may lack what the server had not got to yet.
 fn incomplete(language: &Option<String>) -> vet_protocol::Unavailable {
@@ -54,24 +30,6 @@ fn incomplete(language: &Option<String>) -> vet_protocol::Unavailable {
         },
         language.clone(),
     )
-}
-
-/// A file's text as the lines of a list of places need it.
-struct FileLines {
-    text: String,
-    /// The highlighting of the whole text.
-    highlights: Vec<u32>,
-    /// The offset of each line's start, in UTF-16 units.
-    starts: Vec<u32>,
-}
-
-impl FileLines {
-    fn line_start(&self, line: u32) -> u32 {
-        self.starts
-            .get(line as usize)
-            .copied()
-            .unwrap_or_else(|| self.starts.last().copied().unwrap_or(0))
-    }
 }
 
 impl Booted {
@@ -149,7 +107,7 @@ impl Booted {
 
     pub(crate) async fn references(
         &self,
-        highlighter: &Highlighter,
+        sources: &Sources,
         revision: u32,
         side: Side,
         (path, line, col): (&str, u32, u32),
@@ -159,15 +117,22 @@ impl Booted {
         let answer = (self.semantics)
             .references(&self.view, revision, core_side(side), &at)
             .await?;
-        let limit = limit.map_or(map::MAX_ROWS, |l| l as usize);
-        Ok(Response::References(
-            self.rows(highlighter, answer, side, &at, limit).await?,
-        ))
+        Ok(Response::References(map::location_rows(
+            &(self.semantics)
+                .rows(&self.view, core_side(side), &answer, &at, limit, sources)
+                .await?,
+            side,
+            answer
+                .result
+                .as_ref()
+                .err()
+                .map(|e| map::unavailable(e, self.language_of(&at.file))),
+        )))
     }
 
     pub(crate) async fn implementations(
         &self,
-        highlighter: &Highlighter,
+        sources: &Sources,
         revision: u32,
         side: Side,
         path: &str,
@@ -178,72 +143,17 @@ impl Booted {
         let answer = (self.semantics)
             .implementations(&self.view, revision, core_side(side), &at)
             .await?;
-        Ok(Response::Implementations(
-            self.rows(highlighter, answer, side, &at, map::MAX_ROWS).await?,
-        ))
-    }
-
-    /// The places of `answer` as rows to list, at most `limit` of them: with their line, and
-    /// where they stand against the changeset on `side`.
-    async fn rows(
-        &self,
-        highlighter: &Highlighter,
-        answer: vet_app::semantics::Answer<Vec<Reference>>,
-        side: Side,
-        at: &At,
-        limit: usize,
-    ) -> Result<vet_protocol::LocationRows> {
-        let revision = answer.revision;
-        let answerer = self.language_of(&at.file);
-        let (found, unavailable) = map::answer(answer.result, answerer.clone());
-        let files = self.view.changed_files(revision).await?;
-        let mut texts: HashMap<RepoPath, Option<FileLines>> = HashMap::new();
-        let mut rows = Vec::with_capacity(found.len());
-        for r in &found {
-            let file = &r.location.file;
-            if !texts.contains_key(file) {
-                let text = if r.location.external {
-                    read_outside(answerer.as_deref(), file).await
-                } else {
-                    self.view.side_text(revision, core_side(side), file).await?
-                };
-                let lines = match text {
-                    Some(text) => {
-                        let highlights = highlighter.text(&file.to_string_lossy(), Some(&text)).await;
-                        let starts = Lines::new(&text).starts().to_vec();
-                        Some(FileLines {
-                            text,
-                            highlights,
-                            starts,
-                        })
-                    }
-                    None => None,
-                };
-                texts.insert(file.clone(), lines);
-            }
-            let line = r.location.span.start.line;
-            let source = texts[file].as_ref();
-            let text = source.map_or("", |s| map::line_at(&s.text, line));
-            let standing = if r.location.external {
-                (vet_protocol::LocationChange::Unchanged, None)
-            } else {
-                map::change_at(&files, core_side(side), file, line)
-            };
-            rows.push(map::row(r, text, standing, |from, to| {
-                source.map_or_else(Vec::new, |s| {
-                    let start = s.line_start(line);
-                    vet_highlight::slice(&s.highlights, start + from, start + to)
-                })
-            }));
-        }
-        let (rows, total) = map::finish(rows, limit);
-        Ok(vet_protocol::LocationRows {
-            revision,
+        Ok(Response::Implementations(map::location_rows(
+            &(self.semantics)
+                .rows(&self.view, core_side(side), &answer, &at, None, sources)
+                .await?,
             side,
-            rows,
-            total,
-            unavailable,
-        })
+            answer
+                .result
+                .as_ref()
+                .err()
+                .map(|e| map::unavailable(e, self.language_of(&at.file))),
+        )))
     }
 
     pub(crate) async fn diagnostics(&self, revision: u32, path: &str, against_base: bool) -> Result<Response> {
@@ -394,17 +304,25 @@ impl Booted {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use vet_app::ports::LineSources;
+    use vet_core::content::RepoPath;
+    use vet_infra::budget::Budget;
+    use vet_infra::language;
 
+    use super::highlight::Sources;
+
+    /// A file a language server named outside the repository is read only where it is a source
+    /// of the answerer's language, and never one too large to show.
     #[tokio::test]
-    async fn only_sources_of_the_answering_servers_language_are_read_from_outside_the_repository() {
+    async fn a_source_of_the_answerers_language_is_read_from_outside_the_repository() {
         let dir = tempfile::tempdir().unwrap();
         let file = |name: &str| {
             let path = dir.path().join(name);
             std::fs::write(&path, "secret = 1\n").unwrap();
             RepoPath::from(path.to_string_lossy().as_ref())
         };
-        for (language, source) in [
+        let reads = Sources::new(super::highlight::Highlighter::new(Budget::new(1)));
+        for (answerer, source) in [
             ("rust", "lib.rs"),
             ("typescript", "index.d.ts"),
             ("typescript", "index.js"),
@@ -412,9 +330,14 @@ mod tests {
             ("python", "typing.pyi"),
             ("dockerfile", "Dockerfile"),
         ] {
-            assert!(read_outside(Some(language), &file(source)).await.is_some(), "{source}");
+            assert!(language::is_source_of(answerer, &file(source)), "{source}");
+            assert_eq!(
+                reads.outside(&file(source), u64::MAX).await.as_deref(),
+                Some("secret = 1\n"),
+                "{source}"
+            );
         }
-        for (language, other) in [
+        for (answerer, other) in [
             ("rust", "config"),
             ("rust", "hosts.yml"),
             ("typescript", "secrets.json"),
@@ -422,8 +345,9 @@ mod tests {
             ("python", ".env"),
             ("python", "id_rsa"),
         ] {
-            assert!(read_outside(Some(language), &file(other)).await.is_none(), "{other}");
+            assert!(!language::is_source_of(answerer, &file(other)), "{other}");
         }
-        assert!(read_outside(None, &file("lib.rs")).await.is_none());
+        // Nothing over the byte cap asked for is read.
+        assert_eq!(reads.outside(&file("lib.rs"), 5).await.as_deref(), None);
     }
 }

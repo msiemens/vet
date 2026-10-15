@@ -237,6 +237,23 @@ pub trait Attributes {
     ) -> impl Future<Output = Result<BTreeMap<RepoPath, bool>, GitError>> + Send;
 }
 
+/// Where the text that a list of places shows a line of, and its highlighting, come from when
+/// they are not the session's own: a file outside the repository that a language server named (a
+/// dependency's or toolchain's source) and the highlighting of a text.
+pub trait LineSources: Send + Sync {
+    /// Whether `file` is a source of own kind of `language` (the answerer's), so that a place the
+    /// server named outside the repository may be read there: a project's or home file is not one.
+    fn serves(&self, language: &str, file: &RepoPath) -> bool;
+    /// The text of `file` outside the repository; `None` over `max_bytes` or none to read.
+    fn outside(&self, file: &RepoPath, max_bytes: u64) -> impl Future<Output = Option<String>> + Send;
+    /// The highlighting of `text`, the content of the file at `path`, in the wire form rows cut a
+    /// line's spans out of; empty without a grammar for it.
+    fn highlights(&self, path: &str, text: &str) -> impl Future<Output = Vec<u32>> + Send;
+    /// The highlighted spans of a file's highlighting between two offsets of its text, in units,
+    /// as the wire form of a text that starts at `from`.
+    fn cut(&self, highlights: &[u32], from: u32, to: u32) -> Vec<u32>;
+}
+
 /// A diff of two snapshots and the content it compared.
 #[derive(Clone, Debug, Default)]
 pub struct TextDiff {

@@ -129,6 +129,8 @@ pub struct Orchestrator {
     servers: Arc<LanguageServers>,
     backends: Arc<[Backend]>,
     highlighter: highlight::Highlighter,
+    /// The sources of the files and highlights a row list reads, over `highlighter`.
+    sources: highlight::Sources,
     /// What blocking work and probe processes draw on, shared by every project.
     budgets: Budgets,
     /// The materialized snapshots kept between launches (§8).
@@ -205,6 +207,7 @@ impl Orchestrator {
             servers: Arc::new(Servers::new(resolver, store.clone(), languages)),
             backends,
             highlighter: highlight::Highlighter::new(budgets.review_io.clone()),
+            sources: highlight::Sources::new(highlight::Highlighter::new(budgets.review_io.clone())),
             budgets,
             trees: Arc::new(trees),
             answers: Arc::new(PersistentAnswers::new(store.clone())),
@@ -629,7 +632,7 @@ impl Orchestrator {
             } => reply(async move {
                 self.ready(project)
                     .await?
-                    .references(&self.highlighter, revision, side, (&path, line, col), limit)
+                    .references(&self.sources, revision, side, (&path, line, col), limit)
                     .await
             }),
             Request::Implementations {
@@ -642,7 +645,7 @@ impl Orchestrator {
             } => reply(async move {
                 self.ready(project)
                     .await?
-                    .implementations(&self.highlighter, revision, side, &path, line, col)
+                    .implementations(&self.sources, revision, side, &path, line, col)
                     .await
             }),
             Request::Diagnostics {

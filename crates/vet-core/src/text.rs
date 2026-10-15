@@ -73,6 +73,12 @@ impl<'a> Lines<'a> {
         &self.units
     }
 
+    /// The offset of each line's start in bytes, then the text's length, so that a line's text is
+    /// `text[start..start_of_the_next]` without searching for it again.
+    pub fn byte_starts(&self) -> &[usize] {
+        &self.bytes
+    }
+
     /// The offset of the start of `line`.
     pub fn offset(&self, line: u32) -> u32 {
         self.units[(line as usize).min(self.units.len() - 1)]

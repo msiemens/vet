@@ -5,7 +5,7 @@
 use std::sync::Arc;
 
 use vet_app::session::{FileText, TargetText};
-use vet_core::content::BlobId;
+use vet_core::content::{BlobId, RepoPath};
 use vet_highlight::{Cache, Language};
 use vet_infra::budget::Budget;
 use vet_protocol::{Response, Side, SymbolSignature, Unavailable};
@@ -21,6 +21,49 @@ pub(crate) struct Highlighter {
     cache: Arc<Cache<BlobId>>,
     /// What parsing draws on: it answers a view of a file, so it is the review lane's.
     io: Budget,
+}
+
+/// The sources a list of places reads beyond the session: a file outside the repository a
+/// language server named (a dependency's or toolchain's source) and the highlighting of a text.
+/// It answers for `vet_app::semantics`'s pieces that name them.
+#[derive(Clone)]
+pub(crate) struct Sources {
+    highlighter: Highlighter,
+}
+
+impl vet_app::ports::LineSources for Sources {
+    /// Only a source file of the language `language` that named `file` is read: library and
+    /// toolchain sources have the extension of their language, a key, a dotfile or another
+    /// tool's configuration does not.
+    fn serves(&self, language: &str, file: &RepoPath) -> bool {
+        vet_infra::language::is_source_of(language, file)
+    }
+
+    /// The text of `file` outside the repository; `None` over `max_bytes` or none to read.
+    async fn outside(&self, file: &RepoPath, max_bytes: u64) -> Option<String> {
+        let path = std::path::PathBuf::from(file.to_string_lossy());
+        if tokio::fs::metadata(&path).await.ok()?.len() > max_bytes {
+            return None;
+        }
+        let bytes = tokio::fs::read(&path).await.ok()?;
+        Some(String::from_utf8_lossy(&bytes).into_owned())
+    }
+
+    /// `text` is the content of the file at `path`.
+    async fn highlights(&self, path: &str, text: &str) -> Vec<u32> {
+        self.highlighter.text(path, Some(text)).await
+    }
+
+    /// The wire form the highlighting carries, cut by [`vet_highlight::slice`].
+    fn cut(&self, highlights: &[u32], from: u32, to: u32) -> Vec<u32> {
+        vet_highlight::slice(highlights, from, to)
+    }
+}
+
+impl Sources {
+    pub(crate) fn new(highlighter: Highlighter) -> Self {
+        Self { highlighter }
+    }
 }
 
 impl Highlighter {

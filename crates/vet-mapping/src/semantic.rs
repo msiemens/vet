@@ -2,11 +2,10 @@
 
 use p::UnavailableKind as Kind;
 use vet_app::ports::{FoundServer, ServerOrigin, ServerState, Tsserver};
-use vet_app::semantics::{ServerRuntimes, WorkspaceSymbols};
+use vet_app::semantics::{Row, Rows, ServerRuntimes, Standing, WorkspaceSymbols};
 use vet_app::servers::ServerStatus;
-use vet_core::content::{FileDiff, LineRange, RepoPath};
+use vet_core::content::RepoPath;
 use vet_core::num::sat_u32;
-use vet_core::review::Side;
 use vet_protocol as p;
 use vet_semantic::derived::{
     Bounds, CallSite, Calls, Change, ChangedSymbol, Derived, Fate, FileChanges, Gap, Inputs, Judged, Located, Origin,
@@ -100,114 +99,41 @@ pub fn locations(l: &[Location]) -> Vec<p::SemanticLocation> {
     l.iter().map(location).collect()
 }
 
-/// The most rows an answer lists.
-pub const MAX_ROWS: usize = 200;
-/// The most UTF-16 units of a line a row shows.
-const MAX_ROW_TEXT: u32 = 300;
-
-fn utf16_len(s: &str) -> u32 {
-    sat_u32(s.encode_utf16().count())
-}
-
-/// The line `line` (0-based) of `text`; empty past its end.
-pub fn line_at(text: &str, line: u32) -> &str {
-    text.lines().nth(line as usize).unwrap_or("")
-}
-
-/// Where a place on `side` stands against the diff (`files` are the changed files), and for a
-/// place in a hunk, the hunk's index in its file.
-pub fn change_at(files: &[FileDiff], side: Side, file: &RepoPath, line: u32) -> (p::LocationChange, Option<u32>) {
-    let on_side = |f: &&FileDiff| match side {
-        Side::Base => f.old_path.as_ref() == Some(file),
-        Side::Target => f.new_path.as_ref() == Some(file),
-    };
-    let Some(diff) = files.iter().find(on_side) else {
-        return (p::LocationChange::Unchanged, None);
-    };
-    let at = LineRange {
-        start: line,
-        end: line + 1,
-    };
-    let hunk = diff.hunks.iter().position(|h| {
-        at.intersects(match side {
-            Side::Base => h.old,
-            Side::Target => h.new,
-        })
-    });
-    match hunk {
-        Some(i) => (p::LocationChange::Hunk, Some(sat_u32(i))),
-        None => (p::LocationChange::File, None),
+/// The rows an answer about places came in as, as the protocol delivers them: with the side they
+/// answer for, and `unavailable`, why no server answered, where there was one.
+pub fn location_rows(rows: &Rows, side: p::Side, unavailable: Option<p::Unavailable>) -> p::LocationRows {
+    p::LocationRows {
+        revision: rows.revision,
+        side,
+        rows: rows.rows.iter().map(row).collect(),
+        total: rows.total,
+        unavailable,
     }
 }
 
-/// A row for the reference `r`, whose line is `line_text` (the whole line, if it could be read).
-/// `change` and `hunk` are what [`change_at`] says. `highlights` gives the highlighting of a
-/// range of the line, in UTF-16 units from its start.
-pub fn row(
-    r: &Reference,
-    line_text: &str,
-    (change, hunk): (p::LocationChange, Option<u32>),
-    highlights: impl FnOnce(u32, u32) -> p::Highlights,
-) -> p::LocationRow {
-    let span = r.location.span;
-    let trimmed = line_text.trim_start();
-    let lead = utf16_len(&line_text[..line_text.len() - trimmed.len()]);
-    let mut shown = 0;
-    let text: String = trimmed
-        .trim_end()
-        .chars()
-        .take_while(|c| {
-            shown += c.len_utf16() as u32;
-            shown <= MAX_ROW_TEXT
-        })
-        .collect();
-    let len = utf16_len(&text);
-    let match_start = span.start.col.saturating_sub(lead).min(len);
-    let mut match_end = if span.end.line == span.start.line {
-        span.end.col.saturating_sub(lead).clamp(match_start, len)
-    } else {
-        len
+/// The row as the use case built it, value for value.
+fn row(r: &Row) -> p::LocationRow {
+    let change = match r.change {
+        Standing::Hunk(_) => p::LocationChange::Hunk,
+        Standing::File => p::LocationChange::File,
+        Standing::Unchanged => p::LocationChange::Unchanged,
     };
-    if match_end == match_start {
-        // A server may point at a name without giving its extent.
-        let word = text
-            .encode_utf16()
-            .skip(match_start as usize)
-            .take_while(|&u| char::from_u32(u.into()).is_some_and(|c| c.is_alphanumeric() || c == '_'))
-            .count();
-        match_end += sat_u32(word);
-    }
     p::LocationRow {
-        path: r.location.file.to_string_lossy(),
-        line: span.start.line + 1,
-        col: span.start.col + 1,
+        path: r.path.to_string_lossy(),
+        line: r.line,
+        col: r.col,
         within: r.within.as_ref().map(symbol_name),
-        highlights: highlights(lead, lead + len),
-        text,
-        match_start,
-        match_end,
+        highlights: r.highlights.clone(),
+        text: r.text.clone(),
+        match_start: r.match_start,
+        match_end: r.match_end,
         change,
-        hunk,
-        external: r.location.external,
+        hunk: match r.change {
+            Standing::Hunk(hunk) => Some(hunk),
+            _ => None,
+        },
+        external: r.external,
     }
-}
-
-/// The rows by path and line, those in the repository before the others, cut to `limit`
-/// ([`MAX_ROWS`] by default); with how many there were. A cut keeps the places in changed
-/// hunks, then those in changed files, before the others.
-pub fn finish(mut rows: Vec<p::LocationRow>, limit: usize) -> (Vec<p::LocationRow>, u32) {
-    let total = sat_u32(rows.len());
-    if rows.len() > limit {
-        let rank = |r: &p::LocationRow| match r.change {
-            p::LocationChange::Hunk => 0,
-            p::LocationChange::File => 1,
-            p::LocationChange::Unchanged => 2,
-        };
-        rows.sort_by_key(|r| (rank(r), r.external));
-        rows.truncate(limit);
-    }
-    rows.sort_by(|a, b| (a.external, &a.path, a.line, a.col).cmp(&(b.external, &b.path, b.line, b.col)));
-    (rows, total)
 }
 
 fn diagnostic(d: &Diagnostic, origin: p::DiagnosticOrigin) -> p::Diagnostic {
@@ -615,8 +541,8 @@ pub fn servers(
 
 #[cfg(test)]
 mod tests {
-    use vet_app::semantics::LanguageSymbols;
-    use vet_core::content::Hunk;
+    use vet_app::semantics::{LanguageSymbols, Row, Standing};
+    use vet_core::content::RepoPath;
 
     use super::*;
 
@@ -637,24 +563,20 @@ mod tests {
         }
     }
 
-    /// A row of an unhighlighted line.
-    fn plain_row(r: &Reference, line: &str) -> p::LocationRow {
-        row(r, line, (p::LocationChange::Unchanged, None), |_, _| Vec::new())
-    }
-
-    fn diff(path: &str, hunks: &[(u32, u32, u32, u32)]) -> FileDiff {
-        FileDiff {
-            old_path: Some(RepoPath::from(path)),
-            new_path: Some(RepoPath::from(path)),
-            old_blob: None,
-            new_blob: None,
-            hunks: hunks
-                .iter()
-                .map(|&(os, oe, ns, ne)| Hunk {
-                    old: LineRange { start: os, end: oe },
-                    new: LineRange { start: ns, end: ne },
-                })
-                .collect(),
+    fn within(kind: SymbolKind) -> SymbolInfo {
+        SymbolInfo {
+            sym: Sym {
+                file: RepoPath::from("db.py"),
+                name: vec!["TinyDB".into(), "table".into()],
+            },
+            span: Span {
+                start: Pos { line: 1, col: 0 },
+                end: Pos { line: 9, col: 0 },
+            },
+            at: Pos { line: 1, col: 8 },
+            detail: None,
+            kind,
+            modules: 0,
         }
     }
 
@@ -686,202 +608,71 @@ mod tests {
     }
 
     #[test]
-    fn a_row_shows_the_trimmed_line_with_the_match_inside_it() {
-        let r = reference("a.cs", (3, 12), (3, 15), false);
-        let row = plain_row(&r, "        x = Foo();  ");
-        assert_eq!((row.line, row.col), (4, 13));
-        assert_eq!(row.text, "x = Foo();");
-        assert_eq!(&row.text[row.match_start as usize..row.match_end as usize], "Foo");
-    }
-
-    #[test]
-    fn a_rows_highlights_are_asked_for_the_trimmed_text_in_units_of_its_line() {
-        let r = reference("a.rs", (0, 4), (0, 5), false);
-        let asked = std::cell::Cell::new((0, 0));
-        // Three units of indentation, then "é😀 f" (five units) and trailing blanks.
-        row(&r, "   é😀 f  ", (p::LocationChange::Unchanged, None), |from, to| {
-            asked.set((from, to));
-            vec![1, 2, 3]
-        });
-        assert_eq!(asked.get(), (3, 3 + 5));
-    }
-
-    #[test]
-    fn a_place_without_extent_marks_the_name_it_points_at() {
-        let r = reference("Program.cs", (9, 15), (9, 15), false);
-        let row = plain_row(&r, "    public int Area() => 4;");
-        assert_eq!(&row.text[row.match_start as usize..row.match_end as usize], "Area");
-    }
-
-    #[test]
-    fn match_columns_count_utf16_units_not_bytes() {
-        // "é" is two bytes, the emoji one scalar of two UTF-16 units.
-        let r = reference("a.rs", (0, 4), (0, 7), false);
-        let row = plain_row(&r, "é😀 f(x)");
-        let units: Vec<u16> = row.text.encode_utf16().collect();
-        let matched = String::from_utf16(&units[row.match_start as usize..row.match_end as usize]).unwrap();
-        assert_eq!(matched, "f(x");
-    }
-
-    #[test]
-    fn a_match_over_several_lines_ends_with_the_first_line() {
-        let r = reference("a.rs", (1, 4), (3, 1), false);
-        let row = plain_row(&r, "    fn run() {");
-        assert_eq!(
-            &row.text[row.match_start as usize..row.match_end as usize],
-            "fn run() {"
-        );
-    }
-
-    #[test]
-    fn a_long_line_is_cut_and_a_match_beyond_the_cut_is_clamped_to_its_end() {
-        let line = "x".repeat(1000);
-        let matched = |from, to| {
-            let row = plain_row(&reference("a.rs", (0, from), (0, to), false), &line);
-            assert_eq!(row.text.len(), 300);
-            (row.match_start, row.match_end)
-        };
-        assert_eq!(matched(100, 110), (100, 110));
-        assert_eq!(matched(295, 310), (295, 300));
-        assert_eq!(matched(900, 910), (300, 300));
-    }
-
-    #[test]
-    fn a_place_names_the_kind_of_the_symbol_it_is_in() {
-        let within = |kind| SymbolInfo {
-            sym: Sym {
-                file: RepoPath::from("db.py"),
-                name: vec!["TinyDB".into(), "table".into()],
-            },
-            span: Span {
-                start: Pos { line: 1, col: 0 },
-                end: Pos { line: 9, col: 0 },
-            },
-            at: Pos { line: 1, col: 8 },
-            detail: None,
-            kind,
-            modules: 0,
-        };
+    fn a_place_lists_the_kind_of_the_symbol_it_is_in() {
         let kinds = |kind| {
             let r = Reference {
                 within: Some(within(kind)),
                 ..reference("db.py", (3, 8), (3, 13), false)
             };
-            let listed = super::reference(&r).within.map(|w| w.kind);
-            let in_row = plain_row(&r, "x.table()").within.map(|w| w.kind);
-            (listed, in_row)
+            super::reference(&r).within.map(|w| w.kind)
         };
-        let method = Some(p::SymbolKind::Function);
-        assert_eq!(kinds(SymbolKind::Function), (method, method));
-        let class = Some(p::SymbolKind::Type);
-        assert_eq!(kinds(SymbolKind::Type), (class, class));
+        assert_eq!(kinds(SymbolKind::Function), Some(p::SymbolKind::Function));
+        assert_eq!(kinds(SymbolKind::Type), Some(p::SymbolKind::Type));
+    }
+
+    fn a_row(change: Standing, external: bool) -> Row {
+        Row {
+            path: RepoPath::from(if external { "/dep/lib.rs" } else { "src/db.rs" }),
+            line: 4,
+            col: 13,
+            within: None,
+            highlights: Vec::new(),
+            text: String::new(),
+            match_start: 0,
+            match_end: 0,
+            change,
+            external,
+        }
     }
 
     #[test]
-    fn a_line_that_could_not_be_read_leaves_an_empty_text() {
-        let r = reference("/dep/lib.rs", (7, 2), (7, 5), true);
-        let row = plain_row(&r, "");
-        assert_eq!((row.text.as_str(), row.match_start, row.match_end), ("", 0, 0));
-        assert!(row.external);
-    }
-
-    #[test]
-    fn the_line_of_a_text_is_found_whatever_its_line_ending() {
-        assert_eq!(line_at("a\r\nb\nc", 1), "b");
-        assert_eq!(line_at("a\r\nb\nc", 0), "a");
-        assert_eq!(line_at("a", 5), "");
-    }
-
-    #[test]
-    fn a_place_is_in_a_hunk_in_a_changed_file_or_unchanged() {
-        let files = [diff("a.rs", &[(10, 12, 10, 15)])];
-        let a = RepoPath::from("a.rs");
-        let hunk = (p::LocationChange::Hunk, Some(0));
-        assert_eq!(change_at(&files, Side::Target, &a, 14), hunk);
-        assert_eq!(change_at(&files, Side::Target, &a, 15), (p::LocationChange::File, None));
-        assert_eq!(change_at(&files, Side::Base, &a, 12), (p::LocationChange::File, None));
-        assert_eq!(change_at(&files, Side::Base, &a, 11), hunk);
+    fn a_row_is_delivered_value_for_value() {
+        let r = Row {
+            within: Some(within(SymbolKind::Function)),
+            highlights: vec![1, 2, 3],
+            text: "x = Foo()".into(),
+            match_start: 4,
+            match_end: 7,
+            ..a_row(Standing::Hunk(2), false)
+        };
+        let mapped = super::row(&r);
+        assert_eq!(mapped.path, "src/db.rs");
+        assert_eq!((mapped.line, mapped.col), (4, 13));
         assert_eq!(
-            change_at(&files, Side::Target, &RepoPath::from("b.rs"), 14),
-            (p::LocationChange::Unchanged, None)
-        );
-    }
-
-    #[test]
-    fn a_place_in_a_hunk_names_the_hunk_by_its_index_in_the_file() {
-        let files = [diff("a.rs", &[(1, 2, 1, 2), (10, 12, 10, 15), (30, 31, 33, 34)])];
-        let a = RepoPath::from("a.rs");
-        assert_eq!(change_at(&files, Side::Target, &a, 11).1, Some(1));
-        assert_eq!(change_at(&files, Side::Target, &a, 33).1, Some(2));
-        assert_eq!(change_at(&files, Side::Base, &a, 30).1, Some(2));
-    }
-
-    #[test]
-    fn a_renamed_file_is_changed_under_the_name_of_the_side() {
-        let mut renamed = diff("new.rs", &[(0, 1, 0, 1)]);
-        renamed.old_path = Some(RepoPath::from("old.rs"));
-        let files = [renamed];
-        assert_eq!(
-            change_at(&files, Side::Base, &RepoPath::from("old.rs"), 0),
-            (p::LocationChange::Hunk, Some(0))
-        );
-        assert_eq!(
-            change_at(&files, Side::Target, &RepoPath::from("old.rs"), 0),
-            (p::LocationChange::Unchanged, None)
-        );
-    }
-
-    #[test]
-    fn rows_are_ordered_by_path_and_line_with_outside_places_last_and_cut_with_the_total_kept() {
-        let at =
-            |path: &str, line: u32, external: bool| plain_row(&reference(path, (line, 0), (line, 1), external), "");
-        let rows = vec![
-            at("/dep/a.rs", 1, true),
-            at("src/b.rs", 9, false),
-            at("src/a.rs", 20, false),
-            at("src/a.rs", 3, false),
-        ];
-        let (sorted, total) = finish(rows, MAX_ROWS);
-        let order: Vec<_> = sorted.iter().map(|r| (r.path.as_str(), r.line)).collect();
-        assert_eq!(
-            order,
-            [("src/a.rs", 4), ("src/a.rs", 21), ("src/b.rs", 10), ("/dep/a.rs", 2)]
-        );
-        assert_eq!(total, 4);
-
-        let many = (0..MAX_ROWS as u32 + 7)
-            .map(|n| {
-                let mut r = at("src/a.rs", n, false);
-                if n >= MAX_ROWS as u32 {
-                    r.change = p::LocationChange::Hunk;
-                }
-                r
+            mapped.within,
+            Some(p::SymbolName {
+                id: p::SymbolId {
+                    path: "db.py".into(),
+                    name: vec!["TinyDB".into(), "table".into()],
+                },
+                modules: 0,
+                kind: p::SymbolKind::Function,
             })
-            .collect();
-        let (cut, total) = finish(many, MAX_ROWS);
-        assert_eq!((cut.len(), total as usize), (MAX_ROWS, MAX_ROWS + 7));
-        let hunks = cut.iter().filter(|r| r.change == p::LocationChange::Hunk).count();
-        assert_eq!(hunks, 7, "a cut keeps the places in changed hunks");
-        assert!(cut.windows(2).all(|w| w[0].line < w[1].line));
+        );
+        assert_eq!(mapped.highlights, [1, 2, 3]);
+        assert_eq!(mapped.text, "x = Foo()");
+        assert_eq!((mapped.match_start, mapped.match_end), (4, 7));
+        assert!(!mapped.external);
     }
 
     #[test]
-    fn a_larger_limit_lists_every_row_and_a_smaller_one_cuts_sooner() {
-        let rows = |n: u32| -> Vec<_> {
-            (0..n)
-                .map(|n| plain_row(&reference("src/a.rs", (n, 0), (n, 1), false), ""))
-                .collect()
-        };
-        let n = MAX_ROWS as u32 + 50;
-        let (all, total) = finish(rows(n), n as usize);
-        assert_eq!((all.len(), total), (n as usize, n));
-        let (few, total) = finish(rows(n), 10);
-        assert_eq!((few.len(), total), (10, n));
-        let (few, total) = finish(rows(20), 10);
-        assert_eq!(
-            (few.len(), total),
-            (10, 20),
-            "a limit below the default cuts a short list too"
-        );
+    fn a_row_delivers_where_the_place_stands_and_that_it_is_not_of_the_repository() {
+        let in_hunk = super::row(&a_row(Standing::Hunk(3), false));
+        assert_eq!((in_hunk.change, in_hunk.hunk), (p::LocationChange::Hunk, Some(3)));
+        let in_file = super::row(&a_row(Standing::File, false));
+        assert_eq!((in_file.change, in_file.hunk), (p::LocationChange::File, None));
+        let unchanged = super::row(&a_row(Standing::Unchanged, true));
+        assert_eq!(unchanged.change, p::LocationChange::Unchanged);
+        assert_eq!((unchanged.hunk, unchanged.external), (None, true));
     }
 }

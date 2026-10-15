@@ -5,6 +5,10 @@
 //! answers come from the live tree, which is the revision's target until the next
 //! snapshot settles, or, when the target is a commit's tree, from a snapshot.
 
+mod rows;
+
+pub use rows::{MAX_ROWS, Row, Rows, Standing};
+
 use std::collections::HashMap;
 use std::pin::Pin;
 use std::sync::{Arc, Mutex};
