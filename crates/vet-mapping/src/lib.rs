@@ -14,11 +14,11 @@ use vet_app::ports::{CommitInfo, Degraded};
 use vet_app::pull_request::PullRequestList;
 use vet_app::search::{FoundLine, LineKind, SearchFilters, SearchPattern, SearchSide};
 use vet_app::session::{
-    BaseDiffKind, BaseDiffView, BaseView, ChangesetList, CommentAt, CommentSpot, CommitKind, CommitsView, DirEntryKind,
-    DirListing, DiscussionView, EntryInfo, ExcludedBy, ExcludedGroup, FileListing, FileStatus, FileView, ItemBlob,
-    ItemView, Lifecycle, ManifestView, ModeChange, NewThread, NoText, PatternMatch, PatternMatches, ReviewUpdateView,
-    ReviewView, RowReview, SearchResult, SearchScope, SubmitReport, SyncNotice, TargetText, ThreadView, ThreadsView,
-    VersionView, View, VoteSent,
+    BaseDiffKind, BaseDiffView, BaseView, Blocker, ChangesetList, CommentAt, CommentSpot, CommitKind, CommitsView,
+    DirEntryKind, DirListing, DiscussionView, EntryInfo, ExcludedBy, ExcludedGroup, FileListing, FileStatus, FileView,
+    ItemBlob, ItemView, Lifecycle, ManifestView, ModeChange, NewThread, NoText, PatternMatch, PatternMatches,
+    ReviewUpdateView, ReviewView, RowReview, SearchResult, SearchScope, SubmitReport, SyncNotice, TargetText,
+    ThreadView, ThreadsView, VersionView, View, VoteSent,
 };
 use vet_app::trust::{Origin, Trust};
 use vet_core::completion::{Completion, HunkState};
@@ -691,8 +691,8 @@ pub fn manifest(
             name: m.target.name.clone(),
             branch: m.target.branch.clone(),
             head: m.target.head.clone(),
-            title: None,
-            draft: false,
+            title: m.target.title.clone(),
+            draft: m.target.draft,
         },
         filter: filter(&m.filter),
         narrowing: m.narrowing.as_ref().map(filter),
@@ -1071,6 +1071,15 @@ pub fn verdict(v: &Verdict) -> p::Verdict {
     }
 }
 
+/// What stands in the way, as the use case said it.
+fn blocker(b: &Blocker) -> p::Blocker {
+    match b {
+        Blocker::Threads(count) => p::Blocker::Threads { count: *count },
+        Blocker::Checks => p::Blocker::Checks,
+        Blocker::ChangesRequested => p::Blocker::ChangesRequested,
+    }
+}
+
 pub fn verdict_of(v: p::Verdict) -> Verdict {
     match v {
         p::Verdict::Comment => Verdict::Comment,
@@ -1149,18 +1158,6 @@ pub fn pull_request_info(
 ) -> p::PullRequestInfo {
     let d = &v.discussion;
     let traits = platform_traits(kind);
-    let mut blocking = Vec::new();
-    if v.unresolved_threads > 0 {
-        blocking.push(p::Blocker::Threads {
-            count: v.unresolved_threads,
-        });
-    }
-    if matches!(d.ci, Some(CiState::Failure | CiState::Pending)) {
-        blocking.push(p::Blocker::Checks);
-    }
-    if d.reviewers.iter().any(|r| r.state == ReviewerState::ChangesRequested) {
-        blocking.push(p::Blocker::ChangesRequested);
-    }
     p::PullRequestInfo {
         number: sat_u32(v.number),
         title: d.title.clone(),
@@ -1191,7 +1188,7 @@ pub fn pull_request_info(
         }),
         labels: d.labels.clone(),
         ci: d.ci.map(ci_state),
-        blocking,
+        blocking: v.blocking.iter().map(blocker).collect(),
         conversation: if traits.conversation_feed {
             (d.conversation.iter())
                 .map(|c| p::ConversationEntry {

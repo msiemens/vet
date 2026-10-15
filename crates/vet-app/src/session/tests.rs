@@ -2110,6 +2110,42 @@ async fn a_pull_request_into_a_branch_other_than_the_default_says_so() {
 }
 
 #[tokio::test]
+async fn a_pull_request_is_headed_with_the_title_the_platform_last_named_it_and_a_branch_is_not() {
+    let fx = Fixture::open(&[("a.txt", "one\n")], &[("a.txt", "one\n")]).await;
+    fx.git.feature(&[("a.txt", "one\n")], &[("a.txt", "one\n")]);
+    fetch_pull_request_7(&fx.git, &[("a.txt", "one\n")], "pr1", &[("a.txt", "two\n")]);
+    fx.session.open_changeset(pull_request_7()).await.unwrap();
+
+    // The platform has not said anything of the pull request yet, so nothing to be headed with.
+    let unnamed = fx.session.manifest(View::Changeset).await.unwrap().target;
+    assert_eq!(
+        (unnamed.name.as_str(), unnamed.title.is_none(), unnamed.draft),
+        ("#7", true, false)
+    );
+
+    // What the platform named it last is what it is headed with.
+    fx.store.0.lock().unwrap().heads.insert(
+        pull_request_7(),
+        PullRequestHead {
+            title: "Add idempotency keys".into(),
+            draft: true,
+            fork: false,
+            target_branch: "main".into(),
+        },
+    );
+    let named = fx.session.manifest(View::Changeset).await.unwrap().target;
+    assert_eq!(
+        (named.title.as_deref(), named.draft),
+        (Some("Add idempotency keys"), true)
+    );
+
+    // A branch is not a pull request: its target says nothing of a platform.
+    fx.session.open_changeset(feature()).await.unwrap().unwrap();
+    let branch = fx.session.manifest(View::Changeset).await.unwrap().target;
+    assert_eq!((branch.title.as_deref(), branch.draft), (None, false));
+}
+
+#[tokio::test]
 async fn a_pull_request_its_target_branch_holds_is_empty_even_when_git_cannot_say_more() {
     let fx = Fixture::open(&[("a.txt", "one\n")], &[("a.txt", "one\n")]).await;
     // The head is the commit it left the target branch at, and the fake cannot resolve the

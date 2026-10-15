@@ -23,16 +23,22 @@ use crate::review::ReviewSummary;
 impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> LiveSession<G, S> {
     pub async fn manifest(&self, view: View) -> Result<ManifestView> {
         let (st, shown) = self.viewing(view).await?;
-        match &shown {
-            Shown::Interdiff(id) => return self.interdiff_manifest(&st, id).await,
-            Shown::Commit { index } => return self.commit_manifest(&st, *index).await,
-            Shown::Changeset => {}
-        }
+        let manifest = match &shown {
+            Shown::Interdiff(id) => self.interdiff_manifest(&st, id).await?,
+            Shown::Commit { index } => self.commit_manifest(&st, *index).await?,
+            Shown::Changeset => self.changeset_manifest(&st).await?,
+        };
+        self.headed(&st, manifest).await
+    }
+
+    /// The manifest of the changeset on view itself, whatever view some of its facts
+    /// (`changeset_base` and friends) speak of beside it.
+    async fn changeset_manifest(&self, st: &State) -> Result<ManifestView> {
         let branches = self.acquisition.git.branches().await?;
-        let facts = self.lens_facts(&st, &branches).await?;
+        let facts = self.lens_facts(st, &branches).await?;
         let changes = st.changes();
         let cov = changes.remapped.coverage();
-        let acked = acknowledged(&st, &changes.diffed.diff.non_text);
+        let acked = acknowledged(st, &changes.diffed.diff.non_text);
         let compiled = st.filter.compile(&changes.diffed.diff.generated);
         let files = file_views(&changes.diffed, &st.filter, |diff, items| {
             (
@@ -44,14 +50,14 @@ impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> L
             revision: st.revision,
             seq: st.seq,
             name: self.name.clone(),
-            lifecycle: lifecycle_of(&st),
+            lifecycle: lifecycle_of(st),
             base: facts.base.clone(),
             target: target_view(&st.source, &st.head, &branches),
             filter: st.project_filter().clone(),
             narrowing: st.narrowing(),
             completion: changes.remapped.completion,
             delta: files.iter().map(|f| f.delta).sum(),
-            excluded: excluded_groups(&changes.diffed, &st),
+            excluded: excluded_groups(&changes.diffed, st),
             files,
             degraded: self.degraded_for(&st.source),
             interdiff: None,
@@ -61,6 +67,19 @@ impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> L
             changeset_files: facts.files,
             changeset_completion: facts.completion,
         })
+    }
+
+    /// Names the target of a pull request after the platform, with what it last said of it: its
+    /// title and whether it is a draft. A view of a pull request, also a restored one, is headed
+    /// without the platform being asked; a changeset of another kind says nothing of a platform.
+    async fn headed(&self, st: &State, mut manifest: ManifestView) -> Result<ManifestView> {
+        if let Source::PullRequest { .. } = &st.source
+            && let Some(head) = self.pull_request_head(&st.source).await?
+        {
+            manifest.target.title = Some(head.title);
+            manifest.target.draft = head.draft;
+        }
+        Ok(manifest)
     }
 }
 
@@ -98,18 +117,24 @@ pub(super) fn target_view(source: &Source, tip: &CommitId, branches: &[BranchInf
             name: name.clone(),
             branch: Some(name.clone()),
             head: Some(tip.0.clone()),
+            title: None,
+            draft: false,
         },
         Source::PullRequest { number, .. } => TargetView {
             source: source.clone(),
             name: format!("#{number}"),
             branch: None,
             head: Some(tip.0.clone()),
+            title: None,
+            draft: false,
         },
         Source::WorkingTree => TargetView {
             source: source.clone(),
             name: "Working tree".into(),
             branch: branches.iter().find(|b| b.current).map(|b| b.name.clone()),
             head: None,
+            title: None,
+            draft: false,
         },
     }
 }

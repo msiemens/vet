@@ -21,9 +21,9 @@ use super::threads::{
 use super::{LiveSession, Result, SessionError};
 use crate::changeset::{CommitId, Source};
 use crate::platform::{
-    CommentKind, CommentRef, ConversationItem, ConversationKind, DiffSide, Discussion, MessageSync,
+    CiState, CommentKind, CommentRef, ConversationItem, ConversationKind, DiffSide, Discussion, MessageSync,
     NewConversationComment, NewReply, NewThread, Platform, PlatformComment, PlatformError, PlatformThreadData,
-    PostedComment, Posting, RemoteKey, StatusSync, Submission, Submitted, SyncPlan, reconcile,
+    PostedComment, Posting, RemoteKey, ReviewerState, StatusSync, Submission, Submitted, SyncPlan, reconcile,
 };
 use crate::ports::{GitRepo, LiveStore, ReviewWrites};
 use crate::review::visible_threads;
@@ -63,6 +63,40 @@ pub struct DiscussionView {
     pub discussion: Discussion,
     /// Threads the platform has that are open and can be resolved.
     pub unresolved_threads: u32,
+    /// What stands between the pull request and its merge, as the last sync found it (§11).
+    pub blocking: Vec<Blocker>,
+}
+
+/// What a view of a pull request names as standing in the merge's way.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Blocker {
+    /// `u32` threads that are open and can be resolved.
+    Threads(u32),
+    /// Checks that have failed or are still running.
+    Checks,
+    /// A reviewer has asked for changes.
+    ChangesRequested,
+}
+
+/// What stands in the merge's way: threads that can be resolved, checks that have failed or
+/// are not done, and a reviewer who asked for changes. No `unresolved_threads` among them, so
+/// what a run synced is what the viewer shows.
+fn blocking(discussion: &Discussion, unresolved_threads: u32) -> Vec<Blocker> {
+    let mut blocking = Vec::new();
+    if unresolved_threads > 0 {
+        blocking.push(Blocker::Threads(unresolved_threads));
+    }
+    if matches!(discussion.ci, Some(CiState::Failure | CiState::Pending)) {
+        blocking.push(Blocker::Checks);
+    }
+    if discussion
+        .reviewers
+        .iter()
+        .any(|r| r.state == ReviewerState::ChangesRequested)
+    {
+        blocking.push(Blocker::ChangesRequested);
+    }
+    blocking
 }
 
 #[derive(Clone, PartialEq, Eq, Debug, Default)]
@@ -184,18 +218,21 @@ impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> L
             }
         };
         let st = self.published.read();
-        let unresolved_threads = st
-            .threads
-            .iter()
-            .filter(|t| {
-                t.is_posted() && t.status == ThreadStatus::Open && t.platform.as_ref().is_some_and(|p| p.resolvable)
-            })
-            .count();
+        let unresolved_threads = sat_u32(
+            st.threads
+                .iter()
+                .filter(|t| {
+                    t.is_posted() && t.status == ThreadStatus::Open && t.platform.as_ref().is_some_and(|p| p.resolvable)
+                })
+                .count(),
+        );
+        let blocking = blocking(&discussion, unresolved_threads);
         Some(DiscussionView {
             number: *number,
             synced_at,
             discussion,
-            unresolved_threads: sat_u32(unresolved_threads),
+            unresolved_threads,
+            blocking,
         })
     }
 

@@ -4,7 +4,6 @@
 
 use std::sync::Arc;
 
-use vet_app::changeset::Source;
 use vet_app::search::SearchFilters;
 use vet_app::session::{Outcome, ReviewUpdateView, SearchQuery, SessionError, View};
 use vet_core::filter::FileMask;
@@ -50,13 +49,7 @@ impl Orchestrator {
         let view = open.session.manifest(mapping::core_view(view)).await?;
         let failures = open.semantics.restore_failures();
         let (trust, head) = open.session.trust().await?;
-        let mut manifest = mapping::manifest(project, &view, &failures, mapping::analysis_trust(&trust, &head));
-        if matches!(view.target.source, Source::PullRequest { .. })
-            && let Some(head) = open.session.pull_request_head(&view.target.source).await?
-        {
-            manifest.target.title = Some(head.title);
-            manifest.target.draft = head.draft;
-        }
+        let manifest = mapping::manifest(project, &view, &failures, mapping::analysis_trust(&trust, &head));
         Ok(Response::Manifest(Box::new(manifest)))
     }
 

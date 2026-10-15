@@ -171,6 +171,10 @@ pub struct TargetView {
     pub branch: Option<String>,
     /// The full id of a branch's or a pull request's tip; `None` for the working tree.
     pub head: Option<String>,
+    /// How the platform named a pull request, and whether it is a draft; what a view of one is
+    /// headed with. `None` for one the platform was never asked about, and for every other kind.
+    pub title: Option<String>,
+    pub draft: bool,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
