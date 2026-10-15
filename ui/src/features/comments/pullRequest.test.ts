@@ -1,12 +1,20 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { blockerText, postedNote, stateLabel, stateTone, submitBlock } from "./pullRequest.ts";
+import type { PullRequestInfo } from "../../generated/PullRequestInfo";
+import { blockerText, postedNote, stateLabel, stateTone, submitBlock, voteBlocked } from "./pullRequest.ts";
 
 void test("a signed out or expired platform blocks submitting and says what to do", () => {
   assert.equal(submitBlock({ type: "ok" }), undefined);
   assert.equal(submitBlock({ type: "failed", message: "offline" }), undefined);
   assert.match(submitBlock({ type: "signedOut" }) ?? "", /Sign in/);
   assert.match(submitBlock({ type: "tokenExpired", message: "" }) ?? "", /sign in again/);
+});
+
+void test("a vote being sent says so; a signed out platform blocks the vote", () => {
+  const info = (partial: object) => partial as unknown as PullRequestInfo;
+  assert.equal(voteBlocked(undefined), undefined);
+  assert.equal(voteBlocked(info({ platform: { connection: { type: "signedOut" } } })), "Sign in to submit the review");
+  assert.equal(voteBlocked(info({ pendingVote: { state: { type: "posting" } } })), "The vote is being sent");
 });
 
 void test("a post tells how many comments went through and that the vote was cast", () => {

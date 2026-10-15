@@ -1,7 +1,3 @@
-<script module lang="ts">
-  export type Screen = "queue" | "review";
-</script>
-
 <script lang="ts">
   import type { Snippet } from "svelte";
   import type { Completion } from "../../generated/Completion";
@@ -14,6 +10,7 @@
   import { completionTitle, nothingToReview } from "./completionTitle";
   import ScopeChip from "./ScopeChip.svelte";
   import type { BaseNote as BaseNoteInfo, ScopeChip as ScopeInfo } from "./scopeText";
+  import type { Screen } from "./tools";
   import TitleBar from "./TitleBar.svelte";
 
   let {

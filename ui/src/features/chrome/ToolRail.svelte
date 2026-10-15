@@ -1,7 +1,5 @@
 <script module lang="ts">
   import type { IconName } from "../../lib/ui/icons";
-  import { TOOL_WINDOWS, toolCommand } from "../../state/appCommands";
-  import { commands } from "../../state/commands";
 
   const ICONS: Record<string, IconName> = {
     changes: "review",
@@ -15,16 +13,13 @@
     symbol: "module",
     structure: "structure",
   };
-
-  export const TOOLS = {
-    left: TOOL_WINDOWS.filter((t) => t.side === "left"),
-    bottom: TOOL_WINDOWS.filter((t) => t.side === "bottom"),
-    right: TOOL_WINDOWS.filter((t) => t.side === "right"),
-  };
 </script>
 
 <script lang="ts">
   import IconButton from "../../lib/ui/IconButton.svelte";
+  import { toolCommand } from "../../state/appCommands";
+  import { commands } from "../../state/commands";
+  import { TOOLS } from "./tools";
 
   let {
     side = "left",

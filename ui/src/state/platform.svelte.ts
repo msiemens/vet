@@ -220,6 +220,38 @@ class PlatformStore {
     this.cardTimers.get(id)?.release();
   }
 
+  /** The platform says the token is missing or no longer works, so nothing can be asked of it. */
+  get signedOut(): boolean {
+    const connection = this.status?.connection.type;
+    return connection === "signedOut" || connection === "tokenExpired";
+  }
+
+  /** What the viewer has not read of the pull request as a whole. */
+  get unreadCount(): number {
+    return this.info?.unread.all ?? 0;
+  }
+
+  /** The viewer's comments and staged vote that wait to be posted. */
+  get outgoingCount(): number {
+    return this.info?.outgoing.count ?? 0;
+  }
+
+  /** Shows the outgoing comments and the vote, with the button that posts them; `picking` lists the votes to pick from instead. */
+  openOutgoing(picking: boolean) {
+    this.votePicking = picking;
+    this.outgoingOpen = true;
+  }
+
+  /** Shows the Comments tool window's Conversation tab. */
+  showConversation() {
+    this.commentsTab = "conversation";
+  }
+
+  /** Opens the form for a comment on the changeset as a whole. */
+  composeChangesetComment() {
+    this.changesetComment.composing = true;
+  }
+
   private notify(notification: Notification) {
     const id = ++this.lastId;
     this.notified = [{ id, notification, at: Math.floor(Date.now() / 1000), card: true }, ...this.notified];

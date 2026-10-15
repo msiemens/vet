@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { type ComponentProps, onMount, tick, untrack } from "svelte";
+  import { onMount, untrack } from "svelte";
   import {
     AboutDialog,
     Banners,
@@ -11,87 +11,43 @@
     TaskProgress,
     TitleBar,
     ToolRail,
-    type Screen,
-    baseNote,
+    focusPipelines,
+    focusTimeline,
+    headerFacts,
     lensOnSelect,
-    scopeChip,
-    toggleBottom,
-    toggleTool,
+    shell,
     toolFor,
   } from "../features/chrome";
-  import { ChecksButton, badgeCount } from "../features/checks";
+  import { ChecksButton, headChecksLook, pipelineBadge } from "../features/checks";
   import { LocationPicker } from "../features/locations";
-  import { OutgoingButton, threadCommands, submitBlock } from "../features/comments";
-  import {
-    type ChoiceHost,
-    Palette,
-    openChoice,
-    palette,
-    paletteCommands,
-    watchDoubleShift,
-  } from "../features/palette";
-  import { NotificationCards, PlatformFooter, copyText } from "../features/platform";
+  import { OutgoingButton } from "../features/comments";
+  import { Palette, openChoice, palette } from "../features/palette";
+  import { NotificationCards, PlatformFooter } from "../features/platform";
   import { FindPanel } from "../features/find";
-  import { PipelinesPanel, belongsTo, headerTitle, logKey } from "../features/pipelines";
+  import { PipelinesPanel, belongsTo, logKey } from "../features/pipelines";
   import { ProblemsPanel } from "../features/problems";
-  import { ChangesetSwitcher, OpenPullRequestDialog, QueueScreen, queueCommands, targetLabel } from "../features/queue";
-  import {
-    ON_SCREEN,
-    ReviewScreen,
-    type ReviewController,
-    fileCommands,
-    fileTab,
-    reviewActions,
-    modeChange,
-    viewCommands,
-  } from "../features/review";
-  import { FindInFilesDialog, findInFiles, searchCommands } from "../features/search";
+  import { ChangesetSwitcher, OpenPullRequestDialog, QueueScreen, targetLabel } from "../features/queue";
+  import { ON_SCREEN, ReviewScreen, modeChange } from "../features/review";
+  import { FindInFilesDialog, findInFiles } from "../features/search";
   import { SettingsDialog } from "../features/settings";
   import { StructurePanel } from "../features/structure";
   import { type OpenLocation, SymbolPanel } from "../features/symbols";
   import { type RangeFile, TimelinePanel } from "../features/timeline";
-  import { ProjectSwitcher, recentCommands, WelcomeScreen } from "../features/welcome";
-  import type { Thread } from "../generated/Thread";
+  import { ProjectSwitcher, WelcomeScreen } from "../features/welcome";
   import { letterOfStatus } from "../lib/changeLetter";
-  import { ciIcon } from "../lib/ciStatus";
-  import { clock } from "../lib/format";
   import { repoName } from "../lib/paths";
-  import { platformName } from "../lib/platformName";
   import type { SoftWrap } from "../lib/softWrap";
   import { applyTheme } from "../lib/theme/theme";
-  import { softWrapPreference, themePreference } from "./appPreferences.svelte";
   import ContextMenu from "../lib/ui/ContextMenu.svelte";
-  import { setDoubleClickMs } from "../lib/ui/doubleClick";
   import Toast from "../lib/ui/Toast.svelte";
-  import { browse } from "../state/browse";
   import { changeset } from "../state/changeset.svelte";
   import { checks } from "../state/checks.svelte";
-  import {
-    appVersion,
-    canQuit,
-    canRestartBackend,
-    canShowFolder,
-    hasNativeDialogs,
-    hasNativeMenu,
-    hostLabel,
-    inTauri,
-    quit,
-    showFolder,
-    showWindow,
-    systemDoubleClickMs,
-  } from "../state/host";
-  import { appCommands } from "../state/appCommands";
-  import { backendSettings } from "../state/backendSettings.svelte";
-  import { keyId } from "../state/changesetKey";
+  import { canRestartBackend, hasNativeDialogs, hasNativeMenu } from "../state/host";
   import { commands } from "../state/commands";
   import { contextMenus } from "../state/contextMenu.svelte";
-  import { type FindSet, findSets } from "../state/findSets.svelte";
-  import type { Place } from "../state/foundPlace";
-  import { keymap } from "../state/keymap.svelte";
+  import { findSets } from "../state/findSets.svelte";
   import { mainMenu } from "../state/mainMenu.svelte";
   import { notices } from "../state/notices.svelte";
-  import { pendingEdits } from "../state/pendingEdits.svelte";
-  import { minute } from "../state/minute.svelte";
   import { platform } from "../state/platform.svelte";
   import { problems } from "../state/problems.svelte";
   import { progress as backgroundTasks } from "../state/progress.svelte";
@@ -103,108 +59,63 @@
   import { serverList } from "../state/serverList.svelte";
   import { serverLine } from "../state/serverStatus";
   import { session } from "../state/session.svelte";
-  import { symbols } from "../state/symbols.svelte";
   import { threads } from "../state/threads.svelte";
   import { defaultRange } from "../state/timelineRange";
   import { versions } from "../state/versions.svelte";
+  import { softWrapPreference, themePreference } from "./appPreferences.svelte";
+  import { appState } from "./appState.svelte";
+  import { choiceHost, goToFirstFlagged, openPlace, openThread, showInBrowser } from "./actions";
+  import { registerCommands } from "./commands";
+  import { installWindow } from "./window";
   import ConnectionNotice from "./ConnectionNotice.svelte";
 
-  let controller = $state.raw<ReviewController>();
-  // The selected tool of each rail, and whether its sidebar is shown.
-  const left = $state({ tool: "changes", open: true });
-  const right = $state({ tool: "symbol", open: true });
-  // The bottom tool whose panel is shown; they exclude each other.
-  let bottomTool = $state<string>();
   const theme = $derived(themePreference.value);
   const softWrap = $derived(softWrapPreference.value);
   $effect(() => applyTheme(theme));
   // The viewer's choice, here or in another window, rebuilds the views.
   $effect(() => {
     const wrap = softWrap;
-    untrack(() => controller?.setSoftWrap(wrap));
+    untrack(() => appState.controller?.setSoftWrap(wrap));
   });
-  let dialog = $state<"settings" | "about" | "finish" | "pullRequest">();
-  let settingsPage = $state<ComponentProps<typeof SettingsDialog>["page"]>("general");
-  let switcherOpen = $state(false);
-  // The queue is the project's home; the review screen stays mounted behind it, so its views survive.
-  let screen = $state<Screen>("queue");
-  // Only the host knows these; a plain browser shows none.
-  let version = $state<string>();
-  let host = $state<string>();
-  const reviewOpen = $derived(changeset.facts?.review.state === "open");
-  const lens = $derived(changeset.facts?.lens);
-  const commitCount = $derived(changeset.facts?.commits ?? 0);
 
   // Selecting the Commits tool reviews the changeset by commit and leaving it returns to all changes.
-  let selectedTool = untrack(() => left.tool);
+  let selectedTool = untrack(() => shell.left.tool);
   $effect(() => {
-    const tool = left.tool;
+    const tool = shell.left.tool;
     const want = lensOnSelect(selectedTool, tool);
     selectedTool = tool;
     if (!want) return;
     untrack(() => {
-      if (changeset.facts && lens !== want) void changeset.showLens(want);
+      if (changeset.facts && changeset.lens !== want) void changeset.showLens(want);
     });
   });
   // A lens set elsewhere (a changeset reopened by commit) selects the tool that goes with it.
   $effect(() => {
     const next = toolFor(
-      untrack(() => left.tool),
-      lens,
-      commitCount,
+      untrack(() => shell.left.tool),
+      changeset.lens,
+      changeset.commitCount,
     );
-    untrack(() => (left.tool = next));
+    untrack(() => (shell.left.tool = next));
   });
-  /** Goes to the first flagged hunk; when the range or commit on view has none, to the first of the whole changeset. */
-  async function goToFirstFlagged() {
-    if (reviewActions.firstFlagged()) return;
-    await changeset.showWhole();
-    await tick();
-    reviewActions.firstFlagged();
-  }
-  const baseChangedLeft = $derived(changeset.baseChangedCount);
 
-  /** The head commit of a pull request, whose checks the toolbar shows; none for another changeset. */
-  const headId = $derived(changeset.headCommit);
-  /** The commit whose runs the Pipelines tool shows: the one on view by commit, else the head. */
-  const pipelineCommit = $derived(changeset.pipelineCommit);
-  const platformSignedOut = $derived(
-    platform.status?.connection.type === "signedOut" || platform.status?.connection.type === "tokenExpired",
+  const headLook = $derived(
+    headChecksLook(
+      checks.of(changeset.headCommit),
+      platform.status,
+      platform.signedOut,
+      checks.limitedUntil,
+      checks.loadedAt,
+    ),
   );
-  const headChecksLook = $derived.by(() => {
-    const head = checks.of(headId);
-    const status = platform.status;
-    if (!head) return undefined;
-    const until = checks.limitedUntil;
-    const limited =
-      until === undefined || !status
-        ? undefined
-        : {
-            until: clock(until),
-            asOf: clock(checks.loadedAt ?? until),
-            platform: platformName(status.kind),
-          };
-    const title = platformSignedOut
-      ? `${status && platformName(status.kind)}: the token for ${status?.host} is not valid. Checks are not loaded.`
-      : headerTitle(head, limited);
-    return { head, title, stale: limited !== undefined };
-  });
-  /** The rail's count for Pipelines: what the head's checks are about, while they are not all passed. */
-  const pipelineBadge = $derived.by(() => {
-    const head = checks.of(headId);
-    if (!head || platformSignedOut || head.state === "success" || head.state === undefined) {
-      return { count: 0, text: "" };
-    }
-    const count = badgeCount(head);
-    return { count, text: `${count} ${ciIcon(head.state)?.word ?? "waiting"}`, bad: head.state === "failure" };
-  });
+  const pipelineRail = $derived(pipelineBadge(checks.of(changeset.headCommit), platform.signedOut));
   // The tool belongs to a pull request; while the changeset reloads there are no facts yet and it stays.
   $effect(() => {
-    if (!belongsTo(changeset.facts?.target.changeset.type) && bottomTool === "pipelines") bottomTool = undefined;
+    if (!belongsTo(changeset.facts?.target.changeset.type) && shell.bottom === "pipelines") shell.hideBottom();
   });
 
   /** The Comments tool window is on screen. */
-  const commentsShown = $derived(screen === "review" && left.open && left.tool === "comments");
+  const commentsShown = $derived(shell.screen === "review" && shell.left.open && shell.left.tool === "comments");
   // While the tool window is open, what comes in is seen: the backend keeps the time the viewer
   // last looked and answers the counts (D96). The reads make the effect run again when new comments
   // arrive while it is open, so the backend moves the seen time past them.
@@ -215,43 +126,19 @@
     untrack(() => void platform.markCommentsSeen());
   });
   /** The rail's count for Comments: what the backend says the viewer has not read of the pull request as a whole. */
-  const unreadComments = $derived(commentsShown ? 0 : (platform.info?.unread.all ?? 0));
+  const unreadComments = $derived(commentsShown ? 0 : platform.unreadCount);
 
-  const semanticSummary = $derived(semantic.summary(controller?.semanticPath));
+  const semanticSummary = $derived(semantic.summary(appState.controller?.semanticPath));
   const range = $derived(changeset.range);
   const rangeFiles = $derived<RangeFile[]>(
     range ? (changeset.layout?.files ?? []).map((f) => ({ path: f.path, delta: f.delta, mode: modeChange(f) })) : [],
-  );
-  const shownCommit = $derived(
-    changeset.shownCommit === undefined ? undefined : changeset.commits[changeset.shownCommit],
-  );
-  const scope = $derived(
-    changeset.facts &&
-      scopeChip({
-        range,
-        latest: versions.items.at(-1)?.n,
-        commit:
-          changeset.shownCommit === undefined
-            ? undefined
-            : {
-                position: changeset.shownCommit + 1,
-                of: changeset.facts.commits,
-                shortId: shownCommit?.commit.shortId,
-                subject: shownCommit?.commit.subject,
-              },
-        live: changeset.facts.target.changeset.type === "workingTree",
-        pending: pendingEdits.waiting,
-      }),
-  );
-  const note = $derived(
-    changeset.facts && baseNote(changeset.facts.base, changeset.facts.target.changeset.type, minute.now),
   );
   const footer = $derived({
     commit:
       changeset.shownCommit === undefined ? undefined : `${changeset.shownCommit + 1} / ${changeset.commits.length}`,
     languageServer: serverLine(
-      controller?.semanticPath,
-      controller?.semanticPath === undefined ? undefined : servedBy.of(controller.semanticPath),
+      appState.controller?.semanticPath,
+      appState.controller?.semanticPath === undefined ? undefined : servedBy.of(appState.controller.semanticPath),
       serverList.servers,
       serverList.runtimes,
       semanticSummary,
@@ -264,143 +151,35 @@
     if (!session.backend || !session.repo) return;
     return queue.watch();
   });
-  $effect(() => reviewShown.set(screen === "review"));
+  $effect(() => reviewShown.set(shell.screen === "review"));
   // The changed files the window has open, so the backend's background analysis reads them first.
   $effect(() => {
     const backend = session.backend;
-    const paths = reviewShown.on ? [...(controller?.openPaths ?? [])] : [];
+    const paths = reviewShown.on ? [...(appState.controller?.openPaths ?? [])] : [];
     if (backend) untrack(() => void backend.setOpenFiles(paths).catch(() => undefined));
   });
 
-  const openLocation: OpenLocation = (path, line, side) => void controller?.openLocation(ON_SCREEN, path, line, side);
+  const openLocation: OpenLocation = (path, line, side) =>
+    void appState.controller?.openLocation(ON_SCREEN, path, line, side);
 
   // Registered before the first render, so the menu below is built from them.
-  const stopCommands = commands.register(
-    ...appCommands({
-      pickProject: () => void pickProject(),
-      openProject,
-      closeProject: () => void session.closeRepo(),
-      finishReview: () => (dialog = "finish"),
-      changesSinceReview: () => void showChangesSinceReview(),
-      wholeChangeset: () => void changeset.showWhole(),
-      refresh: () => void queue.refresh(),
-      reconfirmAll: () => void changeset.reconfirmAll(),
-      openChangeset: (key) => void changeset.openChangeset(key),
-      showScreen: (s) => (screen = s),
-      showChangesets: () => {
-        screen = "review";
-        switcherOpen = true;
-      },
-      openPullRequest: () => void openPullRequest(),
-      openInBrowser: (at) => showInBrowser(at ?? platform.info?.url),
-      showDialog: (d) => showDialog(d),
-      showKeymap: () => showDialog("settings", "keymap"),
-      showAccounts: () => showDialog("settings", "accounts"),
-      showProjectSettings: () => showDialog("settings", "trust"),
-      quit: () => void quit(),
-      toggleSoftWrap: () => setSoftWrap(softWrap === "never" ? "prose" : "never"),
-      toggleTool: (id) => {
-        if (TOOLS.bottom.some((t) => t.id === id)) {
-          bottomTool = toggleBottom(bottomTool, id);
-          if (bottomTool === "problems") void focusProblems();
-          if (bottomTool === "find") void focusFind();
-          if (bottomTool === "pipelines") void focusPipelines();
-          return;
-        }
-        const side = TOOLS.left.some((t) => t.id === id) ? left : right;
-        Object.assign(side, toggleTool(side, id));
-      },
-      stepProblem: (delta) => void controller?.stepProblem(delta),
-      setTheme: (t) => (themePreference.value = t),
-      commentOnChangeset,
-      postComments: () => {
-        screen = "review";
-        platform.votePicking = false;
-        platform.outgoingOpen = true;
-      },
-      pickVote: () => {
-        screen = "review";
-        platform.votePicking = true;
-        platform.outgoingOpen = true;
-      },
-      stageVote: (verdict) => void platform.stageVote(verdict),
-      clearSemanticCaches: () => void clearSemanticCaches(),
-      showLog: () => void showLog(),
-      restartBackend: () => void session.restartBackend(),
-      restartLanguageServer: (language) => void restartLanguageServer(language),
-    }),
-    ...queueCommands({
-      open: (key) => {
-        if (!queue.onView || keyId(queue.onView) !== keyId(key)) void changeset.openChangeset(key);
-        screen = "review";
-      },
-      copyText: (text) => void copyText(text),
-    }),
-    ...recentCommands({
-      open: (path) => {
-        if (path !== session.repo) commands.run(`file.openRecent:${path}`);
-      },
-      forget: (path) => void session.forget(path),
-    }),
-    ...searchCommands(() => controller?.find.options.text),
-    ...viewCommands(reviewActions),
-    ...fileCommands(reviewActions),
-    ...threadCommands({
-      attach: (thread, at) => void threads.attach(thread, at),
-      remove: (thread) => void threads.remove(thread),
-    }),
-    ...paletteCommands({ show: (tab) => palette.show(tab) }),
-  );
-  keymap.load();
-  findSets.show = (focus) => {
-    screen = "review";
-    bottomTool = "find";
-    if (focus) void focusFind();
-  };
-  session.onOpen(() => (screen = "queue"));
-  session.onClose(() => {
-    palette.close();
-    findSets.reset();
-  });
-  /** Comments and a staged vote that wait to be sent to the platform of the pull request on view. */
-  const outgoing = $derived(platform.info?.outgoing.count ?? 0);
-  const voteBlock = $derived.by(() => {
-    const info = platform.info;
-    if (info?.pendingVote?.state.type === "posting") return "The vote is being sent";
-    return info && submitBlock(info.platform.connection);
-  });
-  const stopContext = commands.provide(() => ({
-    repoOpen: !!session.repo,
-    reviewOpen,
-    queueShown: screen === "queue",
-    paletteOpen: palette.open,
-    canQuit,
-    changesetOpen: !!session.repo && !!changeset.layout,
-    rangeShown: !!range,
-    reconfirmable: baseChangedLeft > 0,
-    pullRequest: platform.info !== undefined,
-    outgoing,
-    voteSeparate: !!platform.traits?.verdictSeparate,
-    voteBlock,
-    manyCommits: commitCount > 1,
-    problems: controller?.problemFile !== undefined && problems.problemsOf([controller.problemFile]).length > 0,
-  }));
+  const stopCommands = registerCommands();
 
   // The main menu follows the state it shows.
   $effect(() => {
-    const shown = (side: typeof left, id: string) => side.open && side.tool === id;
+    const shown = (side: { open: boolean; tool: string }, id: string) => side.open && side.tool === id;
     const traits = platform.traits;
     mainMenu.update({
       native: hasNativeMenu,
       recent: recent.list.map(({ path }) => ({ path, name: repoName(path) })),
-      screen,
-      viewMode: controller?.activeMode,
+      screen: shell.screen,
+      viewMode: appState.controller?.activeMode,
       softWrap: softWrap !== "never",
       theme,
       tools: [
-        ...TOOLS.left.map((t) => ({ id: t.id, shown: shown(left, t.id) })),
-        ...TOOLS.right.map((t) => ({ id: t.id, shown: shown(right, t.id) })),
-        ...TOOLS.bottom.map((t) => ({ id: t.id, shown: bottomTool === t.id })),
+        ...TOOLS.left.map((t) => ({ id: t.id, shown: shown(shell.left, t.id) })),
+        ...TOOLS.right.map((t) => ({ id: t.id, shown: shown(shell.right, t.id) })),
+        ...TOOLS.bottom.map((t) => ({ id: t.id, shown: shell.bottom === t.id })),
       ],
       range: !!range,
       canRestart: canRestartBackend,
@@ -415,223 +194,17 @@
   });
 
   onMount(() => {
-    // Capturing, so a command's key reaches it before any control or editor handles the key.
-    const onkeydown = (e: KeyboardEvent) => void commands.dispatch(e);
-    window.addEventListener("keydown", onkeydown, true);
-    window.addEventListener("keydown", leaveScope);
-    // The webview's own menu stays on text fields; elsewhere a handler opened the app's menu, or there is none.
-    const onContextMenu = (e: MouseEvent) => {
-      if (!(e.target instanceof Element && e.target.closest("input, textarea"))) e.preventDefault();
-    };
-    window.addEventListener("contextmenu", onContextMenu);
-    // The viewer may change the mouse settings while the window stays open.
-    const readDoubleClick = () =>
-      void systemDoubleClickMs().then(
-        (ms) => ms !== undefined && setDoubleClickMs(ms),
-        (e: unknown) => console.error(e),
-      );
-    readDoubleClick();
-    window.addEventListener("focus", readDoubleClick);
-    // The splash covers the start until the backend is connected (or the connection failed, which
-    // the window then shows), so the window never shows empty.
-    let shown: Promise<void> | undefined;
-    const reveal = () => {
-      shown ??= showWindow().then(
-        (frame) => {
-          if (frame === "native") console.warn("app-drawn title bar unavailable; the host log says why");
-        },
-        (e: unknown) => {
-          console.error(e);
-        },
-      );
-    };
-    if (inTauri) void appVersion().then((v) => (version = v));
-    void hostLabel().then((label) => (host = label));
-    session.onConnect(reveal);
-    void session.connect().then(reveal);
-    // Result sets belong to the changeset on view.
-    const stopSets = changeset.onOpening((opening) => {
-      if (opening.type === "requested") findSets.reset();
-    });
-    const stopMenu = mainMenu.listen();
-    const stopDoubleShift = watchDoubleShift(
-      () => !!session.repo && !commands.isCapturing(),
-      () => commands.run("palette.all"),
-    );
+    const stopWindow = installWindow();
     return () => {
-      stopSets();
-      stopMenu();
-      stopDoubleShift();
-      window.removeEventListener("keydown", onkeydown, true);
-      window.removeEventListener("keydown", leaveScope);
-      window.removeEventListener("contextmenu", onContextMenu);
-      window.removeEventListener("focus", readDoubleClick);
-      stopContext();
+      stopWindow();
       stopCommands();
     };
   });
 
-  function showDialog(d: "settings" | "about", page: typeof settingsPage = "general") {
-    settingsPage = page;
-    dialog = d;
-  }
-
-  /** Opens the folder of the log files in the file manager; a plain browser says where it is. */
-  async function showLog() {
-    try {
-      const path = await session.connected().logDirectory();
-      if (canShowFolder) await showFolder(path);
-      else notices.show(`The log is in ${path}`);
-    } catch (e) {
-      notices.failed("Cannot show the log", e);
-    }
-  }
-
-  async function clearSemanticCaches() {
-    const problem = await backendSettings.clearCaches();
-    notices.show(problem === undefined ? "Semantic caches cleared" : `Cannot clear the semantic caches: ${problem}`);
-  }
-
-  async function restartLanguageServer(language: string) {
-    const problem = await serverList.restart(language);
-    if (problem !== undefined) notices.show(`Cannot restart the ${language} language server: ${problem}`);
-  }
-
-  /** Asks for a pull request by its number, in the repository the project has on GitHub. */
-  async function openPullRequest() {
-    if (!queue.sources.length) await queue.loadPullRequests();
-    if (queue.sources.length) dialog = "pullRequest";
-    else notices.show("This project has no GitHub remote to open a pull request from");
-  }
-
-  /** Every way of opening a project (recent list, menu, folder dialog, typed path) ends here. */
-  function openProject(path: string) {
-    void session.openRepo(path);
-  }
-
-  async function pickProject() {
-    const path = await session.pickRepo();
-    if (path) openProject(path);
-  }
-
-  /** The review view compares the last reviewed version with the latest; with nothing after it, the changeset shows. */
-  async function showChangesSinceReview() {
-    const since = defaultRange(versions.items);
-    if (!since) notices.show("Nothing has changed since your last review");
-    await changeset.setRange(since);
-  }
-
   /** Shows a tool window: the Timeline under the editors, or one of the left rail's. */
   function showTool(tool: "changes" | "all" | "comments" | "timeline") {
-    if (tool === "timeline") bottomTool = "timeline";
-    else Object.assign(left, { tool, open: true });
-  }
-
-  /** Shows the timeline, or moves the focus into it where it is shown. */
-  async function focusTimeline() {
-    bottomTool = "timeline";
-    await tick();
-    document.querySelector<HTMLElement>('[aria-label="Timeline"]')?.focus();
-  }
-
-  /** Shows a web address in the browser, if there is one. */
-  function showInBrowser(url: string | undefined) {
-    if (url !== undefined) browse(url);
-  }
-
-  /** Shows the Pipelines tool, or moves the focus into it where it is shown. */
-  async function focusPipelines() {
-    screen = "review";
-    bottomTool = "pipelines";
-    await tick();
-    const panel = document.querySelector<HTMLElement>('[aria-label="Pipelines"]');
-    (panel?.querySelector<HTMLElement>("[data-list]") ?? panel)?.focus();
-  }
-
-  /** Moves the focus into the Problems list once it is up. */
-  async function focusProblems() {
-    await tick();
-    document.querySelector<HTMLElement>('[aria-label="Problems"] [data-list]')?.focus();
-  }
-
-  /** Moves the focus into the Find list once it is up. */
-  async function focusFind() {
-    await tick();
-    document.querySelector<HTMLElement>('[aria-label="Find"] [data-list]')?.focus();
-  }
-
-  /** Opens a place of a result set where it was found. */
-  function openPlace(set: FindSet, place: Place, ownTab: boolean) {
-    screen = "review";
-    const { spec } = set;
-    if (spec.type === "usages") {
-      const { file, side, line, col, width } = place;
-      void controller?.openUsage({ path: file.path, side, line, col, width, external: file.external }, ownTab);
-      return;
-    }
-    void controller?.openFound({
-      path: place.file.path,
-      hunks: place.file.hunks,
-      kind: place.kind,
-      line: place.line,
-      col: place.col,
-      width: place.width,
-      scope: spec.request.scope,
-      commit: spec.scope.commit?.id,
-      ownTab,
-      options: spec.options,
-    });
-  }
-
-  /** Escape, with the focus nowhere in particular or in the timeline or the chip, goes back to all changes. */
-  function leaveScope(e: KeyboardEvent) {
-    if (e.key !== "Escape" || e.defaultPrevented || e.metaKey || e.ctrlKey || e.altKey || e.shiftKey) return;
-    if (!scope?.narrowed) return;
-    const at = e.target instanceof Element ? e.target : undefined;
-    if (at && at !== document.body && !at.closest("[data-escapes-scope]")) return;
-    e.preventDefault();
-    void changeset.showWhole();
-  }
-
-  /** Shows a thread where it is: at its code, or in the Comments tool window's Conversation tab. */
-  function openThread(thread: Thread) {
-    screen = "review";
-    if (thread.kind !== "changeset") return void controller?.goToThread(thread);
-    Object.assign(left, { tool: "comments", open: true });
-    platform.commentsTab = "conversation";
-  }
-
-  /** Does what was chosen in Search Everywhere, which has closed and given the focus back. */
-  const choiceHost: ChoiceHost = {
-    showReview: () => (screen = "review"),
-    commitShown: () => changeset.shownCommit !== undefined,
-    showWhole: async () => {
-      await changeset.showWhole();
-      await tick();
-    },
-    openOnScreen: (path, line) => void controller?.openSource(ON_SCREEN, path, line),
-    openUnpinned: (path, line) => void controller?.openSource(fileTab(path), path, line),
-    revealFile: (path) => void controller?.revealInChanges(path),
-    revealSymbol: (symbol, change) => {
-      symbols.choose(symbol, change, true);
-      void controller?.revealSymbol({ symbol, change });
-    },
-    openChangeset: (id) => {
-      if (!queue.onView || keyId(queue.onView) !== id) commands.run(`changeset.open:${id}`);
-    },
-    openThread: (id) => {
-      const thread = threads.items.find((t) => t.id === id);
-      if (thread) openThread(thread);
-    },
-    run: (command) => commands.run(command),
-  };
-
-  /** Opens the Comments tool window at the form for a comment on the changeset as a whole. */
-  function commentOnChangeset() {
-    screen = "review";
-    Object.assign(left, { tool: "comments", open: true });
-    platform.commentsTab = "conversation";
-    platform.changesetComment.composing = true;
+    if (tool === "timeline") shell.showBottom("timeline");
+    else shell.showLeft(tool);
   }
 
   function setSoftWrap(next: SoftWrap) {
@@ -653,19 +226,19 @@
     >
   {/snippet}
   {#snippet headChecks()}
-    {#if headChecksLook}
+    {#if headLook}
       <ChecksButton
-        checks={headChecksLook.head}
-        title={headChecksLook.title}
-        stale={headChecksLook.stale}
-        warn={platformSignedOut}
+        checks={headLook.head}
+        title={headLook.title}
+        stale={headLook.stale}
+        warn={platform.signedOut}
         onopen={() => void focusPipelines()}
       />
     {/if}
   {/snippet}
   {#snippet outgoingComments()}
     <!-- A changeset that is no pull request has nowhere to post to. -->
-    {#if headId !== undefined}<OutgoingButton onopen={openThread} />{/if}
+    {#if changeset.headCommit !== undefined}<OutgoingButton onopen={openThread} />{/if}
   {/snippet}
   {#snippet projectSwitcher()}
     {#if session.repo}
@@ -673,7 +246,7 @@
         name={repoName(session.repo)}
         path={session.repo}
         recent={recent.list}
-        {host}
+        host={appState.host}
         canPick={hasNativeDialogs}
       />
     {/if}
@@ -684,24 +257,22 @@
       label={target && targetLabel(target)}
       draft={target?.draft}
       title={target?.branch && `On ${target.branch}`}
-      bind:open={switcherOpen}
+      bind:open={appState.switcherOpen}
     />
   {/snippet}
   <Header
-    {screen}
+    screen={shell.screen}
     project={projectSwitcher}
     changesets={changesetSwitcher}
-    baseNote={note}
-    {scope}
+    baseNote={headerFacts.note}
+    scope={headerFacts.scope}
     onscope={versions.items.length ? () => void focusTimeline() : undefined}
     onwhole={() => void changeset.showWhole()}
     filtered={changeset.baseChanged ? baseChangedActions : undefined}
     checks={headChecks}
     outgoing={outgoingComments}
     review={changeset.facts?.review}
-    completion={changeset.shownCommit === undefined
-      ? changeset.viewCompletion
-      : (changeset.facts?.completion ?? changeset.viewCompletion)}
+    completion={changeset.shownCompletion}
     refreshing={queue.refreshing}
   />
 
@@ -711,58 +282,58 @@
     offBase={changeset.facts?.base.headOffBase ? changeset.facts.base.commit.shortId : undefined}
     pullRequest={changeset.facts?.trust.pullRequest}
     ontrust={() => void changeset.trustPullRequest()}
-    ontrustproject={() => showDialog("settings", "trust")}
+    ontrustproject={() => appState.showDialog("settings", "trust")}
   />
 
   <div class="body">
-    {#if screen === "queue"}
+    {#if shell.screen === "queue"}
       <QueueScreen
-        onopen={() => (screen = "review")}
+        onopen={() => shell.show("review")}
         onopenthread={openThread}
         onopenlog={(run) => {
-          screen = "review";
-          void controller?.openLog(run, logKey(run, undefined));
+          shell.show("review");
+          void appState.controller?.openLog(run, logKey(run, undefined));
         }}
       />
     {/if}
-    <div class="review" class:away={screen !== "review"} inert={screen !== "review"}>
+    <div class="review" class:away={shell.screen !== "review"} inert={shell.screen !== "review"}>
       <ToolRail
-        active={left.tool}
-        open={left.open}
+        active={shell.left.tool}
+        open={shell.left.open}
         badges={{
           comments: { count: unreadComments, text: `${unreadComments} new` },
           problems: { count: problems.summary?.badge ?? 0, text: problems.summary?.badgeText ?? "" },
-          pipelines: pipelineBadge,
+          pipelines: pipelineRail,
         }}
-        bottom={bottomTool ?? null}
+        bottom={shell.bottom ?? null}
       />
       <ReviewScreen
         backend={session.backend}
         {changeset}
-        leftTool={left.tool}
-        leftOpen={left.open}
-        rightTool={right.tool}
-        rightOpen={right.open}
+        leftTool={shell.left.tool}
+        leftOpen={shell.left.open}
+        rightTool={shell.right.tool}
+        rightOpen={shell.right.open}
         {softWrap}
-        bottomOpen={bottomTool !== undefined}
-        onfilter={() => showDialog("settings", "filter")}
+        bottomOpen={shell.bottom !== undefined}
+        onfilter={() => appState.showDialog("settings", "filter")}
         ontool={showTool}
-        scope={scope?.label ?? "All changes"}
-        onready={(c) => void (controller = c)}
-        onclose={() => (controller = undefined)}
+        scope={headerFacts.scope?.label ?? "All changes"}
+        onready={(c) => void (appState.controller = c)}
+        onclose={() => (appState.controller = undefined)}
       >
         {#snippet side(tool)}
           {#if tool === "symbol"}
             <SymbolPanel onopen={openLocation} />
           {:else if tool === "structure"}
             <StructurePanel
-              onjump={(symbol, removed) => void controller?.jumpToOutlineSymbol(symbol, removed)}
-              oneditor={() => controller?.focusEditor()}
+              onjump={(symbol, removed) => void appState.controller?.jumpToOutlineSymbol(symbol, removed)}
+              oneditor={() => appState.controller?.focusEditor()}
             />
           {/if}
         {/snippet}
         {#snippet bottom({ selected, select })}
-          {#if bottomTool === "timeline"}
+          {#if shell.bottom === "timeline"}
             <TimelinePanel
               versions={versions.items}
               base={changeset.facts?.base.commit}
@@ -772,39 +343,39 @@
               {selected}
               onrange={(r) => void changeset.setRange(r)}
               onselect={select}
-              onclose={() => (bottomTool = undefined)}
+              onclose={() => shell.hideBottom()}
             />
-          {:else if bottomTool === "problems"}
+          {:else if shell.bottom === "problems"}
             <ProblemsPanel
-              openFiles={controller?.openPaths ?? []}
-              currentFile={controller?.problemFile}
-              onshow={(p, jump) => void controller?.showProblem(p.path, p.line, jump)}
-              onfile={(path) => void controller?.revealFileInChanges(path)}
-              oneditor={() => controller?.focusEditor()}
-              oninstall={() => showDialog("settings", "servers")}
-              onclose={() => (bottomTool = undefined)}
+              openFiles={appState.controller?.openPaths ?? []}
+              currentFile={appState.controller?.problemFile}
+              onshow={(p, jump) => void appState.controller?.showProblem(p.path, p.line, jump)}
+              onfile={(path) => void appState.controller?.revealFileInChanges(path)}
+              oneditor={() => appState.controller?.focusEditor()}
+              oninstall={() => appState.showDialog("settings", "servers")}
+              onclose={() => shell.hideBottom()}
             />
-          {:else if bottomTool === "find" && session.backend}
+          {:else if shell.bottom === "find" && session.backend}
             <FindPanel
               backend={session.backend}
               onopen={openPlace}
-              onclose={() => (bottomTool = undefined)}
-              oneditor={() => controller?.focusEditor()}
+              onclose={() => shell.hideBottom()}
+              oneditor={() => appState.controller?.focusEditor()}
             />
-          {:else if bottomTool === "pipelines"}
+          {:else if shell.bottom === "pipelines"}
             <PipelinesPanel
-              checks={pipelineCommit === undefined ? undefined : checks.of(pipelineCommit)}
-              commit={pipelineCommit}
-              onlog={(job, run) => void controller?.openLog(job, logKey(job, run))}
+              checks={changeset.pipelineCommit === undefined ? undefined : checks.of(changeset.pipelineCommit)}
+              commit={changeset.pipelineCommit}
+              onlog={(job, run) => void appState.controller?.openLog(job, logKey(job, run))}
               onbrowser={showInBrowser}
-              onsignin={() => showDialog("settings", "accounts")}
-              oneditor={() => controller?.focusEditor()}
-              onclose={() => (bottomTool = undefined)}
+              onsignin={() => appState.showDialog("settings", "accounts")}
+              oneditor={() => appState.controller?.focusEditor()}
+              onclose={() => shell.hideBottom()}
             />
           {/if}
         {/snippet}
       </ReviewScreen>
-      <ToolRail side="right" active={right.tool} open={right.open} />
+      <ToolRail side="right" active={shell.right.tool} open={shell.right.open} />
     </div>
   </div>
 {:else if session.backend}
@@ -815,7 +386,7 @@
       recent={recent.list}
       failed={session.openError}
       canPick={hasNativeDialogs}
-      {version}
+      version={appState.version}
       onforget={(path) => void session.forget(path)}
     />
   </div>
@@ -834,13 +405,13 @@
 
 <NotificationCards />
 
-{#if dialog === "settings"}
+{#if appState.dialog === "settings"}
   <SettingsDialog
-    bind:page={settingsPage}
+    bind:page={appState.settingsPage}
     {theme}
     {softWrap}
     onsoftwrap={setSoftWrap}
-    onclose={() => (dialog = undefined)}
+    onclose={() => appState.closeDialog()}
     project={session.repo ? repoName(session.repo) : undefined}
     filter={session.repo ? changeset.facts?.filter : undefined}
     excluded={{ lines: changeset.layout?.excludedLines ?? 0, items: changeset.layout?.excludedItems ?? 0 }}
@@ -848,27 +419,27 @@
     trusted={session.repo ? changeset.facts?.trust.project : undefined}
     ontrusted={(trusted) => void changeset.setProjectTrusted(trusted)}
   />
-{:else if dialog === "about"}
-  <AboutDialog onclose={() => (dialog = undefined)} />
-{:else if dialog === "finish"}
+{:else if appState.dialog === "about"}
+  <AboutDialog onclose={() => appState.closeDialog()} />
+{:else if appState.dialog === "finish"}
   <FinishDialog
     flagged={changeset.facts?.completion.flaggedHunks ?? 0}
     ongoto={() => {
-      dialog = undefined;
+      appState.closeDialog();
       void goToFirstFlagged();
     }}
-    onclose={() => (dialog = undefined)}
+    onclose={() => appState.closeDialog()}
     onfinish={() => {
-      dialog = undefined;
+      appState.closeDialog();
       void changeset.finishReview();
     }}
   />
-{:else if dialog === "pullRequest"}
+{:else if appState.dialog === "pullRequest"}
   <OpenPullRequestDialog
     remotes={queue.sources.map((s) => s.remote)}
-    onclose={() => (dialog = undefined)}
+    onclose={() => appState.closeDialog()}
     onopen={(remote, number) => {
-      dialog = undefined;
+      appState.closeDialog();
       void changeset.openChangeset({ type: "pullRequest", remote, number });
     }}
   />
@@ -877,7 +448,7 @@
 {#if palette.open}
   <Palette
     onchoose={(choice) => void openChoice(choice, choiceHost)}
-    onsettings={() => showDialog("settings", "servers")}
+    onsettings={() => appState.showDialog("settings", "servers")}
   />
 {/if}
 
@@ -889,8 +460,8 @@
     range={changeset.range ?? defaultRange(versions.items)}
     revision={changeset.layout?.shown.revision ?? 0}
     onopen={(result) => {
-      screen = "review";
-      void controller?.openFound(result);
+      shell.show("review");
+      void appState.controller?.openFound(result);
     }}
     onkeep={(kept) => findSets.keepSearch(kept)}
   />
@@ -901,7 +472,7 @@
     const file = changeset.layoutOf(path);
     return file && letterOfStatus(file.status);
   }}
-  onsettings={() => showDialog("settings", "servers")}
+  onsettings={() => appState.showDialog("settings", "servers")}
 />
 
 {#if contextMenus.drawn}
@@ -917,10 +488,10 @@
 
 <StatusFooter
   info={footer}
-  onserver={() => showDialog("settings", "servers")}
+  onserver={() => appState.showDialog("settings", "servers")}
   onproblems={() => {
-    screen = "review";
-    bottomTool = "problems";
+    shell.show("review");
+    shell.showBottom("problems");
   }}
 >
   {#snippet progress()}<TaskProgress tasks={backgroundTasks.tasks} /><PlatformFooter />{/snippet}

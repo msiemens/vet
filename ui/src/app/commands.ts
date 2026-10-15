@@ -1,0 +1,143 @@
+// The window's commands: the registry built from the app, queue, recent, search, review, comments and
+// palette command groups, the app-wide command context, and the wiring of the result sets, the keymap
+// and the screen the project opens on. `App` registers them once before its first render.
+
+import { focusFind, focusPipelines, focusProblems, shell } from "../features/chrome";
+import { threadCommands, voteBlocked } from "../features/comments";
+import { palette, paletteCommands } from "../features/palette";
+import { copyText } from "../features/platform";
+import { queueCommands } from "../features/queue";
+import { fileCommands, reviewActions, viewCommands } from "../features/review";
+import { searchCommands } from "../features/search";
+import { recentCommands } from "../features/welcome";
+import { appCommands } from "../state/appCommands";
+import { keyId } from "../state/changesetKey";
+import { changeset } from "../state/changeset.svelte";
+import { commands } from "../state/commands";
+import { findSets } from "../state/findSets.svelte";
+import { canQuit, quit } from "../state/host";
+import { keymap } from "../state/keymap.svelte";
+import { platform } from "../state/platform.svelte";
+import { problems } from "../state/problems.svelte";
+import { queue } from "../state/queue.svelte";
+import { session } from "../state/session.svelte";
+import { threads } from "../state/threads.svelte";
+import { softWrapPreference, themePreference } from "./appPreferences.svelte";
+import { appState } from "./appState.svelte";
+import {
+  clearSemanticCaches,
+  commentOnChangeset,
+  openProject,
+  openPullRequest,
+  pickProject,
+  restartLanguageServer,
+  showChangesSinceReview,
+  showInBrowser,
+  showLog,
+} from "./actions";
+
+/** Registers the window's commands and the wiring they depend on; answers the function that takes them away. */
+export function registerCommands(): () => void {
+  const stopCommands = commands.register(
+    ...appCommands({
+      pickProject: () => void pickProject(),
+      openProject,
+      closeProject: () => void session.closeRepo(),
+      finishReview: () => (appState.dialog = "finish"),
+      changesSinceReview: () => void showChangesSinceReview(),
+      wholeChangeset: () => void changeset.showWhole(),
+      refresh: () => void queue.refresh(),
+      reconfirmAll: () => void changeset.reconfirmAll(),
+      openChangeset: (key) => void changeset.openChangeset(key),
+      showScreen: (s) => shell.show(s),
+      showChangesets: () => {
+        shell.show("review");
+        appState.switcherOpen = true;
+      },
+      openPullRequest: () => void openPullRequest(),
+      openInBrowser: (at) => showInBrowser(at ?? platform.info?.url),
+      showDialog: (d) => appState.showDialog(d),
+      showKeymap: () => appState.showDialog("settings", "keymap"),
+      showAccounts: () => appState.showDialog("settings", "accounts"),
+      showProjectSettings: () => appState.showDialog("settings", "trust"),
+      quit: () => void quit(),
+      toggleSoftWrap: () => (softWrapPreference.value = softWrapPreference.value === "never" ? "prose" : "never"),
+      toggleTool: (id) => {
+        const bottom = shell.toggle(id);
+        if (bottom === "problems") void focusProblems();
+        else if (bottom === "find") void focusFind();
+        else if (bottom === "pipelines") void focusPipelines();
+      },
+      stepProblem: (delta) => void appState.controller?.stepProblem(delta),
+      setTheme: (t) => (themePreference.value = t),
+      commentOnChangeset,
+      postComments: () => {
+        shell.show("review");
+        platform.openOutgoing(false);
+      },
+      pickVote: () => {
+        shell.show("review");
+        platform.openOutgoing(true);
+      },
+      stageVote: (verdict) => void platform.stageVote(verdict),
+      clearSemanticCaches: () => void clearSemanticCaches(),
+      showLog: () => void showLog(),
+      restartBackend: () => void session.restartBackend(),
+      restartLanguageServer: (language) => void restartLanguageServer(language),
+    }),
+    ...queueCommands({
+      open: (key) => {
+        if (!queue.onView || keyId(queue.onView) !== keyId(key)) void changeset.openChangeset(key);
+        shell.show("review");
+      },
+      copyText: (text) => void copyText(text),
+    }),
+    ...recentCommands({
+      open: (path) => {
+        if (path !== session.repo) commands.run(`file.openRecent:${path}`);
+      },
+      forget: (path) => void session.forget(path),
+    }),
+    ...searchCommands(() => appState.controller?.find.options.text),
+    ...viewCommands(reviewActions),
+    ...fileCommands(reviewActions),
+    ...threadCommands({
+      attach: (thread, at) => void threads.attach(thread, at),
+      remove: (thread) => void threads.remove(thread),
+    }),
+    ...paletteCommands({ show: (tab) => palette.show(tab) }),
+  );
+  keymap.load();
+  findSets.show = (focus) => {
+    shell.show("review");
+    shell.showBottom("find");
+    if (focus) void focusFind();
+  };
+  session.onOpen(() => shell.show("queue"));
+  session.onClose(() => {
+    palette.close();
+    findSets.reset();
+  });
+  const stopContext = commands.provide(() => ({
+    repoOpen: !!session.repo,
+    reviewOpen: changeset.reviewOpen,
+    queueShown: shell.screen === "queue",
+    paletteOpen: palette.open,
+    canQuit,
+    changesetOpen: !!session.repo && !!changeset.layout,
+    rangeShown: !!changeset.range,
+    reconfirmable: changeset.baseChangedCount > 0,
+    pullRequest: platform.info !== undefined,
+    outgoing: platform.outgoingCount,
+    voteSeparate: !!platform.traits?.verdictSeparate,
+    voteBlock: voteBlocked(platform.info),
+    manyCommits: changeset.commitCount > 1,
+    problems:
+      appState.controller?.problemFile !== undefined &&
+      problems.problemsOf([appState.controller.problemFile]).length > 0,
+  }));
+  return () => {
+    stopContext();
+    stopCommands();
+  };
+}

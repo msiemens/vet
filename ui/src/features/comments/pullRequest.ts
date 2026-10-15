@@ -65,3 +65,9 @@ export function submitBlock(connection: PlatformConnection | undefined): string 
       return undefined;
   }
 }
+
+/** Why a vote cannot be cast now, if it cannot; the message while the vote is being sent. */
+export function voteBlocked(info: PullRequestInfo | undefined): string | undefined {
+  if (info?.pendingVote?.state.type === "posting") return "The vote is being sent";
+  return info && submitBlock(info.platform.connection);
+}

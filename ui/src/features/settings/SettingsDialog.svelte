@@ -10,6 +10,7 @@
   import AccountsPage from "./AccountsPage.svelte";
   import GeneralPage from "./GeneralPage.svelte";
   import KeymapPage from "./KeymapPage.svelte";
+  import { APPLICATION, PROJECT, type Page } from "./pages";
   import ReviewFilterPage from "./ReviewFilterPage.svelte";
   import ServersPage from "./ServersPage.svelte";
   import TrustPage from "./TrustPage.svelte";
@@ -48,19 +49,6 @@
   } = $props();
 
   // A Backends page is not listed: SPEC names no setting of its own for it.
-  const APPLICATION = [
-    { id: "general", label: "General" },
-    { id: "appearance", label: "Appearance" },
-    { id: "keymap", label: "Keymap" },
-    { id: "servers", label: "Language servers" },
-    { id: "accounts", label: "Accounts" },
-  ] as const;
-  const PROJECT = [
-    { id: "trust", label: "Trust" },
-    { id: "filter", label: "Review filter" },
-  ] as const;
-  type Page = (typeof APPLICATION)[number]["id"] | (typeof PROJECT)[number]["id"];
-
   // Without a project its pages are greyed and cannot be the one shown.
   const shown = $derived<Page>(project === undefined && PROJECT.some((p) => p.id === page) ? "general" : page);
 </script>

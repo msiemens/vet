@@ -3,17 +3,7 @@ import { test } from "node:test";
 import type { CheckRun } from "../../generated/CheckRun.ts";
 import type { CommitChecks } from "../../generated/CommitChecks.ts";
 import type { Pipeline } from "../../generated/Pipeline.ts";
-import {
-  belongsTo,
-  defaultJob,
-  disabledReason,
-  headerTitle,
-  logKey,
-  rerunnable,
-  runMeta,
-  runOf,
-  runRows,
-} from "./pipelineRows.ts";
+import { belongsTo, defaultJob, disabledReason, logKey, rerunnable, runMeta, runOf, runRows } from "./pipelineRows.ts";
 
 const pipeline = (id: string, phase: Pipeline["phase"], state: Pipeline["state"], attempt = 1): Pipeline => ({
   id,
@@ -101,16 +91,6 @@ void test("the tool stays for a pull request and while the changeset loads, and 
   assert.equal(belongsTo("pullRequest"), true);
   assert.equal(belongsTo(undefined), true);
   assert.equal(belongsTo("workingTree"), false);
-});
-
-void test("the button's tooltip names what failed, and says the result is old while the platform limits requests", () => {
-  const checks = commit([job("1", { state: "failure" }), job("2", { state: "failure" })], []);
-  const failing = { ...checks, state: "failure" as const };
-  assert.equal(headerTitle(failing), "Checks failing: job 1, job 2");
-  assert.equal(
-    headerTitle({ ...failing, state: "pending" }, { until: "14:32", asOf: "14:21", platform: "GitHub" }),
-    "Checks running. GitHub is limiting requests until 14:32; as of 14:21.",
-  );
 });
 
 void test("a re-run run has a log of its own, named by its attempt", () => {

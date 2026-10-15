@@ -154,6 +154,31 @@ class ChangesetStore implements ViewSource {
     return this.baseChanged ? this.baseChangedFiles().length : 0;
   }
 
+  /** Whether a review of the changeset is open (SPEC §6: Finish review ends it). */
+  get reviewOpen(): boolean {
+    return this.facts?.review.state === "open";
+  }
+
+  /** The lens the changeset is reviewed in; none before the first manifest. */
+  get lens(): Lens | undefined {
+    return this.facts?.lens;
+  }
+
+  /** How many commits the changeset has. */
+  get commitCount(): number {
+    return this.facts?.commits ?? 0;
+  }
+
+  /** The commit on view, with its own progress; none for the whole changeset. */
+  get shownCommitUnit(): CommitUnit | undefined {
+    return this.shownCommit === undefined ? undefined : this.commits[this.shownCommit];
+  }
+
+  /** The progress the header shows: the commit on view's own, else the view's. */
+  get shownCompletion(): Completion | undefined {
+    return this.shownCommit === undefined ? this.viewCompletion : (this.facts?.completion ?? this.viewCompletion);
+  }
+
   /** The structure of a file of the view. */
   layoutOf(path: string): FileLayout | undefined {
     return this.layouts.get(path);

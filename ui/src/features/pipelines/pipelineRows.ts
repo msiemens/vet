@@ -4,7 +4,6 @@ import type { CheckPhase } from "../../generated/CheckPhase";
 import type { CheckRun } from "../../generated/CheckRun";
 import type { CommitChecks } from "../../generated/CommitChecks";
 import type { Pipeline } from "../../generated/Pipeline";
-import { CI_PASSED, ciIcon } from "../../lib/ciStatus.ts";
 
 /** A run with its jobs, in the order the platform listed them. */
 export interface RunRows {
@@ -73,16 +72,6 @@ export function disabledReason(kind: ActionKind, { run, jobs, held, busy }: Acti
 /** Whether a job can be run again on its own: it failed or was stopped, and its run is over. */
 export function rerunnable(job: CheckRun, run: Pipeline | undefined): boolean {
   return (job.state === "failure" || job.phase === "cancelled") && run !== undefined && finished(run.phase);
-}
-
-/** The tooltip of the header's button: what the checks say, and that they are old when the platform limits requests. */
-export function headerTitle(checks: CommitChecks, limited?: { until: string; asOf: string; platform: string }): string {
-  const failed = checks.runs.filter((r) => r.state === "failure").map((r) => r.name);
-  const { title } = ciIcon(checks.state) ?? CI_PASSED;
-  const base = checks.state === "failure" ? `${title}: ${failed.join(", ")}` : title;
-  return limited
-    ? `${base}. ${limited.platform} is limiting requests until ${limited.until}; as of ${limited.asOf}.`
-    : base;
 }
 
 /** A run's line beside its name: the platform's number and why it ran, and the attempt after a re-run. */
