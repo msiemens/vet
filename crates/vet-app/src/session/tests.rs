@@ -4513,7 +4513,7 @@ async fn a_pull_request_no_longer_listed_keeps_its_refs_while_it_is_on_view_or_i
     let other = (remote.clone(), 8);
     assert_eq!(
         fx.session.prunable(vec![other.clone()]).await.unwrap(),
-        [other.clone()],
+        vec![other.clone()],
         "never opened"
     );
 
@@ -4524,7 +4524,7 @@ async fn a_pull_request_no_longer_listed_keeps_its_refs_while_it_is_on_view_or_i
             .prunable(vec![(remote.clone(), 7), other.clone()])
             .await
             .unwrap(),
-        [other.clone()],
+        vec![other.clone()],
         "on view"
     );
 
@@ -4536,7 +4536,7 @@ async fn a_pull_request_no_longer_listed_keeps_its_refs_while_it_is_on_view_or_i
             .prunable(vec![(remote.clone(), 7), other.clone()])
             .await
             .unwrap(),
-        [other.clone()],
+        vec![other.clone()],
         "a review is open"
     );
 
@@ -4549,11 +4549,10 @@ async fn a_pull_request_no_longer_listed_keeps_its_refs_while_it_is_on_view_or_i
             .prunable(vec![(remote.clone(), 7), other.clone()])
             .await
             .unwrap(),
-        [(remote.clone(), 7), other],
+        vec![(remote.clone(), 7), other],
         "the review is finished"
     );
 }
-
 
 /// How far the working tree's review is, as the list says it.
 async fn tree_progress(session: &LiveSession<FakeGit, MemStore>) -> Option<ReviewSummary> {
