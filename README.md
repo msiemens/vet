@@ -1,53 +1,69 @@
 # Vet
 
-Vet is a desktop app for reviewing code changes, built for the case where most of the code is written by agents and you are the one who checks it. Its unit of work is the changeset, not the file: a working tree an agent is editing, a local branch, or a pull request on GitHub or Azure DevOps.
+<center>An Integrated Review Environment for the agentic age.</center>
 
-Vet doesn't write code and doesn't drive agents. It watches what they leave behind in git and on disk, and it helps you verify that before it is merged.
+![](docs/screenshot.png)
 
-## What it does
+Vet helps doing code reviews by providing a review-first code environment with
+full code analysis (your beloved type hints still work) while having
+first-party support for review flows: mark files as seen or flag them for
+later, draft review comments and view CI pipeline results.
 
-- **One queue for everything to review.** Working trees, local branches and pull requests, ordered by what blocks you, each with how much of it you have reviewed.
-- **Review state that survives rewrites.** What you marked as seen is tied to the content, not to line numbers. It survives amends, rebases, force-pushes and an agent's later edits. Content that changed is never silently left marked as seen.
-- **Versions.** Every settled state of a working tree, and every push to a pull request, is a version. You can review just what changed since you last looked.
-- **Real code intelligence on both sides of the diff.** Go to definition, references, hover, call hierarchy, symbols and diagnostics come from the languages' own servers (rust-analyzer, TypeScript, Svelte, Angular, Pyright, Roslyn, YAML, JSON, Bash, Dockerfile), for the base as well as the changed code.
-- **Comments where your team reads them.** Threads are synced both ways with GitHub and Azure DevOps, and stay anchored to the right lines across rebases.
-- **Safe with code you didn't write.** Pull requests from forks, and pull requests in projects you haven't marked trusted, are analysed without running any of their code until you trust them.
-- **Keyboard first.** Hunk navigation, marking seen, commenting and Search Everywhere all work from the keyboard.
+## Features
 
-The full product definition, with its invariants, is in [SPEC.md](SPEC.md).
+- **Review queue.** Pull Requests, local branches, or working trees, to find
+  what to review next.
+- **Real code intelligence on both sides of the diff.** Go to definition,
+  references, hover, call hierarchy, symbols and diagnostics come from the
+  languages' own LSP servers, for the base as well as the changed code.
+- **Problems introduced by the changeset.** Find which problems were introduced
+  by the changes you're looking at.
+- **Draft review comments before posting them.** You can write and rewrite your
+  review comments to your heart's content without anyone else seeing them until
+  you hit *publish*.
 
 ## Status
 
-Vet is a personal tool in active development, not released. It runs on macOS, Windows and WSL2, including a setup where the window runs on Windows and the backend in WSL.
+Vet is a personal tool in active development, not released. It runs on macOS
+and Windows.
 
 ## Building and running
 
-You need a Rust toolchain that supports edition 2024 (1.85 or newer), Node.js and pnpm. To use code intelligence for a language, its language server has to be installed.
+You need a Rust toolchain that supports edition 2024 (1.85 or newer), Node.js
+and pnpm. To use code intelligence for a language, its language server has to
+be installed.
 
 ```sh
 cargo build --workspace
 cd ui && pnpm install && pnpm tauri dev
 ```
 
-Vet keeps its state in the platform's data directory (`~/Library/Application Support/vet` on macOS, `~/.local/share/vet` in WSL). Running the window on Windows with the backend in WSL is described in [ui/src-tauri/README.md](ui/src-tauri/README.md#wsl-split).
+Vet keeps its state in the platform's data directory.
 
-## Checks
+## FAQ
 
-```sh
-./ci/check.sh          # everything; run it before merging
-./ci/quick.sh [BASE]   # only what changed since BASE
-```
+### Which Git hosts are supported?
 
-Both use sccache when it is installed and plain rustc otherwise. [ci/README.md](ci/README.md) lists what each one runs.
+At the moment, only GitHub and Azure DevOps.
 
-## How it is built
+### Why build this?
 
-A Rust backend does all the work: it watches the repository, keeps review state in SQLite, talks to GitHub and Azure DevOps, and runs the language servers. A Svelte window in a Tauri app only shows what the backend tells it, over a local WebSocket.
+Because why *not* build this? Given how much code agents write these days,
+the burden of reviewing this code has increased exponentially, but most of
+the widely available tooling is still built for a manual workflow where
+*writing* code is the hardest part of programming, not *reading* it. *Vet*
+is an attempt to explore a solution to this.
 
-| Path            | What                                                                                    |
-| --------------- | --------------------------------------------------------------------------------------- |
-| `crates/`       | The backend, a Cargo workspace; [ARCHITECTURE.md](ARCHITECTURE.md) describes its crates |
-| `ui/`           | The window, Svelte and CodeMirror; [ui/ARCHITECTURE.md](ui/ARCHITECTURE.md)             |
-| `ui/src-tauri/` | The Tauri app, outside the Cargo workspace ([README](ui/src-tauri/README.md))           |
-| `ci/`           | The checks ([README](ci/README.md))                                                     |
-| `tools/`        | The module-cycle checker the checks run                                                 |
+### Is it an Electron app?
+
+Despite the UI being built in TypeScript (using Svelte), there is no full
+Chromium instance that is being shipped. Instead, *Vet* is built with
+[Tauri](https://github.com/tauri-apps/tauri) which uses your OS's native
+webview, while the backend is written in Rust.
+
+### Was this vibe-coded?
+
+Let's say, it was vibe-engineered. No, I didn't read every single line of code
+that went into this project. No, that doesn't mean that *Vet* will fall apart
+at the slightest of touches. (Though it might, while still in development. Use
+at your own risk.) We're all still figuring this out, okay?
