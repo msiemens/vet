@@ -5,6 +5,7 @@
   // back when it closes, unless a click went elsewhere or `keepFocus` says what was chosen takes it;
   // Escape and a press outside close it. It sits under the header unless `place` puts it elsewhere.
   import { onDestroy, onMount, type Snippet } from "svelte";
+  import { focusScope, type FocusScope } from "./focusScope";
   import Icon from "./Icon.svelte";
   import KeyHints from "./KeyHints.svelte";
 
@@ -64,18 +65,18 @@
     foot?: Snippet;
   } = $props();
 
-  let before: Element | null = null;
+  let scope: FocusScope | undefined;
   // What was pressed outside took the focus itself.
   let pressedAway = false;
 
   onMount(() => {
-    before = document.activeElement;
+    scope = focusScope();
     (input ?? root)?.focus();
   });
   onDestroy(() => {
-    if (!pressedAway && !keepFocus && before instanceof HTMLElement && before.isConnected) {
-      before.focus({ preventScroll: true });
-    }
+    // A press or the chosen thing took the focus itself, so it is not given back.
+    if (pressedAway || keepFocus) scope?.cancel();
+    else scope?.leave(root);
   });
 
   function keys(e: KeyboardEvent) {

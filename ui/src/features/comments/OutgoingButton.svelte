@@ -3,6 +3,7 @@
   import type { Thread } from "../../generated/Thread";
   import { SUBMIT_KEY } from "../../lib/composer";
   import Icon from "../../lib/ui/Icon.svelte";
+  import { focusScope, type FocusScope } from "../../lib/ui/focusScope";
   import Menu from "../../lib/ui/Menu.svelte";
   import Popover from "../../lib/ui/Popover.svelte";
   import Spinner from "../../lib/ui/Spinner.svelte";
@@ -72,18 +73,16 @@
 
   // Keys work as soon as the list opens, and the focus goes back where it was when it closes.
   let sheet: HTMLElement | undefined;
-  let returnTo: Element | null = null;
+  let scope: FocusScope | undefined;
   // Before the list renders: the vote picker's menu takes the focus as it mounts.
   $effect.pre(() => {
-    if (platform.outgoingOpen) returnTo ??= document.activeElement;
+    if (platform.outgoingOpen) scope ??= focusScope();
   });
   $effect(() => {
     if (!platform.outgoingOpen) {
       // A focus that moved on by itself (to a thread that was opened) stays there.
-      if (returnTo instanceof HTMLElement && returnTo.isConnected && document.activeElement === document.body) {
-        returnTo.focus();
-      }
-      returnTo = null;
+      scope?.leave();
+      scope = undefined;
       return;
     }
     // The vote picker's menu takes the focus itself.

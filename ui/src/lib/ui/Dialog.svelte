@@ -2,6 +2,7 @@
   import type { Snippet } from "svelte";
   import { onMount } from "svelte";
   import { Preference } from "../preferences.svelte";
+  import { focusScope } from "./focusScope";
   import IconButton from "./IconButton.svelte";
   import ScrollArea from "./ScrollArea.svelte";
 
@@ -119,10 +120,10 @@
   }
 
   onMount(() => {
-    const opener = document.activeElement as HTMLElement | null;
+    const scope = focusScope();
     sheet.showModal();
     sheet.focus();
-    return () => opener?.focus();
+    return () => scope.leave(sheet);
   });
 </script>
 

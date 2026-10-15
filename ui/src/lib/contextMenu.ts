@@ -55,7 +55,10 @@ export async function openContextMenu(
     return;
   }
   const items = nativeItems(request.items);
-  if (!items.length) return;
+  if (!items.length) {
+    restoreFocus();
+    return;
+  }
   let id: string | null;
   try {
     id = await native(items, request.x, request.y);

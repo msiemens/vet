@@ -3,6 +3,7 @@
 
 import type { MenuSpec } from "../lib/commandMenu";
 import { type ContextMenuRequest, openContextMenu } from "../lib/contextMenu";
+import { focusScope } from "../lib/ui/focusScope";
 import { type CommandContext, commands, menuFor } from "./commands";
 import { hasNativeContextMenu, popUpNativeMenu } from "./host";
 
@@ -15,9 +16,16 @@ class ContextMenus {
     request: ContextMenuRequest,
     draw: (request: ContextMenuRequest) => void = (r) => (this.drawn = r),
   ): Promise<void> {
-    const previous = document.activeElement instanceof HTMLElement ? document.activeElement : undefined;
-    return openContextMenu(request, hasNativeContextMenu ? popUpNativeMenu : undefined, draw, () =>
-      previous?.focus({ preventScroll: true }),
+    // A menu the page draws keeps its own scope; this one is for the host's menu.
+    const scope = focusScope();
+    return openContextMenu(
+      request,
+      hasNativeContextMenu ? popUpNativeMenu : undefined,
+      (r) => {
+        scope.cancel();
+        draw(r);
+      },
+      () => scope.leave(),
     );
   }
 
