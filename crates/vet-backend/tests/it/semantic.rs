@@ -7,8 +7,9 @@ use std::process::Command;
 use std::sync::Arc;
 use std::time::Duration;
 
-use crate::common::{Client, config, find, git, repo_with, write};
+use crate::common::{Client, config, find, git, init, repo_with, write};
 use vet_backend::{Config, Orchestrator, open_store};
+use vet_core::content::BlobId;
 use vet_protocol::{
     CallFate, ChangesetKey, Event, LocationChange, ProjectId, Reach, Request, Response, ServerMessage, ServerState,
     Serving, Side, SymbolChange, SymbolId, SymbolKind, SymbolName, UnavailableKind, View,
@@ -1035,5 +1036,125 @@ pub fn main() -> u32 {
     assert_eq!(defs.locations.len(), 1, "{defs:?}");
     assert_eq!(defs.locations[0].path, path);
     assert_eq!(defs.locations[0].span.start.line, 4);
+    assert!(!defs.locations[0].external);
+}
+
+/// A definition that names a file the revision kept no copy of is asked again at the
+/// newer revision (D97): the answer the server read from the disk holds the worktree's
+/// newer positions and reaches nobody, when the worktree moves on while the question
+/// waits. A file the revision has a copy of is answered from it, once.
+///
+/// The copy is made to fail on purpose: the store's path for that file's blob is
+/// occupied by a directory, so the store reports the blob as held and never writes it
+/// again, yet cannot read it, and the revision keeps no readable copy of the file.
+#[tokio::test]
+#[ignore = "needs rust-analyzer"]
+async fn a_definition_of_a_file_the_worktree_moved_is_asked_again_at_the_newer_revision() {
+    /// The revision's text; the call sits on the first line of every state, so the
+    /// position the question is asked at is the revision's.
+    const HEAD: &str = "pub fn call() -> u32 { target() }\npub fn target() -> u32 { 0 }\n";
+    const FRESH: &str = "pub fn call() -> u32 { target() }\npub fn target() -> u32 { 1 }\n";
+    const COPIED: &str = "pub fn call() -> u32 { target() }\npub fn target() -> u32 { 10 }\n";
+    // The worktree moves on: the call stays where it is, the target moves further down.
+    const FRESH_MOVED: &str = "pub fn call() -> u32 { target() }\n// one\n// two\npub fn target() -> u32 { 2 }\n";
+    const FRESH_AGAIN: &str =
+        "pub fn call() -> u32 { target() }\n// one\n// two\n// three\n// four\npub fn target() -> u32 { 3 }\n";
+    const COPIED_MOVED: &str = "pub fn call() -> u32 { target() }\n// moved\npub fn target() -> u32 { 11 }\n";
+
+    let repo = tempfile::tempdir().unwrap();
+    init(repo.path());
+    write(repo.path(), ".gitignore", "target/\n");
+    write(
+        repo.path(),
+        "Cargo.toml",
+        "[package]\nname = \"tiny\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+    );
+    write(repo.path(), "src/lib.rs", "pub mod copied;\npub mod fresh;\n");
+    write(repo.path(), "src/fresh.rs", HEAD);
+    write(repo.path(), "src/copied.rs", HEAD);
+    let lock = Command::new("cargo")
+        .args(["generate-lockfile", "--offline"])
+        .current_dir(repo.path())
+        .output()
+        .unwrap();
+    assert!(lock.status.success(), "{}", String::from_utf8_lossy(&lock.stderr));
+    git(repo.path(), &["add", "-A"]);
+    git(repo.path(), &["commit", "-q", "-m", "base"]);
+    // The edits stay uncommitted: no git object holds their text (§6.1).
+    write(repo.path(), "src/fresh.rs", FRESH);
+    write(repo.path(), "src/copied.rs", COPIED);
+
+    let data = tempfile::tempdir().unwrap();
+    let handler = Arc::new(Orchestrator::new(
+        open_store(data.path()).await.unwrap(),
+        Config {
+            // The worktree's moves settle well after the question has read them.
+            debounce: Duration::from_secs(20),
+            quiet: Duration::from_secs(3600),
+            ..config()
+        },
+    ));
+    let client = Client::new(&handler);
+    let project = client.open(repo.path()).await;
+    let revision = client.revision(project).await;
+
+    // The store cannot read the revision's copy of `fresh.rs`, however it is asked.
+    let hex = BlobId::of(FRESH.as_bytes()).0.to_hex();
+    let blocked = data.path().join("content").join(&hex[..2]).join(&hex[2..]);
+    std::fs::create_dir_all(blocked).unwrap();
+
+    // A file the revision has a copy of is served from it, at the revision's line.
+    write(repo.path(), "src/copied.rs", COPIED_MOVED);
+    let copied = client
+        .definition(
+            project,
+            revision,
+            Side::Target,
+            "src/copied.rs",
+            find(COPIED, "target()", 0, 1),
+        )
+        .await;
+    assert_eq!(copied.revision, revision, "the copy of the revision answers");
+    assert_eq!(copied.locations.len(), 1, "{copied:?}");
+    assert_eq!(copied.locations[0].path, "src/copied.rs");
+    assert_eq!(
+        copied.locations[0].span.start.line, 1,
+        "the revision's line, not the worktree's"
+    );
+
+    // `fresh.rs` moves on, so the server reads the worktree, not the revision.
+    write(repo.path(), "src/fresh.rs", FRESH_MOVED);
+    let asked = client.definition(
+        project,
+        revision,
+        Side::Target,
+        "src/fresh.rs",
+        find(FRESH, "target()", 0, 1),
+    );
+    let moved = async {
+        // The first answer is read from `FRESH_MOVED` before the next move.
+        tokio::time::sleep(Duration::from_secs(1)).await;
+        write(repo.path(), "src/fresh.rs", FRESH_AGAIN);
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(60);
+        loop {
+            if client.revision(project).await > revision {
+                break;
+            }
+            assert!(tokio::time::Instant::now() < deadline, "the revision did not move");
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
+    };
+    let (defs, ()) = tokio::join!(asked, moved);
+    assert_eq!(
+        defs.revision,
+        revision + 1,
+        "the newer revision answers, not the one that was asked"
+    );
+    assert_eq!(defs.locations.len(), 1, "{defs:?}");
+    assert_eq!(defs.locations[0].path, "src/fresh.rs");
+    assert_eq!(
+        defs.locations[0].span.start.line, 5,
+        "the newer revision's line, not the moved worktree's"
+    );
     assert!(!defs.locations[0].external);
 }
