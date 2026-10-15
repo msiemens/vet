@@ -625,6 +625,47 @@ async fn a_pull_request_comes_with_its_iterations_as_pushes_and_the_merge_base()
 }
 
 #[tokio::test]
+async fn a_head_the_iterations_have_moved_past_is_named_by_the_newest_iteration() {
+    set_now(NOW);
+    let fake = Fake::start(|request, _| {
+        let path = request.path.split('?').next().unwrap();
+        if path.ends_with("/_apis/connectionData") {
+            Canned::json(&profile())
+        } else if path == "/contoso/_apis/identities" || path.ends_with("/statuses") || path.ends_with("/threads") {
+            Canned::json(&no_value())
+        } else if path.ends_with("/iterations") {
+            let iteration = |id: i32, source: &str| {
+                json!({ "id": id, "reason": "push", "createdDate": "2024-04-02T10:00:00Z",
+                    "sourceRefCommit": { "commitId": source },
+                    "commonRefCommit": { "commitId": "base" } })
+            };
+            Canned::json(&json!({ "count": 2, "value": [iteration(1, "a1"), iteration(2, "a2")] }).to_string())
+        } else if path == format!("{PULLS}/7") {
+            // The pull request's own `lastMergeSourceCommit` still names the older state.
+            let mut doc = Doc::new(7).json();
+            doc["head"] = json!("a1");
+            doc["lastMergeSourceCommit"] = json!({ "commitId": "a1" });
+            Canned::json(&doc.to_string())
+        } else {
+            Canned::status(
+                404,
+                r#"{"message":"TF401180: The requested pull request was not found."}"#,
+            )
+        }
+    });
+    let detail = client(&fake).pull_request(&remote(), 7).await.unwrap();
+
+    assert_eq!(
+        detail.pull_request.head, "a2",
+        "the newest recorded push names the head, not the stale lastMergeSourceCommit"
+    );
+    assert_eq!(
+        detail.pushes.iter().map(|p| p.head.as_str()).collect::<Vec<_>>(),
+        ["a1", "a2"]
+    );
+}
+
+#[tokio::test]
 async fn a_personal_token_is_the_password_of_a_user_with_no_name_and_a_cli_token_a_bearer() {
     set_now(NOW);
     let fake = repository(vec![], vec![], vec![]);

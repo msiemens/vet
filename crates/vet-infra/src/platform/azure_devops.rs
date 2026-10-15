@@ -608,6 +608,12 @@ impl<C: CredentialProvider + Sync> Platform for AzureDevOpsClient<C> {
         .await?;
 
         let (base, pushes) = wire::pushes(&iterations, &pull_request.head);
+        // The newest state the platform recorded names the head. Azure DevOps' own
+        // `lastMergeSourceCommit` can lag the newest iteration, and with it the fetched head, which
+        // for a source branch fetched by commit left the push unseen.
+        if let Some(newest) = pushes.last() {
+            pull_request.head.clone_from(&newest.head);
+        }
         {
             let mut state = self.state();
             for push in &pushes {

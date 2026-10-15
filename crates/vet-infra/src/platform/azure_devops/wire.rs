@@ -269,8 +269,10 @@ pub(super) fn last_activity(
         .fold(created, i64::max)
 }
 
-/// The states of the source branch the iterations record, oldest first, ending in
-/// `head`; and the merge base of the latest.
+/// The states of the source branch the iterations record, oldest first, with `head` (the pull
+/// request's `lastMergeSourceCommit`) added last when the iterations do not already have it; and
+/// the merge base of the latest. Azure DevOps leaves `lastMergeSourceCommit` behind the newest
+/// iteration it recorded sometimes, so a state the iterations have is never displaced by it.
 pub(super) fn pushes(iterations: &[GitPullRequestIteration], head: &str) -> (Option<String>, Vec<Push>) {
     let mut ordered: Vec<&GitPullRequestIteration> = iterations.iter().collect();
     ordered.sort_by_key(|i| i.id);
@@ -294,7 +296,9 @@ pub(super) fn pushes(iterations: &[GitPullRequestIteration], head: &str) -> (Opt
             }),
         }
     }
-    if pushes.last().is_none_or(|last| last.head != head) {
+    // The pull request's own commit is a state the iterations do not have (the platform names a
+    // push before it lists it): it joins them, last, as the newest.
+    if !pushes.iter().any(|p| p.head == head) {
         pushes.push(Push {
             head: head.to_owned(),
             at: None,
