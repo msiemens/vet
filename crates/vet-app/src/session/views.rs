@@ -226,6 +226,18 @@ pub struct ManifestView {
     pub changeset_completion: Completion,
 }
 
+/// What differs between one version of a review and the current one, as the interdiff of the two
+/// compares them: a change taken back and what only a base move explains count for nothing.
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub struct ChangesSince {
+    /// The earlier version.
+    pub from: u32,
+    /// The current version.
+    pub to: u32,
+    /// The files that differ between the two.
+    pub files: Vec<RepoPath>,
+}
+
 /// What an interdiff view says about itself beyond its files.
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub struct InterdiffView {

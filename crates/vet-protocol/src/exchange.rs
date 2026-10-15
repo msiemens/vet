@@ -36,6 +36,7 @@ pub const EXCHANGES: &[(&str, &str)] = &[
     ("finishReview", "reviewFinished"),
     ("tasks", "tasks"),
     ("versions", "versions"),
+    ("changedSince", "changedFiles"),
     ("commits", "commits"),
     ("setLens", "done"),
     ("manifest", "manifest"),

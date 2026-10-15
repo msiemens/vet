@@ -127,6 +127,7 @@ pub fn effect(request: &Request) -> Effect {
         | Request::PipelineSteps { .. }
         | Request::Tasks { .. }
         | Request::Versions { .. }
+        | Request::ChangedSince { .. }
         | Request::Commits { .. }
         | Request::Manifest { .. }
         | Request::FileContents { .. }
@@ -379,6 +380,7 @@ mod tests {
             Request::FinishReview { project },
             Request::Tasks { project },
             Request::Versions { project },
+            Request::ChangedSince { project, from: 1 },
             Request::Commits { project },
             Request::SetLens {
                 project,

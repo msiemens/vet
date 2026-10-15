@@ -56,7 +56,7 @@
     return item?.kind === "place" ? item.place : undefined;
   });
   const stale = $derived(!!set && findSets.stale(set));
-  const moved = $derived<ReadonlySet<string>>(set && stale ? findSets.changedFiles(set) : new Set());
+  const moved = $derived<ReadonlySet<string>>(set && stale ? set.changed : new Set());
   const files = $derived(new Set(shown.map((p) => p.file.path)).size);
   const notSeen = $derived(shown.filter((p) => p.review === "unseen" || p.review === "old").length);
   const cut = $derived(

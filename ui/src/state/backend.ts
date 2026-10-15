@@ -352,6 +352,15 @@ export class Backend {
     return (await this.call({ type: "versions", project: this.pid })).versions;
   }
 
+  /**
+   * The files of the open review that differ between version `from` and the current version, as
+   * the interdiff of the two compares them. `from` must be an earlier version.
+   */
+  async changedSince(from: number): Promise<{ from: number; to: number; files: string[] }> {
+    const { from: at, to, files } = await this.call({ type: "changedSince", project: this.pid, from });
+    return { from: at, to, files };
+  }
+
   /** The commits of the changeset on view with their own progress, oldest first; none for the working tree. */
   async commits(): Promise<{ revision: number; commits: CommitUnit[] }> {
     const { revision, commits } = await this.call({ type: "commits", project: this.pid });

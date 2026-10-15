@@ -3,7 +3,7 @@ import { test } from "node:test";
 import type { SearchScope } from "../generated/SearchScope.ts";
 import type { View } from "../generated/View.ts";
 import type { Place } from "./foundPlace.ts";
-import { changedSince, diffRuns, isStale, linesToLocate, ranVersion, relocated, slotFor } from "./findRuns.ts";
+import { diffRuns, isStale, linesToLocate, ranVersion, relocated, slotFor } from "./findRuns.ts";
 
 void test("a result replaces the first tab that is not pinned, opens a new one when all are pinned, and reruns the same query", () => {
   const sets = [
@@ -47,17 +47,6 @@ void test("only the target lines of the file are looked up, each once and in ord
     ({ ...at(path, "x"), file: { path }, line, side }) as Place;
   const places = [p("a.rs", 9), p("a.rs", 2), p("a.rs", 9), p("a.rs", 4, "base"), p("b.rs", 1)];
   assert.deepEqual(linesToLocate(places, "a.rs"), [2, 9]);
-});
-
-void test("the files changed since a set ran are those of the versions after it", () => {
-  const versions = [
-    { n: 1, files: [{ path: "a.rs" }] },
-    { n: 2, files: [{ path: "b.rs" }, { path: "c.rs" }] },
-    { n: 3, files: [{ path: "b.rs" }] },
-  ];
-  assert.deepEqual([...changedSince(versions, 1)].sort(), ["b.rs", "c.rs"]);
-  assert.deepEqual([...changedSince(versions, 3)], []);
-  assert.deepEqual([...changedSince(versions, undefined)], []);
 });
 
 void test("a run is of the latest version, but a search of an interdiff is of its newer end", () => {

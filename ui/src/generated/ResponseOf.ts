@@ -33,6 +33,7 @@ export const RESPONSE_TAG = {
   finishReview: "reviewFinished",
   tasks: "tasks",
   versions: "versions",
+  changedSince: "changedFiles",
   commits: "commits",
   setLens: "done",
   manifest: "manifest",

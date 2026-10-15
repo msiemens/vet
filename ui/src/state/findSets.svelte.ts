@@ -12,7 +12,7 @@ import type { SearchQuery, SearchResults } from "./backend";
 import { changeset } from "./changeset.svelte";
 import { type ChangedFile, type Place, placesFromRows, placesFromSearch } from "./foundPlace";
 import { type Filters, NO_FILTERS } from "./findRows";
-import { changedSince, diffRuns, isStale, linesToLocate, ranVersion, slotFor } from "./findRuns";
+import { diffRuns, isStale, linesToLocate, ranVersion, slotFor } from "./findRuns";
 import { atRevision } from "./revision";
 import { session } from "./session.svelte";
 import { versions } from "./versions.svelte";
@@ -90,6 +90,8 @@ export class FindSet {
   hasRun = $state(false);
   /** Where the places of the files changed since the run are now, by place id. */
   moves = $state.raw<ReadonlyMap<string, MappedLine>>(new SvelteMap());
+  /** The files that differ between the version the set ran at and the current one, from the backend. */
+  changed = $state.raw<ReadonlySet<string>>(new SvelteSet());
   /** The revision `moves` was asked for. */
   located?: number;
 
@@ -134,11 +136,6 @@ class FindSets {
     return ranVersion(spec.type === "search" ? spec.request.scope : undefined, versions.items.at(-1)?.n);
   }
 
-  /** The files versions after the one `set` ran on changed. */
-  changedFiles(set: FindSet): ReadonlySet<string> {
-    return changedSince(versions.items, set.ran.version);
-  }
-
   stale(set: FindSet): boolean {
     return isStale({ done: set.phase === "done", commit: set.commit, revision: set.ran.revision }, this.revision);
   }
@@ -154,8 +151,16 @@ class FindSets {
     if (!backend || from === undefined || revision === undefined || set.located === revision || !this.stale(set))
       return;
     set.located = revision;
+    let changed: ReadonlySet<string> = new SvelteSet();
+    try {
+      changed = new SvelteSet((await backend.changedSince(from)).files);
+    } catch {
+      // A version whose content is gone: the lines are not looked up.
+    }
+    if (set.located !== revision) return;
+    set.changed = changed;
     const moves = new SvelteMap<string, MappedLine>();
-    for (const path of this.changedFiles(set)) {
+    for (const path of changed) {
       const lines = linesToLocate(set.places, path);
       if (!lines.length) continue;
       try {
@@ -231,6 +236,7 @@ class FindSets {
     const { fresh, gone } = before ? diffRuns(before, set.places) : { fresh: new SvelteSet<string>(), gone: 0 };
     set.fresh = fresh;
     set.moves = new SvelteMap();
+    set.changed = new SvelteSet();
     set.located = undefined;
     set.rerun = before ? { fresh: fresh.size, gone } : undefined;
     if (!set.places.some((p) => p.id === set.selected)) set.selected = undefined;

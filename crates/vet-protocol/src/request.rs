@@ -202,6 +202,13 @@ pub enum Request {
     Versions {
         project: ProjectId,
     },
+    /// The files of the open review that differ between version `from` and the current version,
+    /// compared as the interdiff of the two compares them. Fails if no review is open or there is
+    /// no such version. Answers with `Response::ChangedFiles`.
+    ChangedSince {
+        project: ProjectId,
+        from: u32,
+    },
     /// The commits of the changeset on view, oldest first, each with its own diff and progress,
     /// and the lens the changeset is reviewed in. The working tree has none. Answers with
     /// `Response::Commits`.

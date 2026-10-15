@@ -60,7 +60,7 @@ error: string | null,
 /**
  * Unix seconds: the platform limits requests until then, which is why `error` is set.
  */
-limitedUntil: number | null, } | { "type": "checkLog" } & CheckLog | { "type": "pipelineSteps", steps: Array<PipelineStep>, } | { "type": "pipelineChanged", outcome: PipelineOutcome, } | { "type": "versions", versions: Array<VersionInfo>, } | { "type": "commits", revision: number, lens: Lens, commits: Array<CommitUnit>, } | { "type": "manifest" } & Manifest | { "type": "fileContents", revision: number, base: string | null, target: string | null, 
+limitedUntil: number | null, } | { "type": "checkLog" } & CheckLog | { "type": "pipelineSteps", steps: Array<PipelineStep>, } | { "type": "pipelineChanged", outcome: PipelineOutcome, } | { "type": "versions", versions: Array<VersionInfo>, } | { "type": "changedFiles", from: number, to: number, files: Array<string>, } | { "type": "commits", revision: number, lens: Lens, commits: Array<CommitUnit>, } | { "type": "manifest" } & Manifest | { "type": "fileContents", revision: number, base: string | null, target: string | null, 
 /**
  * The changed ranges of the hunks in order, down to the words that differ within a
  * replaced region: line-snapped, one block per hunk (see [`TextChange`]).

@@ -1509,6 +1509,54 @@ async fn a_version_that_only_moves_the_base_changed_nothing_the_author_did() {
 }
 
 #[tokio::test]
+async fn what_changed_since_the_reviewed_version_leaves_out_a_change_taken_back() {
+    let fx = Fixture::open(
+        &[
+            ("a.txt", "a0\n"),
+            ("b.txt", "b0\n"),
+            ("c.txt", "c0\n"),
+            ("d.txt", "d0\n"),
+        ],
+        &[
+            ("a.txt", "a1\n"),
+            ("b.txt", "b0\n"),
+            ("c.txt", "c0\n"),
+            ("d.txt", "d0\n"),
+        ],
+    )
+    .await;
+    fx.begin().await;
+    let revision = fx.session.revision().await;
+    fx.session.set_seen(revision, "a.txt", &[0], true).await.unwrap();
+
+    // Version 2 changes b.txt and d.txt; version 3 takes b.txt back and changes c.txt, so d.txt
+    // and c.txt differ from version 1 while b.txt, changed and changed back, does not.
+    fx.settle(&[
+        ("a.txt", "a1\n"),
+        ("b.txt", "b1\n"),
+        ("c.txt", "c0\n"),
+        ("d.txt", "d1\n"),
+    ])
+    .await;
+    fx.settle(&[
+        ("a.txt", "a1\n"),
+        ("b.txt", "b0\n"),
+        ("c.txt", "c1\n"),
+        ("d.txt", "d1\n"),
+    ])
+    .await;
+
+    let since = fx.session.changed_since(1).await.unwrap();
+    let files: Vec<String> = since.files.iter().map(|p| p.to_string_lossy()).collect();
+    assert_eq!(
+        files,
+        ["c.txt", "d.txt"],
+        "a change taken back and an unchanged file count for nothing"
+    );
+    assert_eq!((since.from, since.to), (1, 3));
+}
+
+#[tokio::test]
 async fn the_working_tree_keeps_the_head_it_was_opened_at_as_its_base() {
     let fx = Fixture::open(&[("a.txt", "one\n")], &[("a.txt", "two\n")]).await;
     fx.git.add_branch("feature", true, "head", &[]);

@@ -41,15 +41,6 @@ export function ranVersion(searched: SearchScope | undefined, latest: number | u
   return searched?.type === "view" && searched.view.type === "interdiff" ? searched.view.to : latest;
 }
 
-/** The files that versions after `since` changed: what a set run on version `since` may be wrong about. */
-export function changedSince(
-  versions: readonly { n: number; files: readonly { path: string }[] }[],
-  since: number | undefined,
-): ReadonlySet<string> {
-  if (since === undefined) return new Set();
-  return new Set(versions.filter((v) => v.n > since).flatMap((v) => v.files.map((f) => f.path)));
-}
-
 /**
  * The place as it is opened once the lines of its file may have moved: at the line `moved` says. Only
  * a target line of a changed file is looked up; a line an edit replaced has no match to select.

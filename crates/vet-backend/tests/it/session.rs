@@ -1411,6 +1411,40 @@ async fn a_review_starts_with_the_first_mark_and_finishing_returns_to_browsing()
     ));
 }
 
+#[tokio::test]
+async fn what_changed_since_a_version_is_the_interdiff_not_the_union_of_pushes() {
+    let dirty = text(30, &[3]);
+    let fx = fixture(&[("a.txt", &text(30, &[]))], &[("a.txt", &dirty)]).await;
+    let mut one = Client::new(&fx.handler);
+    let project = open(&one, fx.repo.path()).await;
+
+    one.toggle_hunk(project, 0, 0).await; // Version 1, marked seen.
+
+    // Version 2 changes a line and version 3 takes it back.
+    write(fx.repo.path(), "a.txt", &text(30, &[3, 10]));
+    one.settled().await;
+    write(fx.repo.path(), "a.txt", &text(30, &[3]));
+    one.settled().await;
+
+    let Response::ChangedFiles { from, to, files } =
+        one.call(Request::ChangedSince { project, from: 1 }).await.unwrap()
+    else {
+        panic!("not changed files");
+    };
+    assert_eq!((from, to), (1, 3));
+    assert!(files.is_empty(), "a change taken back is no change: {files:?}");
+
+    // Version 4 really changes a line, which counts.
+    write(fx.repo.path(), "a.txt", &text(30, &[3, 20]));
+    one.settled().await;
+    let Response::ChangedFiles { to, files, .. } = one.call(Request::ChangedSince { project, from: 1 }).await.unwrap()
+    else {
+        panic!("not changed files");
+    };
+    assert_eq!(to, 4);
+    assert_eq!(files, ["a.txt"]);
+}
+
 /// `main` gained `c.txt` after `feature` split off and `feature` added `b.txt`. Leaves `main` checked out.
 async fn diverged(fx: &Fixture) -> String {
     let p = fx.repo.path();

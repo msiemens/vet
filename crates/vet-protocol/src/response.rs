@@ -96,6 +96,13 @@ pub enum Response {
     Versions {
         versions: Vec<VersionInfo>,
     },
+    /// The answer to `ChangedSince`: the files of the changeset that differ between version `from`
+    /// and the current version `to`, compared as the interdiff of the two compares them.
+    ChangedFiles {
+        from: u32,
+        to: u32,
+        files: Vec<String>,
+    },
     /// The answer to `Commits`, at `revision`.
     Commits {
         revision: u32,

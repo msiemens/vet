@@ -8,7 +8,6 @@ import type { PullRequestRow } from "../../generated/PullRequestRow";
 import type { Reviewer } from "../../generated/Reviewer";
 import type { RowReview } from "../../generated/RowReview";
 import type { Thread } from "../../generated/Thread";
-import type { VersionInfo } from "../../generated/VersionInfo";
 import { ciIcon } from "../../lib/ciStatus.ts";
 import { count, plural } from "../../lib/format.ts";
 import { type QueueRow, authorOf, sourceText, updatedText } from "./queueRows.ts";
@@ -131,11 +130,12 @@ export function reviewSummary(input: {
   files?: number;
   asked: boolean;
   base?: { branch?: string; shortId: string };
-  versions: readonly Pick<VersionInfo, "n" | "files">[];
+  /** What differs between the reviewed version and the current one, from the backend. */
+  changesSince?: { from: number; to: number; files: number };
   /** What a new version is called, singular and plural: the pushes of a pull request. */
   noun: readonly [string, string];
 }): ReviewSummary {
-  const { review, completion, files, asked, base, versions, noun } = input;
+  const { review, completion, files, asked, base, changesSince, noun } = input;
   const state = { none: "Not started", open: "In progress", finished: "Finished" }[review.state];
   const progress = completion ?? (review.state === "open" ? review.progress : undefined);
   let detail = "";
@@ -156,14 +156,11 @@ export function reviewSummary(input: {
   };
   if (review.state === "open" && progress) summary.percent = Math.round(progress.seenPercent);
   if (base) summary.base = `Base ${base.branch ? `${base.branch} · ` : ""}${base.shortId}`;
-  const reviewed = review.state === "open" ? review.lastReviewed : undefined;
-  if (review.state === "open" && reviewed !== undefined && reviewed < review.version) {
-    const since = versions.filter((v) => v.n > reviewed);
-    const changed = new Set(since.flatMap((v) => v.files.map((f) => f.path))).size;
+  if (review.state === "open" && changesSince) {
     const older = completion?.oldBaseLines ?? 0;
     summary.pushes =
-      `${plural(review.version - reviewed, ...noun)} since you last reviewed ` +
-      `(v${reviewed} → v${review.version}): ${plural(changed, "file")} changed` +
+      `${plural(changesSince.to - changesSince.from, ...noun)} since you last reviewed ` +
+      `(v${changesSince.from} → v${changesSince.to}): ${plural(changesSince.files, "file")} changed` +
       (older > 0 ? `, and ${plural(older, "line")} you had seen changed again` : "");
   }
   if (completion && completion.oldBaseLines > 0) {

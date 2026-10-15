@@ -68,7 +68,6 @@ const completion = (over: Partial<Completion> = {}): Completion => ({
 const input = (over: Partial<Parameters<typeof reviewSummary>[0]> = {}): Parameters<typeof reviewSummary>[0] => ({
   review: { state: "none" },
   asked: false,
-  versions: [],
   noun: ["push", "pushes"],
   ...over,
 });
@@ -89,21 +88,16 @@ void test("a review in progress says how far it is, with what was seen against a
 });
 
 void test("the pushes since the last review count their files once and the lines seen again", () => {
-  const file = (path: string) => ({ path, delta: { added: 1, removed: 0 } });
   const s = reviewSummary(
     input({
       review: open(),
       completion: completion(),
-      versions: [
-        { n: 2, files: [file("old.rs")] },
-        { n: 3, files: [file("a.rs"), file("b.rs")] },
-        { n: 4, files: [file("a.rs")] },
-      ],
+      changesSince: { from: 2, to: 5, files: 2 },
     }),
   );
   assert.equal(
     s.pushes,
-    "2 pushes since you last reviewed (v2 → v4): 2 files changed, and 164 lines you had seen changed again",
+    "3 pushes since you last reviewed (v2 → v5): 2 files changed, and 164 lines you had seen changed again",
   );
   assert.equal(reviewSummary(input({ review: open({ lastReviewed: 4 }), completion: completion() })).pushes, undefined);
 });

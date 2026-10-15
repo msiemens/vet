@@ -32,6 +32,13 @@ impl Orchestrator {
         Ok(mapping::versions(&versions))
     }
 
+    pub(crate) async fn changed_since(&self, project: ProjectId, from: u32) -> Result<Response> {
+        let changed = self
+            .asking(project, async |session| session.changed_since(from).await)
+            .await?;
+        Ok(mapping::changed_files(&changed))
+    }
+
     pub(crate) async fn commits(&self, project: ProjectId) -> Result<Response> {
         let list = self.asking(project, async |session| session.commits().await).await?;
         Ok(mapping::commits(&list))

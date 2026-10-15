@@ -14,11 +14,11 @@ use vet_app::ports::{CommitInfo, Degraded};
 use vet_app::pull_request::PullRequestList;
 use vet_app::search::{FoundLine, LineKind, SearchFilters, SearchPattern, SearchSide};
 use vet_app::session::{
-    BaseDiffKind, BaseDiffView, BaseView, Blocker, ChangesetList, CommentAt, CommentSpot, CommitKind, CommitsView,
-    DirEntryKind, DirListing, DiscussionView, EntryInfo, ExcludedBy, ExcludedGroup, FileListing, FileStatus, FileView,
-    ItemBlob, ItemView, Lifecycle, ManifestView, ModeChange, NewThread, NoText, PatternMatch, PatternMatches,
-    ReviewUpdateView, ReviewView, RowReview, SearchResult, SearchScope, SubmitReport, SyncNotice, TargetText,
-    ThreadView, ThreadsView, VersionView, View, VoteSent,
+    BaseDiffKind, BaseDiffView, BaseView, Blocker, ChangesSince, ChangesetList, CommentAt, CommentSpot, CommitKind,
+    CommitsView, DirEntryKind, DirListing, DiscussionView, EntryInfo, ExcludedBy, ExcludedGroup, FileListing,
+    FileStatus, FileView, ItemBlob, ItemView, Lifecycle, ManifestView, ModeChange, NewThread, NoText, PatternMatch,
+    PatternMatches, ReviewUpdateView, ReviewView, RowReview, SearchResult, SearchScope, SubmitReport, SyncNotice,
+    TargetText, ThreadView, ThreadsView, VersionView, View, VoteSent,
 };
 use vet_app::trust::{Origin, Trust};
 use vet_core::completion::{Completion, HunkState};
@@ -150,6 +150,14 @@ pub fn versions(versions: &[VersionView]) -> p::Response {
                     .collect(),
             })
             .collect(),
+    }
+}
+
+pub fn changed_files(c: &ChangesSince) -> p::Response {
+    p::Response::ChangedFiles {
+        from: c.from,
+        to: c.to,
+        files: c.files.iter().map(|path| path.to_string_lossy()).collect(),
     }
 }
 

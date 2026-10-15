@@ -14,7 +14,7 @@ use vet_core::review::{ReviewedSpan, Side};
 use super::derived::{Compared, Interdiff};
 use super::manifest::{excluded_groups, file_views, target_view};
 use super::state::{Interdiffed, Shown, State, ack_of, find_diff, find_non_text, lifecycle_of, shown_items};
-use super::views::{InterdiffView, ManifestView, ReviewUpdateView, ReviewView};
+use super::views::{ChangesSince, InterdiffView, ManifestView, ReviewUpdateView, ReviewView};
 use super::{LiveSession, Result, SessionError};
 use crate::changeset::{Snapshots, Version, VersionChange};
 use crate::ports::{GitRepo, LiveStore};
@@ -99,6 +99,46 @@ impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> L
             from: a,
             to: b,
         })
+    }
+
+    /// The files that differ between the version `from` and the current one, as the interdiff of
+    /// the two compares them ([`ChangesSince`]): a change taken back and what only a base move
+    /// explains count for nothing. Empty when `from` is not earlier than the current version; fails
+    /// when no review is open.
+    pub(super) async fn changes_since(&self, st: &State, from: u32) -> Result<ChangesSince> {
+        let Some(review) = &st.review else {
+            return Err(SessionError::Invalid(
+                "versions are recorded once a review has started".into(),
+            ));
+        };
+        let to = review.version;
+        if from >= to {
+            return Ok(ChangesSince {
+                from,
+                to,
+                files: Vec::new(),
+            });
+        }
+        let asked = self.interdiffing(st, from, to).await?;
+        let compared = self.interdiff_of(asked.key.clone()).await?;
+        Ok(ChangesSince {
+            from,
+            to,
+            files: compared
+                .diffed
+                .diff
+                .changed_files()
+                .into_iter()
+                .map(|(path, _)| path)
+                .collect(),
+        })
+    }
+
+    /// As [`changes_since`](Self::changes_since) for the state currently published: what differs
+    /// between version `from` and the current version. Fails when no review is open.
+    pub async fn changed_since(&self, from: u32) -> Result<ChangesSince> {
+        let st = self.published.read();
+        self.changes_since(&st, from).await
     }
 
     /// The manifest of the interdiff `id`.
@@ -421,6 +461,25 @@ mod tests {
             1,
             "the changeset itself still has the author's change"
         );
+    }
+
+    #[tokio::test]
+    async fn what_changed_since_the_reviewed_version_leaves_out_what_only_the_base_move_explains() {
+        let base = lines(20);
+        let upstream = base.replace("l2\n", "upstream\n");
+        let fx = reviewing_pull_request(&[("a.txt", &base)], &[("a.txt", &base.replace("l15\n", "mine\n"))]).await;
+        push(
+            &fx,
+            "pr2",
+            ("m2", &[("a.txt", &upstream)]),
+            &[("a.txt", &upstream.replace("l15\n", "mine\n"))],
+        )
+        .await;
+
+        let since = fx.session.changed_since(1).await.unwrap();
+
+        assert!(since.files.is_empty(), "{:?}", since.files);
+        assert_eq!(since.to, 2);
     }
 
     #[tokio::test]

@@ -442,6 +442,7 @@ impl Orchestrator {
             Request::Tasks { project } => reply(self.tasks(project)),
             Request::FinishReview { project } => reply(self.finish_review(project)),
             Request::Versions { project } => reply(self.versions(project)),
+            Request::ChangedSince { project, from } => reply(self.changed_since(project, from)),
             Request::Commits { project } => reply(self.commits(project)),
             Request::SetLens { project, lens } => reply(self.set_lens(project, lens)),
             Request::Manifest { project, view } => reply(self.manifest(project, view)),

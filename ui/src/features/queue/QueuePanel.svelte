@@ -2,6 +2,7 @@
   // The side panel of the queue: what the changeset on view is, why it is blocked, where the viewer's
   // review stands, its comments, checks and reviewers. It is for reading: the review is where to act.
   import type { Snippet } from "svelte";
+  import { untrack } from "svelte";
   import type { CheckRun } from "../../generated/CheckRun";
   import type { Thread } from "../../generated/Thread";
   import { flagPreference } from "../../lib/preferences.svelte";
@@ -25,8 +26,8 @@
   import { commands } from "../../state/commands";
   import { minute } from "../../state/minute.svelte";
   import { platform } from "../../state/platform.svelte";
+  import { reviewChanges } from "../../state/reviewChanges.svelte";
   import { threads } from "../../state/threads.svelte";
-  import { versions } from "../../state/versions.svelte";
   import ChangesetName from "./ChangesetName.svelte";
   import { metaOf, reasonOf, repliesForYou, reviewSummary, reviewerLabel, reviewersSummary } from "./queuePanel";
   import { type QueueRow, labelOf, statusTitle } from "./queueRows";
@@ -94,6 +95,13 @@
         unread: repliesForYou(threads.items, isNew),
       }),
   );
+  /** The version the review last marked; what changed since it is asked of the backend (D95). */
+  const reviewed = $derived(row?.review.state === "open" ? row.review.lastReviewed : undefined);
+  const changesSince = $derived(reviewChanges.of(reviewed));
+  $effect(() => {
+    const version = reviewed;
+    untrack(() => reviewChanges.ensure(version));
+  });
   const summary = $derived(
     row &&
       reviewSummary({
@@ -102,7 +110,7 @@
         files: frame?.facts.files,
         asked: pull?.waitingForMe ?? false,
         base: frame && { branch: pull?.targetBranch, shortId: frame.layout.base.commit.shortId },
-        versions: versions.items,
+        changesSince,
         noun: row.key.type === "pullRequest" ? ["push", "pushes"] : ["version", "versions"],
       }),
   );
