@@ -79,6 +79,7 @@ pub const EXCHANGES: &[(&str, &str)] = &[
     ("stageVote", "done"),
     ("discardVote", "done"),
     ("pullRequestInfo", "pullRequestInfo"),
+    ("markCommentsSeen", "done"),
     ("confirmAnchor", "thread"),
     ("attachAnchor", "thread"),
     ("hover", "hover"),

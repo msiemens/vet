@@ -22,7 +22,7 @@ impl Orchestrator {
         let thread = (open.session)
             .edit_message(&open.hosting().await?, MessageId(id.into()), body, unix_now())
             .await?;
-        Ok(thread_changed(&open, &thread).await)
+        thread_changed(&open, &thread).await
     }
 
     pub(crate) async fn remove_message(&self, project: ProjectId, id: u32) -> Result<Response> {
@@ -43,7 +43,7 @@ impl Orchestrator {
         let thread = (open.session)
             .keep_edit(&open.hosting().await?, MessageId(id.into()), keep)
             .await?;
-        Ok(thread_changed(&open, &thread).await)
+        thread_changed(&open, &thread).await
     }
 
     pub(crate) async fn edit_conversation_comment(
@@ -144,6 +144,8 @@ impl Orchestrator {
         let view = (open.session.discussion().await)
             .ok_or_else(|| Error::Unavailable("the pull request was not synced yet".into()))?;
         let pending_vote = open.session.pending_vote().await?;
+        let seen = open.session.comments_seen().await?;
+        let unread = open.session.unread(&view.discussion.conversation, seen);
         let account = remote.account();
         let kind = open.open.kind_of(&remote).await?;
         let standing = open.open.platforms.standing(&account);
@@ -154,6 +156,7 @@ impl Orchestrator {
             pending_vote.as_ref(),
             kind,
             status,
+            unread,
         ))))
     }
 }

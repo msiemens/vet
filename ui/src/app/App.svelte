@@ -24,13 +24,9 @@
   import {
     OutgoingButton,
     threadCommands,
-    commentsSeen,
     outgoingComments,
-    seenKey,
-    seenNow,
     submitBlock,
     summarizeOutgoing,
-    unreadCount,
   } from "../features/comments";
   import {
     type ChoiceHost,
@@ -217,21 +213,19 @@
     if (!belongsTo(changeset.facts?.target.changeset.type) && bottomTool === "pipelines") bottomTool = undefined;
   });
 
-  /** Where the time the pull request's Comments tool window was last open is kept; none for another changeset. */
-  const seenUnder = $derived(seenKey(changeset.facts?.target.changeset));
+  /** The Comments tool window is on screen. */
   const commentsShown = $derived(screen === "review" && left.open && left.tool === "comments");
-  // While the tool window is open, what comes in is seen.
+  // While the tool window is open, what comes in is seen: the backend keeps the time the viewer
+  // last looked and answers the counts (D96). The reads make the effect run again when new comments
+  // arrive while it is open, so the backend moves the seen time past them.
   $effect(() => {
-    const key = seenUnder;
-    if (!commentsShown || key === undefined) return;
-    const at = seenNow(platform.info, threads.items, Math.floor(Date.now() / 1000));
-    untrack(() => commentsSeen.mark(key, at));
+    if (!commentsShown) return;
+    // eslint-disable-next-line @typescript-eslint/no-unused-expressions -- the reads make the effect a dependency
+    [platform.info, threads.items];
+    untrack(() => void platform.markCommentsSeen());
   });
-  const unreadComments = $derived(
-    seenUnder === undefined || commentsShown
-      ? 0
-      : unreadCount(platform.info, threads.items, commentsSeen.at(seenUnder)),
-  );
+  /** The rail's count for Comments: what the backend says the viewer has not read of the pull request as a whole. */
+  const unreadComments = $derived(commentsShown ? 0 : (platform.info?.unread.all ?? 0));
 
   const semanticSummary = $derived(semantic.summary(controller?.semanticPath));
   const range = $derived(changeset.range);

@@ -159,6 +159,11 @@ pub fn effect(request: &Request) -> Effect {
         | Request::MapLines { .. }
         | Request::CommentTarget { .. }
         | Request::PullRequestInfo { .. } => Effect::Query,
+        // Announces `ThreadsChanged` when what is unread changed.
+        Request::MarkCommentsSeen { .. } => untested(
+            &[ThreadsChanged],
+            "needs a pull request on view with comments it has not read, which only a platform has",
+        ),
         Request::CloseProject { .. } => {
             Effect::Unannounced("unsubscribes the connection; the others see nothing change")
         }
@@ -682,6 +687,7 @@ mod tests {
             },
             Request::DiscardVote { project },
             Request::PullRequestInfo { project },
+            Request::MarkCommentsSeen { project },
             Request::ConfirmAnchor {
                 project,
                 revision: 0,

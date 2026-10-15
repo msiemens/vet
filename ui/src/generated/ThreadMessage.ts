@@ -31,4 +31,9 @@ editedAt: number | null,
  * Set when the text was edited here and on the platform since the last sync: both are kept
  * until `KeepEdit` chooses one, and nothing is posted from the thread meanwhile.
  */
-conflict: EditConflict | null, };
+conflict: EditConflict | null, 
+/**
+ * Someone else wrote it after the viewer last looked at the pull request's comments (D96).
+ * Vet's conclusion from the time they last looked, not the shell's.
+ */
+new: boolean, };

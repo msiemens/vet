@@ -70,6 +70,7 @@ mod state;
 mod sync;
 mod threads;
 mod trust;
+mod unread;
 mod versions;
 mod views;
 
@@ -101,6 +102,7 @@ pub use self::state::View;
 use self::state::{OpenReview, Shown, State, lifecycle_of};
 pub use self::sync::{Blocker, DiscussionView, Keep, SubmitReport, SyncNotice, SyncReport, VoteSent};
 pub use self::threads::{CommentAt, CommentSpot, NewThread, ThreadView, ThreadsView};
+pub use self::unread::{Unread, is_unread};
 pub use self::versions::VersionView;
 use self::versions::first_change;
 pub use self::views::{

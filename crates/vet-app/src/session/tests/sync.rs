@@ -101,6 +101,49 @@ async fn the_platforms_threads_are_pulled_in_where_they_were_made_with_their_ids
 }
 
 #[tokio::test]
+async fn marking_the_comments_seen_moves_the_time_and_the_counts_fall() {
+    let (fx, hosting) = on_a_pull_request().await;
+    hosting.say_on_the_pull_request("lena", false, "Please rebase");
+    fx.sync(&hosting).await;
+
+    let view = fx.session.discussion().await.expect("synced");
+    assert_eq!(
+        fx.session.comments_seen().await.unwrap(),
+        None,
+        "the viewer never looked"
+    );
+    assert_eq!(
+        fx.session.unread(&view.discussion.conversation, None),
+        Unread::default(),
+        "nothing is unread before the first look"
+    );
+
+    // Looking sees the comment, up to now (or the newest, where the platform's clock is ahead).
+    fx.session.mark_comments_seen(1_000).await.unwrap();
+    let seen = fx.session.comments_seen().await.unwrap();
+    assert_eq!(seen, Some(1_001));
+    assert_eq!(
+        fx.session.unread(&view.discussion.conversation, seen),
+        Unread::default()
+    );
+
+    // A comment after that is unread again, and looking sees it.
+    hosting.say_on_the_pull_request("marco", false, "And add a test");
+    fx.sync(&hosting).await;
+    let view = fx.session.discussion().await.expect("synced");
+    assert_eq!(fx.session.unread(&view.discussion.conversation, seen).all, 1);
+    assert!(
+        fx.session.mark_comments_seen(1_003).await.unwrap(),
+        "what is unread changed"
+    );
+    assert_eq!(fx.session.comments_seen().await.unwrap(), Some(1_003));
+    assert_eq!(
+        fx.session.unread(&view.discussion.conversation, Some(1_003)),
+        Unread::default()
+    );
+}
+
+#[tokio::test]
 async fn a_comment_on_older_code_is_anchored_there_and_follows_the_code_to_where_it_went() {
     let base = numbered(30, &[]);
     let first = numbered(30, &[20]);

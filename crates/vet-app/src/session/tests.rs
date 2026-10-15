@@ -25,8 +25,8 @@ use crate::changeset::{BaseChoice, ChangesetId, CommitId, Lens, RemoteKey, Sourc
 use crate::platform::{Discussion, FakeHosting, PullRequestHead, StoredDiscussion};
 use crate::ports::{
     Attributes, BlobJob, BlobRead, BlobReader, BlobSession, BranchInfo, ChangesetRefs, ChangesetStore, Checkout,
-    CommitDetail, CommitInfo, Differ, Dirty, GitError, History, Remerged, ReviewRow, ReviewStore, Scan, Scanner,
-    SourceReview, Store, StoreError, TextDiff, ThreadStore,
+    CommitDetail, CommitInfo, Differ, Dirty, GitError, History, PreferenceStore, Remerged, ReviewRow, ReviewStore,
+    Scan, Scanner, SourceReview, Store, StoreError, TextDiff, ThreadStore,
 };
 use crate::pull_request::PullRequestRefs;
 use crate::review::{ChangesetThread, NonTextAck, RecordedSpan, Review, ReviewId, ReviewSummary, SpanId, SpanOrigin};
@@ -576,6 +576,8 @@ struct Mem {
     next_row: u64,
     filters: HashMap<String, ReviewFilter>,
     trusted: HashSet<String>,
+    /// The window's preferences, by scope (none: the app) and key.
+    preferences: HashMap<(Option<String>, String), String>,
     /// How many reviews were started; the ids run on.
     started: u64,
     next_message: u64,
@@ -839,6 +841,31 @@ impl ReviewStore for MemStore {
 impl ThreadStore for MemStore {
     async fn threads(&self, changeset: ChangesetId) -> StoreResult<Vec<ChangesetThread>> {
         Ok(self.0.lock().unwrap().threads_of(changeset.0))
+    }
+}
+
+impl PreferenceStore for MemStore {
+    async fn preferences(&self, scope: Option<String>) -> StoreResult<Vec<(String, String)>> {
+        let mem = self.0.lock().unwrap();
+        Ok(mem
+            .preferences
+            .iter()
+            .filter(|((s, _), _)| *s == scope)
+            .map(|((_, key), value)| (key.clone(), value.clone()))
+            .collect())
+    }
+
+    async fn set_preference(&self, scope: Option<String>, key: String, value: Option<String>) -> StoreResult<()> {
+        let mut mem = self.0.lock().unwrap();
+        match value {
+            Some(value) => {
+                mem.preferences.insert((scope, key), value);
+            }
+            None => {
+                mem.preferences.remove(&(scope, key));
+            }
+        }
+        Ok(())
     }
 }
 

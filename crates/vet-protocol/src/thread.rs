@@ -86,6 +86,9 @@ pub struct ThreadMessage {
     /// Set when the text was edited here and on the platform since the last sync: both are kept
     /// until `KeepEdit` chooses one, and nothing is posted from the thread meanwhile.
     pub conflict: Option<EditConflict>,
+    /// Someone else wrote it after the viewer last looked at the pull request's comments (D96).
+    /// Vet's conclusion from the time they last looked, not the shell's.
+    pub new: bool,
 }
 
 /// Where one of the viewer's comments is on its way to the platform.

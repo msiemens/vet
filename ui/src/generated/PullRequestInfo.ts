@@ -7,6 +7,7 @@ import type { PlatformStatus } from "./PlatformStatus";
 import type { PlatformTraits } from "./PlatformTraits";
 import type { PullRequestState } from "./PullRequestState";
 import type { Reviewer } from "./Reviewer";
+import type { Unread } from "./Unread";
 import type { Verdict } from "./Verdict";
 
 /**
@@ -37,7 +38,11 @@ pendingVote: PendingVote | null, labels: Array<string>,
 /**
  * The checks of the head commit; absent when it has none.
  */
-ci: CiState | null, blocking: Array<Blocker>, traits: PlatformTraits, 
+ci: CiState | null, blocking: Array<Blocker>, 
+/**
+ * What the viewer has not read of the comments, from the time they last looked.
+ */
+unread: Unread, traits: PlatformTraits, 
 /**
  * Oldest first; empty unless `traits.conversation_feed`.
  */

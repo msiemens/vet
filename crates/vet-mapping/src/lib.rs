@@ -18,7 +18,7 @@ use vet_app::session::{
     CommitsView, DirEntryKind, DirListing, DiscussionView, EmptyReason, EntryInfo, ExcludedBy, ExcludedGroup,
     FileListing, FileStatus, FileView, ItemBlob, ItemView, Lifecycle, ManifestView, ModeChange, NewThread, NoText,
     PatternMatch, PatternMatches, ReviewUpdateView, ReviewView, RowReview, SearchResult, SearchScope, SubmitReport,
-    SyncNotice, TargetText, ThreadView, ThreadsView, VersionView, View, VoteSent,
+    SyncNotice, TargetText, ThreadView, ThreadsView, Unread, VersionView, View, VoteSent,
 };
 use vet_app::trust::{Origin, Trust};
 use vet_core::completion::{Completion, HunkState};
@@ -1023,7 +1023,7 @@ fn anchor_state(s: &AnchorState) -> p::AnchorState {
     }
 }
 
-pub fn thread(revision: u32, t: &ThreadView) -> p::Thread {
+pub fn thread(revision: u32, t: &ThreadView, seen: Option<i64>) -> p::Thread {
     let (kind, side_of, original) = match &t.target {
         CommentTarget::Range(a) => (
             p::ThreadKind::Range,
@@ -1063,6 +1063,7 @@ pub fn thread(revision: u32, t: &ThreadView) -> p::Thread {
                         remote_body: c.remote_body.clone(),
                         remote_at: unix_secs(c.remote_at),
                     }),
+                new: vet_app::session::is_unread(m.mine, m.at, seen),
             })
             .collect(),
         status: thread_status(t.status),
@@ -1193,6 +1194,7 @@ pub fn pull_request_info(
     pending_vote: Option<&PendingVote>,
     kind: PlatformKind,
     platform: p::PlatformStatus,
+    unread: Unread,
 ) -> p::PullRequestInfo {
     let d = &v.discussion;
     let traits = platform_traits(kind);
@@ -1227,6 +1229,10 @@ pub fn pull_request_info(
         labels: d.labels.clone(),
         ci: d.ci.map(ci_state),
         blocking: v.blocking.iter().map(blocker).collect(),
+        unread: p::Unread {
+            all: unread.all,
+            replies: unread.replies,
+        },
         conversation: if traits.conversation_feed {
             (d.conversation.iter())
                 .map(|c| p::ConversationEntry {
@@ -1310,10 +1316,10 @@ pub fn review_submitted(r: &SubmitReport) -> p::Response {
     })
 }
 
-pub fn threads(v: &ThreadsView) -> p::Response {
+pub fn threads(v: &ThreadsView, seen: Option<i64>) -> p::Response {
     p::Response::Threads {
         revision: v.revision,
-        threads: v.threads.iter().map(|t| thread(v.revision, t)).collect(),
+        threads: v.threads.iter().map(|t| thread(v.revision, t, seen)).collect(),
     }
 }
 
@@ -1330,6 +1336,43 @@ pub fn review_update(u: &ReviewUpdateView) -> p::ReviewUpdate {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn message(at: i64, mine: bool) -> Message {
+        Message {
+            id: vet_core::review::MessageId(at as u64),
+            author: if mine { "you".into() } else { "lena".into() },
+            body: String::new(),
+            at,
+            mine,
+            avatar: None,
+            edited_at: None,
+            remote: None,
+            outgoing: Outgoing::Draft,
+        }
+    }
+
+    fn changeset_thread(messages: Vec<Message>) -> ThreadView {
+        ThreadView {
+            id: vet_core::review::ThreadId(1),
+            target: CommentTarget::Changeset,
+            path: None,
+            state: None,
+            location: None,
+            target_line: None,
+            messages,
+            status: ThreadStatus::Open,
+            platform: None,
+        }
+    }
+
+    #[test]
+    fn a_message_carries_the_backends_verdict_on_being_new() {
+        let view = changeset_thread(vec![message(100, false), message(150, true), message(200, false)]);
+        let new: Vec<bool> = thread(3, &view, Some(120)).messages.iter().map(|m| m.new).collect();
+        assert_eq!(new, [false, false, true], "only what others wrote after the last look");
+        // Nothing is new before the viewer first looked.
+        assert!(thread(3, &view, None).messages.iter().all(|m| !m.new));
+    }
 
     #[test]
     fn what_the_viewer_can_act_on_is_an_outcome_and_any_other_failure_fails_the_request() {

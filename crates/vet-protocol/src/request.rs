@@ -786,6 +786,13 @@ pub enum Request {
     PullRequestInfo {
         project: ProjectId,
     },
+    /// Marks the pull request on view's comments as read: the time the viewer last looked moves to
+    /// now (or to the newest comment, where the platform's clock is ahead), so the unread counts
+    /// (`PullRequestInfo.unread`) and the messages' `new` flags fall to none. The Comments tool
+    /// window calls this while it is open. Announces `ThreadsChanged`. Answers with `Response::Done`.
+    MarkCommentsSeen {
+        project: ProjectId,
+    },
     /// Re-anchors a thread whose anchor is `Inferred` at its current location,
     /// which makes it `Exact`. Fails if `revision` is no longer current or the
     /// anchor is not `Inferred`. Answers with `Response::Thread`.

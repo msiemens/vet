@@ -16,8 +16,6 @@ import { avatar, foldedCard, markdownBody, messageMeta, slot } from "./threadCar
 export interface BriefOptions {
   /** The file and the line suffix (`:12`) the thread is on; none for the changeset's own. */
   place?: { path: string; suffix: string };
-  /** Whether the viewer has not read the message. */
-  isNew(message: ThreadMessage): boolean;
   /** Opens a resolved thread, or folds it again; the owner redraws it. */
   toggle(): void;
   /** Shows the thread in the review. */
@@ -42,7 +40,7 @@ function placeButton(brief: BriefOptions): HTMLElement {
 
 /** A message: the first lines of its text, and "Show all" when there are more. */
 function briefMessage(thread: Thread, message: ThreadMessage, brief: BriefOptions): HTMLElement {
-  const fresh = brief.isNew(message);
+  const fresh = message.new;
   const row = el("div", fresh ? "vet-msg vet-msg-new" : "vet-msg");
   const meta = messageMeta(thread, message);
   if (fresh) {
@@ -74,7 +72,7 @@ function topRow(thread: Thread, brief: BriefOptions): HTMLElement {
     row.append(iconButton("Hide the thread", "open", () => brief.toggle(), "vet-thread-btn", 10, 2));
   }
   row.append(placeButton(brief), el("span", "vet-thread-grow"));
-  const fresh = thread.messages.filter((m) => brief.isNew(m)).length;
+  const fresh = thread.messages.filter((m) => m.new).length;
   if (fresh > 0) {
     const mark = el("span", "vet-thread-new");
     mark.append(el("span", "vet-new-dot"), `${fresh} new`);

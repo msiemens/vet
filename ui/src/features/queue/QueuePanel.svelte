@@ -17,7 +17,7 @@
   import SectionHead from "../../lib/ui/SectionHead.svelte";
   import SeenMeter from "../../lib/ui/SeenMeter.svelte";
   import { CheckRuns, failedFirst, passed } from "../checks";
-  import { ThreadCards, commentsSeen, groupThreads, isUnread, seenKey, threadPlace } from "../comments";
+  import { ThreadCards, groupThreads, threadPlace } from "../comments";
   import { markdownBody, needsShowAll, buildBriefCard } from "../review";
   import type { Frame } from "../../state/reviewModel";
   import { browse } from "../../state/browse";
@@ -29,7 +29,7 @@
   import { reviewChanges } from "../../state/reviewChanges.svelte";
   import { threads } from "../../state/threads.svelte";
   import ChangesetName from "./ChangesetName.svelte";
-  import { metaOf, reasonOf, repliesForYou, reviewSummary, reviewerLabel, reviewersSummary } from "./queuePanel";
+  import { metaOf, reasonOf, reviewSummary, reviewerLabel, reviewersSummary } from "./queuePanel";
   import { type QueueRow, labelOf, statusTitle } from "./queueRows";
   import StatusChip from "./StatusChip.svelte";
 
@@ -78,11 +78,6 @@
   );
   const head = $derived(checks.of(headId));
   const kind = $derived(platform.status?.kind ?? info?.platform.kind);
-  const seenAt = $derived.by(() => {
-    const under = seenKey(row?.key);
-    return under === undefined ? undefined : commentsSeen.at(under);
-  });
-  const isNew = (message: Thread["messages"][number]) => isUnread(message, seenAt);
   const groups = $derived(groupThreads(threads.items));
   const openThreads = $derived([...groups.conflicts, ...groups.open]);
   const reason = $derived(
@@ -92,7 +87,7 @@
         info,
         platform: kind,
         failed: (head?.runs ?? []).filter((r) => r.state === "failure").map((r) => r.name),
-        unread: repliesForYou(threads.items, isNew),
+        unread: info?.unread.replies ?? 0,
       }),
   );
   /** The version the review last marked; what changed since it is asked of the backend (D95). */
@@ -125,7 +120,6 @@
   const card = (thread: Thread, isOpen: boolean, toggle: () => void) =>
     buildBriefCard(thread, isOpen, {
       place: threadPlace(thread),
-      isNew,
       toggle,
       openThread: () => onopenthread(thread),
       openLink: browse,

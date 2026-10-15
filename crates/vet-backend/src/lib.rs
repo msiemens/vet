@@ -591,6 +591,7 @@ impl Orchestrator {
             }
             Request::DiscardVote { project } => reply(self.discard_vote(project)),
             Request::PullRequestInfo { project } => reply(self.pull_request_info(project)),
+            Request::MarkCommentsSeen { project } => reply(self.mark_comments_seen(project)),
             Request::ConfirmAnchor {
                 project,
                 revision,

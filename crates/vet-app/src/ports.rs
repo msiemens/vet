@@ -782,7 +782,7 @@ pub trait ReviewWrites {
 
 /// Everything a live session reads of the store, and the means to write what it changes. The
 /// session keeps the writes to the commands that hold its write token.
-pub trait LiveStore: Store + ChangesetStore + ReviewStore + ThreadStore {
+pub trait LiveStore: Store + ChangesetStore + ReviewStore + ThreadStore + PreferenceStore {
     type Writes: ReviewWrites + Clone + Send + Sync + 'static;
 
     /// The store's write connection; its clones share the one connection.

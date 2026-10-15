@@ -937,6 +937,11 @@ export class Backend {
     return await this.call(request);
   }
 
+  /** Marks the pull request on view's comments as read, so their unread counts fall to none. */
+  async markCommentsSeen(): Promise<void> {
+    await this.call({ type: "markCommentsSeen", project: this.pid });
+  }
+
   /** Re-anchors an inferred thread where it is now. */
   async confirmAnchor(revision: number, thread: number): Promise<Thread> {
     const request = { type: "confirmAnchor", project: this.pid, revision, thread } as const;

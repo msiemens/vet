@@ -76,6 +76,7 @@ export const RESPONSE_TAG = {
   stageVote: "done",
   discardVote: "done",
   pullRequestInfo: "pullRequestInfo",
+  markCommentsSeen: "done",
   confirmAnchor: "thread",
   attachAnchor: "thread",
   hover: "hover",

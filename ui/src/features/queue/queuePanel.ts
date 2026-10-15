@@ -7,7 +7,6 @@ import type { PullRequestInfo } from "../../generated/PullRequestInfo";
 import type { PullRequestRow } from "../../generated/PullRequestRow";
 import type { Reviewer } from "../../generated/Reviewer";
 import type { RowReview } from "../../generated/RowReview";
-import type { Thread } from "../../generated/Thread";
 import { ciIcon } from "../../lib/ciStatus.ts";
 import { count, plural } from "../../lib/format.ts";
 import { type QueueRow, authorOf, sourceText, updatedText } from "./queueRows.ts";
@@ -54,11 +53,6 @@ export function metaOf(row: QueueRow, files: number | undefined, nowMs: number):
       : { type: "text", text: sourceText(row) },
     ...(updated ? [{ type: "text" as const, text: `updated ${updated}` }] : []),
   ];
-}
-
-/** How many messages someone else wrote after the viewer last looked in threads the viewer is in. */
-export function repliesForYou(threads: readonly Thread[], isNew: (message: Thread["messages"][number]) => boolean) {
-  return threads.filter((t) => t.messages.some((m) => m.mine)).reduce((n, t) => n + t.messages.filter(isNew).length, 0);
 }
 
 function approvedBy(reviewers: readonly Reviewer[]): string[] {

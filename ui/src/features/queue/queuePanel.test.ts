@@ -3,8 +3,7 @@ import { test } from "node:test";
 import type { ChangesetRow } from "../../generated/ChangesetRow";
 import type { Completion } from "../../generated/Completion";
 import type { Reviewer } from "../../generated/Reviewer";
-import type { Thread } from "../../generated/Thread";
-import { metaOf, reasonOf, repliesForYou, reviewSummary, reviewersSummary } from "./queuePanel.ts";
+import { metaOf, reasonOf, reviewSummary, reviewersSummary } from "./queuePanel.ts";
 
 type Pull = Parameters<typeof reasonOf>[0]["pull"];
 
@@ -122,15 +121,6 @@ void test("folded reviewers name who decided and count who waits", () => {
   );
   assert.equal(reviewersSummary([reviewer("Jonas", "changesRequested")]), "Jonas ✗");
   assert.equal(reviewersSummary([reviewer("Anna", "commented")]), "");
-});
-
-const thread = (...mine: boolean[]): Thread =>
-  ({ messages: mine.map((m, i) => ({ id: i, mine: m, at: 10 + i })) }) as unknown as Thread;
-
-void test("replies for you are the unread messages of threads the viewer is in", () => {
-  const unread = (m: { at: number }) => m.at >= 11;
-  assert.equal(repliesForYou([thread(true, false, false), thread(false, false)], unread), 2);
-  assert.equal(repliesForYou([], unread), 0);
 });
 
 void test("the working tree's line says where its changes live", () => {

@@ -186,6 +186,18 @@ pub struct PendingVote {
     pub state: CommentState,
 }
 
+/// What the viewer has not read of a pull request's comments (D96), from the time they last
+/// looked. Decided by the backend; the shell only words it.
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct Unread {
+    /// Comments on the pull request as a whole: its conversation and its changeset threads.
+    pub all: u32,
+    /// Replies to the viewer in the threads they are in.
+    pub replies: u32,
+}
+
 /// What the Comments tool window shows of the pull request on view, above its threads.
 #[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
@@ -215,6 +227,8 @@ pub struct PullRequestInfo {
     /// The checks of the head commit; absent when it has none.
     pub ci: Option<CiState>,
     pub blocking: Vec<Blocker>,
+    /// What the viewer has not read of the comments, from the time they last looked.
+    pub unread: Unread,
     pub traits: PlatformTraits,
     /// Oldest first; empty unless `traits.conversation_feed`.
     pub conversation: Vec<ConversationEntry>,

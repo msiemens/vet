@@ -193,6 +193,18 @@ class PlatformStore {
     return true;
   }
 
+  /**
+   * Marks the pull request on view's comments read; the backend moves the time the viewer last
+   * looked and pushes the new counts when they change. Called while the Comments tool is open.
+   */
+  async markCommentsSeen(): Promise<void> {
+    try {
+      await this.backend?.markCommentsSeen();
+    } catch (error) {
+      notices.report(error);
+    }
+  }
+
   dismiss(id: number) {
     this.cardTimers.get(id)?.stop();
     this.cardTimers.delete(id);
