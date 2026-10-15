@@ -144,23 +144,20 @@ pub(super) fn cargo_workspaces(root: &Path, dirs: &[PathBuf]) -> Vec<Workspace> 
         .collect()
 }
 
-/// The `packages:` of a `pnpm-workspace.yaml`: the one list of plain strings
-/// the file is used for, so no YAML parser.
+/// The `packages:` of a `pnpm-workspace.yaml`, read as YAML: a sequence of strings,
+/// block or flow, plain or quoted, with comments. A file the parser rejects names no
+/// packages, so a malformed one leaves the directories below it as projects of their own.
 fn pnpm_packages(text: &str) -> Vec<String> {
-    let mut lines = text.lines().skip_while(|l| l.trim_end() != "packages:");
-    lines.next();
-    let mut packages = Vec::new();
-    for line in lines {
-        let Some(item) = line.trim().strip_prefix('-') else {
-            if line.trim().is_empty() || line.trim().starts_with('#') {
-                continue;
-            }
-            break;
-        };
-        let item = item.split(" #").next().unwrap_or("").trim();
-        packages.push(item.trim_matches(['"', '\'']).to_owned());
-    }
-    packages
+    let Ok(document) = yaml_serde::from_str::<yaml_serde::Value>(text) else {
+        return Vec::new();
+    };
+    document
+        .get("packages")
+        .and_then(yaml_serde::Value::as_sequence)
+        .into_iter()
+        .flatten()
+        .filter_map(|value| value.as_str().map(str::to_owned))
+        .collect()
 }
 
 /// pnpm (`pnpm-workspace.yaml`), npm and Yarn (`workspaces` in `package.json`).
@@ -301,6 +298,43 @@ mod tests {
         let roots = without_members(dirs.clone(), &js_workspaces(dir.path(), &dirs));
         // `*` does not cross folders: `packages/a/nested` is not a member.
         assert_eq!(roots, paths(&["", "docs", "apps/legacy", "packages/a/nested"]));
+    }
+
+    #[test]
+    fn pnpm_packages_read_yaml_quoting_comments_and_flow_sequences() {
+        let cases: &[(&str, &[&str])] = &[
+            // The block list the old line reader understood: quotes, a trailing comment, a
+            // blank line, a comment inside and an unrelated key after the list.
+            (
+                "# comment\npackages:\n  - 'packages/*'\n  - \"apps/**\" # all\n  - '!apps/legacy'\n\ncatalog:\n  - x\n",
+                &["packages/*", "apps/**", "!apps/legacy"],
+            ),
+            (
+                "packages:\n  - packages/*\n\n  # a comment\n  - apps/**\n",
+                &["packages/*", "apps/**"],
+            ),
+            // Plain entries, and a `#` inside a quoted entry that is not a comment.
+            ("packages:\n  - packages/*\n  - a#b\n", &["packages/*", "a#b"]),
+            // A flow sequence, which the old reader read as no packages at all.
+            ("packages: [packages/*, apps/**]\n", &["packages/*", "apps/**"]),
+            ("packages: ['a/*', '!a/old']\n", &["a/*", "!a/old"]),
+            // A space before the colon: the old reader knew only the exact line `packages:`.
+            ("packages : [a]\n", &["a"]),
+            // YAML single quotes escape a quote by doubling it.
+            ("packages:\n  - 'it''s/*'\n", &["it's/*"]),
+            // No `packages` key names none.
+            ("catalog:\n  - x\n", &[]),
+            ("packages:\n", &[]),
+            // A `packages` value that is not a sequence names none.
+            ("packages: a\n", &[]),
+            ("packages:\n  nested: a\n", &[]),
+            // A file the parser rejects names none, and never stops a restore.
+            ("packages:\n  - 'unclosed\n", &[]),
+            ("packages: [a, b\n", &[]),
+        ];
+        for (yaml, expected) in cases {
+            assert_eq!(pnpm_packages(yaml), *expected, "{yaml:?}");
+        }
     }
 
     #[test]

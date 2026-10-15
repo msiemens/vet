@@ -47,6 +47,8 @@ tower = { workspace = true, features = ["retry"] }
 http.workspace = true
 # The times the platforms write.
 time = { workspace = true, features = ["parsing", "macros"] }
+# The `packages:` of `pnpm-workspace.yaml` (restore/discover.rs); the manifest is YAML.
+yaml_serde.workspace = true
 
 [target.'cfg(not(windows))'.dependencies]
 notify.workspace = true
