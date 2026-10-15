@@ -3,7 +3,7 @@
 
 use std::collections::HashMap;
 use std::io::{BufRead, BufReader, Read, Write};
-use std::net::{SocketAddr, TcpListener, TcpStream};
+use std::net::{Shutdown, SocketAddr, TcpListener, TcpStream};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread::JoinHandle;
@@ -58,6 +58,9 @@ pub struct Fake {
     addr: SocketAddr,
     seen: Arc<Mutex<Vec<Seen>>>,
     stop: Arc<AtomicBool>,
+    /// The connection the server thread reads or answers now, if any. Dropping shuts it down so a
+    /// read that waits for a request that will not come cannot hold the server thread up.
+    current: Arc<Mutex<Option<TcpStream>>>,
     thread: Option<JoinHandle<()>>,
 }
 
@@ -68,21 +71,33 @@ impl Fake {
         let addr = listener.local_addr().unwrap();
         let seen = Arc::new(Mutex::new(Vec::new()));
         let stop = Arc::new(AtomicBool::new(false));
+        let current = Arc::new(Mutex::new(None));
         let thread = {
-            let (seen, stop) = (seen.clone(), stop.clone());
+            let (seen, stop, current) = (seen.clone(), stop.clone(), current.clone());
             std::thread::spawn(move || {
                 let base = format!("http://{addr}");
                 for stream in listener.incoming() {
-                    if stop.load(Ordering::SeqCst) {
-                        return;
-                    }
                     let Ok(mut stream) = stream else { continue };
+                    // The stop, the wake-up connection that ends the accept, and the connection to
+                    // read next are decided under one lock, so a drop cannot miss either.
+                    {
+                        let mut current = current.lock().unwrap();
+                        if stop.load(Ordering::SeqCst) {
+                            return;
+                        }
+                        match stream.try_clone() {
+                            Ok(handle) => *current = Some(handle),
+                            Err(_) => continue,
+                        }
+                    }
                     let Some(request) = read_request(&mut stream) else {
+                        *current.lock().unwrap() = None;
                         continue;
                     };
                     let canned = handler(&request, &base);
                     seen.lock().unwrap().push(request);
                     write_response(&mut stream, &canned, &base);
+                    *current.lock().unwrap() = None;
                 }
             })
         };
@@ -90,6 +105,7 @@ impl Fake {
             addr,
             seen,
             stop,
+            current,
             thread: Some(thread),
         }
     }
@@ -106,6 +122,11 @@ impl Fake {
 impl Drop for Fake {
     fn drop(&mut self) {
         self.stop.store(true, Ordering::SeqCst);
+        // A read waiting for a request that will not come ends when its socket is shut down.
+        if let Some(stream) = self.current.lock().unwrap().take() {
+            let _ = stream.shutdown(Shutdown::Both);
+        }
+        // Wakes the accept that waits for a connection, so the loop sees the stop.
         let _ = TcpStream::connect(self.addr);
         if let Some(thread) = self.thread.take() {
             let _ = thread.join();
@@ -170,5 +191,37 @@ impl CredentialProvider for Signed {
             token: Token::new(token).unwrap(),
             source: self.1,
         }))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::mpsc;
+    use std::time::Duration;
+
+    use super::*;
+
+    /// A client may connect and then send nothing or half a request (an idle pooled connection);
+    /// the server thread then waits in `read_request`. Dropping the fake must not wait for that
+    /// read, or a test that finished its body hangs until its deadline.
+    #[test]
+    fn dropping_the_server_does_not_wait_for_a_connection_that_sends_nothing() {
+        let fake = Fake::start(|_, _| Canned::json("{}"));
+        let mut idle = TcpStream::connect(fake.addr).unwrap();
+        // A request line without the blank line that ends the headers: read_request waits.
+        idle.write_all(b"GET /idle HTTP/1.1\r\n").unwrap();
+        // Let the server accept the connection and reach the read.
+        std::thread::sleep(Duration::from_millis(200));
+
+        let (dropped, finished) = mpsc::channel();
+        std::thread::spawn(move || {
+            drop(fake);
+            let _ = dropped.send(());
+        });
+        assert!(
+            finished.recv_timeout(Duration::from_secs(10)).is_ok(),
+            "dropping the fake waited for a connection that sent nothing"
+        );
+        drop(idle);
     }
 }
