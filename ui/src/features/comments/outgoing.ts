@@ -1,6 +1,8 @@
 // The viewer's comments and staged vote on their way to the platform, as the toolbar's outgoing
-// button counts them and its popover lists them.
+// button counts them and its popover lists them. What is outgoing is the backend's (A17); here are
+// the order it lists them in and the words.
 
+import type { Outgoing } from "../../generated/Outgoing";
 import type { PendingVote } from "../../generated/PendingVote";
 import type { PullRequestInfo } from "../../generated/PullRequestInfo";
 import type { Thread } from "../../generated/Thread";
@@ -17,39 +19,15 @@ export interface OutgoingComment {
   message: ThreadMessage;
 }
 
-/** The comments the platform does not have yet, in the order the Comments tool window lists their threads, each thread's as written. */
+/** The messages the backend says the platform does not have, in the order the Comments tool window lists their threads. */
 export function outgoingComments(threads: readonly Thread[]): OutgoingComment[] {
-  return threads
-    .filter((t) => t.platform !== null)
+  return [...threads]
     .sort(inOrder)
-    .flatMap((thread) =>
-      thread.messages.filter((m) => m.state.type !== "posted").map((message) => ({ thread, message })),
-    );
-}
-
-export interface OutgoingSummary {
-  count: number;
-  /** How many the platform refused. */
-  failed: number;
-  /** Some are on their way to the platform. */
-  posting: boolean;
-}
-
-/** The staged vote counts as one outgoing item, in the state of a comment. */
-export function summarizeOutgoing(
-  list: readonly OutgoingComment[],
-  vote: PendingVote | null | undefined,
-): OutgoingSummary {
-  const states = [...list.map((o) => o.message.state.type), ...(vote ? [vote.state.type] : [])];
-  return {
-    count: states.length,
-    failed: states.filter((s) => s === "failed").length,
-    posting: states.includes("posting"),
-  };
+    .flatMap((thread) => thread.messages.filter((m) => m.outgoing).map((message) => ({ thread, message })));
 }
 
 /** The button's tooltip: how much is outgoing, and how much of it failed. A staged vote makes them items, not comments. */
-export function outgoingTitle(summary: OutgoingSummary, withVote: boolean): string {
+export function outgoingTitle(summary: Pick<Outgoing, "count" | "failed">, withVote: boolean): string {
   const what = (n: number) => noun(n, withVote ? "item" : "comment");
   if (summary.failed > 0) return `${summary.failed} of ${summary.count} outgoing ${what(summary.count)} failed to post`;
   if (summary.count > 0) return `${summary.count} outgoing ${what(summary.count)}`;

@@ -146,6 +146,7 @@ impl Orchestrator {
         let pending_vote = open.session.pending_vote().await?;
         let seen = open.session.comments_seen().await?;
         let unread = open.session.unread(&view.discussion.conversation, seen);
+        let outgoing = open.session.outgoing(pending_vote.as_ref());
         let account = remote.account();
         let kind = open.open.kind_of(&remote).await?;
         let standing = open.open.platforms.standing(&account);
@@ -157,6 +158,7 @@ impl Orchestrator {
             kind,
             status,
             unread,
+            outgoing,
         ))))
     }
 }

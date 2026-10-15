@@ -2,6 +2,7 @@
 import type { Blocker } from "./Blocker";
 import type { CiState } from "./CiState";
 import type { ConversationEntry } from "./ConversationEntry";
+import type { Outgoing } from "./Outgoing";
 import type { PendingVote } from "./PendingVote";
 import type { PlatformStatus } from "./PlatformStatus";
 import type { PlatformTraits } from "./PlatformTraits";
@@ -42,7 +43,11 @@ ci: CiState | null, blocking: Array<Blocker>,
 /**
  * What the viewer has not read of the comments, from the time they last looked.
  */
-unread: Unread, traits: PlatformTraits, 
+unread: Unread, 
+/**
+ * What the viewer's own comments and staged vote wait to send to the platform.
+ */
+outgoing: Outgoing, traits: PlatformTraits, 
 /**
  * Oldest first; empty unless `traits.conversation_feed`.
  */

@@ -1,13 +1,10 @@
 // How the Comments tool window words what the platform said of a pull request.
 
 import type { Blocker } from "../../generated/Blocker";
-import type { PendingVote } from "../../generated/PendingVote";
 import type { PlatformConnection } from "../../generated/PlatformConnection";
 import type { PullRequestInfo } from "../../generated/PullRequestInfo";
 import type { ReviewerState } from "../../generated/ReviewerState";
 import type { ReviewSubmitted } from "../../generated/ReviewSubmitted";
-import type { Thread } from "../../generated/Thread";
-import type { ThreadMessage } from "../../generated/ThreadMessage";
 import { plural } from "../../lib/format.ts";
 import type { StatusTone } from "../../lib/ui/statusTone.ts";
 
@@ -49,20 +46,6 @@ export function reviewerMark(state: ReviewerState): string {
 export function waitingNote(count: number): string {
   return `${plural(count, "draft waits", "drafts wait")}: its code is gone or its thread has an edit to settle.`;
 }
-
-/** The messages that `SubmitReview` or `PostDrafts` would post: the drafts and failed ones of threads of a platform. */
-export function draftsToSubmit(threads: readonly Thread[]): number {
-  const waits = (m: ThreadMessage) => m.state.type === "draft" || m.state.type === "failed";
-  return threads.reduce((n, t) => n + (t.platform ? t.messages.filter(waits).length : 0), 0);
-}
-
-/** Whether a post would send the staged vote: not when there is none, nor while it is on its way. */
-export const voteWaits = (vote: PendingVote | null | undefined): boolean =>
-  vote != null && vote.state.type !== "posting";
-
-/** What a post would send: the comments that wait and the staged vote. */
-export const waitingToPost = (threads: readonly Thread[], vote: PendingVote | null | undefined): number =>
-  draftsToSubmit(threads) + (voteWaits(vote) ? 1 : 0);
 
 /** What is told after a post went through: how many comments were posted, and the vote if one was cast. */
 export function postedNote(done: Pick<ReviewSubmitted, "posted" | "skipped" | "voteCast">): string {

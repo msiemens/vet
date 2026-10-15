@@ -36,4 +36,9 @@ conflict: EditConflict | null,
  * Someone else wrote it after the viewer last looked at the pull request's comments (D96).
  * Vet's conclusion from the time they last looked, not the shell's.
  */
-new: boolean, };
+new: boolean, 
+/**
+ * The platform does not have it yet, and the thread is one it can post to (A17): what a post
+ * would send. Vet's conclusion, not the shell's.
+ */
+outgoing: boolean, };

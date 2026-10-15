@@ -21,13 +21,7 @@
   } from "../features/chrome";
   import { ChecksButton, badgeCount } from "../features/checks";
   import { LocationPicker } from "../features/locations";
-  import {
-    OutgoingButton,
-    threadCommands,
-    outgoingComments,
-    submitBlock,
-    summarizeOutgoing,
-  } from "../features/comments";
+  import { OutgoingButton, threadCommands, submitBlock } from "../features/comments";
   import {
     type ChoiceHost,
     Palette,
@@ -373,11 +367,7 @@
     findSets.reset();
   });
   /** Comments and a staged vote that wait to be sent to the platform of the pull request on view. */
-  const outgoing = $derived(
-    platform.info === undefined
-      ? 0
-      : summarizeOutgoing(outgoingComments(threads.items), platform.info.pendingVote).count,
-  );
+  const outgoing = $derived(platform.info?.outgoing.count ?? 0);
   const voteBlock = $derived.by(() => {
     const info = platform.info;
     if (info?.pendingVote?.state.type === "posting") return "The vote is being sent";

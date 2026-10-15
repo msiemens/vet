@@ -4,5 +4,5 @@ export { threadCommands, threadMenu } from "./commentCommands";
 export { default as ThreadPlace } from "./ThreadPlace.svelte";
 export { default as ThreadCards } from "./ThreadCards.svelte";
 export { groupThreads, placeLabel, preview, threadPlace } from "./groups";
-export { outgoingComments, summarizeOutgoing } from "./outgoing";
+export { outgoingComments } from "./outgoing";
 export { submitBlock } from "./pullRequest";

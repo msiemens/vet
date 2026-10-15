@@ -11,12 +11,11 @@ import {
   outgoingKey,
   outgoingTitle,
   postLabel,
-  summarizeOutgoing,
   voteChoices,
   voteText,
 } from "./outgoing.ts";
 
-const message = (id: number, state: ThreadMessage["state"] = { type: "draft" }): ThreadMessage => ({
+const message = (id: number, state: ThreadMessage["state"] = { type: "draft" }, outgoing = true): ThreadMessage => ({
   id,
   author: "ada",
   body: `message ${id}`,
@@ -26,6 +25,8 @@ const message = (id: number, state: ThreadMessage["state"] = { type: "draft" }):
   state,
   editedAt: null,
   conflict: null,
+  new: false,
+  outgoing,
 });
 const thread = (
   id: number,
@@ -50,43 +51,19 @@ const posted = { type: "posted" } as const;
 const failed = { type: "failed", error: "locked" } as const;
 const posting = { type: "posting" } as const;
 
-void test("the outgoing comments are the unposted ones of a platform's threads, in the Comments tool window's order", () => {
+void test("the outgoing comments are the ones the backend flags, in the Comments tool window's order", () => {
   const list = outgoingComments([
-    thread(1, "b.rs", 30, [message(10, posted), message(11), message(12, failed)]),
+    thread(1, "b.rs", 30, [message(10, posted, false), message(11), message(12, failed)]),
     thread(2, "a.rs", 4, [message(20, posting)]),
     thread(3, null, 0, [message(30)]),
-    thread(4, "b.rs", 2, [message(40, posted)]),
-    // Without a platform nothing is posted, so nothing is outgoing.
-    thread(5, "a.rs", 1, [message(50)], false),
+    thread(4, "b.rs", 2, [message(40, posted, false)]),
+    // A thread without a platform never posts, so the backend does not flag it.
+    thread(5, "a.rs", 1, [message(50, { type: "draft" }, false)], false),
   ]);
   assert.deepEqual(
     list.map((o) => o.message.id),
     [30, 20, 11, 12],
   );
-});
-
-void test("the button counts what is outgoing, how much the platform refused, and whether some is on its way", () => {
-  const list = outgoingComments([thread(1, "a.rs", 1, [message(1), message(2, failed), message(3, failed)])]);
-  assert.deepEqual(summarizeOutgoing(list, null), { count: 3, failed: 2, posting: false });
-  const sending = outgoingComments([thread(1, "a.rs", 1, [message(1, posting)])]);
-  assert.deepEqual(summarizeOutgoing(sending, null), { count: 1, failed: 0, posting: true });
-  assert.deepEqual(summarizeOutgoing([], null), { count: 0, failed: 0, posting: false });
-});
-
-void test("a staged vote is outgoing like a comment, in its own state", () => {
-  const list = outgoingComments([thread(1, "a.rs", 1, [message(1)])]);
-  const vote = { verdict: { type: "approve" } as const, state: { type: "draft" } } as const;
-  assert.deepEqual(summarizeOutgoing(list, vote), { count: 2, failed: 0, posting: false });
-  assert.deepEqual(summarizeOutgoing(list, { ...vote, state: failed }), {
-    count: 2,
-    failed: 1,
-    posting: false,
-  });
-  assert.deepEqual(summarizeOutgoing([], { ...vote, state: { type: "posting" } }), {
-    count: 1,
-    failed: 0,
-    posting: true,
-  });
 });
 
 void test("the popover names the staged vote by its words and the button says what is outgoing", () => {

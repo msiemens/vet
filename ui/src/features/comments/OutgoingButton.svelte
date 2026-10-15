@@ -18,14 +18,16 @@
     outgoingKey,
     outgoingTitle,
     postLabel,
-    summarizeOutgoing,
     voteChoices,
     voteText,
   } from "./outgoing";
   import PostingControls from "./PostingControls.svelte";
   import { sendComments } from "./posting";
-  import { draftsToSubmit, submitBlock, voteWaits } from "./pullRequest";
+  import { submitBlock } from "./pullRequest";
   import ThreadPlace from "./ThreadPlace.svelte";
+
+  /** Nothing waits to be posted. */
+  const NOTHING_OUTGOING = { count: 0, failed: 0, posting: false, comments: 0, vote: false };
 
   /** The toolbar's count of the viewer's comments and staged vote that the platform does not have yet; a click lists them, and posts them. */
   let { onopen }: { onopen: (thread: Thread) => void } = $props();
@@ -38,10 +40,10 @@
   const info = $derived(platform.info);
   const list = $derived(outgoingComments(threads.items));
   const vote = $derived(info?.pendingVote ?? null);
-  const summary = $derived(summarizeOutgoing(list, vote));
+  const summary = $derived(info?.outgoing ?? NOTHING_OUTGOING);
   const busy = $derived(platform.sending || summary.posting);
-  const comments = $derived(draftsToSubmit(threads.items));
-  const ready = $derived(comments + (voteWaits(vote) ? 1 : 0));
+  const comments = $derived(summary.comments);
+  const ready = $derived(comments + (summary.vote ? 1 : 0));
   const blocked = $derived(info && submitBlock(info.platform.connection));
   const title = $derived(outgoingTitle(summary, vote !== null));
 
@@ -177,7 +179,7 @@
               type="button"
               disabled={!postable}
               title={blocked ?? commands.keyLabel(SUBMIT_KEY)}
-              onclick={() => void send()}>{postLabel(comments, voteWaits(vote))}</button
+              onclick={() => void send()}>{postLabel(comments, summary.vote)}</button
             >
           </div>
         </div>

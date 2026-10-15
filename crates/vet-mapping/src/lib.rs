@@ -17,8 +17,8 @@ use vet_app::session::{
     BaseDiffKind, BaseDiffView, BaseView, Blocker, ChangesSince, ChangesetList, CommentAt, CommentSpot, CommitKind,
     CommitsView, DirEntryKind, DirListing, DiscussionView, EmptyReason, EntryInfo, ExcludedBy, ExcludedGroup,
     FileListing, FileStatus, FileView, ItemBlob, ItemView, Lifecycle, ManifestView, ModeChange, NewThread, NoText,
-    PatternMatch, PatternMatches, ReviewUpdateView, ReviewView, RowReview, SearchResult, SearchScope, SubmitReport,
-    SyncNotice, TargetText, ThreadView, ThreadsView, Unread, VersionView, View, VoteSent,
+    Outgoing as OutgoingSummary, PatternMatch, PatternMatches, ReviewUpdateView, ReviewView, RowReview, SearchResult,
+    SearchScope, SubmitReport, SyncNotice, TargetText, ThreadView, ThreadsView, Unread, VersionView, View, VoteSent,
 };
 use vet_app::trust::{Origin, Trust};
 use vet_core::completion::{Completion, HunkState};
@@ -1064,6 +1064,7 @@ pub fn thread(revision: u32, t: &ThreadView, seen: Option<i64>) -> p::Thread {
                         remote_at: unix_secs(c.remote_at),
                     }),
                 new: vet_app::session::is_unread(m.mine, m.at, seen),
+                outgoing: t.platform.is_some() && m.remote.is_none(),
             })
             .collect(),
         status: thread_status(t.status),
@@ -1195,6 +1196,7 @@ pub fn pull_request_info(
     kind: PlatformKind,
     platform: p::PlatformStatus,
     unread: Unread,
+    outgoing: OutgoingSummary,
 ) -> p::PullRequestInfo {
     let d = &v.discussion;
     let traits = platform_traits(kind);
@@ -1232,6 +1234,13 @@ pub fn pull_request_info(
         unread: p::Unread {
             all: unread.all,
             replies: unread.replies,
+        },
+        outgoing: p::Outgoing {
+            count: outgoing.count,
+            failed: outgoing.failed,
+            posting: outgoing.posting,
+            comments: outgoing.comments,
+            vote: outgoing.vote,
         },
         conversation: if traits.conversation_feed {
             (d.conversation.iter())
@@ -1372,6 +1381,30 @@ mod tests {
         assert_eq!(new, [false, false, true], "only what others wrote after the last look");
         // Nothing is new before the viewer first looked.
         assert!(thread(3, &view, None).messages.iter().all(|m| !m.new));
+    }
+
+    #[test]
+    fn a_message_carries_whether_the_platform_lacks_it() {
+        let mut posted = message(100, true);
+        posted.remote = Some(vet_core::review::RemoteComment {
+            id: "r1".into(),
+            synced: String::new(),
+            conflict: None,
+        });
+        let mut view = changeset_thread(vec![posted, message(150, true)]);
+        view.platform = Some(vet_core::review::PlatformThread::draft(true));
+        assert_eq!(
+            thread(3, &view, None)
+                .messages
+                .iter()
+                .map(|m| m.outgoing)
+                .collect::<Vec<_>>(),
+            [false, true],
+            "only what the platform lacks waits to be posted"
+        );
+        // Without a platform nothing is posted, so nothing is outgoing.
+        view.platform = None;
+        assert!(thread(3, &view, None).messages.iter().all(|m| !m.outgoing));
     }
 
     #[test]

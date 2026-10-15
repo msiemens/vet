@@ -2,15 +2,14 @@
   import type { PullRequestInfo } from "../../generated/PullRequestInfo";
   import { commands } from "../../state/commands";
   import { platform } from "../../state/platform.svelte";
-  import { threads } from "../../state/threads.svelte";
   import PostingControls from "./PostingControls.svelte";
   import { sendComments } from "./posting";
-  import { submitBlock, waitingToPost } from "./pullRequest";
+  import { submitBlock } from "./pullRequest";
 
   let { info }: { info: PullRequestInfo } = $props();
 
   // The staged vote is posted with the comments, so it counts among them.
-  const drafts = $derived(waitingToPost(threads.items, info.pendingVote));
+  const drafts = $derived(info.outgoing.comments + (info.outgoing.vote ? 1 : 0));
   const blocked = $derived(submitBlock(info.platform.connection));
   const form = platform.review;
 </script>
