@@ -13,6 +13,7 @@ import { changeset } from "./changeset.svelte";
 import { type ChangedFile, type Place, placesFromRows, placesFromSearch } from "./foundPlace";
 import { type Filters, NO_FILTERS } from "./findRows";
 import { changedSince, diffRuns, isStale, linesToLocate, ranVersion, slotFor } from "./findRuns";
+import { atRevision } from "./revision";
 import { session } from "./session.svelte";
 import { versions } from "./versions.svelte";
 
@@ -158,10 +159,10 @@ class FindSets {
       const lines = linesToLocate(set.places, path);
       if (!lines.length) continue;
       try {
-        const mapped = await backend.mapLines(revision, from, path, lines);
-        if (set.located !== revision) return;
+        const mapped = atRevision(this.revision, await backend.mapLines(revision, from, path, lines));
+        if (set.located !== revision || !mapped) return;
         for (const p of set.places) {
-          const found = p.file.path === path && p.side === "target" ? mapped[lines.indexOf(p.line)] : undefined;
+          const found = p.file.path === path && p.side === "target" ? mapped.lines[lines.indexOf(p.line)] : undefined;
           if (found) moves.set(p.id, found);
         }
       } catch {

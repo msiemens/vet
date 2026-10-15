@@ -202,7 +202,7 @@ impl Orchestrator {
         let diff = self
             .asking(project, async |session| session.base_diff(revision, path, hunk).await)
             .await?;
-        Ok(mapping::base_diff(&diff))
+        Ok(mapping::base_diff(revision, &diff))
     }
 
     pub(crate) async fn item_blob(
@@ -227,7 +227,7 @@ impl Orchestrator {
                     .await
             })
             .await?;
-        Ok(mapping::item_blob(blob))
+        Ok(mapping::item_blob(revision, blob))
     }
 
     pub(crate) async fn set_project_filter(
@@ -301,6 +301,7 @@ impl Orchestrator {
             })
             .await?;
         Ok(Response::MappedLines {
+            revision,
             lines: lines
                 .into_iter()
                 .map(|m| vet_protocol::MappedLine {

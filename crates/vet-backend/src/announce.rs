@@ -28,8 +28,12 @@ pub(crate) async fn threads_changed(open: &Ready) {
 }
 
 pub(crate) async fn thread_changed(open: &Ready, thread: &ThreadView) -> Response {
-    threads_changed(open).await;
-    Response::Thread(mapping::thread(thread))
+    let revision = open.session.revision().await;
+    open.subscribers.broadcast(Event::ThreadsChanged {
+        project: open.id,
+        revision,
+    });
+    Response::Thread(mapping::thread(revision, thread))
 }
 
 /// The protocol update for the requester; every subscriber is told of the changeset's file. A

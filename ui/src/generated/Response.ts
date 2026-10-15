@@ -108,4 +108,4 @@ truncated: boolean,
 /**
  * How many files had text to look in.
  */
-searched: number, } | { "type": "itemBlob", content: BlobContent, } | { "type": "threads", revision: number, threads: Array<Thread>, } | { "type": "targetLine", revision: number, line: number, } | { "type": "mappedLines", lines: Array<MappedLine>, } | { "type": "commentTarget", target: ThreadTarget, line: number | null, } | { "type": "thread" } & Thread | { "type": "pullRequestInfo" } & PullRequestInfo | { "type": "reviewSubmitted" } & ReviewSubmitted;
+searched: number, } | { "type": "itemBlob", revision: number, content: BlobContent, } | { "type": "threads", revision: number, threads: Array<Thread>, } | { "type": "targetLine", revision: number, line: number, } | { "type": "mappedLines", revision: number, lines: Array<MappedLine>, } | { "type": "commentTarget", revision: number, target: ThreadTarget, line: number | null, } | { "type": "thread" } & Thread | { "type": "pullRequestInfo" } & PullRequestInfo | { "type": "reviewSubmitted" } & ReviewSubmitted;

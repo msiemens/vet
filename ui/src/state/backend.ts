@@ -398,9 +398,16 @@ export class Backend {
   }
 
   /** One side of a non-text item's file, as of `revision`. */
-  async itemBlob(revision: number, path: string, kind: NonTextKind, side: Side, view: View): Promise<BlobContent> {
+  async itemBlob(
+    revision: number,
+    path: string,
+    kind: NonTextKind,
+    side: Side,
+    view: View,
+  ): Promise<{ revision: number; content: BlobContent }> {
     const request = { type: "itemBlob", project: this.pid, view, revision, path, kind, side } as const;
-    return (await this.call(request)).content;
+    const { revision: answered, content } = await this.call(request);
+    return { revision: answered, content };
   }
 
   /**
@@ -798,11 +805,18 @@ export class Backend {
   /**
    * Where the lines (0-based) of the target text of `path` in version `from` of the open review are in
    * the target text as of `revision`, the manifest's (a stale one is rejected); fails when the version
-   * or the file's text is not there.
+   * or the file's text is not there. Resolves with the revision the mapping is of, so a caller can
+   * drop it when the view moved on.
    */
-  async mapLines(revision: number, from: number, path: string, lines: number[]): Promise<MappedLine[]> {
+  async mapLines(
+    revision: number,
+    from: number,
+    path: string,
+    lines: number[],
+  ): Promise<{ revision: number; lines: MappedLine[] }> {
     const request = { type: "mapLines", project: this.pid, revision, from, path, lines } as const;
-    return (await this.call(request)).lines;
+    const { revision: answered, lines: mapped } = await this.call(request);
+    return { revision: answered, lines: mapped };
   }
 
   /**
@@ -814,10 +828,10 @@ export class Backend {
     path: string,
     at: CommentAt,
     view: View,
-  ): Promise<{ target: ThreadTarget; line: number | null }> {
+  ): Promise<{ revision: number; target: ThreadTarget; line: number | null }> {
     const request = { type: "commentTarget", project: this.pid, view, revision, path, at } as const;
-    const { target, line } = await this.call(request);
-    return { target, line };
+    const { revision: answered, target, line } = await this.call(request);
+    return { revision: answered, target, line };
   }
 
   /** `revision` is the manifest's; lines of a range target are in its text. */

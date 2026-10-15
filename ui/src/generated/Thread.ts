@@ -8,10 +8,14 @@ import type { ThreadPlatform } from "./ThreadPlatform";
 import type { ThreadStatus } from "./ThreadStatus";
 
 /**
- * A comment thread. `anchor` and `location` belong to the revision of the
- * response; they are re-resolved from the recorded anchor each revision.
+ * A comment thread. `anchor` and `location` belong to `revision`; they are re-resolved
+ * from the recorded anchor each revision.
  */
-export type Thread = { id: number, kind: ThreadKind, 
+export type Thread = { id: number, 
+/**
+ * The revision `anchor` and `location` were resolved at.
+ */
+revision: number, kind: ThreadKind, 
 /**
  * `None` for a changeset thread.
  */

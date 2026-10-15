@@ -32,7 +32,7 @@ impl Orchestrator {
                     .await
             })
             .await?;
-        Ok(mapping::comment_spot(&spot))
+        Ok(mapping::comment_spot(revision, &spot))
     }
 
     pub(crate) async fn create_thread(

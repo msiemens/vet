@@ -776,9 +776,17 @@ mod tests {
             }
         }
 
+        /// The thread a mutation answers with, checked to carry the revision it was resolved at.
         async fn thread(&mut self, request: Request) -> Thread {
+            let revision = self.manifest().await.revision;
             match self.drive(request).await {
-                Response::Thread(thread) => thread,
+                Response::Thread(thread) => {
+                    assert_eq!(
+                        thread.revision, revision,
+                        "the backend did not fill the thread's revision"
+                    );
+                    thread
+                }
                 other => panic!("{other:?}"),
             }
         }
@@ -964,6 +972,24 @@ mod tests {
             })
             .await;
 
+        // The comment target carries the revision it was computed at.
+        let target = world
+            .ask(Request::CommentTarget {
+                project,
+                view,
+                revision,
+                path: "a.txt".into(),
+                at: CommentAt::File,
+            })
+            .await;
+        let Response::CommentTarget { revision: answered, .. } = target else {
+            panic!("{target:?}");
+        };
+        assert_eq!(
+            answered, revision,
+            "the backend did not fill the comment target's revision"
+        );
+
         // An edit inside one anchor makes it inferred; the block twice makes the other ambiguous.
         write(p, "a.txt", &text(30, &[3, 11]));
         write(
@@ -1101,7 +1127,13 @@ mod tests {
                 hunk: 0,
             })
             .await;
-        assert!(matches!(diff, Response::BaseDiff(_)), "{diff:?}");
+        let Response::BaseDiff(diff) = diff else {
+            panic!("{diff:?}");
+        };
+        assert_eq!(
+            diff.revision, revision,
+            "the backend did not fill the base diff's revision"
+        );
         world
             .drive(Request::ReconfirmFile {
                 project,

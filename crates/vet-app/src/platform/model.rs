@@ -40,8 +40,6 @@ pub struct PipelineWords {
     pub rerun_all: &'static str,
     pub rerun_group: &'static str,
     pub cancel: &'static str,
-    /// Running everything again also stops a build that is running, so it asks first.
-    pub rerun_all_replaces_running: bool,
 }
 
 /// What a comment on the whole pull request is.
@@ -93,7 +91,6 @@ impl PlatformTraits {
                 rerun_all: "Re-run all jobs",
                 rerun_group: "Re-run job",
                 cancel: "Cancel run",
-                rerun_all_replaces_running: false,
             },
         }
     }
@@ -121,7 +118,6 @@ impl PlatformTraits {
                 rerun_all: "Re-run all",
                 rerun_group: "Retry stage",
                 cancel: "Cancel run",
-                rerun_all_replaces_running: true,
             },
         }
     }

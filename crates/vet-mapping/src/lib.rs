@@ -268,8 +268,9 @@ fn commit_info(c: &CommitInfo) -> p::CommitInfo {
     }
 }
 
-pub fn base_diff(d: &BaseDiffView) -> p::Response {
+pub fn base_diff(revision: u32, d: &BaseDiffView) -> p::Response {
     p::Response::BaseDiff(p::BaseDiff {
+        revision,
         from: d.from.as_ref().map(commit_info),
         to: commit_info(&d.to),
         rows: (d.rows.iter())
@@ -853,7 +854,7 @@ pub fn target_text(t: &TargetText, highlights: p::Highlights) -> p::Response {
     }
 }
 
-pub fn item_blob(blob: ItemBlob) -> p::Response {
+pub fn item_blob(revision: u32, blob: ItemBlob) -> p::Response {
     let content = match blob {
         ItemBlob::Bytes { media_type, bytes } => p::BlobContent::Bytes {
             media_type: media_type.map(String::from),
@@ -863,7 +864,7 @@ pub fn item_blob(blob: ItemBlob) -> p::Response {
         ItemBlob::TooLarge => p::BlobContent::TooLarge,
         ItemBlob::Unavailable => p::BlobContent::Unavailable,
     };
-    p::Response::ItemBlob { content }
+    p::Response::ItemBlob { revision, content }
 }
 
 fn side(s: Side) -> p::Side {
@@ -922,7 +923,7 @@ pub fn core_comment_at(at: p::CommentAt) -> CommentAt {
     }
 }
 
-pub fn comment_spot(spot: &CommentSpot) -> p::Response {
+pub fn comment_spot(revision: u32, spot: &CommentSpot) -> p::Response {
     let target = match &spot.target {
         NewThread::Range { side: s, path, range } => p::ThreadTarget::Range {
             side: side(*s),
@@ -937,6 +938,7 @@ pub fn comment_spot(spot: &CommentSpot) -> p::Response {
         NewThread::Changeset => p::ThreadTarget::Changeset,
     };
     p::Response::CommentTarget {
+        revision,
         target,
         line: spot.line,
     }
@@ -985,7 +987,7 @@ fn anchor_state(s: &AnchorState) -> p::AnchorState {
     }
 }
 
-pub fn thread(t: &ThreadView) -> p::Thread {
+pub fn thread(revision: u32, t: &ThreadView) -> p::Thread {
     let (kind, side_of, original) = match &t.target {
         CommentTarget::Range(a) => (
             p::ThreadKind::Range,
@@ -997,6 +999,7 @@ pub fn thread(t: &ThreadView) -> p::Thread {
     };
     p::Thread {
         id: sat_u32(t.id.0),
+        revision,
         kind,
         side: side_of,
         path: t.path.as_ref().map(RepoPath::to_string_lossy),
@@ -1107,7 +1110,6 @@ pub fn platform_traits(kind: PlatformKind) -> p::PlatformTraits {
             rerun_all: traits.pipelines.rerun_all.into(),
             rerun_group: traits.pipelines.rerun_group.into(),
             cancel: traits.pipelines.cancel.into(),
-            rerun_all_replaces_running: traits.pipelines.rerun_all_replaces_running,
         },
     }
 }
@@ -1275,7 +1277,7 @@ pub fn review_submitted(r: &SubmitReport) -> p::Response {
 pub fn threads(v: &ThreadsView) -> p::Response {
     p::Response::Threads {
         revision: v.revision,
-        threads: v.threads.iter().map(thread).collect(),
+        threads: v.threads.iter().map(|t| thread(v.revision, t)).collect(),
     }
 }
 

@@ -54,7 +54,11 @@ export function fileSource(backend: Backend, revision: number, view: View): File
       if (!reply) throw outdated();
       return reply.content;
     },
-    itemBlob: (path, kind, side) => backend.itemBlob(revision, path, kind, side, view),
+    itemBlob: async (path, kind, side) => {
+      const reply = atRevision(revision, await backend.itemBlob(revision, path, kind, side, view));
+      if (!reply) throw outdated();
+      return reply.content;
+    },
     targetLine: (side, path, line) => backend.targetLine(revision, side, path, line, view),
   };
 }

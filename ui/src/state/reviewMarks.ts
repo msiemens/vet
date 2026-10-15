@@ -11,6 +11,7 @@ import { STALE_NOTICE } from "../lib/notice";
 import { RequestError } from "../lib/requestError";
 import type { Backend } from "./backend";
 import { notices } from "./notices.svelte";
+import { atRevision } from "./revision";
 import { type Shown, isCurrent } from "./shown";
 
 /** What a request that marks answers with: a file's review state. */
@@ -99,7 +100,7 @@ export function reviewMarks(host: MarkHost) {
     async baseDiff(shown: Shown, path: string, hunk: number): Promise<BaseDiff | undefined> {
       if (!host.admit(shown)) return undefined;
       try {
-        return await host.backend().baseDiff(shown.revision, path, hunk);
+        return atRevision(host.current()?.revision, await host.backend().baseDiff(shown.revision, path, hunk));
       } catch (error) {
         reportFailure(error, shown.revision, host.current()?.revision);
         return undefined;
@@ -108,7 +109,12 @@ export function reviewMarks(host: MarkHost) {
     /** Where a comment on a part of the file attaches in `shown`; rejects if `shown` is not current. */
     async commentTarget(shown: Shown, path: string, at: CommentAt) {
       if (!host.admit(shown)) throw new RequestError("outdated", STALE_NOTICE);
-      return host.backend().commentTarget(shown.revision, path, at, shown.view);
+      const reply = atRevision(
+        host.current()?.revision,
+        await host.backend().commentTarget(shown.revision, path, at, shown.view),
+      );
+      if (!reply) throw new RequestError("outdated", STALE_NOTICE);
+      return reply;
     },
   };
 }

@@ -218,8 +218,9 @@ pub enum Response {
         /// How many files had text to look in.
         searched: u32,
     },
-    /// The answer to `ItemBlob`.
+    /// The answer to `ItemBlob`, at `revision`.
     ItemBlob {
+        revision: u32,
         content: BlobContent,
     },
     /// The answer to `Threads`, at `revision`, in creation order.
@@ -232,14 +233,16 @@ pub enum Response {
         revision: u32,
         line: u32,
     },
-    /// The answer to `MapLines`.
+    /// The answer to `MapLines`, at `revision`.
     MappedLines {
+        revision: u32,
         lines: Vec<MappedLine>,
     },
-    /// The answer to `CommentTarget`. For a range target, `line` is the line (0-based) of
+    /// The answer to `CommentTarget`, at `revision`. For a range target, `line` is the line (0-based) of
     /// the target text that a unified diff shows the range's last line at, where a form for
     /// the comment goes (the rule of `Thread::target_line`).
     CommentTarget {
+        revision: u32,
         target: ThreadTarget,
         line: Option<u32>,
     },

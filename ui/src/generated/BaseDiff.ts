@@ -8,6 +8,10 @@ import type { CommitInfo } from "./CommitInfo";
  */
 export type BaseDiff = { 
 /**
+ * The revision the diff is of.
+ */
+revision: number, 
+/**
  * The base the hunk was marked against; absent once git has dropped the commit.
  */
 from: CommitInfo | null, 

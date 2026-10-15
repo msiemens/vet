@@ -773,12 +773,14 @@ async fn binary_items_serve_the_bytes_of_either_side() {
         client.call(request)
     };
     let bytes = |media_type: &str, content: &[u8]| Response::ItemBlob {
+        revision: 0,
         content: BlobContent::Bytes {
             media_type: Some(media_type.into()),
             bytes: base64::engine::general_purpose::STANDARD.encode(content),
         },
     };
     let absent = Response::ItemBlob {
+        revision: 0,
         content: BlobContent::Absent,
     };
 
@@ -803,6 +805,7 @@ async fn binary_items_serve_the_bytes_of_either_side() {
     assert_eq!(
         blob(0, "big.bin", Side::Target).await.unwrap(),
         Response::ItemBlob {
+            revision: 0,
             content: BlobContent::TooLarge
         }
     );
@@ -1323,9 +1326,15 @@ async fn lines_of_an_earlier_version_are_mapped_to_where_they_are_now() {
     write(fx.repo.path(), "a.txt", &edited);
     assert_eq!(one.settled().await, 1);
 
-    let Response::MappedLines { lines } = map(&one, project, 1, &[0, 10, 20, 25, 29]).await.unwrap() else {
+    let revision = one.manifest(project).await.revision;
+    let Response::MappedLines {
+        revision: answered,
+        lines,
+    } = map(&one, project, 1, &[0, 10, 20, 25, 29]).await.unwrap()
+    else {
         panic!("not a mapping");
     };
+    assert_eq!(answered, revision, "the backend did not fill the mapping's revision");
     let at = |line, kept| vet_protocol::MappedLine { line, kept };
     assert_eq!(
         lines,

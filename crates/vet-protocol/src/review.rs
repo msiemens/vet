@@ -191,6 +191,8 @@ pub enum ReviewInfo {
 #[serde(rename_all = "camelCase")]
 #[ts(export)]
 pub struct BaseDiff {
+    /// The revision the diff is of.
+    pub revision: u32,
     /// The base the hunk was marked against; absent once git has dropped the commit.
     pub from: Option<CommitInfo>,
     /// The base now.

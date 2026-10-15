@@ -107,8 +107,6 @@ pub struct PipelineWords {
     pub rerun_all: String,
     pub rerun_group: String,
     pub cancel: String,
-    /// Running everything again also stops a build that runs, so it asks first.
-    pub rerun_all_replaces_running: bool,
 }
 
 #[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize, TS)]

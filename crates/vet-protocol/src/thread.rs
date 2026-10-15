@@ -172,13 +172,15 @@ pub enum AnchorState {
     Ambiguous { candidates: Vec<LineLocation> },
 }
 
-/// A comment thread. `anchor` and `location` belong to the revision of the
-/// response; they are re-resolved from the recorded anchor each revision.
+/// A comment thread. `anchor` and `location` belong to `revision`; they are re-resolved
+/// from the recorded anchor each revision.
 #[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
 #[ts(export)]
 pub struct Thread {
     pub id: u32,
+    /// The revision `anchor` and `location` were resolved at.
+    pub revision: u32,
     pub kind: ThreadKind,
     /// `None` for a changeset thread.
     pub side: Option<Side>,

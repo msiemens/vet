@@ -11,8 +11,4 @@ group: string,
 /**
  * What a group is made of: `step`, `task`.
  */
-step: string, rerunFailed: string, rerunAll: string, rerunGroup: string, cancel: string, 
-/**
- * Running everything again also stops a build that runs, so it asks first.
- */
-rerunAllReplacesRunning: boolean, };
+step: string, rerunFailed: string, rerunAll: string, rerunGroup: string, cancel: string, };

@@ -10,6 +10,7 @@ import { changeset } from "./changeset.svelte";
 import { followProject, whileOpen } from "./followProject";
 import { notices } from "./notices.svelte";
 import { Resource } from "./resource";
+import { atRevision } from "./revision";
 import type { Shown } from "./shown";
 import { rangeKey } from "./timelineRange";
 import { CHANGESET } from "./view";
@@ -143,7 +144,12 @@ class ThreadStore {
   private async change(request?: Promise<Thread>, sent?: number): Promise<boolean> {
     if (!request) return false;
     try {
-      const thread = await request;
+      const thread = atRevision(this.revision, await request);
+      if (!thread) {
+        // The changeset moved while the request was underway: the thread's anchor is of the old text.
+        void this.reload();
+        return false;
+      }
       const known = this.items.some((t) => t.id === thread.id);
       this.set(
         known ? this.items.map((t) => (t.id === thread.id ? thread : t)) : [...this.items, thread],
