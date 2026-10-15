@@ -9,6 +9,7 @@
 
 use std::sync::OnceLock;
 
+use globset::{GlobBuilder, GlobSet, GlobSetBuilder};
 use serde_json::{Value, json};
 use vet_core::content::Hash;
 use vet_semantic::policy::AnalysisPolicy;
@@ -196,29 +197,23 @@ pub fn fingerprint() -> Hash {
     })
 }
 
-/// Whether `path` (with `/` between its names) is matched by `pattern`: names are matched one by
-/// one, `*` stands for any characters of one name and a name of `**` for any number of names.
-/// Unlike the servers' own globs, a name that starts with a dot is matched like any other: the
-/// directories above a project are not ours to choose.
-fn glob(pattern: &str, path: &str) -> bool {
-    fn name(pattern: &[u8], text: &[u8]) -> bool {
-        match pattern.split_first() {
-            None => text.is_empty(),
-            Some((b'*', rest)) => (0..=text.len()).any(|skip| name(rest, &text[skip..])),
-            Some((c, rest)) => text.first() == Some(c) && name(rest, &text[1..]),
+/// The compiled globs of one schema's YAML file-list patterns. `*` stays within one
+/// name, as in the servers' own file matches; a name that starts with a dot is matched
+/// like any other, so the directories above a project are not ours to choose.
+fn compile(patterns: &[&str]) -> GlobSet {
+    let mut set = GlobSetBuilder::new();
+    for pattern in patterns {
+        if let Ok(glob) = GlobBuilder::new(pattern).literal_separator(true).build() {
+            set.add(glob);
         }
     }
-    fn names(pattern: &[&str], path: &[&str]) -> bool {
-        match pattern.split_first() {
-            None => path.is_empty(),
-            Some((&"**", rest)) => (0..=path.len()).any(|skip| names(rest, &path[skip..])),
-            Some((first, rest)) => {
-                path.first().is_some_and(|n| name(first.as_bytes(), n.as_bytes())) && names(rest, &path[1..])
-            }
-        }
-    }
-    let (pattern, path): (Vec<_>, Vec<_>) = (pattern.split('/').collect(), path.split('/').collect());
-    names(&pattern, &path)
+    set.build().unwrap_or_default()
+}
+
+/// The schemas' YAML globs, compiled once.
+fn yaml_globs() -> &'static [GlobSet] {
+    static GLOBS: OnceLock<Vec<GlobSet>> = OnceLock::new();
+    GLOBS.get_or_init(|| SCHEMAS.iter().map(|schema| compile(schema.yaml)).collect())
 }
 
 /// The addresses of the schemas the YAML file at `path` is checked against by file name.
@@ -226,8 +221,9 @@ pub fn yaml_schemas(path: &str) -> Vec<&'static str> {
     let path = path.replace('\\', "/");
     SCHEMAS
         .iter()
-        .filter(|s| s.yaml.iter().any(|g| glob(g, &path)))
-        .map(|s| s.urls[0])
+        .zip(yaml_globs())
+        .filter(|(_, globs)| globs.is_match(&path))
+        .map(|(schema, _)| schema.urls[0])
         .collect()
 }
 
@@ -327,6 +323,12 @@ mod tests {
         assert_eq!(yaml_schemas("/p/docker-compose.override.yaml"), [compose]);
         assert_eq!(yaml_schemas("/p/compose.yml"), [compose]);
         assert_eq!(yaml_schemas("C:\\p\\azure-pipelines.yml"), [azure]);
+        assert_eq!(
+            yaml_schemas("azure-pipelines.yml"),
+            [azure],
+            "`**/` matches no directory too"
+        );
+        assert_eq!(yaml_schemas("compose.yml"), [compose]);
         assert!(yaml_schemas("/p/src/config.yaml").is_empty());
         assert!(
             yaml_schemas("/p/deploy/k8s/base/app.yaml").is_empty(),
@@ -334,6 +336,24 @@ mod tests {
         );
         assert!(yaml_schemas("/p/.github/workflows/nested/ci.yml").is_empty());
         assert!(yaml_schemas("/p/.github/ci.yml").is_empty());
+    }
+
+    #[test]
+    fn a_pathological_glob_is_answered_fast() {
+        // Backtracking `*` matchers blow up on many stars: `a*a*a*…b` against a run of
+        // `a`s has no match, so every star tries every split. globset compiles it to a
+        // regular expression and answers at once.
+        let pattern = "a*".repeat(12) + "b";
+        let globs = compile(&[&pattern]);
+        let path = "a".repeat(30);
+        let start = std::time::Instant::now();
+        assert!(!globs.is_match(&path), "a run of `a`s does not end in `b`");
+        let elapsed = start.elapsed();
+        assert!(
+            elapsed < std::time::Duration::from_millis(100),
+            "a pathological glob took {elapsed:?}"
+        );
+        assert!(globs.is_match(format!("{path}b")), "the same run with `b` matches");
     }
 
     #[test]
