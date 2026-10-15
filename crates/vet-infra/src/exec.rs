@@ -37,7 +37,19 @@ pub fn dotnet_env() -> Vec<(String, String)> {
 /// rustup download toolchains behind a probe, so auto-install is off for every process.
 #[allow(clippy::disallowed_methods, reason = "the one place that spawns processes")]
 pub fn command(program: &str, args: &[String], cwd: Option<&Path>, env: &[(String, String)]) -> TokioCommand {
-    let mut command = TokioCommand::new(invocation(program));
+    command_resolved(&invocation(program), args, cwd, env)
+}
+
+/// `command` for a program whose location is known: the same, without the `PATH` lookup of
+/// `command`, which a caller has already run.
+#[allow(clippy::disallowed_methods, reason = "the one place that spawns processes")]
+pub fn command_resolved(
+    resolved: &Path,
+    args: &[String],
+    cwd: Option<&Path>,
+    env: &[(String, String)],
+) -> TokioCommand {
+    let mut command = TokioCommand::new(resolved);
     command
         .args(args)
         .env("RUSTUP_AUTO_INSTALL", "0")
@@ -68,8 +80,17 @@ pub async fn capture(
     env: &[(String, String)],
     timeout: Duration,
 ) -> Result<Captured, String> {
+    // The lookup of `program` stats every candidate on the `PATH`, however long or slow each
+    // one is, so it waits on a blocking thread like the command's own output would. Before
+    // the turn: the lookup's unit is given back, and the process that follows runs once
+    // a unit is free, as before.
+    let named = program.to_owned();
+    let resolved = budget
+        .blocking(move || invocation(&named))
+        .await
+        .map_err(|e| e.to_string())?;
     let _turn = budget.acquire().await;
-    let mut child = command(program, args, cwd, env)
+    let mut child = command_resolved(&resolved, args, cwd, env)
         .spawn()
         .map_err(|e| format!("{program}: {e}"))?;
     let mut stdout = child.stdout.take().expect("piped");

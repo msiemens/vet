@@ -5,6 +5,7 @@ use std::sync::Arc;
 
 use tokio::sync::OnceCell;
 use vet_app::ports::SettingsStore;
+use vet_infra::budget::Budget;
 use vet_infra::semantic_cache::{SqliteSemanticCache, size_on_disk};
 use vet_infra::store::SqliteStore;
 use vet_semantic::reuse::SemanticCache;
@@ -65,8 +66,10 @@ impl PersistentAnswers {
         }
     }
 
-    /// The bytes the file takes on disk.
-    pub(crate) fn usage(&self) -> u64 {
-        size_on_disk(self.store.dir())
+    /// The bytes the semantic cache's file takes on disk: two stats of files the writer
+    /// task may be changing, so they are answered on the blocking threads.
+    pub(crate) async fn usage(&self, io: &Budget) -> u64 {
+        let dir = self.store.dir().to_owned();
+        io.blocking(move || size_on_disk(&dir)).await.unwrap_or(0)
     }
 }

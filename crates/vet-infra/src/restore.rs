@@ -205,6 +205,13 @@ impl ToolRestorer {
         Self::default()
     }
 
+    /// A look at the record or the tree (`Record::read`, a check of a link, a venv
+    /// search): answered on the lane's blocking threads, so a slow directory or a
+    /// large record never holds an async worker while a restore goes.
+    async fn reading<T: Send + 'static>(&self, read: impl FnOnce() -> T + Send + 'static) -> T {
+        self.semantic_io.blocking(read).await.expect("a blocking task")
+    }
+
     pub fn with_env(env: Vec<(String, String)>) -> Self {
         Self { env, ..Self::default() }
     }
@@ -551,13 +558,15 @@ fn venv_bin(venv: &Path) -> PathBuf {
 }
 
 /// The environment the server runs in: one server, one environment, the first
-/// project's, which is the root's if it has one.
-fn environment(root: &Path, language: &Language, plan: &Plan) -> Vec<(String, String)> {
-    let venv = plan
-        .steps
-        .iter()
-        .map(|s| root.join(&s.project).join(VENV))
-        .find(|v| v.is_dir());
+/// project's, which is the root's if it has one. The venv search stats the
+/// projects' directories, so it waits on `io`.
+async fn environment(io: &Budget, root: &Path, language: &Language, plan: &Plan) -> Vec<(String, String)> {
+    let candidates: Vec<PathBuf> = plan.steps.iter().map(|s| root.join(&s.project).join(VENV)).collect();
+    let venv = io
+        .blocking(move || candidates.into_iter().find(|v| v.is_dir()))
+        .await
+        .ok()
+        .flatten();
     let mut env = Vec::new();
     if let (Restore::Python, Some(venv)) = (language.restore, venv) {
         env.push(("VIRTUAL_ENV".into(), venv.to_string_lossy().into_owned()));
@@ -640,7 +649,7 @@ impl ToolRestorer {
                 task.fail("a restore step failed".into());
             }
         }
-        restored.env = environment(root, language, plan);
+        restored.env = environment(&self.semantic_io, root, language, plan).await;
         (restored, records)
     }
 
@@ -716,14 +725,16 @@ impl ToolRestorer {
 
     /// Whether `record` stands for the restore that would run now: same inputs,
     /// every step done, and the donor's `node_modules` still what they were linked as.
-    fn reusable(&self, record: &Record, inputs: Hash, root: &Path, steps: &[&Step]) -> bool {
+    /// The donor's files are read and the links are stat'ed, so this runs on the caller's
+    /// blocking threads.
+    fn reusable(donor: Option<&Path>, record: &Record, inputs: Hash, root: &Path, steps: &[Step]) -> bool {
         record.inputs == inputs
             && record.succeeded()
             && record.steps.len() == steps.len()
             && record.steps.iter().zip(steps).all(|(done, step)| match &done.outcome {
-                Outcome::Linked { donor, inputs } => {
-                    self.donor.as_deref().is_some_and(|d| {
-                        d.to_string_lossy() == donor.as_str() && reuse::linked_inputs(d, step) == *inputs
+                Outcome::Linked { donor: linked, inputs } => {
+                    donor.is_some_and(|d| {
+                        d.to_string_lossy() == linked.as_str() && reuse::linked_inputs(d, step) == *inputs
                     }) && reuse::link_intact(root, step)
                 }
                 _ => true,
@@ -744,7 +755,18 @@ impl ToolRestorer {
         let tools = self.versions(&steps).await;
         let inputs = self.inputs(plan, &steps, &tools, policy);
         let file = layout.meta().join(format!("restore-{}.json", language.restore.name()));
-        let record = Record::read(&file).filter(|record| self.reusable(record, inputs, root, &steps));
+        // The record is read and judged by the donor's files on the blocking threads.
+        let (donor, root, kept, read) = (
+            self.donor.clone(),
+            root.to_owned(),
+            steps.iter().map(|s| (*s).clone()).collect::<Vec<_>>(),
+            file.clone(),
+        );
+        let record = self
+            .reading(move || {
+                Record::read(&read).filter(|record| Self::reusable(donor.as_deref(), record, inputs, &root, &kept))
+            })
+            .await;
         Standing {
             steps,
             tools,
@@ -792,14 +814,18 @@ impl ToolRestorer {
                         _ => None,
                     }))
                     .collect(),
-                env: environment(root, language, plan),
+                env: environment(&self.semantic_io, root, language, plan).await,
                 fingerprint: Some(record.fingerprint()),
             };
         }
         // What an earlier restore left must not stand in for this one.
-        for step in &steps {
-            reuse::unlink(root, step);
-        }
+        let (unlinks, cleared) = (steps.iter().map(|s| (*s).clone()).collect::<Vec<_>>(), root.to_owned());
+        self.reading(move || {
+            for step in &unlinks {
+                reuse::unlink(&cleared, step);
+            }
+        })
+        .await;
         let (mut restored, done) = self.execute(root, language, plan, policy).await;
         let record = Record {
             inputs,
@@ -808,7 +834,7 @@ impl ToolRestorer {
         };
         restored.fingerprint = Some(record.fingerprint());
         // Without the record the next use restores again, which is only slower.
-        let _ = record.write(&file);
+        let _ = self.reading(move || record.write(&file)).await;
         layout.measure(&self.semantic_io).await;
         vet_semantic::trace::log(|| format!("restore {} (built)", language.id), started);
         restored
@@ -839,7 +865,7 @@ impl Restorer for ToolRestorer {
             return Restored::default();
         };
         let plan = self.plan(root, language, policy).await;
-        match Layout::of_tree(root) {
+        match Layout::of_tree(&self.semantic_io, root).await {
             Some(layout) => self.restore_kept(&layout, root, language, &plan, policy).await,
             None => self.execute(root, language, &plan, policy).await.0,
         }
@@ -847,7 +873,7 @@ impl Restorer for ToolRestorer {
 
     async fn recorded(&self, root: &Path, backend: &Backend, policy: AnalysisPolicy) -> Option<Hash> {
         let language = language::by_id(&backend.config().backend.0)?;
-        let layout = Layout::of_tree(root)?;
+        let layout = Layout::of_tree(&self.semantic_io, root).await?;
         let plan = self.plan(root, language, policy).await;
         let standing = self.standing(&layout, root, language, &plan, policy).await;
         standing.record.map(|record| record.fingerprint())

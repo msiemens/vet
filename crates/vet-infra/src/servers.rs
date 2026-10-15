@@ -16,7 +16,7 @@ use vet_app::ports::{
 use vet_semantic::policy::AnalysisPolicy;
 use vet_semantic::ports::BackendId;
 
-use crate::budget::{Budget, PROBES};
+use crate::budget::{Budget, PROBES, SEMANTIC_IO};
 use crate::exec::{
     Captured, Host, LineSplitter, OUTPUT_TAIL_LINES, Tail, TokioRunner, capture as run_to_end, dotnet_env, is_file,
 };
@@ -28,11 +28,16 @@ pub(crate) const ANGULAR_SERVICE: &str = "@angular/language-service";
 /// How long a `--version` probe may take.
 const PROBE_TIMEOUT: Duration = Duration::from_secs(5);
 
+/// Where each language's server comes from and how it is installed. Cheap to clone: clones
+/// share the budgets.
+#[derive(Clone)]
 pub struct ToolResolver {
     data_dir: PathBuf,
     host: Host,
     /// The processes that only answer a question: versions and the project's toolchain.
     probes: Budget,
+    /// The file lookups of a resolution.
+    io: Budget,
 }
 
 impl ToolResolver {
@@ -46,6 +51,7 @@ impl ToolResolver {
             data_dir,
             host,
             probes: Budget::new(PROBES),
+            io: Budget::new(SEMANTIC_IO),
         }
     }
 
@@ -53,6 +59,20 @@ impl ToolResolver {
     pub fn probing(mut self, probes: Budget) -> Self {
         self.probes = probes;
         self
+    }
+
+    /// Looks at files on `io`.
+    pub fn reading(mut self, io: Budget) -> Self {
+        self.io = io;
+        self
+    }
+
+    /// A look at files or directories (`host.find`, a check for an install): answered
+    /// on the lane's blocking threads, so a slow directory never holds an async worker
+    /// while a server starts.
+    async fn looking<T: Send + 'static>(&self, look: impl FnOnce(&Self) -> T + Send + 'static) -> T {
+        let this = self.clone();
+        self.io.blocking(move || look(&this)).await.expect("a blocking task")
     }
 
     fn spec(language: &BackendId) -> Option<&'static Language> {
@@ -78,16 +98,18 @@ impl ToolResolver {
     /// The version of a Vet-installed server: an npm package's `package.json`,
     /// or what `dotnet tool list --tool-path` reports.
     async fn installed_version(&self, spec: &Language) -> Option<String> {
-        let dir = self.install_dir(spec);
         match spec.install {
             Install::No => None,
-            Install::Npm { packages } => package_version(&dir.join("node_modules").join(packages[0].0)),
+            Install::Npm { packages } => {
+                let manifest = self.install_dir(spec).join("node_modules").join(packages[0].0);
+                self.looking(move |_| package_version(&manifest)).await
+            }
             Install::DotnetTool { package, .. } => {
                 let args = [
                     "tool".to_owned(),
                     "list".into(),
                     "--tool-path".into(),
-                    dir.to_string_lossy().into_owned(),
+                    self.install_dir(spec).to_string_lossy().into_owned(),
                 ];
                 let out = capture(&self.probes, "dotnet", &args, None)
                     .await
@@ -99,7 +121,7 @@ impl ToolResolver {
     }
 
     async fn project_rust_analyzer(&self, project: &Path) -> Result<PathBuf, String> {
-        let Some(rustup) = self.host.find("rustup", is_file) else {
+        let Some(rustup) = self.looking(|t| t.host.find("rustup", is_file)).await else {
             return Err("rustup is not on PATH".into());
         };
         let args = ["which".to_owned(), "rust-analyzer".to_owned()];
@@ -235,7 +257,8 @@ impl ServerResolver for ToolResolver {
         let mut found: Option<(PathBuf, ServerOrigin)> = None;
 
         if let Some(custom) = custom {
-            match self.host.find(custom, is_file) {
+            let path = custom.to_owned();
+            match self.looking(move |t| t.host.find(&path, is_file)).await {
                 Some(path) => found = Some((path, ServerOrigin::Custom)),
                 None => {
                     return ServerState::Missing {
@@ -251,7 +274,7 @@ impl ServerResolver for ToolResolver {
             }
         }
         if found.is_none() {
-            match self.installed(spec) {
+            match self.looking(|t| t.installed(spec)).await {
                 Some(path) => found = Some((path, ServerOrigin::Installed)),
                 None if !matches!(spec.install, Install::No) => {
                     looked.push(format!("not installed in {}", self.install_dir(spec).display()));
@@ -260,7 +283,7 @@ impl ServerResolver for ToolResolver {
             }
         }
         if found.is_none() {
-            match self.host.find(spec.binary, is_file) {
+            match self.looking(|t| t.host.find(spec.binary, is_file)).await {
                 Some(path) => found = Some((path, ServerOrigin::Path)),
                 None => looked.push("not on PATH".into()),
             }
@@ -274,28 +297,39 @@ impl ServerResolver for ToolResolver {
         let mut tsserver = None;
         let mut compiler = None;
         if spec.compiler == Compiler::TypeScript {
-            tsserver = Some(match self.tsserver(spec, project, policy, &path) {
-                Some((path, whose)) => {
-                    compiler = Some(path.clone());
-                    Tsserver::Using { whose, path }
-                }
-                // Left to itself the server would look for the project's typescript.
-                None if !policy.allow_executing => {
-                    return ServerState::Missing {
-                        reason: "the project's typescript is not run for what is not trusted, and neither \
+            let (project, found) = (project.to_owned(), path.clone());
+            tsserver = Some(
+                match self.looking(move |t| t.tsserver(spec, &project, policy, &found)).await {
+                    Some((path, whose)) => {
+                        compiler = Some(path.clone());
+                        Tsserver::Using { whose, path }
+                    }
+                    // Left to itself the server would look for the project's typescript.
+                    None if !policy.allow_executing => {
+                        return ServerState::Missing {
+                            reason: "the project's typescript is not run for what is not trusted, and neither \
                                  Vet's own nor one beside the server is installed. Install Vet's from the \
                                  language servers settings."
-                            .into(),
-                    };
-                }
-                None => Tsserver::Missing {
-                    reason: "the project has no typescript with lib/tsserver.js (TypeScript 7 ships none) \
+                                .into(),
+                        };
+                    }
+                    None => Tsserver::Missing {
+                        reason: "the project has no typescript with lib/tsserver.js (TypeScript 7 ships none) \
                              and Vet's fallback is not installed"
-                        .into(),
+                            .into(),
+                    },
                 },
-            });
+            );
         }
-        if spec.id == language::ANGULAR.id && !policy.allow_executing && !self.has_angular_service(spec, &path) {
+        if spec.id == language::ANGULAR.id
+            && !policy.allow_executing
+            && !self
+                .looking({
+                    let found = path.clone();
+                    move |t| t.has_angular_service(spec, &found)
+                })
+                .await
+        {
             return ServerState::Missing {
                 reason: "the project's @angular/language-service is not run for what is not trusted, and \
                          Vet's own is not installed. Install it from the language servers settings."
@@ -337,7 +371,7 @@ impl ServerResolver for ToolResolver {
         }
     }
 
-    fn install_blocker(&self, language: &BackendId) -> Option<String> {
+    async fn install_blocker(&self, language: &BackendId) -> Option<String> {
         let tool = match Self::spec(language)?.install {
             Install::No => return None,
             Install::Npm { .. } => ("npm", "installing needs npm (Node.js), which is not on PATH"),
@@ -346,7 +380,9 @@ impl ServerResolver for ToolResolver {
                 "installing needs the .NET SDK (`dotnet`), which is not on PATH",
             ),
         };
-        self.host.find(tool.0, is_file).is_none().then(|| tool.1.to_owned())
+        self.looking(|t| t.host.find(tool.0, is_file).is_none())
+            .await
+            .then(|| tool.1.to_owned())
     }
 
     async fn install(&self, language: &BackendId, progress: &(dyn Fn(&str) + Send + Sync)) -> Result<(), String> {
@@ -371,7 +407,7 @@ impl ServerResolver for ToolResolver {
             }
             Install::DotnetTool { package, version } => {
                 // A tool path holds one version; start clean so the pin replaces any other.
-                let _ = std::fs::remove_dir_all(&dir);
+                let _ = self.looking(|t| std::fs::remove_dir_all(t.install_dir(spec))).await;
                 (
                     "dotnet",
                     vec![
@@ -386,7 +422,10 @@ impl ServerResolver for ToolResolver {
                 )
             }
         };
-        std::fs::create_dir_all(&dir).map_err(|e| format!("{}: {e}", dir.display()))?;
+        self.looking(move |t| {
+            std::fs::create_dir_all(t.install_dir(spec)).map_err(|e| format!("{}: {e}", t.install_dir(spec).display()))
+        })
+        .await?;
         progress(&format!("{program} {}", args.join(" ")));
         let command = Command {
             program: program.into(),
@@ -410,7 +449,7 @@ impl ServerResolver for ToolResolver {
                 }
             }
         };
-        if code != Some(0) || self.installed(spec).is_none() {
+        if code != Some(0) || self.looking(|t| t.installed(spec)).await.is_none() {
             let status = code.map_or("was killed".to_owned(), |c| format!("exited with {c}"));
             return Err(format!("{program} {status}:\n{}", tail.text()));
         }
@@ -736,10 +775,17 @@ mod tests {
         );
         assert!(reason.contains("settings"), "{reason}");
         assert_eq!(resolver.pinned(&language("rust")), None);
-        assert!(resolver.install_blocker(&language("python")).unwrap().contains("npm"));
+        assert!(
+            resolver
+                .install_blocker(&language("python"))
+                .await
+                .unwrap()
+                .contains("npm")
+        );
         assert!(
             resolver
                 .install_blocker(&language("csharp"))
+                .await
                 .unwrap()
                 .contains("dotnet")
         );

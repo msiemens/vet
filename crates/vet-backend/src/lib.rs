@@ -178,7 +178,9 @@ impl Orchestrator {
         let store = store.budgeted(budgets.review_io.clone());
         let backends: Arc<[Backend]> = lsp_config::defaults().into();
         let languages = backends.iter().map(|b| b.config().backend.clone()).collect();
-        let resolver = ToolResolver::new(store.dir().to_owned()).probing(budgets.probes.clone());
+        let resolver = ToolResolver::new(store.dir().to_owned())
+            .probing(budgets.probes.clone())
+            .reading(budgets.semantic_io.clone());
         let referenced = Arc::new(StoreReferences(store.clone()));
         let trees = KeptTrees::new(store.dir().join("materialized"), Limits::default(), referenced)
             .budgeted(budgets.semantic_io.clone());
@@ -297,9 +299,9 @@ impl Orchestrator {
         Ok(answer)
     }
 
-    fn semantic_cache_usage(&self) -> Response {
+    async fn semantic_cache_usage(&self) -> Response {
         Response::SemanticCacheUsage {
-            bytes: self.answers.usage(),
+            bytes: self.answers.usage(&self.budgets.semantic_io).await,
         }
     }
 
@@ -405,9 +407,9 @@ impl Orchestrator {
             Request::RemoveCredentials { host } => reply(async move { self.remove_credentials(&host).await }),
             Request::ClearSemanticCaches => reply(async move {
                 self.clear_semantic_caches().await;
-                Ok(self.semantic_cache_usage())
+                Ok(self.semantic_cache_usage().await)
             }),
-            Request::SemanticCacheUsage => reply(async move { Ok(self.semantic_cache_usage()) }),
+            Request::SemanticCacheUsage => reply(async move { Ok(self.semantic_cache_usage().await) }),
             Request::Settings => reply(self.settings(from)),
             Request::SetSettings { settings } => reply(self.set_settings(settings)),
             Request::Preferences { scope } => reply(self.preferences(scope, from)),

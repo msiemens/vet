@@ -879,7 +879,7 @@ pub trait ServerResolver {
     /// The version `install` puts in place; `None` if Vet cannot install the language's server.
     fn pinned(&self, language: &BackendId) -> Option<String>;
     /// Why `install` cannot run now (a tool it needs is missing), if so.
-    fn install_blocker(&self, language: &BackendId) -> Option<String>;
+    fn install_blocker(&self, language: &BackendId) -> impl Future<Output = Option<String>> + Send;
     /// Installs the pinned server into Vet's data directory. `progress` gets the
     /// tool's output lines.
     fn install(

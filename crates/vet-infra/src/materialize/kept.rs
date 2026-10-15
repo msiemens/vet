@@ -592,9 +592,13 @@ pub(crate) struct Layout {
 }
 
 impl Layout {
-    pub(crate) fn of_tree(root: &Path) -> Option<Self> {
+    /// Where a tree under `root` keeps its records, if `root` is the `tree/` of a kept
+    /// tree. Whether the tree is kept is one stat of its mark, on `io`.
+    pub(crate) async fn of_tree(io: &Budget, root: &Path) -> Option<Self> {
         let dir = root.parent()?;
-        (root.file_name()? == TREE && dir.join(META).join(COMPLETE).is_file()).then(|| Self { dir: dir.to_owned() })
+        let complete = dir.join(META).join(COMPLETE);
+        let kept = io.blocking(move || complete.is_file()).await.ok().unwrap_or(false);
+        (root.file_name()? == TREE && kept).then(|| Self { dir: dir.to_owned() })
     }
 
     pub(crate) fn meta(&self) -> PathBuf {

@@ -118,7 +118,7 @@ impl<R: ServerResolver + Sync, S: ServerSettings + Sync> Servers<R, S> {
                 state,
                 custom_path,
                 pinned: self.resolver.pinned(language),
-                install_blocker: self.resolver.install_blocker(language),
+                install_blocker: self.resolver.install_blocker(language).await,
             });
         }
         Ok(all)
@@ -141,7 +141,7 @@ impl<R: ServerResolver + Sync, S: ServerSettings + Sync> Servers<R, S> {
     pub async fn install(&self, language: &str, progress: &(dyn Fn(&str) + Send + Sync)) -> Result<(), ServersError> {
         let language = self.known(language)?;
         let _one_at_a_time = self.installing.lock().await;
-        if let Some(why) = self.resolver.install_blocker(language) {
+        if let Some(why) = self.resolver.install_blocker(language).await {
             return Err(ServersError::Install(why));
         }
         self.resolver
@@ -262,7 +262,7 @@ mod tests {
             (language.0 == "typescript").then(|| "1.0.0".into())
         }
 
-        fn install_blocker(&self, language: &BackendId) -> Option<String> {
+        async fn install_blocker(&self, language: &BackendId) -> Option<String> {
             (language.0 == "python").then(|| "npm is missing".into())
         }
 
