@@ -2,10 +2,10 @@
 
 import { test } from "./browserApp.ts";
 import { runBrowserSession } from "./browserHarness.ts";
-import { sessions } from "./browserSessions.ts";
+import { sessions, startOnQueue } from "./browserSessions.ts";
 
 for (const [name, script] of Object.entries(sessions)) {
   test(name, async ({ app }) => {
-    await runBrowserSession(app, name, script);
+    await runBrowserSession(app, name, script, startOnQueue.has(name));
   });
 }

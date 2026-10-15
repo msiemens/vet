@@ -3,6 +3,9 @@
 
 import type { Driver, Probe } from "./browserHarness.ts";
 
+/** The sessions whose script starts on the queue, before the review screen is shown. */
+export const startOnQueue = new Set<string>(["hidden"]);
+
 /** A step that sends one review request. */
 const ONE = { marks: 1 };
 
@@ -10,6 +13,25 @@ const call = (method: string, path: string, hunk?: number) =>
   `__t.changeset.${method}(__t.changeset.currentShown(), ${JSON.stringify(path)}${hunk === undefined ? "" : `, ${hunk}`})`;
 
 export const sessions: Record<string, (d: Driver) => Promise<void>> = {
+  /**
+   * The review screen stays mounted behind the queue and loads nothing there; a revision that settles
+   * while it is away waits too, and the files load when the screen comes up.
+   */
+  async hidden(d) {
+    await d.until(`!!__t.changeset.layout`, "the changeset");
+    await d.page(`__t.session.backend.waitForQuiet()`);
+    await d.sleep(500);
+    const loaded = async () => (await d.page(`__wire.fileContents`)) as number;
+    if ((await loaded()) !== 0) throw new Error("the hidden review screen loaded files while the queue was on screen");
+    await d.revise("b.txt", "wt2", [7, 25, 33]);
+    await d.page(`__t.session.backend.waitForQuiet()`);
+    await d.sleep(500);
+    if ((await loaded()) !== 0) throw new Error("a revision while the queue was on screen loaded files");
+    await d.page(`__t.commands.run("view.review")`);
+    await d.until(`document.querySelectorAll(".cm-editor").length > 0`, "the editors");
+    await d.until(`__wire.fileContents > 0`, "the review screen's files to load");
+  },
+
   /** The Changes tab and a file's text follow marks made here and in another window. */
   async views(d) {
     await d.step("opened", () => Promise.resolve());

@@ -37,6 +37,8 @@ export interface Driver {
   manyThreads(count: number): Promise<void>;
   /** An agent edits a file of the working tree; resolves once the page has a version for it. */
   edit(path: string, tag: string, edited: number[]): Promise<void>;
+  /** An agent edits a file of the working tree; resolves once the page has a newer revision. */
+  revise(path: string, tag: string, edited: number[]): Promise<void>;
   /** A push to the branch on view: a commit of `path`; resolves once the page has a new revision. */
   pushBranch(path: string, tag: string, edited: number[]): Promise<void>;
   /** An agent moves `HEAD` to `ref` and keeps the files; resolves once the page says it left the base. */
@@ -76,6 +78,7 @@ export async function runBrowserSession(
   app: BrowserApp,
   name: string,
   script: (d: Driver) => Promise<void>,
+  onQueue = false,
 ): Promise<void> {
   const { page, other, fixture, url } = app;
   const exceptions: string[] = [];
@@ -84,6 +87,21 @@ export async function runBrowserSession(
   page.on("console", (message) => {
     if (message.type() === "error") logged.push(message.text());
   });
+
+  // Counts the requests that reach the backend from the very first one, before the app can send any.
+  await page.addInitScript(`(() => {
+    const wire = { fileContents: 0, fileText: 0, itemBlob: 0, targetLine: 0 };
+    window.__wire = wire;
+    const send = WebSocket.prototype.send;
+    WebSocket.prototype.send = function (data) {
+      try {
+        const message = JSON.parse(data);
+        if (message && message.type === "request" && message.request && wire[message.request.type] !== undefined)
+          wire[message.request.type]++;
+      } catch {}
+      return send.call(this, data);
+    };
+  })()`);
 
   const evaluate = (js: string) => page.evaluate(`(async () => { return await (${js}); })()`);
   const waitFor = async (js: string, what: string): Promise<void> => {
@@ -130,8 +148,10 @@ export async function runBrowserSession(
     };
   })()`);
   await until(`!!__t.changeset.layout`, "the changeset");
-  await evaluate(`__t.commands.run("view.review")`);
-  await until(`!!window.__vet && document.querySelectorAll(".cm-editor").length > 0`, "the editors");
+  if (!onQueue) {
+    await evaluate(`__t.commands.run("view.review")`);
+    await until(`!!window.__vet && document.querySelectorAll(".cm-editor").length > 0`, "the editors");
+  }
 
   const results: StepResult[] = [];
   // Events from another window arrive after a step ends; nothing is left to come when the views stop changing.
@@ -228,6 +248,11 @@ export async function runBrowserSession(
     async edit(path, tag, edited) {
       fixture.write(path, tag, edited);
       await until(`__t.versions.items.length >= 2`, "a version for the edit");
+    },
+    async revise(path, tag, edited) {
+      const before = (await evaluate(`__t.changeset.layout?.shown.revision ?? -1`)) as number;
+      fixture.write(path, tag, edited);
+      await until(`(__t.changeset.layout?.shown.revision ?? -1) > ${before}`, "a newer revision for the edit");
     },
     async pushBranch(path, tag, edited) {
       const before = (await evaluate(`__t.changeset.layout?.shown.revision ?? -1`)) as number;
