@@ -4,7 +4,8 @@
 //!
 //! Implemented in Vet itself: `BlobReader` and friends by the acquisition over
 //! git and the content store, and `Retainer` by the session, for the semantic
-//! layer's reads.
+//! layer's reads. `LineSources` is implemented by `vet-backend`'s highlighter,
+//! which no lower crate may name.
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
