@@ -6,20 +6,21 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 
 # crate: space-separated workspace crates it may depend on (normal dependencies).
-declare -A ALLOWED=(
-    [vet-core]=""
-    [vet-protocol]=""
-    [vet-log]=""
-    [vet-engine]=""
-    [vet-host]="vet-protocol"
-    [vet-transport]="vet-protocol"
-    [vet-highlight]="vet-core"
-    [vet-semantic]="vet-core vet-highlight vet-engine"
-    [vet-app]="vet-core vet-semantic vet-engine"
-    [vet-infra]="vet-core vet-semantic vet-app vet-log vet-engine"
-    [vet-mapping]="vet-core vet-protocol vet-semantic vet-app"
-    [vet-backend]="vet-core vet-protocol vet-transport vet-semantic vet-app vet-infra vet-highlight vet-mapping vet-log"
-)
+ALLOWED_CRATES="vet-core vet-protocol vet-log vet-engine vet-host vet-transport
+    vet-highlight vet-semantic vet-app vet-infra vet-mapping vet-backend"
+allowed() {
+    case $1 in
+        vet-core | vet-protocol | vet-log | vet-engine) echo "" ;;
+        vet-host) echo "vet-protocol" ;;
+        vet-transport) echo "vet-protocol" ;;
+        vet-highlight) echo "vet-core" ;;
+        vet-semantic) echo "vet-core vet-highlight vet-engine" ;;
+        vet-app) echo "vet-core vet-semantic vet-engine" ;;
+        vet-infra) echo "vet-core vet-semantic vet-app vet-log vet-engine" ;;
+        vet-mapping) echo "vet-core vet-protocol vet-semantic vet-app" ;;
+        vet-backend) echo "vet-core vet-protocol vet-transport vet-semantic vet-app vet-infra vet-highlight vet-mapping vet-log" ;;
+    esac
+}
 
 # External crates the pure layers must never depend on.
 DENY='^(tokio|async-std|smol|futures|gix|gix-.*|git2|rusqlite|sqlx|notify|reqwest|hyper|tungstenite|tokio-tungstenite)$'
@@ -28,14 +29,15 @@ PURE="vet-core vet-semantic vet-protocol vet-engine"
 metadata=$(cargo metadata --format-version 1 --no-deps)
 status=0
 
-for crate in "${!ALLOWED[@]}"; do
+for crate in $ALLOWED_CRATES; do
     # Workspace dependencies are the ones declared with a path.
     deps=$(jq -r --arg c "$crate" \
         '.packages[] | select(.name == $c) | .dependencies[] | select(.kind == null and .path != null) | .name' \
         <<<"$metadata")
+    allow=$(allowed "$crate")
     for dep in $deps; do
-        if [[ " ${ALLOWED[$crate]} " != *" $dep "* ]]; then
-            echo "FORBIDDEN: $crate depends on $dep (allowed: ${ALLOWED[$crate]:-none})"
+        if [[ " $allow " != *" $dep "* ]]; then
+            echo "FORBIDDEN: $crate depends on $dep (allowed: ${allow:-none})"
             status=1
         fi
     done

@@ -14,13 +14,15 @@ cd "$(dirname "$0")/.."
 export RUSTC_WRAPPER
 
 base=$(git merge-base HEAD "${1:-main}")
-mapfile -t changed < <({ git diff --name-only "$base"; git ls-files --others --exclude-standard; } | sort -u)
+changed=()
+while IFS= read -r f; do changed+=("$f"); done \
+    < <({ git diff --name-only "$base"; git ls-files --others --exclude-standard; } | sort -u)
 exists() { [[ -e $1 ]]; }
 
 source ci/lib.sh
 
 rust_files=() crates=() tauri=false protocol=false deps=false cycle_tool=false harness=false ui_files=()
-for f in "${changed[@]}"; do
+for f in ${changed[@]+"${changed[@]}"}; do
     case $f in
         tools/module-cycles/* | ci/check-module-cycles.sh | ci/fixtures/module-cycle*) cycle_tool=true ;;
         ui/src-tauri/*) tauri=true ;;
@@ -45,24 +47,29 @@ for f in "${changed[@]}"; do
 done
 
 if ((${#crates[@]})); then
-    mapfile -t crates < <(printf '%s\n' "${crates[@]}" | sort -u)
+    deduped=()
+    while IFS= read -r c; do deduped+=("$c"); done \
+        < <(printf '%s\n' ${crates[@]+"${crates[@]}"} | sort -u)
+    crates=(${deduped[@]+"${deduped[@]}"})
     # The changed crates plus every workspace crate that depends on them, transitively.
-    mapfile -t affected < <(cargo metadata --format-version 1 --no-deps | jq -r --args '
+    affected=()
+    while IFS= read -r c; do affected+=("$c"); done \
+        < <(cargo metadata --format-version 1 --no-deps | jq -r --args '
         [.packages[] | {name, deps: [.dependencies[] | select(.path != null) | .name]}] as $p
         | def up($set): ($set + [$p[] | select(any(.deps[]; . as $d | $set | index($d))) | .name] | unique)
               as $next | if $next == $set then $set else up($next) end;
-        up($ARGS.positional | unique)[]' "${crates[@]}")
+        up($ARGS.positional | unique)[]' ${crates[@]+"${crates[@]}"})
     pkgs=()
-    for c in "${affected[@]}"; do pkgs+=(-p "$c"); done
+    for c in ${affected[@]+"${affected[@]}"}; do pkgs+=(-p "$c"); done
 
     if ((${#rust_files[@]})); then
         step "rustfmt (${#rust_files[@]} files)"
         rustfmt --check --edition 2024 "${rust_files[@]}"
     fi
-    step "cargo clippy (${affected[*]})"
-    cargo clippy "${pkgs[@]}" --all-targets -- -D warnings
-    step "cargo nextest (${affected[*]})"
-    cargo nextest run "${pkgs[@]}"
+    step "cargo clippy (${affected[*]+"${affected[*]}"})"
+    cargo clippy ${pkgs[@]+"${pkgs[@]}"} --all-targets -- -D warnings
+    step "cargo nextest (${affected[*]+"${affected[*]}"})"
+    cargo nextest run ${pkgs[@]+"${pkgs[@]}"}
     if $protocol; then
         step "generated bindings are fresh"
         dirty=$(git status --porcelain -- ui/src/generated)
@@ -72,14 +79,14 @@ if ((${#crates[@]})); then
             exit 1
         fi
     fi
-    step "tests that need tools (${affected[*]})"
+    step "tests that need tools (${affected[*]+"${affected[*]}"})"
     tool_log=$(mktemp)
-    ci/tool-tests.sh "${pkgs[@]}" 2>&1 | tee "$tool_log"
+    ci/tool-tests.sh ${pkgs[@]+"${pkgs[@]}"} 2>&1 | tee "$tool_log"
     not_run=$(grep '^NOT RUN:' "$tool_log" || true)
     rm -f "$tool_log"
     [[ -z $not_run ]] || skip "tests that need tools: ${not_run#NOT RUN: }"
-    step "module cycles (${crates[*]})"
-    ci/check-module-cycles.sh "${crates[@]}"
+    step "module cycles (${crates[*]+"${crates[*]}"})"
+    ci/check-module-cycles.sh ${crates[@]+"${crates[@]}"}
 fi
 if $deps; then
     step "check-deps"
@@ -107,7 +114,9 @@ if ((${#ui_files[@]})) || $protocol; then
     cd ui
     step "pnpm check"
     pnpm check
-    mapfile -t lintable < <(printf '%s\n' "${ui_files[@]}" | grep -E '\.(ts|js|mjs|svelte)$' || true)
+    lintable=()
+    while IFS= read -r f; do lintable+=("$f"); done \
+        < <(printf '%s\n' ${ui_files[@]+"${ui_files[@]}"} | grep -E '\.(ts|js|mjs|svelte)$' || true)
     if ((${#lintable[@]})); then
         step "eslint (${#lintable[@]} files)"
         pnpm exec eslint "${lintable[@]}"

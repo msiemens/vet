@@ -31,7 +31,7 @@ tauri_step() {
 finish() {
     if ((${#skipped[@]})); then
         printf '\n%s\n' "$1, but ${#skipped[@]} step(s) did not run:"
-        printf '  - %s\n' "${skipped[@]}"
+        printf '  - %s\n' ${skipped[@]+"${skipped[@]}"}
     else
         printf '\n%s\n' "$1"
     fi
