@@ -170,6 +170,11 @@ class QueueStore {
     return this.refreshing || this.listingLocal || this.listingPullRequests;
   }
 
+  /** Whether a read the list follows a burst of marks with is waiting to run. */
+  get settling() {
+    return this.following.pending;
+  }
+
   /** Lists the local changesets. Rows already counted are counted again only with `recount`: a thread changing moves no branch. */
   async load(recount = true) {
     const isLatest = this.reads.local.begin();

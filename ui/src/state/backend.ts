@@ -347,6 +347,17 @@ export class Backend {
     return (await this.call({ type: "tasks", project: this.pid })).tasks;
   }
 
+  /**
+   * Resolves once the backend has no background work of the project running or pending: nothing
+   * being scanned, fetched, analysed or started, and no edit waiting to settle. The working tree
+   * is looked at as it is now, so an edit the watcher has not delivered yet is part of what is
+   * waited for. The answer is a point in time; work a later request or an edit starts is not
+   * waited for.
+   */
+  async waitForQuiet(): Promise<void> {
+    await this.call({ type: "waitForQuiet", project: this.pid });
+  }
+
   /** The versions of the open review, oldest first; none while browsing. */
   async versions(): Promise<VersionInfo[]> {
     return (await this.call({ type: "versions", project: this.pid })).versions;

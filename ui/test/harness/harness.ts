@@ -210,7 +210,6 @@ export async function runSession(script: (h: Harness) => Promise<void>): Promise
     const wrongViews: Violation[] = [];
     const failed: string[] = [];
     let element: View | undefined;
-    let activity = Date.now();
     let inFlight = 0;
     const conn = (
       app as unknown as {
@@ -235,7 +234,6 @@ export async function runSession(script: (h: Harness) => Promise<void>): Promise
         });
       }
       inFlight++;
-      activity = Date.now();
       const answer = request(r, s);
       // A request the window itself gave up on is not a failure.
       answer.catch((error: unknown) => {
@@ -243,23 +241,28 @@ export async function runSession(script: (h: Harness) => Promise<void>): Promise
       });
       return answer.finally(() => {
         inFlight--;
-        activity = Date.now();
       });
     };
-    conn.onEvent(() => (activity = Date.now()));
 
     await changeset.refresh();
     await queue.loadAll();
     // The window shows the queue, which follows the events for the changeset on view.
     const stopQueue = queue.watch();
 
-    /** No request in flight and nothing heard for a moment. */
+    /** No request in flight and no background work left in the backend or the window. */
     const idle = async () => {
       const start = Date.now();
       for (;;) {
-        if (inFlight === 0 && Date.now() - activity > 200) return;
+        while (inFlight > 0) {
+          if (Date.now() - start > 30_000) throw new Error("the window did not settle");
+          await sleep(20);
+        }
+        // The answer is ordered after every message the backend sent this connection before it, so
+        // the stores have seen everything the backend did.
+        await app.waitForQuiet();
+        // The window reacts to those messages with reads of its own, some debounced.
+        if (inFlight === 0 && !queue.settling) return;
         if (Date.now() - start > 30_000) throw new Error("the window did not settle");
-        await sleep(20);
       }
     };
 
@@ -274,7 +277,6 @@ export async function runSession(script: (h: Harness) => Promise<void>): Promise
         notices.close();
         await run();
         // What another window did reaches this one as events after `run` ended.
-        activity = Date.now();
         await idle();
         const violations = [...wrongViews.splice(0), ...(await checkInvariants(other))];
         const step = (what: string, ui: unknown, backend: unknown) =>
