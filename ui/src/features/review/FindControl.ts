@@ -46,6 +46,11 @@ export class FindControl {
     return this.tabs.modes.get(id) === "file" ? "text" : "diff";
   }
 
+  /** Whether the bar is open in the tab. */
+  isOpen(id: TabId): boolean {
+    return this.state.open.has(id);
+  }
+
   /** Runs the find in the pane the tab shows, and ends it in the other. */
   apply(id: TabId) {
     const shown = this.pane(id);
