@@ -9,6 +9,7 @@ use std::time::Duration;
 
 #[cfg(debug_assertions)]
 use crate::mutex::lock;
+use vet_app::analysis::open_first;
 #[cfg(debug_assertions)]
 use vet_app::ports::StoreError;
 use vet_app::session::{FileView, SessionError, View};
@@ -161,24 +162,11 @@ pub(crate) async fn changed_files(
     open_first(paths, &open.open_files())
 }
 
-/// `paths` as the open ones and the rest: those in `first` (each once, in `first`'s order) that the
-/// changeset has, then the others in their order.
-fn open_first(paths: Vec<String>, first: &[String]) -> (Vec<String>, Vec<String>) {
-    let mut opened: Vec<String> = Vec::new();
-    for path in first {
-        if paths.contains(path) && !opened.contains(path) {
-            opened.push(path.clone());
-        }
-    }
-    let rest = paths.into_iter().filter(|path| !opened.contains(path)).collect();
-    (opened, rest)
-}
-
 #[cfg(test)]
 mod tests {
     use vet_protocol::UnavailableKind;
 
-    use super::{Error, Unavailable, can_pass, error_can_pass, open_first};
+    use super::{Error, Unavailable, can_pass, error_can_pass};
 
     /// A reason of the semantic layer of `kind`, as the answer carries it.
     fn reason(kind: UnavailableKind) -> Unavailable {
@@ -219,26 +207,5 @@ mod tests {
         assert!(!error_can_pass(&Error::Session(SessionError::NotFound(
             "src/lib.rs".into()
         ))));
-    }
-
-    #[test]
-    fn the_open_files_come_first_in_their_order_and_the_rest_keep_theirs() {
-        let paths = vec![
-            "a.rs".to_owned(),
-            "b.rs".to_owned(),
-            "c.rs".to_owned(),
-            "d.rs".to_owned(),
-        ];
-        let (opened, rest) = open_first(paths, &["c.rs".to_owned(), "a.rs".to_owned()]);
-        assert_eq!(opened, ["c.rs", "a.rs"]);
-        assert_eq!(rest, ["b.rs", "d.rs"]);
-    }
-
-    #[test]
-    fn an_open_file_not_in_the_changeset_is_ignored() {
-        let paths = vec!["a.rs".to_owned(), "b.rs".to_owned()];
-        let (opened, rest) = open_first(paths, &["gone.rs".to_owned(), "b.rs".to_owned()]);
-        assert_eq!(opened, ["b.rs"]);
-        assert_eq!(rest, ["a.rs"]);
     }
 }

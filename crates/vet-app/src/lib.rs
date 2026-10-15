@@ -6,6 +6,7 @@
 #![cfg_attr(test, allow(clippy::disallowed_methods))]
 
 pub mod acquisition;
+pub mod analysis;
 pub mod base;
 pub mod changeset;
 pub mod editor;
