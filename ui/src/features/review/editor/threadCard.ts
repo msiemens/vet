@@ -2,7 +2,9 @@
 // in its top right corner, or the form that opens a thread. Plain DOM, like `changeCard.ts`, so
 // editor widgets and section blocks share it. The card sits in a slot (`.vet-thread`) that insets it
 // from the code column's edge. Its height depends on the text, so the view measures the slot
-// (`ChangesetView`); the estimate of `threadPlacement.ts` only holds the place until then.
+// (`ChangesetView`); the estimate of `threadPlacement.ts` only holds the place until then. The pieces
+// a card shares with the queue's brief card (message body, meta, avatar, folded row) are in
+// `lib/ui/commentCard.ts`.
 
 import type { EditChoice } from "../../../generated/EditChoice";
 import type { EditConflict } from "../../../generated/EditConflict";
@@ -10,16 +12,12 @@ import type { Thread } from "../../../generated/Thread";
 import type { ThreadMessage } from "../../../generated/ThreadMessage";
 import type { ThreadStatus } from "../../../generated/ThreadStatus";
 import type { ThreadTarget } from "../../../generated/ThreadTarget";
-import { avatarColor } from "../../../lib/avatar.ts";
-import { commentPreview, renderComment } from "../../../lib/commentMarkdown.ts";
 import { canSubmit, isSubmitKey, replyShape } from "../../../lib/composer.ts";
 import { isFlat } from "../../../lib/flatThread.ts";
 import { lineRange } from "../../../lib/lineRange.ts";
 import { movedLabel, movedTitle } from "../../../lib/movedTitle.ts";
-import { liveTime } from "../../../lib/liveTime.ts";
-import { fullTime } from "../../../lib/shortTime.ts";
-import { iconSvg } from "../../../lib/ui/icons.ts";
-import { el, iconButton } from "./dom.ts";
+import { avatar, foldedCard, isDraft, markdownBody, messageMeta, slot } from "../../../lib/ui/commentCard.ts";
+import { el, iconButton } from "../../../lib/ui/dom.ts";
 import type { CardData } from "./threadPlacement.ts";
 import { markDifferences } from "./wordDiff.ts";
 
@@ -140,13 +138,6 @@ function composer(
   return { field, send };
 }
 
-/** A card inside its slot. */
-export function slot(card: HTMLElement): HTMLElement {
-  const outer = el("div", "vet-thread");
-  outer.append(card);
-  return outer;
-}
-
 function draftCard(target: ThreadTarget, actions: ThreadActions): HTMLElement {
   const card = el("div", "vet-thread-card");
   const form = el("div", "vet-thread-form");
@@ -171,22 +162,6 @@ function draftCard(target: ThreadTarget, actions: ThreadActions): HTMLElement {
   };
   requestAnimationFrame(() => focus(30));
   return slot(card);
-}
-
-/** A message that only Vet has, in a thread the platform has or will have: posted with the review. */
-const isDraft = (thread: Thread, message: ThreadMessage) => !!thread.platform && message.state.type !== "posted";
-
-/** The author's picture, or a disc with their initials. */
-export function avatar(author: string, url: string | null): HTMLElement {
-  if (url) {
-    const img = el("img", "vet-avatar");
-    img.src = url;
-    img.alt = "";
-    return img;
-  }
-  const initials = el("span", "vet-avatar vet-avatar-initials", author.slice(0, 2).toUpperCase());
-  initials.style.background = `var(--avatar-${avatarColor(author)})`;
-  return initials;
 }
 
 /** The two texts of a comment that was edited in two places, side by side with Keep under each. */
@@ -245,35 +220,6 @@ function editForm(message: ThreadMessage, actions: ThreadActions, close: () => v
   return form;
 }
 
-/** The text of a comment, as markdown; a link in it opens in the browser, never in the webview. */
-export function markdownBody(text: string, actions: Pick<ThreadActions, "openLink">): HTMLElement {
-  const body = el("div", "vet-msg-body vet-md selectable");
-  body.innerHTML = renderComment(text);
-  body.addEventListener("click", (e) => {
-    const link = e.target instanceof Element ? e.target.closest("a[href]") : null;
-    if (!(link instanceof HTMLAnchorElement)) return;
-    e.preventDefault();
-    if (/^(https?|mailto):/i.test(link.href)) actions.openLink(link.href);
-  });
-  return body;
-}
-
-/** A message's meta line: who wrote it and when, whether it was edited, and whether it waits to be posted. */
-export function messageMeta(thread: Thread, message: ThreadMessage): HTMLElement {
-  const meta = el("div", "vet-msg-meta");
-  const when = el("span", "vet-msg-time");
-  liveTime(when, message.at, "detailed");
-  when.title = fullTime(message.at);
-  meta.append(el("span", "vet-msg-author", message.author), when);
-  if (message.editedAt !== null) {
-    const edited = el("span", "vet-msg-edited", "edited");
-    edited.title = fullTime(message.editedAt);
-    meta.append(edited);
-  }
-  if (isDraft(thread, message)) meta.append(el("span", "vet-msg-draft-label", "Draft"));
-  return meta;
-}
-
 /** A message: its author's picture, who wrote it and when, and its text; the viewer's own can be edited and removed. */
 function messageRow(thread: Thread, message: ThreadMessage, actions: ThreadActions): HTMLElement {
   const draft = isDraft(thread, message);
@@ -318,47 +264,6 @@ function messageRow(thread: Thread, message: ThreadMessage, actions: ThreadActio
   }
   row.append(avatar(message.author, message.avatar), meta, shown);
   return row;
-}
-
-/** What a resolved thread's one-row card says. */
-export function foldedSummary(thread: Thread) {
-  const [first] = thread.messages;
-  const participants = new Map<string, string | null>();
-  for (const m of thread.messages) if (!participants.has(m.author)) participants.set(m.author, m.avatar);
-  const by = thread.platform?.resolvedBy;
-  return {
-    author: first.author,
-    text: commentPreview(first.body),
-    count: thread.messages.length > 1 ? `${thread.messages.length} comments` : null,
-    participants: [...participants].map(([author, picture]) => ({ author, picture })),
-    resolved: by ? `Resolved by ${by}` : "Resolved",
-  };
-}
-
-/**
- * A resolved thread, folded to the row that says who started it and what they said. A narrow row (`place`:
- * where the thread is) leaves out who took part and who resolved it, and ends with the place.
- */
-export function foldedCard(thread: Thread, toggle: () => void, place?: HTMLElement): HTMLElement {
-  const summary = foldedSummary(thread);
-  const card = el("div", "vet-thread-card vet-thread-folded");
-  card.addEventListener("click", toggle);
-  const chevron = iconButton("Show the thread", "closed", () => undefined, "vet-thread-btn", 10, 2);
-  const ok = el("span", "vet-thread-ok");
-  ok.innerHTML = iconSvg("check", 13, 2);
-  const preview = el("span", "vet-thread-preview");
-  preview.append(el("span", "vet-msg-author", summary.author), `: ${summary.text}`);
-  card.append(chevron, ok, preview);
-  if (place) {
-    if (summary.count) card.append(el("span", "vet-thread-count", String(thread.messages.length)));
-    card.append(place);
-    return slot(card);
-  }
-  if (summary.count) card.append(el("span", "vet-thread-count", summary.count));
-  const stack = el("span", "vet-avatar-stack");
-  stack.append(...summary.participants.slice(0, 3).map((p) => avatar(p.author, p.picture)));
-  card.append(stack, el("span", "vet-thread-by", summary.resolved));
-  return slot(card);
 }
 
 /** What is known about a thread's anchor and state, above its messages; none when there is nothing to say. */

@@ -16,9 +16,9 @@
   import ScrollArea from "../../lib/ui/ScrollArea.svelte";
   import SectionHead from "../../lib/ui/SectionHead.svelte";
   import SeenMeter from "../../lib/ui/SeenMeter.svelte";
+  import { buildBriefCard, markdownBody, needsShowAll } from "../../lib/ui/commentCard";
   import { CheckRuns, failedFirst, passed } from "../checks";
   import { ThreadCards, groupThreads, threadPlace } from "../comments";
-  import { markdownBody, needsShowAll, buildBriefCard } from "../review";
   import type { Frame } from "../../state/reviewModel";
   import { browse } from "../../state/browse";
   import { changeset } from "../../state/changeset.svelte";

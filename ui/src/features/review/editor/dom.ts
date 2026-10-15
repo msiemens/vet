@@ -1,46 +1,22 @@
 // Plain DOM builders for the editor's own widgets (headers, hunk bars, cards), which are not Svelte.
+// The generic `el` and `iconButton` are shared with the comment cards (`lib/ui/dom.ts`).
 
 import type { EditorView } from "@codemirror/view";
-import { type IconName, iconSvg } from "../../../lib/ui/icons.ts";
+import { el } from "../../../lib/ui/dom.ts";
+
+export { el, iconButton } from "../../../lib/ui/dom.ts";
+
 /**
  * Whether the editor takes the keys: its content is the document's active element. Unlike
  * `EditorView.hasFocus`, this does not also ask whether the window has the focus.
  */
 export const takesKeys = (view: EditorView): boolean => view.contentDOM === document.activeElement;
 
-export function el<K extends keyof HTMLElementTagNameMap>(
-  tag: K,
-  className: string,
-  text?: string,
-): HTMLElementTagNameMap[K] {
-  const e = document.createElement(tag);
-  e.className = className;
-  if (text !== undefined) e.textContent = text;
-  return e;
-}
-
 /** The text button that marks what was seen against an old base seen again. */
 export function reconfirmButton(label: string, onclick: () => void): HTMLButtonElement {
   const button = el("button", "ctl vet-reconfirm vet-review-action", "Re-confirm");
   button.type = "button";
   button.title = label;
-  button.addEventListener("click", onclick);
-  return button;
-}
-
-/** A flat button with an icon; `className` also sets its size (`vet-icon-btn` is the small control's). */
-export function iconButton(
-  label: string,
-  icon: IconName,
-  onclick: () => void,
-  className = "vet-icon-btn",
-  size = 13,
-  stroke = 1.8,
-): HTMLButtonElement {
-  const button = el("button", `flat ${className}`);
-  button.type = "button";
-  button.ariaLabel = button.title = label;
-  button.innerHTML = iconSvg(icon, size, stroke);
   button.addEventListener("click", onclick);
   return button;
 }

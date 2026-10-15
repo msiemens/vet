@@ -81,6 +81,13 @@ export default defineConfig(
             { target: "./src/state", from: ["./src/features", "./src/app"] },
             { target: "./src/features", from: "./src/app" },
             ...featureZones,
+            // The queue's panel reads the shared thread builders from `lib/ui`, not the review
+            // feature; kept apart so neither screen reaches into the other.
+            {
+              from: "./src/features/review",
+              target: "./src/features/queue",
+              message: "The queue does not depend on the review feature; shared builders live in lib/ui.",
+            },
           ],
         },
       ],
