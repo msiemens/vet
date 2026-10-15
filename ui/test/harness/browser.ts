@@ -147,11 +147,11 @@ const sessions: Record<string, (d: Driver) => Promise<void>> = {
       await d.page(
         `(() => { document.getElementById("probe-a").focus(); __t.commands.run(${JSON.stringify(command)}); })()`,
       );
-      await d.until(`document.activeElement?.closest(".palette") !== null`, "the popup to take the focus");
+      await d.until(`document.activeElement?.closest(".popup") !== null`, "the popup to take the focus");
     };
     const closed = (focus: string) =>
       d.until(
-        `document.querySelector(".palette") === null && document.activeElement?.id === ${JSON.stringify(focus)}`,
+        `document.querySelector(".popup") === null && document.activeElement?.id === ${JSON.stringify(focus)}`,
         `the popup closed with the focus on ${focus}`,
       );
     await d.step("Escape gives the focus back", async () => {
@@ -162,14 +162,11 @@ const sessions: Record<string, (d: Driver) => Promise<void>> = {
     await d.step("a choice gives the focus back before it is carried out", async () => {
       await open("palette.actions");
       await d.page(`(() => {
-        const field = document.querySelector(".palette input");
+        const field = document.querySelector(".popup input");
         field.value = "Soft Wrap";
         field.dispatchEvent(new Event("input", { bubbles: true }));
       })()`);
-      await d.until(
-        `document.querySelector(".palette .r")?.textContent.includes("Soft Wrap")`,
-        "the action to be found",
-      );
+      await d.until(`document.querySelector(".popup .r")?.textContent.includes("Soft Wrap")`, "the action to be found");
       await d.press("Enter", "Enter");
       await closed("probe-a");
       await d.page(`__t.commands.run("view.softWrap")`);
