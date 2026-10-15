@@ -12,10 +12,12 @@ use vet_core::remap::cut_recorded;
 use vet_core::review::{ReviewedSpan, Side, SpanState};
 
 use super::blobs::Texts;
-use super::interdiff::{HunkMarks, check_markable, interdiff_hunk_marks, squash_item, update_in};
+use super::interdiff::{HunkMarks, interdiff_hunk_marks, squash_item, update_in};
 use super::lens::view_unit;
 use super::remap::{Prepared, frame_of, landing, part_completion};
-use super::state::{Shown, State, View, ack_of, check_revision, find_diff, find_non_text, outcome, shown_items};
+use super::state::{
+    Shown, State, View, ack_of, check_markable, check_revision, find_diff, find_non_text, outcome, shown_items,
+};
 use super::views::{Outcome, ReviewUpdateView};
 use super::{LiveSession, Result, SessionError};
 use crate::ports::{GitRepo, LiveStore, ReviewWrites};

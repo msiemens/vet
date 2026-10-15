@@ -68,6 +68,29 @@ impl Shown {
     }
 }
 
+/// What a request in a view may do: marks and comments land in the changeset of the newer
+/// version, which only the latest version's interdiff has.
+pub(super) fn check_markable(shown: &Shown) -> Result<()> {
+    if shown.markable() {
+        Ok(())
+    } else {
+        Err(SessionError::Invalid(
+            "marks and comments need an interdiff that ends at the latest version".into(),
+        ))
+    }
+}
+
+/// What a request to comment may do: comments are on the changeset and its interdiffs, not on one
+/// commit's own diff.
+pub(super) fn check_commentable(shown: &Shown) -> Result<()> {
+    if matches!(shown, Shown::Commit { .. }) {
+        return Err(SessionError::Invalid(
+            "comments are made in All changes, not in one commit".into(),
+        ));
+    }
+    check_markable(shown)
+}
+
 /// The interdiff of two of the review's versions.
 pub(super) struct Interdiffed {
     pub(super) compared: Arc<Compared>,

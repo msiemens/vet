@@ -10,6 +10,13 @@
 //! one of its own ancestors are dropped: that is how a Rust module tree reads, not a
 //! layering cycle.
 //!
+//! `#[cfg(test)]` is set, so a module's tests are part of it: what a test module declares
+//! or uses counts for the innermost enclosing module that is not test-only. A production
+//! module whose tests depend on another module that depends on it is a cycle, and so is a
+//! test helper module that depends on a module that depends back. The same holds for the
+//! items of a module a `cfg` marks as test-only (`cfg(not(windows))`, which holds where
+//! only `test` is set).
+//!
 //! Usage: module-cycles [--manifest-path PATH] [--dump-edges] [--timings] [CRATE...]
 //!
 //! Exits 0 when all graphs are acyclic, 1 when one has a cycle, 2 on other errors.
@@ -83,7 +90,7 @@ fn load(args: &Args, timings: &mut Timings) -> Result<(Vec<Target>, ide_db::Root
     let cargo_config = project_model::CargoConfig {
         all_targets: false,
         cfg_overrides: project_model::CfgOverrides {
-            global: cfg::CfgDiff::new(Vec::new(), vec![cfg::CfgAtom::Flag(hir::Symbol::intern("test"))]),
+            global: cfg::CfgDiff::new(vec![cfg::CfgAtom::Flag(hir::Symbol::intern("test"))], Vec::new()),
             selective: Default::default(),
         },
         extra_args: vec![],
@@ -193,17 +200,17 @@ impl<'a> ModuleGraph<'a> {
             edges: HashSet::new(),
         };
         let root = krate.root_module(db);
-        let mut pending = vec![(root, root)];
-        while let Some((module, kept_ancestor)) = pending.pop() {
-            let counts_as = if module == root || !is_test_cfg(hir::ModuleDef::Module(module), db) {
-                module
-            } else {
-                kept_ancestor
-            };
+        // A module under a test-only `cfg` is not a node of its own: what it declares and uses
+        // belongs to the innermost module above it that is not, which is `kept_ancestor`.
+        let mut pending = vec![(root, root, false)];
+        while let Some((module, kept_ancestor, inside_test)) = pending.pop() {
+            let test = module != root && is_test_cfg(hir::ModuleDef::Module(module), db);
+            let counts_as = if inside_test || test { kept_ancestor } else { module };
+            let inside_test = inside_test || test;
             graph.modules.insert(module, counts_as);
             for declaration in module.declarations(db) {
                 match declaration {
-                    hir::ModuleDef::Module(child) => pending.push((child, counts_as)),
+                    hir::ModuleDef::Module(child) => pending.push((child, counts_as, inside_test)),
                     hir::ModuleDef::Function(_)
                     | hir::ModuleDef::Adt(_)
                     | hir::ModuleDef::Trait(_)
@@ -342,8 +349,9 @@ impl<'a> ModuleGraph<'a> {
     }
 }
 
-/// cargo-modules drops items under a `cfg` attribute that holds when only `test` is set,
-/// which includes `cfg(not(windows))`; what they use is attributed to the enclosing module.
+/// Whether a `cfg` on a module holds when only `test` is set, which includes `cfg(not(windows))`
+/// on a Unix host. A module marked so is not a node of its own: what it declares and uses counts
+/// for the innermost enclosing module that is not (see [`ModuleGraph::new`]).
 fn is_test_cfg(def: hir::ModuleDef, db: &dyn HirDatabase) -> bool {
     let test = hir::Symbol::intern("test");
     let Some(expr) = def.attrs(db).cfgs(db) else {

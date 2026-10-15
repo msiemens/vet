@@ -795,3 +795,29 @@ pub enum Request {
         candidate: u32,
     },
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_request_that_carries_a_token_does_not_show_it() {
+        let request = Request::SetCredentials {
+            host: "github.com".into(),
+            token: Secret("ghp_supersecret".into()),
+            validate: true,
+        };
+        let shown = format!("{request:?}");
+        assert!(
+            shown.contains("github.com") && !shown.contains("supersecret"),
+            "{shown}"
+        );
+    }
+
+    #[test]
+    fn a_token_travels_as_a_plain_string() {
+        let json = r#"{"type":"setCredentials","host":"github.com","token":"ghp_x","validate":false}"#;
+        let request: Request = serde_json::from_str(json).unwrap();
+        assert_eq!(serde_json::to_string(&request).unwrap(), json);
+    }
+}

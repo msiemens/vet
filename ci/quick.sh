@@ -22,7 +22,7 @@ source ci/lib.sh
 rust_files=() crates=() tauri=false protocol=false deps=false cycle_tool=false harness=false ui_files=()
 for f in "${changed[@]}"; do
     case $f in
-        tools/module-cycles/* | ci/check-module-cycles.sh | ci/fixtures/module-cycle/*) cycle_tool=true ;;
+        tools/module-cycles/* | ci/check-module-cycles.sh | ci/fixtures/module-cycle*) cycle_tool=true ;;
         ui/src-tauri/*) tauri=true ;;
         ui/src/generated/*) ;;
         ui/*)

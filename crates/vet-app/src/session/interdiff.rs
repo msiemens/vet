@@ -201,29 +201,6 @@ pub(super) fn interdiff_hunk_marks(
     Ok((regions, add))
 }
 
-/// What a request in an interdiff view may do: marks and comments land in the changeset of the
-/// newer version, which only the latest version's has.
-pub(super) fn check_markable(shown: &Shown) -> Result<()> {
-    if shown.markable() {
-        Ok(())
-    } else {
-        Err(SessionError::Invalid(
-            "marks and comments need an interdiff that ends at the latest version".into(),
-        ))
-    }
-}
-
-/// What a request to comment may do: comments are on the changeset and its interdiffs, not on one
-/// commit's own diff.
-pub(super) fn check_commentable(shown: &Shown) -> Result<()> {
-    if matches!(shown, Shown::Commit { .. }) {
-        return Err(SessionError::Invalid(
-            "comments are made in All changes, not in one commit".into(),
-        ));
-    }
-    check_markable(shown)
-}
-
 /// The review state of `path` in the view `shown` with the completions it implies.
 pub(super) fn update_in(st: &State, shown: &Shown, path: &str) -> Result<ReviewUpdateView> {
     let id = match shown {

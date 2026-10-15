@@ -22,15 +22,20 @@ cargo build --release --quiet --manifest-path "$manifest" --target-dir "$target"
 tool=$target/release/module-cycles
 
 if [[ ${1:-} == --self-test ]]; then
-    fixture=ci/fixtures/module-cycle
-    status=0
-    out=$("$tool" --manifest-path "$fixture/Cargo.toml") || status=$?
-    if [[ $status -ne 1 ]]; then
-        echo "self-test failed: the cycle in $fixture was not detected (exit $status)" >&2
-        exit 1
-    fi
-    echo "self-test ok, detected:"
-    echo "$out"
+    detected() {
+        local fixture=$1 status=0 out
+        out=$("$tool" --manifest-path "$fixture/Cargo.toml") || status=$?
+        if [[ $status -ne 1 ]]; then
+            echo "self-test failed: the cycle in $fixture was not detected (exit $status)" >&2
+            exit 1
+        fi
+        echo "self-test ok, detected:"
+        echo "$out"
+    }
+    # A plain cycle, and one that exists only with `test` set (a module's tests naming a
+    # module that names it back), which the check must see too.
+    detected ci/fixtures/module-cycle
+    detected ci/fixtures/module-cycle-test
     exit 0
 fi
 

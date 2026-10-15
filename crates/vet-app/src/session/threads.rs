@@ -13,9 +13,8 @@ use vet_core::review::{
 
 use super::derived::Diffed;
 use super::hold::Held;
-use super::interdiff::check_commentable;
 use super::manifest::{old_path_of, status_of};
-use super::state::{Shown, State, View, check_revision, find_diff, outcome, shown_items};
+use super::state::{Shown, State, View, check_commentable, check_revision, find_diff, outcome, shown_items};
 use super::views::{FileStatus, Outcome};
 use super::{LiveSession, Result, SessionError};
 use crate::changeset::Source;
