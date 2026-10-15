@@ -31,9 +31,9 @@ const CLI_TOKEN_LIFETIME: i64 = 300;
 const EXPIRY_MARGIN: i64 = 120;
 
 /// How long a CLI read that gave no token is trusted to still give none, in seconds.
-/// Short, so that signing in from a terminal (`gh auth login`) is seen by the next
-/// read; whatever many requests in those seconds ask, the CLI is spawned once. Vet's
-/// own account changes forget it at once.
+/// Short, so that signing in from a terminal (`gh auth login`) or repairing a broken
+/// sign-in is seen soon after; whatever many requests in those seconds ask, the CLI
+/// is spawned once. Vet's own account changes forget it at once.
 const ABSENT_LIFETIME: i64 = 30;
 
 /// Hosts whose CLI is looked at even before anything asks for them, so that a signed-in
@@ -400,14 +400,14 @@ where
 
     /// The signed-in CLI's token for `host`, from what was read earlier while it is
     /// still good, else read from the CLI again: one read for every caller asking
-    /// while it reads, and a read that gave nothing trusted to give nothing for a
+    /// while it reads, and a read that gave no token trusted to give none for a
     /// moment, so that a burst of asks is not a burst of spawns (R6).
     async fn cli_token(&self, host: &str, now: i64) -> Option<Token> {
         let cached = self.state().hosts.get(host).and_then(|s| s.cli.clone());
         if let Some(held) = cached.filter(|h| now < h.refresh_at) {
             return Some(held.token);
         }
-        // Nothing was there moments ago, so it still is not: asking again waits for
+        // No token was there moments ago, so it still is not: asking again waits for
         // the window instead of another spawn. Vet's own account changes forget this.
         if self.state().hosts.get(host).is_some_and(|s| now < s.absent_until) {
             return None;
@@ -426,7 +426,7 @@ where
             // A CLI read cannot fail.
             Err(never) => match never {},
         };
-        let absent = matches!(read, CliRead::Absent);
+        let gave_no_token = matches!(read, CliRead::Absent | CliRead::Unusable(_));
         let mut state = self.state();
         let slot = state.hosts.entry(host.to_owned()).or_default();
         slot.cli_unusable = None;
@@ -445,10 +445,10 @@ where
                 None
             }
         };
-        // A read that gave nothing is trusted to stay that way while the window runs;
-        // anything found, or a CLI whose sign-in is broken (of which the reads keep up
-        // to date), is read again on the next ask.
-        slot.absent_until = if absent { now + ABSENT_LIFETIME } else { 0 };
+        // A read that gave no token — the CLI missing, signed out, or its sign-in
+        // broken — is trusted to give none again while the window runs, so that a
+        // burst of asks is one read, instead of two spawns per ask.
+        slot.absent_until = if gave_no_token { now + ABSENT_LIFETIME } else { 0 };
         slot.cli.as_ref().map(|held| held.token.clone())
     }
 
@@ -759,6 +759,19 @@ mod tests {
         format!(r#"{{"accessToken":"{token}","expires_on":{expires_on}}}"#)
     }
 
+    /// The reason `gh` gives for the host whose sign-in is broken.
+    const BROKEN_SIGN_IN: &str = "HTTP 401: Bad credentials";
+
+    /// The `gh` of a host whose sign-in is broken: it exits non-zero for the token, and
+    /// lists the host with `gh`'s own reason.
+    fn gh_with_a_broken_sign_in(machine: &Machine, reason: &str) {
+        machine.install("gh", 1, "");
+        let listing = serde_json::json!({
+            "hosts": { "github.com": [{ "active": true, "state": "error", "error": reason }] }
+        });
+        machine.install("gh auth status", 0, &listing.to_string());
+    }
+
     async fn token_for(
         accounts: &Accounts<Machine, Platforms>,
         host: &str,
@@ -970,6 +983,102 @@ mod tests {
             f.machine.runs_of("gh auth token"),
             2,
             "the accounts answer of the sign out read the CLI again, though the miss was fresh"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_broken_cli_sign_in_is_read_once_for_a_burst_of_asks() {
+        let f = fixture();
+        gh_with_a_broken_sign_in(&f.machine, BROKEN_SIGN_IN);
+        assert!(f.accounts.credential("github.com", 0).await.is_none());
+        assert_eq!(
+            f.machine.runs_of("gh"),
+            2,
+            "the token ask and the host listing of the one read"
+        );
+
+        // Whatever asks again while the window runs is answered from that one read.
+        for now in 1..ABSENT_LIFETIME {
+            f.accounts.credential("github.com", now).await;
+        }
+        assert_eq!(f.machine.runs_of("gh"), 2, "still inside the window: no spawn");
+
+        // The window ran out: the next ask reads the CLI again.
+        f.accounts.credential("github.com", ABSENT_LIFETIME + 1).await;
+        assert_eq!(f.machine.runs_of("gh"), 4, "the window ran out: read again");
+    }
+
+    #[tokio::test]
+    async fn a_broken_cli_sign_in_keeps_showing_as_unusable_while_the_window_runs() {
+        let f = fixture();
+        gh_with_a_broken_sign_in(&f.machine, BROKEN_SIGN_IN);
+        assert!(f.accounts.credential("github.com", 0).await.is_none());
+
+        for now in [0, 1, ABSENT_LIFETIME - 1] {
+            let stated: Vec<_> = f
+                .accounts
+                .accounts(now)
+                .await
+                .into_iter()
+                .filter(|account| account.host == "github.com")
+                .map(|account| account.state)
+                .collect();
+            assert_eq!(stated, [AccountState::Unusable(BROKEN_SIGN_IN.to_owned())], "at {now}");
+        }
+        assert_eq!(
+            f.machine.runs_of("gh auth token"),
+            1,
+            "the listings were answered from the one read"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_repaired_cli_sign_in_is_seen_once_the_window_ran_out() {
+        let f = fixture();
+        gh_with_a_broken_sign_in(&f.machine, BROKEN_SIGN_IN);
+        assert!(f.accounts.credential("github.com", 0).await.is_none());
+        assert_eq!(f.accounts.cli_unusable("github.com").as_deref(), Some(BROKEN_SIGN_IN));
+
+        // `gh auth login` repaired it while the window ran; the next read past the
+        // window sees the token, so the fix lands within the window's reach.
+        f.machine.install("gh", 0, "gho_cli\n");
+        assert_eq!(
+            token_for(&f.accounts, "github.com", ABSENT_LIFETIME + 1).await,
+            Some(("gho_cli".into(), CredentialSource::Cli))
+        );
+        assert_eq!(f.accounts.cli_unusable("github.com"), None, "no longer unusable");
+    }
+
+    #[tokio::test]
+    async fn a_vet_sign_in_forgets_a_broken_cli_sign_in_right_away() {
+        let f = fixture();
+        gh_with_a_broken_sign_in(&f.machine, BROKEN_SIGN_IN);
+        assert!(f.accounts.credential("github.com", 0).await.is_none());
+        assert_eq!(f.machine.runs_of("gh auth token"), 1);
+
+        f.accounts
+            .set_credentials("github.com", "ghp_pat", false, 5)
+            .await
+            .unwrap();
+        assert_eq!(
+            f.machine.runs_of("gh auth token"),
+            2,
+            "read again at the change, instead of trusted broken"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_vet_sign_out_forgets_a_broken_cli_sign_in_right_away() {
+        let f = fixture();
+        gh_with_a_broken_sign_in(&f.machine, BROKEN_SIGN_IN);
+        assert!(f.accounts.credential("github.com", 0).await.is_none());
+        assert_eq!(f.machine.runs_of("gh auth token"), 1);
+
+        f.accounts.remove_credentials("github.com", 1).await.unwrap();
+        assert_eq!(
+            f.machine.runs_of("gh auth token"),
+            2,
+            "the accounts answer of the sign out read the CLI again, though the sign-in was broken just now"
         );
     }
 
