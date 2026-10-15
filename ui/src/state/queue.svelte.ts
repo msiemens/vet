@@ -71,6 +71,8 @@ class QueueStore {
         if (event.type === "changesetOpened" || event.type === "reviewStarted") void this.loadAll();
         else if (event.type === "changesetsChanged") void this.load();
         else if (event.type === "threadsChanged") void this.load(false);
+        // The details of listed pull requests were read: the list says more of them now.
+        else if (event.type === "pullRequestsChanged") void this.loadPullRequests();
         // A chunk of a `changesetLines` answer: show those rows as they are counted.
         else if (event.type === "changesetLinesChanged") this.takeLines(event.changesets, event.lines);
         // A new version or a mark changes the version, the last reviewed version and the progress of the row on view.
