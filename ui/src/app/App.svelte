@@ -14,9 +14,8 @@
     focusPipelines,
     focusTimeline,
     headerFacts,
-    lensOnSelect,
+    settleCommits,
     shell,
-    toolFor,
   } from "../features/chrome";
   import { ChecksButton, headChecksLook, pipelineBadge } from "../features/checks";
   import { LocationPicker } from "../features/locations";
@@ -24,7 +23,7 @@
   import { Palette, openChoice, palette } from "../features/palette";
   import { NotificationCards, PlatformFooter } from "../features/platform";
   import { FindPanel } from "../features/find";
-  import { PipelinesPanel, belongsTo, logKey } from "../features/pipelines";
+  import { PipelinesPanel, logKey } from "../features/pipelines";
   import { ProblemsPanel } from "../features/problems";
   import { ChangesetSwitcher, OpenPullRequestDialog, QueueScreen, targetLabel } from "../features/queue";
   import { ON_SCREEN, ReviewScreen, modeChange } from "../features/review";
@@ -40,6 +39,7 @@
   import { applyTheme } from "../lib/theme/theme";
   import ContextMenu from "../lib/ui/ContextMenu.svelte";
   import Toast from "../lib/ui/Toast.svelte";
+  import { changeGate } from "../lib/ui/changeGate";
   import { changeset } from "../state/changeset.svelte";
   import { checks } from "../state/checks.svelte";
   import { canRestartBackend, hasNativeDialogs, hasNativeMenu } from "../state/host";
@@ -78,25 +78,29 @@
     untrack(() => appState.controller?.setSoftWrap(wrap));
   });
 
-  // Selecting the Commits tool reviews the changeset by commit and leaving it returns to all changes.
-  let selectedTool = untrack(() => shell.left.tool);
+  // The Commits tool and the review lens are one choice seen from two places: whichever side moved
+  // decides both, so picking the tool asks for the matching lens and a lens set elsewhere selects
+  // the tool that goes with it. The pair settled on last is the single source, so neither chases the
+  // other.
+  let settledCommits = untrack(() => ({
+    tool: shell.left.tool,
+    lens: changeset.lens,
+    commits: changeset.commitCount,
+  }));
   $effect(() => {
-    const tool = shell.left.tool;
-    const want = lensOnSelect(selectedTool, tool);
-    selectedTool = tool;
-    if (!want) return;
-    untrack(() => {
-      if (changeset.facts && changeset.lens !== want) void changeset.showLens(want);
+    const settled = settleCommits(settledCommits, {
+      tool: shell.left.tool,
+      lens: changeset.lens,
+      commits: changeset.commitCount,
     });
-  });
-  // A lens set elsewhere (a changeset reopened by commit) selects the tool that goes with it.
-  $effect(() => {
-    const next = toolFor(
-      untrack(() => shell.left.tool),
-      changeset.lens,
-      changeset.commitCount,
-    );
-    untrack(() => (shell.left.tool = next));
+    settledCommits = settled;
+    untrack(() => {
+      if (settled.askLens !== undefined) {
+        if (changeset.facts && changeset.lens !== settled.askLens) void changeset.showLens(settled.askLens);
+      } else if (settled.tool !== shell.left.tool) {
+        shell.left.tool = settled.tool;
+      }
+    });
   });
 
   const headLook = $derived(
@@ -109,21 +113,17 @@
     ),
   );
   const pipelineRail = $derived(pipelineBadge(checks.of(changeset.headCommit), platform.signedOut));
-  // The tool belongs to a pull request; while the changeset reloads there are no facts yet and it stays.
-  $effect(() => {
-    if (!belongsTo(changeset.facts?.target.changeset.type) && shell.bottom === "pipelines") shell.hideBottom();
-  });
 
   /** The Comments tool window is on screen. */
   const commentsShown = $derived(shell.screen === "review" && shell.left.open && shell.left.tool === "comments");
   // While the tool window is open, what comes in is seen: the backend keeps the time the viewer
-  // last looked and answers the counts (D96). The reads make the effect run again when new comments
+  // last looked and answers the counts (D96). The gate makes the effect run again when new comments
   // arrive while it is open, so the backend moves the seen time past them.
+  const commentsChanged = changeGate();
   $effect(() => {
-    if (!commentsShown) return;
-    // eslint-disable-next-line @typescript-eslint/no-unused-expressions -- the reads make the effect a dependency
-    [platform.info, threads.items];
-    untrack(() => void platform.markCommentsSeen());
+    if (commentsChanged(commentsShown, platform.info, threads.items) && commentsShown) {
+      untrack(() => void platform.markCommentsSeen());
+    }
   });
   /** The rail's count for Comments: what the backend says the viewer has not read of the pull request as a whole. */
   const unreadComments = $derived(commentsShown ? 0 : platform.unreadCount);
@@ -151,7 +151,6 @@
     if (!session.backend || !session.repo) return;
     return queue.watch();
   });
-  $effect(() => reviewShown.set(shell.screen === "review"));
   // The changed files the window has open, so the backend's background analysis reads them first.
   $effect(() => {
     const backend = session.backend;

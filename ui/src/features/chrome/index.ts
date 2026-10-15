@@ -2,7 +2,7 @@ export { default as AboutDialog } from "./AboutDialog.svelte";
 export { default as Banners } from "./Banners.svelte";
 export { default as FinishDialog } from "./FinishDialog.svelte";
 export { focusFind, focusPipelines, focusProblems, focusTimeline, leaveScope } from "./focus";
-export { COMMITS, lensOnSelect, toolFor } from "./commitsTool";
+export { COMMITS, lensOnSelect, settleCommits, toolFor } from "./commitsTool";
 export { limitedMessage, onlyStoodIn } from "./limitedMessage";
 export { toggleBottom, toggleTool } from "./toggleTool";
 export { default as Header } from "./Header.svelte";

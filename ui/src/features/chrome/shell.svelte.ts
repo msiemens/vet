@@ -1,6 +1,7 @@
 // The shell's own state: the screen shown and the tool windows of the rails and the dock. What `App`
 // passes to the chrome and the review screen, and what the tool commands act on.
 
+import { reviewShown } from "../../state/reviewShown.svelte";
 import { type Screen, TOOLS } from "./tools";
 import { type ToolWindow, toggleBottom, toggleTool } from "./toggleTool";
 
@@ -16,6 +17,8 @@ class Shell {
   /** Shows the queue, or the review of the changeset on view. */
   show(screen: Screen) {
     this.screen = screen;
+    // The servers of a changeset are for the review screen, so the backend is told at the source.
+    reviewShown.set(screen === "review");
   }
 
   /** Shows or hides the tool `id`; answers the bottom tool whose panel is shown now, if `id` is one. */

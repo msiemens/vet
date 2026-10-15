@@ -3,7 +3,8 @@
 // the changeset on view. `App` installs it once while it is mounted.
 
 import { watchDoubleShift } from "../features/palette";
-import { leaveScope } from "../features/chrome";
+import { leaveScope, shell } from "../features/chrome";
+import { belongsTo } from "../features/pipelines";
 import { setDoubleClickMs } from "../lib/ui/doubleClick";
 import { changeset } from "../state/changeset.svelte";
 import { commands } from "../state/commands";
@@ -48,9 +49,12 @@ export function installWindow(): () => void {
   void hostLabel().then((label) => (appState.host = label));
   session.onConnect(reveal);
   void session.connect().then(reveal);
-  // Result sets belong to the changeset on view.
+  // Result sets belong to the changeset on view, and the Pipelines tool belongs to a pull request:
+  // a changeset that opens as another kind closes it, one still loading (none announced) keeps it.
   const stopSets = changeset.onOpening((opening) => {
     if (opening.type === "requested") findSets.reset();
+    if (opening.type === "opened" && !belongsTo(opening.changeset.type) && shell.bottom === "pipelines")
+      shell.hideBottom();
   });
   const stopMenu = mainMenu.listen();
   const stopDoubleShift = watchDoubleShift(
