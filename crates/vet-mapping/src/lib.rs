@@ -404,10 +404,10 @@ pub fn changesets(list: &ChangesetList) -> p::Response {
     }
 }
 
-/// The answer to `ChangesetLines`.
-pub fn changeset_lines(lines: Option<LineDelta>) -> p::Response {
+/// The answer to `ChangesetLines`, one per changeset of the request, in its order.
+pub fn changeset_lines(lines: Vec<Option<LineDelta>>) -> p::Response {
     p::Response::ChangesetLines {
-        lines: lines.map(line_delta),
+        lines: lines.into_iter().map(|lines| lines.map(line_delta)).collect(),
     }
 }
 

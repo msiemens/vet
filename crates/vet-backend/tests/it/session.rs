@@ -1604,9 +1604,9 @@ async fn a_row_of_the_list_has_its_lines_asked_for_and_the_progress_of_its_revie
     let mut client = Client::new(&fx.handler);
     let project = open(&client, fx.repo.path()).await;
     let feature = ChangesetKey::Branch { name: "feature".into() };
-    async fn lines(client: &Client, project: ProjectId, changeset: ChangesetKey) -> Option<LineDelta> {
+    async fn lines(client: &Client, project: ProjectId, changesets: Vec<ChangesetKey>) -> Vec<Option<LineDelta>> {
         match client
-            .call(Request::ChangesetLines { project, changeset })
+            .call(Request::ChangesetLines { project, changesets })
             .await
             .unwrap()
         {
@@ -1622,10 +1622,27 @@ async fn a_row_of_the_list_has_its_lines_asked_for_and_the_progress_of_its_revie
     }
 
     assert_eq!(
-        lines(&client, project, feature.clone()).await,
-        Some(LineDelta { added: 1, removed: 1 })
+        lines(&client, project, vec![feature.clone()]).await,
+        vec![Some(LineDelta { added: 1, removed: 1 })]
     );
-    assert_eq!(lines(&client, project, ChangesetKey::WorkingTree).await, None);
+    assert_eq!(
+        lines(&client, project, vec![ChangesetKey::WorkingTree]).await,
+        vec![None]
+    );
+    // One request carries the whole list and answers in its order.
+    assert_eq!(
+        lines(
+            &client,
+            project,
+            vec![feature.clone(), ChangesetKey::WorkingTree, feature.clone()]
+        )
+        .await,
+        vec![
+            Some(LineDelta { added: 1, removed: 1 }),
+            None,
+            Some(LineDelta { added: 1, removed: 1 })
+        ]
+    );
     let before = row(&client, project, &feature).await;
     assert_eq!((before.review, before.author.as_deref()), (RowReview::None, Some("t")));
 

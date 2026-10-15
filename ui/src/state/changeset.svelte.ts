@@ -495,10 +495,10 @@ class ChangesetStore implements ViewSource {
     }
   }
 
-  /** The lines a row of the list changes; `undefined` where there are none to count or counting failed. */
-  async changesetLines(key: ChangesetKey) {
+  /** The lines each of `keys` changes, in order; `undefined` where counting failed. */
+  async changesetLines(keys: ChangesetKey[]) {
     try {
-      return await session.connected().changesetLines(key);
+      return await session.connected().changesetLines(keys);
     } catch {
       return undefined;
     }

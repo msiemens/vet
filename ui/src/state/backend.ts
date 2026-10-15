@@ -480,12 +480,12 @@ export class Backend {
   }
 
   /**
-   * The lines a changeset changes against its base, for a row of the list; none for the working tree and for a
-   * pull request that was not fetched. Takes a moment for a large changeset, so ask per row.
+   * The lines each of `changesets` changes against its base, for the rows of the list, in the
+   * order asked; none for the working tree and for a pull request that was not fetched.
    */
-  async changesetLines(changeset: ChangesetKey): Promise<LineDelta | undefined> {
-    const { lines } = await this.call({ type: "changesetLines", project: this.pid, changeset });
-    return lines ?? undefined;
+  async changesetLines(changesets: ChangesetKey[]): Promise<(LineDelta | undefined)[]> {
+    const { lines } = await this.call({ type: "changesetLines", project: this.pid, changesets });
+    return lines.map((line) => line ?? undefined);
   }
 
   /**

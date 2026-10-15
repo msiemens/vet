@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { afterEach, beforeEach, mock, test } from "node:test";
 import type { ClientMessage } from "../generated/ClientMessage";
 import type { Event as ServerEvent } from "../generated/Event";
+import { PROTOCOL_VERSION } from "../generated/ProtocolVersion.ts";
 import type { ServerMessage } from "../generated/ServerMessage";
 import { type Address, Connection, type Dialer, type LinkState, type Socket } from "./connection.ts";
 
@@ -83,7 +84,7 @@ class FakeBackend implements Dialer {
 
   received(socket: FakeSocket, message: ClientMessage) {
     if (message.type !== "hello") return;
-    if (message.token === this.address_.token) socket.push({ type: "helloAck", protocolVersion: 3 });
+    if (message.token === this.address_.token) socket.push({ type: "helloAck", protocolVersion: PROTOCOL_VERSION });
     else socket.close();
   }
 
@@ -134,7 +135,7 @@ void test("a dropped socket is replaced by one to the same address, which authen
 
   assert.equal(backend.sockets.length, 2);
   assert.equal(backend.last.url, "ws://127.0.0.1:4000");
-  assert.deepEqual(backend.last.sent[0], { type: "hello", token: "secret", protocolVersion: 3 });
+  assert.deepEqual(backend.last.sent[0], { type: "hello", token: "secret", protocolVersion: PROTOCOL_VERSION });
   assert.deepEqual(seen.states, ["reconnecting", "connected"]);
   assert.equal(seen.reconnects(), 1);
   const event: ServerEvent = { type: "serversChanged", project: 1 };

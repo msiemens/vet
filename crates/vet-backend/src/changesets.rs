@@ -113,10 +113,20 @@ impl Orchestrator {
         Ok(mapping::pull_requests(&list, &reviews))
     }
 
-    pub(crate) async fn changeset_lines(&self, project: ProjectId, changeset: ChangesetKey) -> Result<Response> {
-        let source = mapping::core_changeset_key(changeset).map_err(Error::Invalid)?;
+    pub(crate) async fn changeset_lines(&self, project: ProjectId, changesets: Vec<ChangesetKey>) -> Result<Response> {
+        let sources = changesets
+            .into_iter()
+            .map(mapping::core_changeset_key)
+            .collect::<std::result::Result<Vec<_>, _>>()
+            .map_err(Error::Invalid)?;
         let lines = self
-            .asking(project, async |session| session.lines_of(&source).await)
+            .asking(project, async |session| {
+                let mut lines = Vec::with_capacity(sources.len());
+                for source in &sources {
+                    lines.push(session.lines_of(source).await?);
+                }
+                Ok::<_, vet_app::session::SessionError>(lines)
+            })
             .await?;
         Ok(mapping::changeset_lines(lines))
     }

@@ -17,8 +17,6 @@ import { Latest } from "./resource";
 import type { Frame, Parts, ReviewedFile, ViewLayout } from "./reviewModel";
 import { session } from "./session.svelte";
 
-/** How many rows have their lines counted at once. */
-const LINE_COUNTS_AT_ONCE = 3;
 /** A list shown follows a version or a mark this long after the last one. */
 const FOLLOW_AFTER_MS = 100;
 
@@ -237,10 +235,10 @@ class QueueStore {
   }
 
   /**
-   * Has the backend count the lines of every listed row, a few at a time and top of the list first.
-   * Every pull request too, so the queue and the review view use the same base rule; the platform's
-   * own numbers are not shown. The working tree is not counted: its manifest is live. A later listing
-   * starts over; the numbers shown stay until the new ones arrive.
+   * Has the backend count the lines of every listed row, in one request, so a screen with many
+   * branches costs one round trip. Every pull request too, so the queue and the review view use the
+   * same base rule; the platform's own numbers are not shown. The working tree is not counted: its
+   * manifest is live. A later listing starts over; the numbers shown stay until the new ones arrive.
    */
   private async countLines(recount: boolean) {
     const isLatest = this.reads.lines.begin();
@@ -248,16 +246,10 @@ class QueueStore {
       ...this.local.filter((row) => row.key.type !== "workingTree").map((row) => row.key),
       ...this.pullRequests.map((row) => row.key),
     ].filter((key) => recount || !this.lines.has(keyId(key)));
-    let next = 0;
-    const count = async () => {
-      while (isLatest() && next < wanted.length) {
-        const key = wanted[next++];
-        const lines = await changeset.changesetLines(key);
-        if (!isLatest()) return;
-        this.lines.set(keyId(key), lines ?? null);
-      }
-    };
-    await Promise.all(Array.from({ length: LINE_COUNTS_AT_ONCE }, count));
+    if (!wanted.length) return;
+    const lines = await changeset.changesetLines(wanted);
+    if (!isLatest() || !lines) return;
+    wanted.forEach((key, at) => this.lines.set(keyId(key), lines[at] ?? null));
   }
 }
 

@@ -70,9 +70,9 @@ pub enum Response {
         rows: Vec<PullRequestRow>,
         sources: Vec<PullRequestSource>,
     },
-    /// The answer to `ChangesetLines`.
+    /// The answer to `ChangesetLines`, one per changeset of the request, in its order.
     ChangesetLines {
-        lines: Option<LineDelta>,
+        lines: Vec<Option<LineDelta>>,
     },
     /// The answer to `Checks`, in the order of the commits asked for.
     Checks {

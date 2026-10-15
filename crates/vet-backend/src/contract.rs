@@ -350,7 +350,7 @@ mod tests {
             Request::ListPullRequests { project },
             Request::ChangesetLines {
                 project,
-                changeset: ChangesetKey::WorkingTree,
+                changesets: vec![ChangesetKey::WorkingTree],
             },
             Request::Checks {
                 project,
