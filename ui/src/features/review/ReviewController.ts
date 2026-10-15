@@ -49,10 +49,10 @@ import { STALE_NOTICE } from "../../lib/notice";
 import { RequestError } from "../../lib/requestError";
 import { ChangesetView, type Listeners, type PanePosition, type ViewHooks } from "./editor/ChangesetView";
 import { fileSource } from "./editor/fileSource";
-import { type FindOptions, type PathPos, fromPathPos, orderOf, toPathPos } from "./editor/findMatches";
+import { type FindOptions, orderOf } from "./editor/findMatches";
 import type { OpenedResult } from "../search";
 import { routeFound } from "./foundRoute";
-import { type Finder, NO_SUMMARY, type FindSummary } from "./editor/findView";
+import { FindControl } from "./FindControl";
 import { FindState } from "./FindState.svelte";
 import type { Rendered } from "./editor/rendered";
 import { LogView } from "./editor/LogView";
@@ -126,8 +126,6 @@ const projectViews = {
   write: (value: string | undefined) => preferences.write("project", "tabs", value),
 };
 
-const FIND_TYPING_MS = 120;
-
 /** The tabs and positions are saved this long after the last change. */
 const SAVE_AFTER_MS = 400;
 
@@ -138,11 +136,8 @@ export class ReviewController {
   readonly tabs = new Tabs("unified");
   /** The find bar: the window's query, the tabs it is open in, and what the active tab's view found. */
   readonly find = new FindState();
-  /** Where the current match is in each tab, which a rebuilt view starts from; by file, since the files before it come and go. */
-  private findAt = new Map<TabId, PathPos>();
-  private wraps = 0;
-  /** The tab whose current match is to be shown, as long as its view may still be replaced. */
-  private landing?: TabId;
+  /** The runs of the find bar: which pane the active tab searches and where its current match is. */
+  private readonly findControl: FindControl;
   /** The diff view of each attached tab; a file tab has none while its file is not in the changeset. */
   private views = new Map<TabId, ChangesetView>();
   /** The text view of each file tab that showed its text; built when the tab first shows it. */
@@ -200,6 +195,15 @@ export class ReviewController {
       (scope, paths) => this.scopeWritten(scope, paths),
       (spec, marked) => newScope(backend, spec, marked),
     );
+    this.findControl = new FindControl(this.find, this.tabs, {
+      finder: (id, pane) => (pane === "text" ? this.texts.get(id) : this.views.get(id)),
+      paths: (id, pane) => {
+        const view = pane === "diff" ? this.views.get(id) : undefined;
+        if (view) return view.paths();
+        const path = pathOf(id);
+        return path === undefined ? [] : [path];
+      },
+    });
     const offReview = changeset.subscribe((paths) => this.refreshReview(paths));
     const offThreads = threads.onChange(() => this.showThreads());
     const offCommands = provideActions(this.viewActions());
@@ -379,7 +383,7 @@ export class ReviewController {
   destroy() {
     this.search.cancel();
     this.saving.cancel();
-    this.findTyping.cancel();
+    this.findControl.cancel();
     this.saveView();
     this.unsubscribe();
     this.unsubscribeEvents();
@@ -540,59 +544,9 @@ export class ReviewController {
     };
   }
 
-  /** The tab's pane that shows its file: the text, or the diff. */
-  private findPane(id: TabId): "text" | "diff" {
-    return this.tabs.modes.get(id) === "file" ? "text" : "diff";
-  }
-
-  private finder(id: TabId, pane: "text" | "diff"): Finder | undefined {
-    return pane === "text" ? this.texts.get(id) : this.views.get(id);
-  }
-
-  /** Runs the find in the pane the tab shows, and ends it in the other. */
-  private applyFind(id: TabId) {
-    const shown = this.findPane(id);
-    this.finder(id, shown === "text" ? "diff" : "text")?.find(undefined);
-    const finder = this.finder(id, shown);
-    if (!finder || !this.find.open.has(id)) return;
-    finder.onFind((summary) => this.found(id, shown, summary));
-    const at = this.findAt.get(id);
-    finder.find(this.find.options, at && fromPathPos(this.findPaths(id, shown), at));
-    if (this.landing === id) void this.land(id, shown, finder);
-  }
-
-  /** The files of the sections a find in the tab's pane runs over, in order. */
-  private findPaths(id: TabId, pane: "text" | "diff"): readonly string[] {
-    const view = pane === "diff" ? this.views.get(id) : undefined;
-    if (view) return view.paths();
-    const path = pathOf(id);
-    return path === undefined ? [] : [path];
-  }
-
-  /** Scrolls the tab's current match into view; a view rebuilt meanwhile starts the find again and does it again. */
-  private async land(id: TabId, pane: "text" | "diff", finder: Finder) {
-    await finder.showFound();
-    if (this.finder(id, pane) === finder && this.landing === id) this.landing = undefined;
-  }
-
-  /** A pane found something: the bar shows it if it is the active tab's shown pane. */
-  private found(id: TabId, pane: "text" | "diff", summary: FindSummary) {
-    if (pane !== this.findPane(id) || !this.find.open.has(id)) return;
-    const at = summary.at && toPathPos(this.findPaths(id, pane), summary.at);
-    if (at) this.findAt.set(id, at);
-    if (id === this.tabs.active) this.find.summary = summary;
-  }
-
   /** The tabs, the active one or a view mode changed: the find follows to the pane the active tab shows. */
   syncFind() {
-    for (const id of [...this.find.open]) {
-      if (this.tabs.open.includes(id)) continue;
-      this.find.open.delete(id);
-      this.findAt.delete(id);
-    }
-    const id = this.tabs.active;
-    if (this.find.open.has(id)) this.applyFind(id);
-    else this.find.summary = NO_SUMMARY;
+    this.findControl.sync();
   }
 
   /**
@@ -602,11 +556,7 @@ export class ReviewController {
   openFind(): boolean {
     const id = this.tabs.active;
     if (kindOf(id) === "log") return false;
-    const selected = focusedEditor(document.activeElement)?.selectedText();
-    if (selected && !/[\r\n]/.test(selected)) this.find.options.text = selected;
-    this.find.open.add(id);
-    this.find.focusRequests++;
-    this.applyFind(id);
+    this.findControl.open(id, focusedEditor(document.activeElement)?.selectedText());
     return true;
   }
 
@@ -629,12 +579,8 @@ export class ReviewController {
     const side: Side = kind === "removed" ? "base" : "target";
     const id = await this.showFound(result.scope, result.ownTab, result.commit, { path, side, line, col, width });
     if (id === undefined) return;
-    const mode = this.findPane(id) === "text" ? "file" : "diff";
-    Object.assign(this.find.options, result.options);
-    this.findAt.set(id, { path, order: orderOf(result.hunks, kind, line, mode), from: col });
-    this.find.open.add(id);
-    this.landing = id;
-    this.applyFind(id);
+    const mode = this.findControl.pane(id) === "text" ? "file" : "diff";
+    this.findControl.landOn(id, result.options, { path, order: orderOf(result.hunks, kind, line, mode), from: col });
   }
 
   /**
@@ -682,36 +628,16 @@ export class ReviewController {
 
   /** Closes the bar: the current match stays selected in the editor, which gets the focus. */
   closeFind() {
-    const id = this.tabs.active;
-    this.landing = undefined;
-    this.findTyping.cancel();
-    this.finder(id, this.findPane(id))?.selectFound();
-    this.find.open.delete(id);
-    this.finder(id, "diff")?.find(undefined);
-    this.finder(id, "text")?.find(undefined);
-    this.find.summary = NO_SUMMARY;
+    this.findControl.close(this.tabs.active);
   }
 
   /** Goes to the next or previous match of the active tab, and says when that wrapped round the end. */
   async stepFind(delta: 1 | -1) {
-    const id = this.tabs.active;
-    this.landing = undefined;
-    const stepped = await this.finder(id, this.findPane(id))?.findStep(delta);
-    if (stepped?.wrapped)
-      this.find.wrapped = { text: delta > 0 ? "Wrapped to the start" : "Wrapped to the end", n: ++this.wraps };
+    await this.findControl.step(this.tabs.active, delta);
   }
 
-  /** The query is searched this long after the last key, so typing does not search a long changeset for every letter. */
-  private findTyping = new Debounced();
-
   setFindOptions(patch: Partial<FindOptions>) {
-    Object.assign(this.find.options, patch);
-    this.findTyping.cancel();
-    if (Object.keys(patch).length === 1 && "text" in patch) {
-      this.findTyping.schedule(FIND_TYPING_MS, () => this.applyFind(this.tabs.active));
-      return;
-    }
-    this.applyFind(this.tabs.active);
+    this.findControl.setOptions(patch);
   }
 
   /**
@@ -1099,7 +1025,7 @@ export class ReviewController {
       file && { file, review: source, actions: this.textActions(source, file, shown) },
     );
     this.texts.set(id, text);
-    if (this.find.open.has(id)) this.applyFind(id);
+    if (this.find.open.has(id)) this.findControl.apply(id);
     const at = this.takePending(id, "text") ?? place;
     if (at) text.showLines(at);
     if (this.threadsFit(layout)) text.setThreads(this.shownThreads(id), shown.revision);
@@ -1158,7 +1084,7 @@ export class ReviewController {
     view.scrollTo(top);
     view.keepCurrent(anchor);
     view.sync();
-    if (this.find.open.has(id)) this.applyFind(id);
+    if (this.find.open.has(id)) this.findControl.apply(id);
     // A file tab shows its one file at once; the Changes tab loads sections as they come near.
     // A stale revision is replaced by the next build.
     if (path === undefined) return;
