@@ -138,6 +138,22 @@ class ChangesetStore implements ViewSource {
     return this.baseChanged ? files.filter((f) => this.baseChanged?.has(f.path)) : files;
   });
 
+  /** The head commit of a pull request, whose checks the toolbar shows; none for another changeset. */
+  get headCommit(): string | undefined {
+    const facts = this.facts;
+    return facts?.target.changeset.type === "pullRequest" ? facts.target.head : undefined;
+  }
+
+  /** The commit whose runs the Pipelines tool shows: the one on view by commit, else the head. */
+  get pipelineCommit(): string | undefined {
+    return this.shownCommit === undefined ? this.headCommit : this.commits[this.shownCommit]?.commit.id;
+  }
+
+  /** How many files have hunks seen against an older base, which "review only these" narrows to. */
+  get baseChangedCount(): number {
+    return this.baseChanged ? this.baseChangedFiles().length : 0;
+  }
+
   /** The structure of a file of the view. */
   layoutOf(path: string): FileLayout | undefined {
     return this.layouts.get(path);

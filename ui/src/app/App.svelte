@@ -162,16 +162,12 @@
     await tick();
     reviewActions.firstFlagged();
   }
-  const baseChangedLeft = $derived(changeset.baseChanged ? changeset.baseChangedFiles().length : 0);
+  const baseChangedLeft = $derived(changeset.baseChangedCount);
 
-  /** The head commit of a pull request, whose checks the toolbar shows. */
-  const headId = $derived(
-    changeset.facts?.target.changeset.type === "pullRequest" ? changeset.facts.target.head : undefined,
-  );
+  /** The head commit of a pull request, whose checks the toolbar shows; none for another changeset. */
+  const headId = $derived(changeset.headCommit);
   /** The commit whose runs the Pipelines tool shows: the one on view by commit, else the head. */
-  const pipelineCommit = $derived(
-    changeset.shownCommit === undefined ? headId : changeset.commits[changeset.shownCommit]?.commit.id,
-  );
+  const pipelineCommit = $derived(changeset.pipelineCommit);
   const platformSignedOut = $derived(
     platform.status?.connection.type === "signedOut" || platform.status?.connection.type === "tokenExpired",
   );
