@@ -10,7 +10,9 @@
 `check.sh` runs rustfmt (the workspace and `ui/src-tauri`), clippy (`-D warnings`), tests (the
 workspace's and the host's),
 `check-deps.sh`, `check-module-cycles.sh`, then in `ui/` `pnpm check`, `lint`,
-`format:check`, `test`, `harness` and `build`. The module-cycle tool's own checks (rustfmt, clippy,
+`format:check`, `test`, `harness` and `build`. After the workspace tests it fails if the
+`ui/src/generated` bindings differ from what they regenerated from `vet-protocol`; `quick.sh`
+does the same when `vet-protocol` changed. The module-cycle tool's own checks (rustfmt, clippy,
 self-test) run only in `quick.sh`, when the tool changed.
 
 `quick.sh` runs rustfmt on changed files, clippy, tests and module cycles for the
