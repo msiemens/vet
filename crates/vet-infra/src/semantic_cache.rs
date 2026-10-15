@@ -41,6 +41,10 @@ const BATCH_ROWS: usize = 100;
 /// Rows written between two checks of the budget.
 const CHECK_EVERY: usize = 1000;
 
+/// How many writes may wait for the writer task: a fast producer of answers drops writes to a
+/// cache rather than growing memory, since a lost write only costs a recomputation later.
+const JOBS: usize = 1024;
+
 type Clock = Arc<dyn Fn() -> i64 + Send + Sync>;
 
 enum Job {
@@ -60,7 +64,12 @@ enum Job {
 
 pub struct SqliteSemanticCache {
     pool: SqlitePool,
-    queue: mpsc::UnboundedSender<Job>,
+    queue: mpsc::Sender<Job>,
+}
+
+/// Queues a best-effort write; one that does not fit is dropped, so a fast producer is not held up.
+fn offer(queue: &mpsc::Sender<Job>, job: Job) -> bool {
+    queue.try_send(job).is_ok()
 }
 
 fn message(e: impl std::fmt::Display) -> String {
@@ -151,7 +160,7 @@ impl SqliteSemanticCache {
                 }
             }
         };
-        let (queue, jobs) = mpsc::unbounded_channel();
+        let (queue, jobs) = mpsc::channel(JOBS);
         tokio::spawn(write_all(pool.clone(), jobs, budget, clock));
         let cache = Self { pool, queue };
         cache.flush().await;
@@ -161,7 +170,7 @@ impl SqliteSemanticCache {
     /// Returns when everything put so far is in the file and the file is within its budget.
     pub async fn flush(&self) {
         let (done, wait) = oneshot::channel();
-        if self.queue.send(Job::Flush(done)).is_ok() {
+        if self.queue.send(Job::Flush(done)).await.is_ok() {
             let _ = wait.await;
         }
     }
@@ -169,7 +178,7 @@ impl SqliteSemanticCache {
     /// "Clear semantic caches": removes every answer. Returns the bytes freed.
     pub async fn clear(&self) -> u64 {
         let (done, wait) = oneshot::channel();
-        if self.queue.send(Job::Clear(done)).is_err() {
+        if self.queue.send(Job::Clear(done)).await.is_err() {
             return 0;
         }
         wait.await.unwrap_or(0)
@@ -179,7 +188,7 @@ impl SqliteSemanticCache {
     /// the space of what was removed is handed back to the file system.
     pub async fn set_budget(&self, budget: u64) {
         let (done, wait) = oneshot::channel();
-        if self.queue.send(Job::Budget(budget, done)).is_ok() {
+        if self.queue.send(Job::Budget(budget, done)).await.is_ok() {
             let _ = wait.await;
         }
     }
@@ -193,7 +202,7 @@ impl SqliteSemanticCache {
         let stored: Vec<u8> = row.get(0);
         match decode(kind, &stored) {
             Some(value) => {
-                let _ = self.queue.send(Job::Used(address));
+                let _ = offer(&self.queue, Job::Used(address));
                 Some(value)
             }
             None => {
@@ -220,16 +229,19 @@ impl SemanticCache for SqliteSemanticCache {
             return;
         };
         let (kind, bytes) = encode(value);
-        let _ = self.queue.send(Job::Put {
-            address,
-            kind: kind.id(),
-            bytes,
-        });
+        let _ = offer(
+            &self.queue,
+            Job::Put {
+                address,
+                kind: kind.id(),
+                bytes,
+            },
+        );
     }
 }
 
 /// Applies the queued jobs in batches until every sender is gone.
-async fn write_all(pool: SqlitePool, mut jobs: mpsc::UnboundedReceiver<Job>, mut budget: u64, clock: Clock) {
+async fn write_all(pool: SqlitePool, mut jobs: mpsc::Receiver<Job>, mut budget: u64, clock: Clock) {
     let mut unchecked = 0;
     loop {
         let Some(first) = jobs.recv().await else {

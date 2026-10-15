@@ -391,3 +391,14 @@ async fn clearing_removes_everything_and_the_cache_keeps_working() {
     cache.flush().await;
     assert!(cache.get(&hover_key(3)).await.is_some());
 }
+
+#[test]
+fn a_full_write_queue_drops_a_write_instead_of_growing() {
+    let (queue, _jobs) = mpsc::channel(2);
+    assert!(offer(&queue, Job::Used([0; 32])));
+    assert!(offer(&queue, Job::Used([1; 32])));
+    assert!(
+        !offer(&queue, Job::Used([2; 32])),
+        "the write that does not fit is dropped"
+    );
+}

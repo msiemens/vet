@@ -138,11 +138,15 @@ async fn read_tail(stream: &mut (impl AsyncRead + Unpin), limit: usize) -> std::
 /// How long a killed process gets to wind down before its tree is killed.
 const STOP_GRACE: Duration = Duration::from_secs(3);
 
+/// How many output events of one process may be waiting: a process that writes faster than the
+/// consumer reads blocks on its pipe rather than filling memory.
+const EVENT_QUEUE: usize = 64;
+
 /// Must be called from within a tokio runtime.
 pub struct TokioRunner;
 
 pub struct Process {
-    events: mpsc::UnboundedReceiver<ProcessEvent>,
+    events: mpsc::Receiver<ProcessEvent>,
     kill: Arc<Notify>,
     exit: Option<ProcessEvent>,
 }
@@ -158,7 +162,7 @@ impl ProcessRunner for TokioRunner {
         let tree = tree::Tree::attach(&child).map_err(|e| format!("{}: {e}", command.program))?;
         let stdout = child.stdout.take().expect("piped");
         let stderr = child.stderr.take().expect("piped");
-        let (tx, events) = mpsc::unbounded_channel();
+        let (tx, events) = mpsc::channel(EVENT_QUEUE);
         let kill = Arc::new(Notify::new());
         let killed = kill.clone();
         tokio::spawn(async move {
@@ -185,7 +189,7 @@ impl ProcessRunner for TokioRunner {
             };
             // Whatever the run left behind ends with it, by `tree` dropping.
             drop(tree);
-            let _ = tx.send(ProcessEvent::Exit(status.ok().and_then(|s| s.code())));
+            let _ = tx.send(ProcessEvent::Exit(status.ok().and_then(|s| s.code()))).await;
         });
         Ok(Process {
             events,
@@ -195,14 +199,10 @@ impl ProcessRunner for TokioRunner {
     }
 }
 
-async fn pump(
-    mut stream: impl AsyncRead + Unpin,
-    tx: &mpsc::UnboundedSender<ProcessEvent>,
-    event: fn(Vec<u8>) -> ProcessEvent,
-) {
+async fn pump(mut stream: impl AsyncRead + Unpin, tx: &mpsc::Sender<ProcessEvent>, event: fn(Vec<u8>) -> ProcessEvent) {
     let mut buf = vec![0; 16 * 1024];
     while let Ok(n) = stream.read(&mut buf).await {
-        if n == 0 || tx.send(event(buf[..n].to_vec())).is_err() {
+        if n == 0 || tx.send(event(buf[..n].to_vec())).await.is_err() {
             break;
         }
     }
@@ -257,6 +257,21 @@ mod tests {
         assert_eq!(out, b"hi\n");
         assert_eq!(err, b"oops\n");
         assert_eq!(exit, ProcessEvent::Exit(Some(3)));
+    }
+
+    #[tokio::test]
+    async fn a_noisy_process_stalls_at_the_queue_bound_rather_than_buffering_without_one() {
+        // Writes far more than the queue holds. Nothing reads it, so the process must stall on its
+        // pipe at the bound instead of the whole output piling up in memory.
+        let p = TokioRunner.spawn(&sh("seq 1 200000")).unwrap();
+        tokio::time::sleep(Duration::from_millis(200)).await;
+        assert!(p.events.len() <= EVENT_QUEUE, "{} events buffered", p.events.len());
+        // Nothing is lost once it is read: the queue throttles the process, it does not drop.
+        let (out, err, exit) = drain(p).await;
+        assert!(err.is_empty());
+        assert_eq!(exit, ProcessEvent::Exit(Some(0)));
+        assert_eq!(out.iter().filter(|&&c| c == b'\n').count(), 200000);
+        assert!(out.ends_with(b"200000\n"));
     }
 
     #[tokio::test]
