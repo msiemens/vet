@@ -176,14 +176,14 @@ pub(crate) fn sync_in_background(open: Arc<Open>) {
 /// came of it. A platform that cannot be asked is reported as its status (`Hosting` notes it) and
 /// not as a failure. Answers whether the subscribers were told that threads changed.
 pub(crate) async fn sync_pull_request(open: &Arc<Open>, booted: &Booted) -> bool {
-    let Source::PullRequest { remote, .. } = booted.session.source().await else {
+    let Source::PullRequest { remote, number } = booted.session.source().await else {
         return false;
     };
     let Ok(hosting) = open.hosting_for(&remote).await else {
         return false;
     };
     match booted.session.sync_threads(&hosting).await {
-        Ok(report) => announce(open, booted, &remote, &report).await,
+        Ok(report) => announce(open, booted, &remote, number, &report).await,
         // The platform could not be asked, or the changeset on view changed meanwhile.
         Err(_) => false,
     }
@@ -191,7 +191,7 @@ pub(crate) async fn sync_pull_request(open: &Arc<Open>, booted: &Booted) -> bool
 
 /// Answers whether the subscribers were told that threads changed. A sync is also what the
 /// pull request's information is read after, so the platform's status is told with it.
-async fn announce(open: &Open, booted: &Booted, remote: &RemoteKey, report: &SyncReport) -> bool {
+async fn announce(open: &Open, booted: &Booted, remote: &RemoteKey, number: u64, report: &SyncReport) -> bool {
     let Ok(kind) = open.kind_of(remote).await else {
         tracing::warn!(repository = %remote, "not announcing a pull request of a host Vet does not know");
         return false;
@@ -210,8 +210,18 @@ async fn announce(open: &Open, booted: &Booted, remote: &RemoteKey, report: &Syn
         });
     }
     if report.listing_changed {
-        open.subscribers
-            .broadcast(Event::PullRequestsChanged { project: open.id });
+        // What the details the sync read add to the pull request's row of the queue, so the
+        // client patches it rather than listing again.
+        let changed = open
+            .platforms
+            .known()
+            .added(remote, number)
+            .map(|added| vec![mapping::pull_request_update(remote, number, &added)])
+            .unwrap_or_default();
+        open.subscribers.broadcast(Event::PullRequestsChanged {
+            project: open.id,
+            changed,
+        });
     }
     for notice in &report.notices {
         open.subscribers.broadcast(Event::Notification {

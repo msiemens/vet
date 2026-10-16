@@ -33,7 +33,7 @@ pub use discussion::{
 pub(crate) use fake::FakeHosting;
 pub use health::{Health, Outcome, Standing};
 pub use host::{PlatformKind, Platforms, normalize_host};
-pub use known::PullRequestCache;
+pub use known::{Added, PullRequestCache};
 pub use model::{
     BlockingSource, ChangesAsked, ChangesRequest, ChangesetThreads, CiState, ForcePush, PipelineWords, PlatformError,
     PlatformTraits, Posting, PullRequest, PullRequestDetail, PullRequestHead, PullRequestListing, PullRequestQuery,

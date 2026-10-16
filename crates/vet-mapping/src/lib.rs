@@ -7,7 +7,7 @@ pub mod semantic;
 use base64::Engine;
 use vet_app::changeset::{CommitId, Lens, RemoteKey, Source, VersionOrigin};
 use vet_app::platform::{
-    ChangesAsked, CheckLog, CiState, CommitChecks, ConversationKind, Phase, PipelineAction, PlatformError,
+    Added, ChangesAsked, CheckLog, CiState, CommitChecks, ConversationKind, Phase, PipelineAction, PlatformError,
     PlatformKind, PlatformTraits, Posting, PullRequestState, QueueStatus, ReviewVerdict, ReviewerState, Step,
 };
 use vet_app::ports::{CommitInfo, Degraded};
@@ -466,6 +466,24 @@ pub fn pull_request_source(remote: &RemoteKey, number: u64) -> Source {
     Source::PullRequest {
         remote: remote.clone(),
         number,
+    }
+}
+
+/// What reading the details of pull request `number` of `remote` added to its row of the queue, for
+/// `Event::PullRequestsChanged`.
+pub fn pull_request_update(remote: &RemoteKey, number: u64, added: &Added) -> p::PullRequestUpdate {
+    p::PullRequestUpdate {
+        key: changeset_key(&pull_request_source(remote, number)),
+        status: added.status.map(queue_status),
+        unresolved_threads: added.unresolved_threads,
+        changes_requested: added
+            .changes_requested
+            .iter()
+            .map(|c| p::ChangesRequest {
+                reviewer: c.reviewer.clone(),
+                how: changes_asked(c.how),
+            })
+            .collect(),
     }
 }
 

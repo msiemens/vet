@@ -10,7 +10,8 @@ use vet_core::num::sat_u32;
 use crate::mutex::lock;
 
 use super::discussion::{Discussion, ReviewerState};
-use super::model::{ChangesAsked, ChangesRequest, PullRequest, PullRequestHead, ReviewDecision};
+use super::model::{ChangesAsked, ChangesRequest, PullRequest, PullRequestHead, QueueStatus, ReviewDecision, Viewer};
+use super::queue::{is_waiting_for_me, queue_status};
 use super::remote::RemoteKey;
 
 /// How many pull requests are kept; the one observed longest ago goes first.
@@ -24,6 +25,8 @@ struct Known {
     head: Option<(PullRequestHead, i64, String)>,
     /// What the discussion was when it was last read, and when (unix seconds).
     discussion: Option<(i64, Discussion)>,
+    /// Whether review is asked of the viewer, as of the last listing that said; none until one did.
+    waiting_for_me: Option<bool>,
     /// Orders the entries by how recently they were observed.
     seen: u64,
 }
@@ -31,6 +34,8 @@ struct Known {
 #[derive(Default)]
 struct Entries {
     by_pull_request: HashMap<Key, Known>,
+    /// The viewer of each host, so a listed pull request's wait for them is known without asking.
+    viewers: HashMap<String, Viewer>,
     tick: u64,
 }
 
@@ -52,6 +57,7 @@ impl Entries {
         let known = self.by_pull_request.entry(key).or_insert(Known {
             head: None,
             discussion: None,
+            waiting_for_me: None,
             seen: tick,
         });
         known.seen = tick;
@@ -92,6 +98,32 @@ impl Details {
                 .collect(),
         }
     }
+
+    /// Where a pull request with these details stands, listed as `draft` and asking the viewer to
+    /// review it or not.
+    fn status(&self, draft: bool, waiting_for_me: bool) -> Option<QueueStatus> {
+        queue_status(draft, self.blocked, self.decision, waiting_for_me)
+    }
+
+    /// Who asked for changes, as a row shows them: none unless that is its status.
+    fn asking(&self, status: Option<QueueStatus>) -> Vec<ChangesRequest> {
+        if status == Some(QueueStatus::ChangesRequested) {
+            self.changes_requested.clone()
+        } else {
+            Vec::new()
+        }
+    }
+}
+
+/// What reading a pull request's details adds to its row of the queue.
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub struct Added {
+    /// Where it stands, with the row's draft and whether review waits for the viewer; absent when
+    /// no status applies.
+    pub status: Option<QueueStatus>,
+    pub unresolved_threads: u32,
+    /// Who asked for changes, and how; empty unless that is the status.
+    pub changes_requested: Vec<ChangesRequest>,
 }
 
 /// The pull requests the platforms were asked about, by remote and number. Shared by everything
@@ -110,6 +142,10 @@ impl PullRequestCache {
     /// kept from before the pull request changed) does not replace it.
     pub fn observe(&self, remote: &RemoteKey, pull_request: &PullRequest) {
         let mut entries = self.entries();
+        let waiting_for_me = entries
+            .viewers
+            .get(&remote.host)
+            .map(|viewer| is_waiting_for_me(pull_request, viewer));
         let known = entries.entry(remote, pull_request.number);
         if known
             .head
@@ -123,6 +159,15 @@ impl PullRequestCache {
             pull_request.updated_at,
             pull_request.head.clone(),
         ));
+        if waiting_for_me.is_some() {
+            known.waiting_for_me = waiting_for_me;
+        }
+    }
+
+    /// Notes the viewer of `remote`'s host, so what a listed pull request waits for them can be
+    /// told without asking again.
+    pub fn note_viewer(&self, remote: &RemoteKey, viewer: &Viewer) {
+        self.entries().viewers.insert(remote.host.clone(), viewer.clone());
     }
 
     /// How the platform last named the pull request. What was not learnt since Vet started is read
@@ -187,6 +232,22 @@ impl PullRequestCache {
             pull_request.unresolved_threads = details.unresolved_threads;
             pull_request.changes_requested = details.changes_requested;
         }
+    }
+
+    /// What the details last read of `number` add to its row of the queue: where it stands, its
+    /// unresolved threads and who asked for changes. None when no discussion was read.
+    pub fn added(&self, remote: &RemoteKey, number: u64) -> Option<Added> {
+        let entries = self.entries();
+        let known = entries.by_pull_request.get(&(remote.clone(), number))?;
+        let (_, discussion) = known.discussion.as_ref()?;
+        let details = Details::of(discussion);
+        let draft = known.head.as_ref().is_some_and(|(head, _, _)| head.draft);
+        let status = details.status(draft, known.waiting_for_me.unwrap_or(false));
+        Some(Added {
+            status,
+            unresolved_threads: details.unresolved_threads,
+            changes_requested: details.asking(status),
+        })
     }
 
     /// The discussion as last read, and when.

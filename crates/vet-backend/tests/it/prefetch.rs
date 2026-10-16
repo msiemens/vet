@@ -19,12 +19,14 @@ use vet_app::ports::ChangesetStore;
 use vet_backend::{Config, Orchestrator, open_store};
 use vet_infra::platform::fake::{Canned, Fake, Seen};
 use vet_protocol::{
-    ChangesetKey, Event, ProjectId, PullRequestInfo, PullRequestRow, QueueStatus, Request, Response, Secret,
-    ServerMessage,
+    ChangesetKey, Event, ProjectId, PullRequestInfo, PullRequestRow, PullRequestUpdate, QueueStatus, Request, Response,
+    Secret, ServerMessage,
 };
 
 #[cfg(debug_assertions)]
 use crate::common::background_ended;
+#[cfg(debug_assertions)]
+use crate::common::background_started;
 use crate::common::{Client, git, init, write};
 
 const NOW: &str = "2024-05-01T12:00:00Z";
@@ -49,6 +51,8 @@ pub(crate) struct Mock {
     pub(crate) base: String,
     /// How many discussions were answered.
     pub(crate) discussions: usize,
+    /// How many listing queries the search endpoint answered.
+    pub(crate) lists: usize,
     /// How many discussion requests arrived, answered or not; counted before the delay, so a test
     /// can close the project while one is in flight.
     pub(crate) started: usize,
@@ -273,6 +277,7 @@ fn github(mock: Arc<Mutex<Mock>>) -> Fake {
             return Canned::json(r#"{"total_count":0,"workflow_runs":[]}"#);
         }
         if request.path.starts_with("/repos/acme/app/pulls") {
+            mock.lock().unwrap().lists += 1;
             let (number, updated) = {
                 let mock = mock.lock().unwrap();
                 mock.prs
@@ -662,6 +667,66 @@ fn started(mock: &Mutex<Mock>) -> usize {
     mock.lock().unwrap().started
 }
 
+/// The number of the pull request a row the announcement carried names.
+fn number(key: &ChangesetKey) -> u64 {
+    match key {
+        ChangesetKey::PullRequest { number, .. } => u64::from(*number),
+        other => panic!("{other:?}"),
+    }
+}
+
+/// What an announcement carried of one pull request: the fields the details added to its row.
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct Update {
+    status: Option<QueueStatus>,
+    unresolved_threads: u32,
+    changes_requested: Vec<String>,
+}
+
+impl Update {
+    fn of(update: PullRequestUpdate) -> Self {
+        Self {
+            status: update.status,
+            unresolved_threads: update.unresolved_threads,
+            changes_requested: update
+                .changes_requested
+                .into_iter()
+                .map(|asked| asked.reviewer)
+                .collect(),
+        }
+    }
+}
+
+/// What the announcements carried of the pull requests `numbers`, by number, waited for until
+/// every one is in. A run may announce its changes in more than one event.
+async fn announced_changes(client: &mut Client, numbers: &[u64]) -> Vec<(u64, Update)> {
+    let mut found: Vec<(u64, Update)> = Vec::new();
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(30);
+    loop {
+        while let Ok(message) = client.inbox.try_recv() {
+            if let ServerMessage::Event {
+                event: Event::PullRequestsChanged { changed, .. },
+            } = message
+            {
+                found.extend(
+                    changed
+                        .into_iter()
+                        .map(|update| (number(&update.key), Update::of(update))),
+                );
+            }
+        }
+        if numbers.iter().all(|wanted| found.iter().any(|(at, _)| at == wanted)) {
+            return found;
+        }
+        assert!(
+            tokio::time::Instant::now() < deadline,
+            "the changed rows were not all announced; saw {:?}",
+            found.iter().map(|(at, _)| at).collect::<Vec<_>>()
+        );
+        tokio::time::sleep(Duration::from_millis(5)).await;
+    }
+}
+
 #[cfg(debug_assertions)]
 #[tokio::test]
 async fn the_details_of_a_listed_pull_request_are_fetched_ahead_and_a_changed_one_again_but_not_an_unchanged_one() {
@@ -692,7 +757,7 @@ async fn the_details_of_a_listed_pull_request_are_fetched_ahead_and_a_changed_on
 }
 
 #[tokio::test]
-async fn a_row_is_listed_without_its_threads_and_has_them_once_its_details_are_fetched() {
+async fn the_details_that_were_read_are_announced_with_the_fields_they_add_to_the_rows() {
     let (mock, fake, repo, _scratch) = fixture();
     {
         let mut mock = mock.lock().unwrap();
@@ -717,32 +782,83 @@ async fn a_row_is_listed_without_its_threads_and_has_them_once_its_details_are_f
         );
     }
 
-    // The prefetch reads the details, and says that the list shows more of them now.
-    tokio::time::timeout(Duration::from_secs(30), async {
-        loop {
-            if let Some(ServerMessage::Event {
-                event: Event::PullRequestsChanged { .. },
-            }) = client.inbox.recv().await
-            {
-                break;
-            }
-        }
-    })
-    .await
-    .expect("the list was not announced to have changed");
+    // The announcements carry what the details add to each row: its status, its unresolved threads
+    // and who asked for changes, so the client patches the rows instead of listing again.
+    let changed = announced_changes(&mut client, &[7, 8]).await;
 
-    for (number, row) in rows(&client, project).await {
-        assert_eq!(row.unresolved_threads, 2, "#{number}");
-        if number == 7 {
-            assert_eq!(row.status, Some(QueueStatus::Blocked));
-        } else {
-            let asked: Vec<_> = row.changes_requested.iter().map(|c| c.reviewer.as_str()).collect();
-            assert_eq!(
-                (row.status, asked),
-                (Some(QueueStatus::ChangesRequested), vec!["Linus"])
-            );
+    let seven = changed
+        .iter()
+        .rfind(|(number, _)| *number == 7)
+        .expect("#7 was not announced")
+        .1
+        .clone();
+    assert_eq!(
+        seven,
+        Update {
+            status: Some(QueueStatus::Blocked),
+            unresolved_threads: 2,
+            changes_requested: Vec::new(),
+        },
+        "a blocked pull request does not show who asked for changes"
+    );
+
+    let eight = changed
+        .iter()
+        .rfind(|(number, _)| *number == 8)
+        .expect("#8 was not announced")
+        .1
+        .clone();
+    assert_eq!(
+        eight,
+        Update {
+            status: Some(QueueStatus::ChangesRequested),
+            unresolved_threads: 2,
+            changes_requested: vec!["Linus".to_owned()],
         }
-    }
+    );
+}
+
+/// A run over many pull requests asks the platform to list them once and is not restarted: the
+/// changed rows it announces are what the client patches, so nothing lists again.
+#[cfg(debug_assertions)]
+#[tokio::test]
+async fn a_prefetch_run_lists_the_platform_once_and_is_not_restarted() {
+    let (mock, fake, repo, _scratch) = fixture();
+    many_prs(&mock, 25);
+    mock.lock().unwrap().unresolved_threads = 1;
+    let data = tempfile::tempdir().unwrap();
+    let config = Config {
+        prefetch_pace: Duration::from_millis(5),
+        prefetch_announce: Duration::from_millis(20),
+        ..config()
+    };
+    let (_handler, mut client) = backend_with(data.path(), &fake.base(), config).await;
+    let project = client.open(repo.path()).await;
+
+    list(&client, project).await;
+    let numbers: Vec<u64> = (7..7 + 25).collect();
+    let changed = announced_changes(&mut client, &numbers).await;
+    background_ended(&client, project, "prefetch").await;
+
+    assert_eq!(
+        changed
+            .iter()
+            .map(|(number, _)| *number)
+            .collect::<std::collections::BTreeSet<_>>()
+            .len(),
+        25,
+        "every listed pull request's details were carried"
+    );
+    assert_eq!(
+        mock.lock().unwrap().lists,
+        1,
+        "the platform was asked to list once, and the run did not list again"
+    );
+    assert_eq!(
+        background_started(&client, project, "prefetch"),
+        1,
+        "the run was not restarted"
+    );
 }
 
 #[tokio::test]

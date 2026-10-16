@@ -15,7 +15,7 @@ use vet_app::pull_request::{self, FetchError, PullRequestList, hosted_repositori
 use vet_infra::clock::unix_now;
 use vet_infra::store::SqliteStore;
 use vet_mapping as mapping;
-use vet_protocol::{ChangesetKey, Event, ProjectId, Response};
+use vet_protocol::{ChangesetKey, Event, ProjectId, PullRequestUpdate, Response};
 
 use crate::accounts::Held;
 use crate::checks::refresh_checks_after_action;
@@ -252,6 +252,14 @@ struct Prefetch {
 /// rows cannot show their state at all.
 const PREFETCH_LIMIT: usize = 20;
 
+/// Adds what the details last read of `remote`'s pull request `number` add to its row of the queue
+/// to `changed`, for the announcement.
+fn record_added(known: &PullRequestCache, remote: &RemoteKey, number: u64, changed: &mut Vec<PullRequestUpdate>) {
+    if let Some(added) = known.added(remote, number) {
+        changed.push(mapping::pull_request_update(remote, number, &added));
+    }
+}
+
 /// Fetches the details of the listed pull requests whose `updatedAt` the stored copy does not
 /// have, in the background, so a revisit shows them at once. An unchanged pull request is not
 /// asked for. The run is paced by [`Prefetch`]; an account that is limited or failing is left
@@ -260,10 +268,10 @@ const PREFETCH_LIMIT: usize = 20;
 /// pull request; another for at most [`PREFETCH_LIMIT`] of them, whose list already carries them.
 /// Never delays the list the viewer asked for; the task is handed to the project, which replaces
 /// it with the next list's and stops it when the project closes. What the list shows of a pull
-/// request that its details add (`PullRequestCache::fill`) is announced (`PullRequestsChanged`)
-/// while the run changes it, coalesced to one every `Prefetch::announce`, and once more at the
-/// end when anything changed since the last, also for a copy kept from an earlier run that the
-/// cache did not have.
+/// request that its details add (`PullRequestCache::fill`) is announced (`PullRequestsChanged`,
+/// carrying what they add) while the run changes it, coalesced to one every `Prefetch::announce`,
+/// and once more at the end when anything changed since the last, also for a copy kept from an
+/// earlier run that the cache did not have.
 fn prefetch_details(
     open: &Arc<Open>,
     platforms: Arc<Platforms>,
@@ -278,17 +286,17 @@ fn prefetch_details(
     let prefetching = async move {
         let mut stopped: std::collections::HashSet<String> = std::collections::HashSet::new();
         let mut capped = 0usize;
-        let mut changed = false;
+        let mut changed: Vec<PullRequestUpdate> = Vec::new();
         let mut announced_at: Option<Instant> = None;
         for listed in &list.rows {
             // What changed since the last announcement reaches the window without waiting for the
             // run to end, but no faster than `announce`.
-            if changed && announced_at.is_none_or(|at| at.elapsed() >= announce) {
-                announcer
-                    .subscribers
-                    .broadcast(Event::PullRequestsChanged { project: announcer.id });
+            if !changed.is_empty() && announced_at.is_none_or(|at| at.elapsed() >= announce) {
+                announcer.subscribers.broadcast(Event::PullRequestsChanged {
+                    project: announcer.id,
+                    changed: std::mem::take(&mut changed),
+                });
                 announced_at = Some(Instant::now());
-                changed = false;
             }
             let account = listed.remote.account();
             if stopped.contains(&account) {
@@ -315,13 +323,15 @@ fn prefetch_details(
             {
                 // Nothing changed since the copy that is kept: no call is made, and the list shows
                 // what it says.
-                if known.discussion(&listed.remote, listed.row.number).is_none() {
-                    changed |= known.record_discussion(
+                if known.discussion(&listed.remote, listed.row.number).is_none()
+                    && known.record_discussion(
                         &listed.remote,
                         listed.row.number,
                         stored.synced_at,
                         stored.discussion.clone(),
-                    );
+                    )
+                {
+                    record_added(&known, &listed.remote, listed.row.number, &mut changed);
                 }
                 continue;
             }
@@ -331,7 +341,9 @@ fn prefetch_details(
             match hosting.discussion(&listed.remote, listed.row.number).await {
                 Ok(discussion) => {
                     let at = unix_now();
-                    changed |= known.record_discussion(&listed.remote, listed.row.number, at, discussion.clone());
+                    if known.record_discussion(&listed.remote, listed.row.number, at, discussion.clone()) {
+                        record_added(&known, &listed.remote, listed.row.number, &mut changed);
+                    }
                     if let Err(error) = store
                         .writes()
                         .set_discussion(
@@ -363,10 +375,11 @@ fn prefetch_details(
             }
             tokio::time::sleep(pace).await;
         }
-        if changed {
-            announcer
-                .subscribers
-                .broadcast(Event::PullRequestsChanged { project: announcer.id });
+        if !changed.is_empty() {
+            announcer.subscribers.broadcast(Event::PullRequestsChanged {
+                project: announcer.id,
+                changed,
+            });
         }
     };
     tokio::spawn(crate::open::tracked(open, "prefetch", prefetching)).abort_handle()

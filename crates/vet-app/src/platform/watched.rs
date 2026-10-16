@@ -47,7 +47,11 @@ impl<P: Platform + Sync> Platform for Watched<P> {
     }
 
     async fn viewer(&self, remote: &RemoteKey) -> Result<Viewer, PlatformError> {
-        self.watched(remote, self.platform.viewer(remote)).await
+        let viewer = self.watched(remote, self.platform.viewer(remote)).await?;
+        // A listed pull request's wait for the viewer is worked out from them; keep it for when
+        // the list is read, which does not ask again.
+        self.known.note_viewer(remote, &viewer);
+        Ok(viewer)
     }
 
     async fn list_pull_requests(

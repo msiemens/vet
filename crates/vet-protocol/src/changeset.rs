@@ -223,6 +223,24 @@ pub struct PullRequestRow {
     pub url: String,
 }
 
+/// What reading a pull request's details added to its row of the queue: where it stands, its
+/// unresolved threads and who asked for changes, which a platform's list leaves out. Carried by
+/// `PullRequestsChanged`, one per row it changes, so the client patches those rows in place.
+#[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct PullRequestUpdate {
+    /// The pull request the fields belong to.
+    pub key: ChangesetKey,
+    /// Where the pull request stands now; absent when no status applies.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub status: Option<QueueStatus>,
+    pub unresolved_threads: u32,
+    /// Who asked for changes, and how, in the platform's order; empty unless that is the status.
+    pub changes_requested: Vec<ChangesRequest>,
+}
+
 /// How asking one hosted repository for its pull requests went.
 #[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]

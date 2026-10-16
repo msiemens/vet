@@ -10,9 +10,11 @@ import type { ChangesetRow } from "../generated/ChangesetRow";
 import type { LineDelta } from "../generated/LineDelta";
 import type { PullRequestRow } from "../generated/PullRequestRow";
 import type { PullRequestSource } from "../generated/PullRequestSource";
+import type { PullRequestUpdate } from "../generated/PullRequestUpdate";
 import { Debounced } from "../lib/debounced";
 import { changeset } from "./changeset.svelte";
 import { keyId } from "./changesetKey";
+import { type QueueActions, queueEvent, withDetails } from "./queueEvents";
 import { Latest } from "./resource";
 import type { Frame, Parts, ReviewedFile, ViewLayout } from "./reviewModel";
 import { session } from "./session.svelte";
@@ -64,19 +66,20 @@ class QueueStore {
       });
     });
     session.onConnect((backend) => {
+      const actions: QueueActions = {
+        load: (recount) => void this.load(recount),
+        loadPullRequests: () => void this.loadPullRequests(),
+        loadAll: () => void this.loadAll(),
+        takeLines: (changesets, lines) => this.takeLines(changesets, lines),
+        takeDetails: (changed) => this.takeDetails(changed),
+        follow: () => this.follow(),
+      };
       backend.onEvent((event) => {
         if (event.project !== backend.project) return;
-        // Which changeset is on view and what has a review. Where the branches are is the local list's
-        // alone: the pull requests are listed when the queue is shown and on a refresh, not on each fetch.
-        if (event.type === "changesetOpened" || event.type === "reviewStarted") void this.loadAll();
-        else if (event.type === "changesetsChanged") void this.load();
-        else if (event.type === "threadsChanged") void this.load(false);
-        // The details of listed pull requests were read: the list says more of them now.
-        else if (event.type === "pullRequestsChanged") void this.loadPullRequests();
-        // A chunk of a `changesetLines` answer: show those rows as they are counted.
-        else if (event.type === "changesetLinesChanged") this.takeLines(event.changesets, event.lines);
-        // A new version or a mark changes the version, the last reviewed version and the progress of the row on view.
-        else if (event.type === "snapshotSettled" || event.type === "reviewChanged") this.follow();
+        // The branches are the local list's alone: the pull requests are listed when the queue is
+        // shown and on a refresh, not on each fetch. What the details of a listed pull request add
+        // to its row is patched in place, not listed again.
+        queueEvent(event, actions);
       });
       // Another credential may list other pull requests, or list them where it could not before.
       backend.onAccountsChanged(() => {
@@ -264,6 +267,11 @@ class QueueStore {
   /** Shows the counted lines of `changesets`, in order: a pushed chunk, or the request's answer. */
   private takeLines(changesets: readonly ChangesetKey[], lines: readonly (LineDelta | null | undefined)[]) {
     changesets.forEach((key, at) => this.lines.set(keyId(key), lines[at] ?? null));
+  }
+
+  /** Shows what the details that were read add to the rows they changed, leaving the rest. */
+  private takeDetails(changed: readonly PullRequestUpdate[]) {
+    this.pullRequests = withDetails(this.pullRequests, changed);
   }
 }
 
