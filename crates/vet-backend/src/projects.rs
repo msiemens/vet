@@ -9,7 +9,6 @@ use vet_protocol::{Event, ProjectId};
 
 use crate::error::{Error, Result};
 use crate::events::Connection;
-use crate::feed::run_feed;
 use crate::{Open, Orchestrator};
 
 impl Orchestrator {
@@ -44,7 +43,6 @@ impl Orchestrator {
             // The timer is not a counted run: a client waiting for quiet must not wait for it.
             let timer = open.fetches.clone().every(self.config.fetch_interval);
             open.supervisor.start("fetch timer", timer);
-            run_feed(&open);
         }
         Ok((open.id, root))
     }

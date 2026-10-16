@@ -55,7 +55,7 @@ where
 {
     type Fetcher = G;
 
-    fn hosting(&self, kind: PlatformKind) -> impl Platform + Send {
+    fn hosting(&self, kind: PlatformKind) -> impl Platform + Send + Sync {
         Watched::new(self.platform.clone(), kind, self.health.clone(), self.known.clone())
     }
 
@@ -284,10 +284,6 @@ impl ProjectFake {
 }
 
 impl Project for ProjectFake {
-    type Activity = ();
-
-    fn activity(&self, _: &'static str) {}
-
     async fn on_view(&self) -> Option<(RemoteKey, u64)> {
         self.on_view.lock().unwrap().clone()
     }
@@ -380,8 +376,8 @@ async fn the_cycle_lists_prunes_fetches_heads_and_prefetches_in_order() {
             pace: Duration::ZERO,
             announce: Duration::ZERO,
         },
+        Supervisor::default(),
     );
-    let _run = tokio::spawn(feed.clone().run());
 
     feed.manual().await;
     // The prefetch runs after the cycle the manual request waited for; wait for it to reach a row.
@@ -580,7 +576,14 @@ fn feed_of(
         accounts: vec![],
     };
     (
-        PullRequestFeed::new(side, MemStore::default(), project, || 1_000, timing),
+        PullRequestFeed::new(
+            side,
+            MemStore::default(),
+            project,
+            || 1_000,
+            timing,
+            Supervisor::default(),
+        ),
         readable,
     )
 }
@@ -598,7 +601,7 @@ fn numbers(list: &PullRequestList) -> Vec<u64> {
 }
 
 #[tokio::test]
-async fn ten_timer_requests_during_a_run_give_one_cycle() {
+async fn ten_timer_requests_during_a_run_give_no_more_cycle() {
     let log = Log::default();
     let app = github("acme/app");
     let platform = listing(&log, vec![(app.clone(), vec![7])]);
@@ -610,18 +613,60 @@ async fn ten_timer_requests_during_a_run_give_one_cycle() {
         vec![info("origin", "https://github.com/acme/app")],
         zero(),
     );
-    let _run = tokio::spawn(feed.clone().run());
 
     feed.timer();
-    // The one cycle starts and waits inside its listing while the other requests arrive.
-    tokio::task::yield_now().await;
+    // The cycle waits inside its listing while the other requests arrive.
+    until_listed(&log, 1).await;
     for _ in 0..10 {
         feed.timer();
     }
     gate.notify_one();
 
     assert_eq!(numbers(&feed.list().await.unwrap()), [7]);
-    assert_eq!(counting(&log, "list"), 1, "the requests joined the one cycle");
+    idle(&feed).await;
+    assert_eq!(counting(&log, "list"), 1, "the timer requests joined the one cycle");
+}
+
+/// Waits until the feed has no cycle running or waiting.
+async fn idle(feed: &TestFeed) {
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
+    while feed.inner.supervisor.live() > 0 && tokio::time::Instant::now() < deadline {
+        tokio::time::sleep(Duration::from_millis(1)).await;
+    }
+    assert_eq!(feed.inner.supervisor.live(), 0, "the feed never went idle");
+}
+
+#[tokio::test]
+async fn ten_account_changes_during_a_run_give_one_more_cycle() {
+    let log = Log::default();
+    let app = github("acme/app");
+    let platform = listing(&log, vec![(app.clone(), vec![7])]);
+    let gate = Arc::new(Notify::new());
+    platform.gate(gate.clone());
+    let (feed, _) = feed_of(
+        platform,
+        project(&log),
+        vec![info("origin", "https://github.com/acme/app")],
+        zero(),
+    );
+
+    feed.timer();
+    until_listed(&log, 1).await;
+    for _ in 0..10 {
+        feed.accounts();
+    }
+    gate.notify_one();
+
+    idle(&feed).await;
+    assert_eq!(counting(&log, "list"), 2, "ten requests made one more cycle");
+}
+
+/// Waits until the platform was asked for `count` listings.
+async fn until_listed(log: &Log, count: usize) {
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
+    while counting(log, "list") < count && tokio::time::Instant::now() < deadline {
+        tokio::time::sleep(Duration::from_millis(1)).await;
+    }
 }
 
 #[tokio::test]
@@ -639,7 +684,6 @@ async fn a_manual_request_during_a_run_gives_one_trailing_cycle_and_its_caller_w
         vec![info("origin", "https://github.com/acme/app")],
         zero(),
     );
-    let _run = tokio::spawn(feed.clone().run());
 
     feed.timer();
     tokio::task::yield_now().await; // the first cycle waits inside its listing
@@ -676,7 +720,6 @@ async fn reading_an_empty_feed_waits_for_the_first_listing() {
         vec![info("origin", "https://github.com/acme/app")],
         zero(),
     );
-    let _run = tokio::spawn(feed.clone().run());
 
     assert_eq!(numbers(&feed.list().await.unwrap()), [7]);
 
@@ -689,7 +732,6 @@ async fn reading_an_empty_feed_waits_for_the_first_listing() {
         vec![info("lab", "https://gitlab.com/acme/app")],
         zero(),
     );
-    let _run = tokio::spawn(feed.clone().run());
 
     let listed = feed.list().await.unwrap();
     assert!(listed.rows.is_empty() && listed.sources.is_empty());
@@ -706,7 +748,6 @@ async fn a_failed_cycle_keeps_the_last_list() {
         vec![info("origin", "https://github.com/acme/app")],
         zero(),
     );
-    let _run = tokio::spawn(feed.clone().run());
 
     feed.manual().await;
     assert_eq!(numbers(&feed.list().await.unwrap()), [7]);
@@ -735,7 +776,6 @@ async fn a_read_of_a_feed_with_only_a_failure_lists_again() {
         vec![info("origin", "https://github.com/acme/app")],
         zero(),
     );
-    let _run = tokio::spawn(feed.clone().run());
 
     refs.break_remotes();
     assert!(feed.list().await.is_err(), "the first listing fails");
@@ -756,7 +796,6 @@ async fn a_repository_whose_listing_fails_keeps_its_rows_and_shows_the_error() {
     ];
     let platform = listing(&log, vec![(app.clone(), vec![1, 2]), (lib.clone(), vec![3])]);
     let (feed, _) = feed_of(platform.clone(), project(&log), remotes, zero());
-    let _run = tokio::spawn(feed.clone().run());
 
     feed.manual().await;
     assert_eq!(numbers(&feed.list().await.unwrap()), [3, 2, 1]);
@@ -798,7 +837,6 @@ async fn an_unchanged_list_announces_nothing_and_keeps_a_running_prefetch_a_chan
             announce: Duration::ZERO,
         },
     );
-    let _run = tokio::spawn(feed.clone().run());
 
     feed.manual().await; // lists 7 and 8 and leaves the details fetched ahead running
     assert_eq!(counting(&log, "list"), 1);
@@ -841,7 +879,6 @@ async fn the_first_list_is_announced_only_to_a_reader_that_was_told_of_a_failure
         vec![info("origin", "https://github.com/acme/app")],
         zero(),
     );
-    let _run = tokio::spawn(feed.clone().run());
 
     refs.break_remotes();
     assert!(feed.list().await.is_err());
@@ -861,7 +898,7 @@ async fn the_first_list_is_announced_only_to_a_reader_that_was_told_of_a_failure
         vec![info("origin", "https://github.com/acme/app")],
         zero(),
     );
-    let _run = tokio::spawn(feed.clone().run());
+
     feed.list().await.unwrap();
     assert_eq!(
         counting(&log, "list_changed"),
@@ -881,7 +918,6 @@ async fn an_unchanged_cycle_fetches_a_head_a_failed_fetch_left_missing() {
         vec![info("origin", "https://github.com/acme/app")],
         zero(),
     );
-    let _run = tokio::spawn(feed.clone().run());
 
     refs.refuse_refs();
     feed.manual().await; // lists 7, and the heads' fetch is refused
@@ -917,7 +953,7 @@ async fn opening_a_pull_request_the_platform_does_not_list_adds_its_row_without_
         vec![info("origin", "https://github.com/acme/app")],
         zero(),
     );
-    let _run = tokio::spawn(feed.clone().run());
+
     feed.manual().await;
     let announced = counting(&log, "list_changed");
 
@@ -960,7 +996,7 @@ async fn a_refresh_keeps_the_row_of_the_pull_request_on_view_and_drops_it_once_t
         vec![info("origin", "https://github.com/acme/app")],
         zero(),
     );
-    let _run = tokio::spawn(feed.clone().run());
+
     feed.manual().await;
     feed.on_view_changed(opened(&app, 3)).await;
     side.view(Some((&app, 3)));
@@ -999,14 +1035,22 @@ async fn a_cycle_that_listed_before_a_pull_request_was_opened_keeps_the_row_it_w
         vec![info("origin", "https://github.com/acme/app")],
         zero(),
     );
-    let _run = tokio::spawn(feed.clone().run());
 
     feed.timer();
-    tokio::task::yield_now().await; // the cycle waits inside its listing, with nothing on view
+    until_listed(&log, 1).await; // the cycle waits inside its listing, with nothing on view
     feed.on_view_changed(opened(&app, 3)).await;
     gate.notify_one();
 
-    assert_eq!(numbers(&feed.list().await.unwrap()), [7, 3]);
+    // The list as the cycle published it; a read of an empty feed would ask for another cycle.
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
+    let list = loop {
+        if let Current::Listed(list) = feed.current() {
+            break list;
+        }
+        assert!(tokio::time::Instant::now() < deadline, "the cycle never published");
+        tokio::time::sleep(Duration::from_millis(1)).await;
+    };
+    assert_eq!(numbers(&list), [7, 3]);
 }
 
 #[tokio::test]
@@ -1022,7 +1066,6 @@ async fn the_head_of_the_pull_request_on_view_is_fetched_though_the_platform_doe
         vec![info("origin", "https://github.com/acme/app")],
         zero(),
     );
-    let _run = tokio::spawn(feed.clone().run());
 
     feed.manual().await;
 
@@ -1048,8 +1091,14 @@ fn unlisted_feed() -> (TestFeed, Log, Fake, Arc<Health>) {
         )),
         accounts: vec![],
     };
-    let feed = PullRequestFeed::new(side, MemStore::default(), project(&log), || 1_000, zero());
-    let _run = tokio::spawn(feed.clone().run());
+    let feed = PullRequestFeed::new(
+        side,
+        MemStore::default(),
+        project(&log),
+        || 1_000,
+        zero(),
+        Supervisor::default(),
+    );
     (feed, log, platform, health)
 }
 

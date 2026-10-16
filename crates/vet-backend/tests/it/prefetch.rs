@@ -65,6 +65,9 @@ pub(crate) struct Mock {
     pub(crate) missing: Option<u64>,
     /// How long answering a discussion takes, so a viewer's read can be seen to not wait for it.
     pub(crate) delay: Duration,
+    /// How long answering the listing probe takes, so a listing can be seen to run while requests
+    /// for another arrive.
+    pub(crate) list_delay: Duration,
     /// The JSON answered for a commit's check runs once `checks_pending_calls` is spent; empty
     /// means a commit without runs.
     pub(crate) check_runs: String,
@@ -302,6 +305,10 @@ fn github(mock: Arc<Mutex<Mock>>) -> Fake {
         }
         if request.path.starts_with("/repos/acme/app/pulls") {
             mock.lock().unwrap().lists += 1;
+            let delay = mock.lock().unwrap().list_delay;
+            if !delay.is_zero() {
+                std::thread::sleep(delay);
+            }
             let (number, updated) = {
                 let mock = mock.lock().unwrap();
                 mock.prs

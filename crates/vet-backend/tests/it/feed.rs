@@ -165,6 +165,99 @@ async fn a_fetch_answers_after_the_list_was_refreshed() {
     );
 }
 
+/// Account changes during a listing make one more listing, not one each. Relies on the fake
+/// holding each answer for 1.5 s while the other changes arrive, which is long next to the five
+/// calls, and on the quiet wait for everything after.
+#[tokio::test]
+async fn account_changes_during_a_listing_give_one_more_listing() {
+    let (mock, fake, repo, _scratch) = fixture();
+    let (_handler, client) = backend(repo.path(), &fake.base()).await;
+    let project = client.open(repo.path()).await;
+    list(&client, project).await;
+    quiet(&client, project).await;
+    let before = mock.lock().unwrap().lists;
+    mock.lock().unwrap().list_delay = Duration::from_millis(1500);
+
+    change_account(&client).await;
+    // The listing is under way once the fake has the probe.
+    for _ in 0..500 {
+        if mock.lock().unwrap().lists > before {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+    for token in 0..5 {
+        client
+            .call(Request::SetCredentials {
+                host: "github.com".into(),
+                token: Secret(format!("gho_{token}")),
+                validate: false,
+            })
+            .await
+            .unwrap();
+    }
+    quiet(&client, project).await;
+
+    assert_eq!(
+        mock.lock().unwrap().lists - before,
+        2,
+        "the listing under way and one more for the five changes"
+    );
+}
+
+/// A wrapper for the fetch of the heads that hangs once a marker file exists, and says it did.
+#[cfg(debug_assertions)]
+fn hang_when_asked(scratch: &std::path::Path) -> (std::path::PathBuf, std::path::PathBuf) {
+    let wrapper = scratch.join("ssh-fake.sh");
+    let hang = scratch.join("hang");
+    let hanging = scratch.join("hanging");
+    std::fs::write(
+        &wrapper,
+        format!(
+            "#!/bin/sh\nif [ -e '{}' ]; then : > '{}'; exec sleep 5; fi\nexec git-upload-pack '{}'\n",
+            hang.display(),
+            hanging.display(),
+            scratch.join("served.git").display()
+        ),
+    )
+    .unwrap();
+    (hang, hanging)
+}
+
+#[cfg(debug_assertions)]
+#[tokio::test]
+async fn closing_the_project_ends_a_head_fetch_that_is_under_way() {
+    let (mock, fake, repo, scratch) = fixture();
+    let (hang, hanging) = hang_when_asked(scratch.path());
+    let (_handler, client) = backend(repo.path(), &fake.base()).await;
+    let project = client.open(repo.path()).await;
+    list(&client, project).await;
+    quiet(&client, project).await;
+    add_ninth(&mock);
+
+    std::fs::write(&hang, "").unwrap();
+    change_account(&client).await;
+    for _ in 0..500 {
+        if hanging.exists() {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+    assert!(hanging.exists(), "the head fetch never reached the remote");
+    let heads = "pull request heads";
+    assert_eq!(client.handler.background_counts(project, heads).1, 1);
+
+    let closing = std::time::Instant::now();
+    client.call(Request::CloseProject { project }).await.unwrap();
+
+    assert!(
+        closing.elapsed() < Duration::from_secs(3),
+        "closing waited for the head fetch: {:?}",
+        closing.elapsed()
+    );
+    assert_eq!(client.handler.background_counts(project, heads).1, 0);
+}
+
 async fn open_pull_request(client: &Client, project: ProjectId, number: u32) {
     client
         .call(Request::OpenChangeset {

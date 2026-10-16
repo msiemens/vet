@@ -219,6 +219,8 @@ struct TriggerState<R, O> {
     running: bool,
     /// The run that waits, with the reasons merged so far and where its outcome goes.
     pending: Option<(R, watch::Sender<Option<O>>)>,
+    /// Where the outcome of the run under way goes.
+    current: Option<watch::Receiver<Option<O>>>,
 }
 
 impl<R: Send + 'static, O: Clone + Send + Sync + 'static> Trigger<R, O> {
@@ -237,8 +239,18 @@ impl<R: Send + 'static, O: Clone + Send + Sync + 'static> Trigger<R, O> {
             state: Mutex::new(TriggerState {
                 running: false,
                 pending: None,
+                current: None,
             }),
         }))
+    }
+
+    /// Asks for a run like `request`, but the run under way answers it too, if there is one: for a
+    /// caller that a run which began before it serves as well as a later one.
+    pub fn join(&self, reason: R) -> Ticket<O> {
+        if let Some(current) = &lock(&self.0.state).current {
+            return Ticket(current.clone());
+        }
+        self.request(reason)
     }
 
     /// Asks for a run with `reason`: merged into the run that waits, or becoming it.
@@ -280,6 +292,7 @@ impl<R: Send + 'static, O: Clone + Send + Sync + 'static> Trigger<R, O> {
                     let mut state = lock(&shared.state);
                     let next = state.pending.take();
                     state.running = next.is_some();
+                    state.current = next.as_ref().map(|(_, done)| done.subscribe());
                     next
                 };
                 let Some((reason, done)) = next else {
@@ -288,6 +301,7 @@ impl<R: Send + 'static, O: Clone + Send + Sync + 'static> Trigger<R, O> {
                 };
                 let outcome = shared.supervisor.track(shared.kind, (shared.run)(reason)).await;
                 done.send_replace(Some(outcome));
+                lock(&shared.state).current = None;
             }
         });
     }
@@ -306,6 +320,7 @@ impl<R, O> Drop for Ending<R, O> {
             let mut state = lock(&self.shared.state);
             state.running = false;
             state.pending = None;
+            state.current = None;
         }
     }
 }
@@ -570,6 +585,24 @@ mod tests {
         assert_eq!(*lock(&began), [vec![1], vec![2, 3, 4]]);
         eventually(|| supervisor.live() == 0).await;
         assert_eq!(supervisor.counts("sync"), (2, 0), "two runs for four requests");
+    }
+
+    #[tokio::test]
+    async fn a_join_during_a_run_is_answered_by_it_and_one_with_no_run_starts_one() {
+        let (supervisor, gate) = (Supervisor::default(), Arc::new(Notify::new()));
+        let (trigger, began) = gated(&supervisor, &gate);
+
+        let first = trigger.request(vec![1]);
+        eventually(|| lock(&began).len() == 1).await;
+        let joined = trigger.join(vec![2]);
+        gate.notify_one();
+        assert_eq!((first.wait().await, joined.wait().await), (Some(1), Some(1)));
+        assert_eq!(*lock(&began), [vec![1]], "the join made no run of its own");
+        eventually(|| supervisor.live() == 0).await;
+
+        gate.notify_one();
+        assert_eq!(trigger.join(vec![3]).wait().await, Some(2));
+        assert_eq!(*lock(&began), [vec![1], vec![3]]);
     }
 
     #[tokio::test]

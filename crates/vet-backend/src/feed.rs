@@ -10,7 +10,7 @@ use vet_app::platform::{Platform, PlatformKind, PullRequestCache, Standing};
 use vet_app::pull_request::PullRequestList;
 use vet_app::pull_request_feed::{self, FeedEvent, Hostings, Prefetch, Project};
 use vet_app::session::SessionError;
-use vet_app::supervise::{Counted, Supervisor};
+use vet_app::supervise::Supervisor;
 use vet_infra::clock::unix_now;
 use vet_infra::git::GixRepo;
 use vet_infra::store::SqliteStore;
@@ -36,7 +36,7 @@ pub(crate) struct FeedPlatforms {
 impl Hostings for FeedPlatforms {
     type Fetcher = GixRepo;
 
-    fn hosting(&self, kind: PlatformKind) -> impl Platform + Send {
+    fn hosting(&self, kind: PlatformKind) -> impl Platform + Send + Sync {
         self.platforms.hosting(kind)
     }
 
@@ -63,11 +63,10 @@ impl Hostings for FeedPlatforms {
 
 /// The project side of the pull request cycle, as the backend has it: the review session on view,
 /// which the feed reaches through a weak handle so the project is not kept open by its own feed,
-/// the window it tells, and the task counter `WaitForQuiet` reads.
+/// and the window it tells.
 #[derive(Clone)]
 pub(crate) struct FeedProject {
     entry: Arc<OnceLock<Weak<Open>>>,
-    counting: Supervisor,
 }
 
 impl FeedProject {
@@ -78,12 +77,6 @@ impl FeedProject {
 }
 
 impl Project for FeedProject {
-    type Activity = Counted;
-
-    fn activity(&self, kind: &'static str) -> Counted {
-        self.counting.counted(kind)
-    }
-
     async fn on_view(&self) -> Option<(RemoteKey, u64)> {
         let open = self.open()?;
         let booted = open.booted().await.ok()?;
@@ -156,12 +149,6 @@ impl Project for FeedProject {
     }
 }
 
-/// Runs the project's pull request feed for as long as it is open: one task, stopped when the
-/// project closes.
-pub(crate) fn run_feed(open: &Arc<Open>) {
-    open.supervisor.replace("feeding", open.feed().clone().run());
-}
-
 impl Orchestrator {
     /// The pull request feed of a project: over the platforms and accounts the backend holds, the
     /// project's refs, and a weak handle on its session.
@@ -169,7 +156,7 @@ impl Orchestrator {
         &self,
         fetch: Arc<Fetch<GixRepo>>,
         entry: Arc<OnceLock<Weak<Open>>>,
-        counting: Supervisor,
+        supervisor: Supervisor,
     ) -> Feed {
         Feed::new(
             FeedPlatforms {
@@ -178,12 +165,13 @@ impl Orchestrator {
                 fetch,
             },
             self.store.clone(),
-            FeedProject { entry, counting },
+            FeedProject { entry },
             unix_now,
             Prefetch {
                 pace: self.config.prefetch_pace,
                 announce: self.config.prefetch_announce,
             },
+            supervisor,
         )
     }
 }
