@@ -90,7 +90,8 @@ export async function runBrowserSession(
     if (message.type() === "error") logged.push(message.text());
   });
 
-  // Counts the requests that reach the backend from the very first one, before the app can send any.
+  // Counts the requests that reach the backend from the very first one, before the app can send any:
+  // every request type gets its own count, so a session can hold the review screen's own to zero.
   await page.addInitScript(`(() => {
     const wire = { fileContents: 0, fileText: 0, itemBlob: 0, targetLine: 0, listDirectory: 0, filePaths: [] };
     window.__wire = wire;
@@ -98,9 +99,10 @@ export async function runBrowserSession(
     WebSocket.prototype.send = function (data) {
       try {
         const message = JSON.parse(data);
-        if (message && message.type === "request" && message.request && wire[message.request.type] !== undefined) {
-          wire[message.request.type]++;
-          if (message.request.type === "fileContents") wire.filePaths.push(message.request.path);
+        const type = message?.type === "request" ? message.request?.type : undefined;
+        if (type !== undefined) {
+          wire[type] = (wire[type] ?? 0) + 1;
+          if (type === "fileContents") wire.filePaths.push(message.request.path);
         }
       } catch {}
       return send.call(this, data);
@@ -121,7 +123,7 @@ export async function runBrowserSession(
   const read = async () => (await evaluate("window.__vet.rendered()")) as Rendered;
 
   await page.goto(url);
-  await until(`!!document.querySelector(".review")`, "the app");
+  await until(`!!document.querySelector(".body")`, "the app");
   await evaluate(`(async () => {
     const [changeset, session, commands, versions, notices] = await Promise.all([
       import("/src/state/changeset.svelte.ts"),
@@ -151,10 +153,18 @@ export async function runBrowserSession(
       return answer;
     };
   })()`);
-  await until(`!!__t.changeset.layout`, "the changeset");
-  if (!onQueue) {
-    await evaluate(`__t.commands.run("view.review")`);
-    await until(`!!window.__vet && document.querySelectorAll(".cm-editor").length > 0`, "the editors");
+  try {
+    await until(`!!__t.changeset.layout`, "the changeset");
+    if (!onQueue) {
+      await evaluate(`__t.commands.run("view.review")`);
+      await until(`!!window.__vet && document.querySelectorAll(".cm-editor").length > 0`, "the editors");
+    }
+  } catch (error) {
+    const seen = [...exceptions, ...logged];
+    if (!seen.length) throw error;
+    throw new Error(`${error instanceof Error ? error.message : String(error)}\npage errors:\n  ${seen.join("\n  ")}`, {
+      cause: error,
+    });
   }
 
   const results: StepResult[] = [];
