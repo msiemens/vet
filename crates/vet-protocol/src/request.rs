@@ -520,12 +520,13 @@ pub enum Request {
     RefreshProblems {
         project: ProjectId,
     },
-    /// Fetches the repository's remotes now, as a `Fetch` task, and answers with
-    /// `Response::Done` when it ended. A remote that fails (offline, refused) fails the
-    /// task with its name, not this request, and the others are still fetched. If any
-    /// remote was fetched, every subscriber then gets `ChangesetsChanged`,
+    /// Fetches the repository's remotes now, as a `Fetch` task, then has the pull request feed
+    /// list again, and answers with `Response::Done` when both ended. A remote that fails
+    /// (offline, refused) fails the task with its name, not this request, and the others are
+    /// still fetched. If any remote was fetched, every subscriber then gets `ChangesetsChanged`,
     /// a pull request on view whose head moved is its next version (`SnapshotSettled`), and
-    /// its threads are synced.
+    /// its threads are synced; a different pull request list is announced as
+    /// `PullRequestListChanged`.
     Fetch {
         project: ProjectId,
     },
