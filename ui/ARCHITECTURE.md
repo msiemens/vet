@@ -64,7 +64,7 @@ Each store follows the events of what it shows:
 - `changesetSession.svelte.ts` — `snapshotSettled`, `targetChanged`: fetches the manifest; `lensChanged`: shows the lens's view; `reviewChanged`: one file, or the totals in a commit; `reviewStarted`, `restoreFailed`: the facts' review and failures.
 - `queue.svelte.ts` — `changesetOpened`, `reviewStarted`, `changesetsChanged`: lists the local changesets again; `threadsChanged`: lists them without recounting; `pullRequestListChanged`: reads the pull requests again; `pullRequestsChanged`: patches the rows it names; `changesetLinesChanged`: the counts pushed so far; `snapshotSettled`, `reviewChanged`: follows the row on view.
 - `versions.svelte.ts` — `snapshotSettled`, `reviewStarted`, `reviewChanged`, `changesetOpened`: reloads the versions.
-- `threads.svelte.ts` — `threadsChanged`, `snapshotSettled`, `changesetOpened`: reloads the threads.
+- `threads.svelte.ts` (a session's threads) — `threadsChanged`, `snapshotSettled`, and the session starting or resyncing: reloads the changeset's threads and, while the review screen shows a range, the range's.
 - `checks.svelte.ts` — `checksChanged`: takes the checks.
 - `semantic.svelte.ts` — `fileDiagnostics`: a file's pushed diagnostics.
 - `symbols.svelte.ts` — `fileSymbols`: a file's pushed symbols and the progress; `serversChanged`: asks again about the symbol on show.
@@ -93,7 +93,7 @@ There are no full rebuilds: a keyed or incremental `$derived`, so one change inv
 - The UI computes no diff and parses no code: the backend's changed ranges go to `@codemirror/merge`, and highlights come with the file contents. Lists render through `VirtualRows`.
 - A file has one tab per file and view: one on the whole changeset, or one pinned to a commit, which stays at that commit and offers no comments. A tab reads its own `ViewSource` (the session, its whole-changeset view, or a `ViewScope` created for its commit's tabs), and they share the review cells and mark requests; an action names its tab by id and its view by origin, never by path and commit.
 - A range of versions is a mode of the review: the View every file request carries; it never grows and is read-only unless it ends at the latest. By commit, the `manifest.lens` names one commit and `view` is that commit's view. Hunks seen against an older base draw amber and count as unseen until re-confirmed.
-- Threads reach every view at one revision; a pull request's threads carry the backend's sync state, including a two-sided edit the card shows as two texts and a Keep choice.
+- A session holds the threads per view: the changeset's always, a range's while the review screen shows it, each at its revision. A view draws the threads of its own view only when their revision is its own; a commit's tab draws none; the queue panel lists the changeset's. A pull request's threads carry the backend's sync state, including a two-sided edit the card shows as two texts and a Keep choice.
 - Posting has one code path for the tool window and the header button, following the platform's traits.
 - The find bar searches the tab's own diff or text, never an editor, since an unmounted section has none.
 - Hover, go-to-definition and diagnostics reach the editor bound to its revision; hover text is untrusted and rendered with HTML escaped and no links, and an unavailable answer (I6) is never shown as nothing.
