@@ -712,6 +712,8 @@ mod tests {
     struct Listener {
         connection: Connection,
         inbox: Receiver<ServerMessage>,
+        /// The events the last `heard` took, for checking what they carry.
+        last: Vec<Event>,
     }
 
     impl Listener {
@@ -720,14 +722,26 @@ mod tests {
             Self {
                 connection: Connection(events),
                 inbox,
+                last: Vec::new(),
             }
         }
 
         /// The events waiting, by kind.
         fn heard(&mut self) -> Vec<Kind> {
-            std::iter::from_fn(|| self.inbox.try_recv().ok())
+            self.last = std::iter::from_fn(|| self.inbox.try_recv().ok())
                 .filter_map(|message| match message {
-                    ServerMessage::Event { event } => Some(Kind::of(&event)),
+                    ServerMessage::Event { event } => Some(event),
+                    _ => None,
+                })
+                .collect();
+            self.last.iter().map(Kind::of).collect()
+        }
+
+        /// The `reviewed_at` of each `ReviewChanged` the last `heard` took.
+        fn reviewed_at(&self) -> Vec<Option<u32>> {
+            (self.last.iter())
+                .filter_map(|event| match event {
+                    Event::ReviewChanged { reviewed_at, .. } => Some(*reviewed_at),
                     _ => None,
                 })
                 .collect()
@@ -917,21 +931,37 @@ mod tests {
 
         let revision = world.manifest().await.revision;
         let view = View::Changeset;
+        let hunk = || Request::ToggleHunk {
+            project,
+            view,
+            revision,
+            path: "d.txt".into(),
+            hunk: 0,
+        };
+        // Only the first seen-mark of a version moves where the review last was; the mark that
+        // starts the review is the first.
+        world.drive(hunk()).await;
+        assert_eq!(world.requester.reviewed_at(), [Some(1)], "the first seen-mark");
+        assert_eq!(world.observer.reviewed_at(), [Some(1)], "the first seen-mark, observed");
+        world
+            .drive(Request::ToggleFlag {
+                project,
+                view,
+                revision,
+                path: "d.txt".into(),
+                hunk: 0,
+            })
+            .await;
+        assert_eq!(world.requester.reviewed_at(), [None], "a flag");
+        world.drive(hunk()).await;
+        assert_eq!(world.requester.reviewed_at(), [None], "an unmark");
+        world.drive(hunk()).await;
+        assert_eq!(
+            world.requester.reviewed_at(),
+            [None],
+            "a seen-mark in the version marked in already"
+        );
         for request in [
-            Request::ToggleHunk {
-                project,
-                view,
-                revision,
-                path: "d.txt".into(),
-                hunk: 0,
-            },
-            Request::ToggleFlag {
-                project,
-                view,
-                revision,
-                path: "d.txt".into(),
-                hunk: 0,
-            },
             Request::ToggleItem {
                 project,
                 view,

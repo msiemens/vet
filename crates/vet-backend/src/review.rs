@@ -117,7 +117,9 @@ impl Orchestrator {
         let view = mapping::core_view(view);
         let update = mark(&open.session, view).await?;
         announce_start(&open, update.started);
-        Ok(Response::Review(review_changed(&open, view, &update).await))
+        Ok(Response::Review(
+            review_changed(&open, view, &update, update.reviewed_at).await,
+        ))
     }
 
     pub(crate) async fn toggle_hunk(
@@ -191,7 +193,7 @@ impl Orchestrator {
         announce_start(&open, update.started);
         let mut answers = Vec::with_capacity(update.len());
         for file in &update.value {
-            answers.push(review_changed(&open, view, file).await);
+            answers.push(review_changed(&open, view, file, update.reviewed_at).await);
         }
         Ok(Response::Reviews { updates: answers })
     }
@@ -200,7 +202,7 @@ impl Orchestrator {
         let open = self.ready(project).await?;
         let update = open.session.reconfirm_file(revision, path).await?;
         Ok(Response::Review(
-            review_changed(&open, vet_app::session::View::Changeset, &update).await,
+            review_changed(&open, vet_app::session::View::Changeset, &update, update.reviewed_at).await,
         ))
     }
 

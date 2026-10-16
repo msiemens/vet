@@ -56,10 +56,15 @@ pub enum Event {
     },
     /// Review state of one file of the changeset changed at the current `revision`; a mark
     /// made in an interdiff or a commit is announced as that of the changeset's file.
+    /// `reviewed_at` is set when the mark moved where the review last was, which the first
+    /// seen-mark of a version does (not an unmark, a flag or a later mark): the version it now
+    /// is at. Only then do the versions, the files changed since a version and the queue's
+    /// rows differ from before.
     ReviewChanged {
         project: ProjectId,
         revision: u32,
         update: ReviewUpdate,
+        reviewed_at: Option<u32>,
     },
     /// The changeset on view is reviewed in `lens` now (`SetLens`). The manifest, which
     /// says the lens, is stale: fetch it again.

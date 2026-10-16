@@ -354,6 +354,22 @@ pub(super) fn outcome<T>(st: &State, value: T, started: bool) -> Outcome<T> {
     Outcome {
         value,
         started: started.then(|| lifecycle_of(st)),
+        reviewed_at: None,
+    }
+}
+
+/// The number of the version something was last marked in, as the open review has it.
+pub(super) fn last_reviewed(st: &State) -> Option<u32> {
+    st.review.as_ref().and_then(|r| r.last_reviewed)
+}
+
+/// [`outcome`] of a mark, which says the version the review last was at if the mark moved it
+/// from `reviewed_before`.
+pub(super) fn marked_outcome<T>(st: &State, value: T, started: bool, reviewed_before: Option<u32>) -> Outcome<T> {
+    let now = last_reviewed(st);
+    Outcome {
+        reviewed_at: now.filter(|_| now != reviewed_before),
+        ..outcome(st, value, started)
     }
 }
 

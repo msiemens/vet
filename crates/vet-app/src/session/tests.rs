@@ -3836,6 +3836,27 @@ async fn marking_records_the_version_last_reviewed_in() {
 }
 
 #[tokio::test]
+async fn a_mark_says_when_it_moved_where_the_review_last_was() {
+    let fx = Fixture::reviewing(&[("a.txt", "one\n")], &[("a.txt", "two\n")]).await;
+    let session = &fx.session;
+    let reviewed_at = |outcome: Outcome<ReviewUpdateView>| outcome.reviewed_at;
+
+    let flagged = session.toggle_flag(0, View::Changeset, "a.txt", 0).await.unwrap();
+    assert_eq!(reviewed_at(flagged), None, "a flag marks nothing seen");
+    let seen = session.toggle_hunk(0, View::Changeset, "a.txt", 0).await.unwrap();
+    assert_eq!(reviewed_at(seen), Some(1), "the first seen-mark of version 1");
+    let unseen = session.toggle_hunk(0, View::Changeset, "a.txt", 0).await.unwrap();
+    assert_eq!(reviewed_at(unseen), None, "taking a mark back");
+    let again = session.toggle_hunk(0, View::Changeset, "a.txt", 0).await.unwrap();
+    assert_eq!(reviewed_at(again), None, "a second seen-mark in version 1");
+
+    fx.settle(&[("a.txt", "three\n")]).await;
+    let file = session.toggle_file_seen(1, View::Changeset, "a.txt").await.unwrap();
+    assert!(file.review.hunks.iter().all(|h| *h == HunkState::Seen));
+    assert_eq!(reviewed_at(file), Some(2), "the first seen-mark of version 2");
+}
+
+#[tokio::test]
 async fn a_session_is_named_after_its_repository_directory() {
     let fx = Fixture::open(&[("a.txt", "one\n")], &[("a.txt", "two\n")]).await;
     assert_eq!(fx.session.manifest(View::Changeset).await.unwrap().name, "repo");

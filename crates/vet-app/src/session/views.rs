@@ -354,6 +354,9 @@ pub struct Outcome<T> {
     pub value: T,
     /// The review as it began, if this request started it.
     pub started: Option<Lifecycle>,
+    /// The version the review last was at after this request, if the request moved it: the
+    /// first mark in a version.
+    pub reviewed_at: Option<u32>,
 }
 
 impl<T> std::ops::Deref for Outcome<T> {

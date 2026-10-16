@@ -39,14 +39,21 @@ pub(crate) async fn thread_changed(open: &Ready, thread: &ThreadView) -> crate::
 
 /// The protocol update for the requester; every subscriber is told of the changeset's file. A
 /// mark made in an interdiff or in a commit changes the changeset's file too, which is what
-/// is announced then.
-pub(crate) async fn review_changed(open: &Ready, view: View, update: &ReviewUpdateView) -> vet_protocol::ReviewUpdate {
+/// is announced then. `reviewed_at` is the version the mark moved the review's last mark to, if
+/// it did.
+pub(crate) async fn review_changed(
+    open: &Ready,
+    view: View,
+    update: &ReviewUpdateView,
+    reviewed_at: Option<u32>,
+) -> vet_protocol::ReviewUpdate {
     let mapped = mapping::review_update(update);
     match view {
         View::Changeset => open.subscribers.broadcast(Event::ReviewChanged {
             project: open.id,
             revision: update.revision,
             update: mapped.clone(),
+            reviewed_at,
         }),
         View::Interdiff { .. } | View::Commit { .. } => {
             if let Ok(changeset) = open.session.changeset_update(&mapped.path).await {
@@ -54,6 +61,7 @@ pub(crate) async fn review_changed(open: &Ready, view: View, update: &ReviewUpda
                     project: open.id,
                     revision: changeset.revision,
                     update: mapping::review_update(&changeset),
+                    reviewed_at,
                 });
             }
         }

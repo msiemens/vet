@@ -16,7 +16,8 @@ use super::interdiff::{HunkMarks, interdiff_hunk_marks, squash_item, update_in};
 use super::lens::view_unit;
 use super::remap::{Prepared, frame_of, landing, part_completion};
 use super::state::{
-    Shown, State, View, ack_of, check_markable, check_revision, find_diff, find_non_text, outcome, shown_items,
+    Shown, State, View, ack_of, check_markable, check_revision, find_diff, find_non_text, last_reviewed,
+    marked_outcome, shown_items,
 };
 use super::views::{Outcome, ReviewUpdateView};
 use super::{LiveSession, Result, SessionError};
@@ -93,11 +94,12 @@ impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> L
         } else {
             Mark::Seen(*state != HunkState::Seen)
         };
+        let reviewed = last_reviewed(&st);
         let started = mark.on() && self.begin(&mut st).await?;
         let writes = st.writes();
         self.mark_hunks_in(&writes, &mut st, &shown, path, &[hunk], mark)
             .await?;
-        Ok(outcome(&st, update_in(&st, &shown, path)?, started))
+        Ok(marked_outcome(&st, update_in(&st, &shown, path)?, started, reviewed))
     }
 
     /// Marks the hunks of a file that are seen against an old base seen again, against the base
@@ -118,10 +120,11 @@ impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> L
                 "nothing in this file was seen against an old base".into(),
             ));
         }
+        let reviewed = last_reviewed(&st);
         let writes = st.writes();
         self.mark_hunks(&writes, &mut st, View::Changeset, path, &hunks, Mark::Seen(true))
             .await?;
-        Ok(outcome(&st, update_in(&st, &shown, path)?, false))
+        Ok(marked_outcome(&st, update_in(&st, &shown, path)?, false, reviewed))
     }
 
     /// Flips the acknowledgement of one non-text item. Acknowledging starts the review if none
@@ -140,10 +143,11 @@ impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> L
         if matches!(view, View::Interdiff { .. }) && !has_counterpart(&st, &shown, path, kind) {
             return Err(SessionError::Invalid("nothing is left to review in this change".into()));
         }
+        let reviewed = last_reviewed(&st);
         let started = acknowledged && self.begin(&mut st).await?;
         let writes = st.writes();
         self.mark_item(&writes, &mut st, view, path, kind, acknowledged).await?;
-        Ok(outcome(&st, update_in(&st, &shown, path)?, started))
+        Ok(marked_outcome(&st, update_in(&st, &shown, path)?, started, reviewed))
     }
 
     /// Marks everything of a file seen: all its hunks and its non-text items; if it
@@ -155,6 +159,7 @@ impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> L
         check_revision(&st, revision)?;
         check_markable(&shown)?;
         let seen = !update_in(&st, &shown, path)?.completion.is_complete();
+        let reviewed = last_reviewed(&st);
         let started = seen && self.begin(&mut st).await?;
         let (hunks, kinds) = file_targets(&st, &shown, path, seen)?;
         let writes = st.writes();
@@ -165,7 +170,7 @@ impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> L
         for kind in kinds {
             self.mark_item(&writes, &mut st, view, path, kind, seen).await?;
         }
-        Ok(outcome(&st, update_in(&st, &shown, path)?, started))
+        Ok(marked_outcome(&st, update_in(&st, &shown, path)?, started, reviewed))
     }
 
     /// Marks everything of each of `paths` seen, or takes every mark back, whatever the files'
@@ -182,6 +187,7 @@ impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> L
         let (mut st, shown) = self.beginning(view).await?;
         check_revision(&st, revision)?;
         check_markable(&shown)?;
+        let reviewed = last_reviewed(&st);
         let started = seen && self.begin(&mut st).await?;
         let mut regions = Vec::new();
         let mut add = Vec::new();
@@ -212,7 +218,7 @@ impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> L
             .iter()
             .map(|path| update_in(&st, &shown, path))
             .collect::<Result<Vec<_>>>()?;
-        Ok(outcome(&st, updates, started))
+        Ok(marked_outcome(&st, updates, started, reviewed))
     }
 
     /// The review state of `path` in the changeset itself, for telling those who show it that a
