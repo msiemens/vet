@@ -6,6 +6,7 @@ import type { Request } from "../../src/generated/Request.ts";
 import { appState } from "../../src/app/appState.svelte.ts";
 import { findInFiles } from "../../src/features/search/FindInFiles.svelte.ts";
 import { changeset } from "../../src/state/changeset.svelte.ts";
+import { shell } from "../../src/features/chrome/shell.svelte.ts";
 import { preferences } from "../../src/lib/preferences.svelte.ts";
 import { problems } from "../../src/state/problems.svelte.ts";
 import { session } from "../../src/state/session.svelte.ts";
@@ -127,6 +128,79 @@ export const sessions: Record<SessionName, (h: Harness) => Promise<void>> = {
     await h.step("lens back to the whole", () => changeset.showLens("squash"));
     await h.step("seen in the changeset", () => hunk(h, "a.txt", 0), ONE);
     await h.step("by commit again", () => changeset.showLens("perCommit"));
+  },
+
+  /**
+   * The Commits tool and the review lens are one choice: choosing the tool asks for the by-commit
+   * lens and the rail shows it, leaving asks for all changes, and a lens set by the backend selects
+   * the tool. One lens request goes out per choice, none when the backend set the lens.
+   */
+  async commitsTool(h) {
+    const asked = () => h.sent.filter((r) => r.type === "setLens").length;
+    await h.step("the branch is opened", async () => {
+      await changeset.openChangeset({ type: "branch", name: "feature" });
+      await h.until(() => changeset.facts?.target.changeset.type === "branch", "the branch");
+    });
+    await h.step("the Commits tool is chosen", async () => {
+      const before = asked();
+      shell.toggle("commits");
+      await h.until(
+        () => changeset.lens === "perCommit" && changeset.shownCommit !== undefined,
+        "the by-commit review",
+      );
+      if (shell.left.tool !== "commits") throw new Error(`the rail shows ${shell.left.tool}, not Commits`);
+      if (asked() - before !== 1)
+        throw new Error(`choosing the Commits tool asked for the lens ${asked() - before} times`);
+    });
+    await h.step("another tool is chosen", async () => {
+      const before = asked();
+      shell.toggle("all");
+      await h.until(() => changeset.lens === "squash" && changeset.shownCommit === undefined, "the whole changeset");
+      if (shell.left.tool !== "all") throw new Error(`the rail shows ${shell.left.tool}, not All Files`);
+      if (asked() - before !== 1)
+        throw new Error(`leaving the Commits tool asked for the lens ${asked() - before} times`);
+    });
+    await h.step("the backend sets the lens", async () => {
+      const before = asked();
+      await h.other.setLens("perCommit");
+      await h.until(
+        () => changeset.lens === "perCommit" && changeset.shownCommit !== undefined,
+        "the by-commit review",
+      );
+      if (shell.left.tool !== "commits") throw new Error(`the rail shows ${shell.left.tool}, not Commits`);
+      if (asked() - before !== 0) throw new Error("the window asked for the lens the backend set");
+    });
+    await h.step("the backend returns the lens to all changes", async () => {
+      const before = asked();
+      await h.other.setLens("squash");
+      await h.until(() => changeset.lens === "squash" && changeset.shownCommit === undefined, "the whole changeset");
+      if (shell.left.tool !== "all") throw new Error(`the rail shows ${shell.left.tool}, not the tool chosen last`);
+      if (asked() - before !== 0) throw new Error("the window asked for the lens the backend set");
+    });
+    await h.step("the lens is remembered for the branch", async () => {
+      const before = asked();
+      await h.other.setLens("perCommit");
+      await changeset.openChangeset({ type: "workingTree" });
+      await h.until(() => changeset.facts?.target.changeset.type === "workingTree", "the working tree");
+      await changeset.openChangeset({ type: "branch", name: "feature" });
+      await h.until(() => changeset.lens === "perCommit" && changeset.shownCommit !== undefined, "the remembered lens");
+      if (shell.left.tool !== "commits") throw new Error(`the rail shows ${shell.left.tool}, not Commits`);
+      if (asked() - before !== 0) throw new Error("opening a remembered lens asked for the lens");
+    });
+    await h.step("a changeset of one commit cannot be reviewed by commit", async () => {
+      h.fixture.resetHeadTo("main");
+      h.fixture.commitWorkingTree();
+      await changeset.openChangeset({ type: "branch", name: "feature" });
+      await h.until(() => changeset.facts?.commits === 1, "the one-commit branch");
+      await h.other.setLens("squash");
+      await h.until(() => changeset.lens === "squash", "the whole changeset");
+      const before = asked();
+      shell.toggle("commits");
+      if (shell.left.tool !== "changes") throw new Error(`the rail shows ${shell.left.tool}, not Changes`);
+      if (asked() - before !== 0)
+        throw new Error(`choosing the Commits tool asked for the lens ${asked() - before} times`);
+      if (changeset.lens !== "squash") throw new Error(`the lens became ${changeset.lens}`);
+    });
   },
 
   /** A scope of a commit that is not the one on screen has that commit's files and marks, and keeps them while the window moves on. */

@@ -6,6 +6,7 @@ export const sessionNames = [
   "push",
   "range",
   "commits",
+  "commitsTool",
   "pinned",
   "stepping",
   "otherWindow",

@@ -14,7 +14,6 @@
     focusPipelines,
     focusTimeline,
     headerFacts,
-    settleCommits,
     shell,
   } from "../features/chrome";
   import { ChecksButton, headChecksLook, pipelineBadge } from "../features/checks";
@@ -75,31 +74,6 @@
   $effect(() => {
     const wrap = softWrap;
     untrack(() => appState.controller?.setSoftWrap(wrap));
-  });
-
-  // The Commits tool and the review lens are one choice seen from two places: whichever side moved
-  // decides both, so picking the tool asks for the matching lens and a lens set elsewhere selects
-  // the tool that goes with it. The pair settled on last is the single source, so neither chases the
-  // other.
-  let settledCommits = untrack(() => ({
-    tool: shell.left.tool,
-    lens: changeset.lens,
-    commits: changeset.commitCount,
-  }));
-  $effect(() => {
-    const settled = settleCommits(settledCommits, {
-      tool: shell.left.tool,
-      lens: changeset.lens,
-      commits: changeset.commitCount,
-    });
-    settledCommits = settled;
-    untrack(() => {
-      if (settled.askLens !== undefined) {
-        if (changeset.facts && changeset.lens !== settled.askLens) void changeset.showLens(settled.askLens);
-      } else if (settled.tool !== shell.left.tool) {
-        shell.left.tool = settled.tool;
-      }
-    });
   });
 
   const headLook = $derived(
