@@ -1,27 +1,24 @@
 //! Requests about which changeset is on view and which there are.
 
 use std::sync::Arc;
-use std::time::{Duration, Instant};
 
 use futures::StreamExt;
 use futures::stream::FuturesOrdered;
 use vet_app::changeset::{RemoteKey, Source};
-use vet_app::fetch::FetchMark;
-use vet_app::platform::{
-    Platform, PlatformError, PlatformKind, Platforms as KnownPlatforms, PullRequestCache, Standing, commits_checks,
-};
-use vet_app::ports::{ChangesetStore, LiveStore, ReviewWrites};
-use vet_app::pull_request::{self, FetchError, PullRequestList, hosted_repositories, hosts_to_ask_about};
+use vet_app::fetch::{Credentials, Fetch};
+use vet_app::platform::{Platform, PlatformError, PlatformKind, PullRequestCache, Standing, commits_checks};
+use vet_app::pull_request::{self, FetchError, PullRequestList};
+use vet_app::pull_request_feed::{self, Background, FeedEvent, Hostings, Prefetch, Project};
+use vet_app::session::SessionError;
 use vet_infra::clock::unix_now;
-use vet_infra::store::SqliteStore;
+use vet_infra::git::GixRepo;
 use vet_mapping as mapping;
-use vet_protocol::{ChangesetKey, Event, ProjectId, PullRequestUpdate, Response};
+use vet_protocol::{ChangesetKey, Event, ProjectId, Response};
 
 use crate::accounts::Held;
 use crate::checks::refresh_checks_after_action;
 use crate::error::{Error, Result};
 use crate::hosting::{Hosting, Platforms};
-use crate::open::{Ready, kind_of};
 use crate::review::revision_changed;
 use crate::sync::sync_in_background;
 use crate::{Live, Open, Orchestrator, PlatformAccounts, start_servers_in_background};
@@ -38,68 +35,23 @@ impl Orchestrator {
 
     pub(crate) async fn list_pull_requests(&self, project: ProjectId) -> Result<Response> {
         let open = self.ready(project).await?;
-        let remotes = open.open.fetch.remotes().await?;
-        // The platforms registry: the hosts Vet knows by name, and the hosts the viewer has an
-        // account for (a GitHub Enterprise installation). A host that is neither is not listed.
-        let mut platforms = KnownPlatforms::new();
-        for host in hosts_to_ask_about(&remotes) {
-            if self.accounts.has_account(&host, unix_now()).await {
-                platforms = platforms.with_account(&host);
-            } else {
-                tracing::warn!(
-                    host = %host,
-                    "not listing pull requests: the host is not one Vet knows and has no account, so it is not known to be a platform"
-                );
-            }
-        }
-        let github: Vec<_> = hosted_repositories(&remotes, &platforms, PlatformKind::GitHub)
-            .into_iter()
-            .map(|h| h.key)
-            .collect();
-        let azure_devops: Vec<_> = hosted_repositories(&remotes, &platforms, PlatformKind::AzureDevOps)
-            .into_iter()
-            .map(|h| h.key)
-            .collect();
-        if github.is_empty() && azure_devops.is_empty() {
-            let names: Vec<_> = remotes.iter().map(|r| r.name.as_str()).collect();
-            tracing::warn!(
-                ?names,
-                "not listing pull requests: no remote of the repository is a hosted repository"
-            );
-        }
-        let on_view_source = match open.session.source().await {
-            Source::PullRequest { remote, number } => Some((remote, number)),
-            _ => None,
+        let platforms = FeedPlatforms {
+            platforms: self.platforms.clone(),
+            accounts: self.accounts.clone(),
+            open: open.open.clone(),
         };
-        let on_view = on_view_source.as_ref().map(|(remote, number)| (remote, *number));
-        let since = open.open.fetch.mark();
-        let list = pull_request::list_pull_requests(&self.platforms.hosting(PlatformKind::GitHub), &github, on_view)
-            .await
-            .and(
-                pull_request::list_pull_requests(
-                    &self.platforms.hosting(PlatformKind::AzureDevOps),
-                    &azure_devops,
-                    on_view,
-                )
-                .await,
-            );
-        if let Err(error) = prune_pull_request_refs(&open, &list, since).await {
-            tracing::warn!(%error, "deleting the refs of pull requests no longer listed failed");
-        }
-        fetch_heads_in_background(open.open.clone(), list.clone(), on_view_source);
-        let prefetching = prefetch_details(
-            &open.open,
-            self.platforms.clone(),
-            self.accounts.clone(),
+        let list = pull_request_feed::refresh(
+            &platforms,
             self.store.clone(),
-            self.platforms.known(),
-            list.clone(),
+            &FeedProject(open.open.clone()),
+            &FeedBackground(open.open.clone()),
+            unix_now,
             Prefetch {
                 pace: self.config.prefetch_pace,
                 announce: self.config.prefetch_announce,
             },
-        );
-        open.open.keep_prefetching(prefetching);
+        )
+        .await?;
         for source in &list.sources {
             if let Some(error) = &source.error {
                 // The client told of a rate limit once, when it began.
@@ -238,211 +190,122 @@ impl Orchestrator {
     }
 }
 
-/// How a prefetch run is paced, and how often it tells the window.
-struct Prefetch {
-    /// How long between two pull requests asked.
-    pace: Duration,
-    /// How long between two announcements that the details changed the list.
-    announce: Duration,
-}
-
-/// How many of the newest listed pull requests of a platform whose list already carries their
-/// details have their discussion fetched ahead of the queue: enough that the ones the viewer is
-/// likely to open are ready, few enough to stay gentle on the platform. A platform whose list
-/// leaves the details apart (`PlatformTraits::details_apart`) has no such cap: without them the
-/// rows cannot show their state at all.
-const PREFETCH_LIMIT: usize = 20;
-
-/// Adds what the details last read of `remote`'s pull request `number` add to its row of the queue
-/// to `changed`, for the announcement.
-fn record_added(known: &PullRequestCache, remote: &RemoteKey, number: u64, changed: &mut Vec<PullRequestUpdate>) {
-    if let Some(added) = known.added(remote, number) {
-        changed.push(mapping::pull_request_update(remote, number, &added));
-    }
-}
-
-/// Fetches the details of the listed pull requests whose `updatedAt` the stored copy does not
-/// have, in the background, so a revisit shows them at once. An unchanged pull request is not
-/// asked for. The run is paced by [`Prefetch`]; an account that is limited or failing is left
-/// alone for the rest of the run, a pull request that is merely gone is passed over. A platform
-/// whose list leaves the details apart (`PlatformTraits::details_apart`) is asked for every listed
-/// pull request; another for at most [`PREFETCH_LIMIT`] of them, whose list already carries them.
-/// Never delays the list the viewer asked for; the task is handed to the project, which replaces
-/// it with the next list's and stops it when the project closes. What the list shows of a pull
-/// request that its details add (`PullRequestCache::fill`) is announced (`PullRequestsChanged`,
-/// carrying what they add) while the run changes it, coalesced to one every `Prefetch::announce`,
-/// and once more at the end when anything changed since the last, also for a copy kept from an
-/// earlier run that the cache did not have.
-fn prefetch_details(
-    open: &Arc<Open>,
+/// The platform side of the pull request cycle, as the backend has it: the platform clients and
+/// their health, the accounts, and the project's refs.
+#[derive(Clone)]
+struct FeedPlatforms {
     platforms: Arc<Platforms>,
     accounts: Arc<PlatformAccounts>,
-    store: SqliteStore,
-    known: Arc<PullRequestCache>,
-    list: PullRequestList,
-    timing: Prefetch,
-) -> tokio::task::AbortHandle {
-    let announcer = open.clone();
-    let Prefetch { pace, announce } = timing;
-    let prefetching = async move {
-        let mut stopped: std::collections::HashSet<String> = std::collections::HashSet::new();
-        let mut capped = 0usize;
-        let mut changed: Vec<PullRequestUpdate> = Vec::new();
-        let mut announced_at: Option<Instant> = None;
-        for listed in &list.rows {
-            // What changed since the last announcement reaches the window without waiting for the
-            // run to end, but no faster than `announce`.
-            if !changed.is_empty() && announced_at.is_none_or(|at| at.elapsed() >= announce) {
-                announcer.subscribers.broadcast(Event::PullRequestsChanged {
-                    project: announcer.id,
-                    changed: std::mem::take(&mut changed),
+    open: Arc<Open>,
+}
+
+impl Hostings for FeedPlatforms {
+    type Fetcher = GixRepo;
+
+    fn hosting(&self, kind: PlatformKind) -> impl Platform + Send {
+        self.platforms.hosting(kind)
+    }
+
+    async fn has_account(&self, host: &str) -> bool {
+        self.accounts.has_account(host, unix_now()).await
+    }
+
+    fn standing(&self, account: &str) -> Option<Standing> {
+        self.platforms.standing(account)
+    }
+
+    fn known(&self) -> Arc<PullRequestCache> {
+        self.platforms.known()
+    }
+
+    fn fetch(&self) -> &Fetch<GixRepo> {
+        &self.open.fetch
+    }
+
+    fn credentials(&self) -> impl Credentials + Send + Sync + '_ {
+        Held(&self.accounts)
+    }
+}
+
+/// The project side of the pull request cycle, as the backend has it: the review session on view
+/// and the window it tells.
+#[derive(Clone)]
+struct FeedProject(Arc<Open>);
+
+impl Project for FeedProject {
+    async fn on_view(&self) -> Option<(RemoteKey, u64)> {
+        let booted = self.0.booted().await.ok()?;
+        match booted.session.source().await {
+            Source::PullRequest { remote, number } => Some((remote, number)),
+            _ => None,
+        }
+    }
+
+    async fn prunable(
+        &self,
+        unlisted: Vec<(RemoteKey, u64)>,
+    ) -> std::result::Result<Vec<(RemoteKey, u64)>, SessionError> {
+        // The request that listed the pull requests booted the session, so this cannot fail.
+        let Ok(booted) = self.0.booted().await else {
+            return Ok(Vec::new());
+        };
+        booted.session.prunable(unlisted).await
+    }
+
+    async fn heads_fetched(&self, list: &PullRequestList) {
+        let Some((remote, number)) = self.on_view().await else {
+            return;
+        };
+        if !list
+            .rows
+            .iter()
+            .any(|listed| listed.remote == remote && listed.row.number == number)
+        {
+            return;
+        }
+        let Ok(booted) = self.0.booted().await else {
+            return;
+        };
+        if let Ok(Some(revision)) = booted.session.observe().await {
+            revision_changed(&self.0, revision);
+        }
+    }
+
+    fn announce(&self, event: FeedEvent) {
+        match event {
+            FeedEvent::ChangesetsChanged => {
+                self.0
+                    .subscribers
+                    .broadcast(Event::ChangesetsChanged { project: self.0.id });
+            }
+            FeedEvent::PullRequestsChanged(changed) => {
+                let changed = changed
+                    .into_iter()
+                    .map(|c| mapping::pull_request_update(&c.remote, c.number, &c.added))
+                    .collect();
+                self.0.subscribers.broadcast(Event::PullRequestsChanged {
+                    project: self.0.id,
+                    changed,
                 });
-                announced_at = Some(Instant::now());
             }
-            let account = listed.remote.account();
-            if stopped.contains(&account) {
-                continue;
-            }
-            if matches!(platforms.standing(&account), Some(Standing::Failing(_))) {
-                stopped.insert(account);
-                continue;
-            }
-            let hosting = match kind_of(&listed.remote, &accounts).await {
-                Ok(kind) => platforms.hosting(kind),
-                Err(error) => {
-                    tracing::warn!(repository = %listed.remote, %error, "prefetching a pull request of an unknown host");
-                    continue;
-                }
-            };
-            let apart = hosting.traits().details_apart;
-            if !apart && capped >= PREFETCH_LIMIT {
-                continue;
-            }
-            let stored = store.stored_discussion(listed.remote.clone(), listed.row.number).await;
-            if let Ok(Some(stored)) = &stored
-                && stored.updated_at == listed.row.updated_at
-            {
-                // Nothing changed since the copy that is kept: no call is made, and the list shows
-                // what it says.
-                if known.discussion(&listed.remote, listed.row.number).is_none()
-                    && known.record_discussion(
-                        &listed.remote,
-                        listed.row.number,
-                        stored.synced_at,
-                        stored.discussion.clone(),
-                    )
-                {
-                    record_added(&known, &listed.remote, listed.row.number, &mut changed);
-                }
-                continue;
-            }
-            if !apart {
-                capped += 1;
-            }
-            match hosting.discussion(&listed.remote, listed.row.number).await {
-                Ok(discussion) => {
-                    let at = unix_now();
-                    if known.record_discussion(&listed.remote, listed.row.number, at, discussion.clone()) {
-                        record_added(&known, &listed.remote, listed.row.number, &mut changed);
-                    }
-                    if let Err(error) = store
-                        .writes()
-                        .set_discussion(
-                            listed.remote.clone(),
-                            listed.row.number,
-                            listed.row.head.clone(),
-                            listed.row.updated_at,
-                            at,
-                            &discussion,
-                        )
-                        .await
-                    {
-                        tracing::warn!(error = %error.0, "storing a prefetched pull request's details failed");
-                    }
-                }
-                Err(error) => {
-                    tracing::debug!(
-                        repository = %listed.remote,
-                        number = listed.row.number,
-                        %error,
-                        "prefetching a pull request's details failed"
-                    );
-                    // A pull request that is gone says nothing of the account; only an account the
-                    // platform left unwell (limited, unreachable, refused) stops the rest.
-                    if matches!(platforms.standing(&account), Some(Standing::Failing(_))) {
-                        stopped.insert(account);
-                    }
-                }
-            }
-            tokio::time::sleep(pace).await;
         }
-        if !changed.is_empty() {
-            announcer.subscribers.broadcast(Event::PullRequestsChanged {
-                project: announcer.id,
-                changed,
-            });
-        }
-    };
-    tokio::spawn(crate::open::tracked(open, "prefetch", prefetching)).abort_handle()
-}
-
-/// Brings in the pull requests of `list` that are not in the repository, so the queue can count
-/// the lines of every row, and tells the subscribers when something came. The pull request on
-/// view, if the listing fetched its head, takes a push in as a fetch would: nothing else would
-/// look at it before the next fetch.
-fn fetch_heads_in_background(open: Arc<Open>, list: PullRequestList, on_view: Option<(RemoteKey, u64)>) {
-    tokio::spawn(async move {
-        match pull_request::fetch_listed_heads(&open.fetch, &Held(&open.accounts), &list).await {
-            Ok(true) => {
-                open.subscribers
-                    .broadcast(Event::ChangesetsChanged { project: open.id });
-                take_in_listed_push(&open, &list, on_view).await;
-            }
-            Ok(false) => {}
-            Err(error) => tracing::warn!(%error, "fetching the listed pull requests failed"),
-        }
-    });
-}
-
-/// Takes in a push to the pull request on view after the listing fetched the listed heads: its head
-/// moved without a ref of the user being written, so nothing else looked at it. Tells the window
-/// and starts the servers of the new revision, as a fetch does.
-async fn take_in_listed_push(open: &Arc<Open>, list: &PullRequestList, on_view: Option<(RemoteKey, u64)>) {
-    let Some((remote, number)) = on_view else {
-        return;
-    };
-    if !list
-        .rows
-        .iter()
-        .any(|listed| listed.remote == remote && listed.row.number == number)
-    {
-        return;
-    }
-    let Ok(booted) = open.booted().await else {
-        return;
-    };
-    if let Ok(Some(revision)) = booted.session.observe().await {
-        revision_changed(open, revision);
     }
 }
 
-/// Deletes the refs of the pull requests fetched before `since` that `list` no longer has, unless
-/// one is on view or a review of it is open: those may need their commits before the platform can
-/// be asked again (a closed pull request's branch may be gone).
-async fn prune_pull_request_refs(open: &Ready, list: &PullRequestList, since: FetchMark) -> Result<()> {
-    let unlisted = pull_request::unlisted_fetched(&open.open.fetch, list).await?;
-    if unlisted.is_empty() {
-        return Ok(());
+/// Where the pull request cycle starts its background work, as the backend starts it: the listed
+/// heads as a bare task, the details fetched ahead as the project's replaceable prefetch.
+#[derive(Clone)]
+struct FeedBackground(Arc<Open>);
+
+impl Background for FeedBackground {
+    fn fetch_heads(&self, work: impl Future<Output = ()> + Send + 'static) {
+        tokio::spawn(work);
     }
-    let doomed = open.session.prunable(unlisted).await?;
-    let deleted = pull_request::delete_pull_request_refs(&open.open.fetch, &doomed, since).await?;
-    if !deleted.is_empty() {
-        tracing::info!(
-            refs = deleted.len(),
-            "deleted the refs of pull requests no longer listed"
-        );
+
+    fn prefetch(&self, work: impl Future<Output = ()> + Send + 'static) {
+        let task = tokio::spawn(crate::open::tracked(&self.0, "prefetch", work));
+        self.0.keep_prefetching(task.abort_handle());
     }
-    Ok(())
 }
 
 /// Fetches the head of pull request `number` of `remote`, its target branch and its earlier

@@ -488,7 +488,7 @@ pub async fn fetch_listed_heads<G: Fetcher>(
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use std::sync::{Arc, Mutex};
 
     use super::*;
@@ -499,14 +499,14 @@ mod tests {
     use crate::ports::{FetchAuth, GitError, RefTip};
     use crate::progress::Tasks;
 
-    fn github(path: &str) -> RemoteKey {
+    pub(crate) fn github(path: &str) -> RemoteKey {
         RemoteKey {
             host: "github.com".to_owned(),
             path: path.to_owned(),
         }
     }
 
-    fn info(name: &str, url: &str) -> RemoteInfo {
+    pub(crate) fn info(name: &str, url: &str) -> RemoteInfo {
         RemoteInfo {
             name: name.to_owned(),
             url: url.to_owned(),
@@ -695,20 +695,20 @@ mod tests {
     }
 
     /// The git remote and the refs of each fetch.
-    type Fetched = Arc<Mutex<Vec<(String, Vec<RefUpdate>)>>>;
+    pub(crate) type Fetched = Arc<Mutex<Vec<(String, Vec<RefUpdate>)>>>;
 
     /// The refs of the repository.
-    type Refs = Arc<Mutex<Vec<RefTip>>>;
+    pub(crate) type Refs = Arc<Mutex<Vec<RefTip>>>;
 
     /// The commit the remote has at each of its refs; a ref not in it is at `tip`.
-    type Served = Arc<Mutex<std::collections::HashMap<String, String>>>;
+    pub(crate) type Served = Arc<Mutex<std::collections::HashMap<String, String>>>;
 
-    fn names(refs: &Refs) -> Vec<String> {
+    pub(crate) fn names(refs: &Refs) -> Vec<String> {
         refs.lock().unwrap().iter().map(|r| r.name.clone()).collect()
     }
 
     /// Git remotes that record what they were asked to fetch, into refs.
-    struct Remotes {
+    pub(crate) struct Remotes {
         remotes: Vec<RemoteInfo>,
         fetched: Fetched,
         refs: Refs,
@@ -768,7 +768,7 @@ mod tests {
         }
     }
 
-    struct Anonymous;
+    pub(crate) struct Anonymous;
 
     impl Credentials for Anonymous {
         async fn credential(&self, _: &str) -> Option<Credential> {
@@ -776,13 +776,13 @@ mod tests {
         }
     }
 
-    fn fetching(remotes: Vec<RemoteInfo>) -> (Fetch<Remotes>, Fetched) {
+    pub(crate) fn fetching(remotes: Vec<RemoteInfo>) -> (Fetch<Remotes>, Fetched) {
         let (fetch, fetched, _) = fetching_into(remotes, &[]);
         (fetch, fetched)
     }
 
     /// A repository with the refs `refs` already.
-    fn fetching_into(remotes: Vec<RemoteInfo>, refs: &[&str]) -> (Fetch<Remotes>, Fetched, Refs) {
+    pub(crate) fn fetching_into(remotes: Vec<RemoteInfo>, refs: &[&str]) -> (Fetch<Remotes>, Fetched, Refs) {
         let refs = refs
             .iter()
             .map(|r| RefTip {
