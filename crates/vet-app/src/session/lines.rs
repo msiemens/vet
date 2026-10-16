@@ -3,7 +3,7 @@
 
 use std::sync::Arc;
 
-use vet_core::content::LineDelta;
+use vet_core::content::{LineDelta, Snapshot};
 use vet_engine::{Computed, Kind, Retention};
 
 use super::LiveSession;
@@ -52,6 +52,7 @@ where
             return Ok(None);
         };
         let acquisition = Arc::clone(&self.acquisition);
+        let derived = Arc::clone(&self.derived);
         let key = LinesBetween {
             base: base.clone(),
             tip: tip.clone(),
@@ -59,7 +60,9 @@ where
         let counted = self
             .lines
             .get(key, move |_| async move {
-                lines_between(&acquisition, &base, &tip)
+                let old = derived.snapshot(&acquisition, &base).await?;
+                let new = derived.snapshot(&acquisition, &tip).await?;
+                lines_between(&acquisition, &old, &new)
                     .await
                     .map(|d| Computed::new(d, true))
             })
@@ -90,12 +93,9 @@ where
 
 async fn lines_between<G: GitRepo, S: LiveStore + Sync>(
     acquisition: &Acquisition<G, S>,
-    base: &CommitId,
-    tip: &CommitId,
+    old: &Snapshot,
+    new: &Snapshot,
 ) -> Result<LineDelta, GitError> {
-    let git = &acquisition.git;
-    let old = git.commit_snapshot(base).await?;
-    let new = git.commit_snapshot(tip).await?;
-    let diff = git.diff(&acquisition.store, &old, &new).await?.diff;
+    let diff = acquisition.git.diff(&acquisition.store, old, new).await?.diff;
     Ok(diff.files.iter().map(|file| LineDelta::of(&file.hunks)).sum())
 }

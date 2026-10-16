@@ -1,14 +1,14 @@
-//! What the review derives from snapshots and commits alone: the diff of two snapshots with its
-//! texts, the interdiff of two versions, and the commits between a base and a tip, each with its
-//! own diff. Each is a keyed flight of `vet-engine`: computed once however many requests ask for
-//! it, and kept while the engine has room, as its key names every input. A computation owns what
-//! it reads and never touches a session's state; the session remaps its review state onto the
-//! values it gets.
+//! What the review reads and derives from snapshots and commits alone: the tree of a commit, the
+//! diff of two snapshots with its texts, the interdiff of two versions, and the commits between a
+//! base and a tip, each with its own diff. Each is a keyed flight of `vet-engine`: computed once
+//! however many requests ask for it, and kept while the engine has room, as its key names every
+//! input. A computation owns what it reads and never touches a session's state; the session remaps
+//! its review state onto the values it gets.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
-use vet_core::content::{BlobId, NonTextKind, RepoPath, Snapshot, SnapshotDiff, SnapshotId};
+use vet_core::content::{BlobId, FileEntry, NonTextKind, RepoPath, Snapshot, SnapshotDiff, SnapshotId};
 use vet_core::generated::has_generated_header;
 use vet_core::interdiff::InterdiffHunk;
 use vet_core::merkle::empty_snapshot;
@@ -20,7 +20,7 @@ use super::views::{ItemView, ModeChange};
 use super::{LiveSession, Result, SessionError};
 use crate::acquisition::Acquisition;
 use crate::changeset::CommitId;
-use crate::ports::{CommitDetail, GitRepo, LiveStore, TextDiff};
+use crate::ports::{CommitDetail, GitError, GitRepo, LiveStore, TextDiff};
 use crate::progress::{TaskKind, Tasks};
 
 /// A diff with what showing and marking it needs.
@@ -136,6 +136,29 @@ impl Kind for DiffOf {
     }
 }
 
+/// The tree of a commit: a function of the commit, whose recorded tree git never changes.
+#[derive(Clone, PartialEq, Eq, Hash)]
+pub(super) struct SnapshotOf {
+    commit: CommitId,
+}
+
+impl Kind for SnapshotOf {
+    type Value = Arc<Snapshot>;
+    /// The commit is the only input, so only git not having it fails the read.
+    type Error = GitError;
+
+    fn retention(&self) -> Retention {
+        Retention::Kept
+    }
+
+    /// The paths and the one fixed record per entry a tree holds in memory, which dominate its
+    /// heap; the content it names lives in the store, not here.
+    fn weight(value: &Arc<Snapshot>) -> usize {
+        let per_entry = std::mem::size_of::<RepoPath>() + std::mem::size_of::<FileEntry>();
+        value.entries.keys().map(|path| path.0.len()).sum::<usize>() + value.entries.len() * per_entry + 1
+    }
+}
+
 /// An interdiff: version A's target rebased onto version B's base, against B's target.
 #[derive(Clone, PartialEq, Eq, Hash)]
 pub(super) struct Interdiff {
@@ -220,6 +243,13 @@ const KEPT_DIFFS: Limits = Limits {
     entries: 8,
     weight: 256 << 20,
 };
+/// How many commit trees a session keeps, and how many bytes their paths and entry records may
+/// hold together: 64 MB is half what the diffs keep, since a tree holds names and records rather
+/// than texts yet a few of them still cover a large repository's merge bases.
+pub(super) const KEPT_SNAPSHOTS: Limits = Limits {
+    entries: 16,
+    weight: 64 << 20,
+};
 const KEPT_INTERDIFFS: Limits = Limits {
     entries: 16,
     weight: 128 << 20,
@@ -231,6 +261,7 @@ const KEPT_COMMITS: Limits = Limits {
 
 /// The engines of the review's derived kinds, each reporting its flights as a task.
 pub(super) struct Derived {
+    pub(super) snapshots: Engine<SnapshotOf>,
     pub(super) diffs: Engine<DiffOf>,
     pub(super) interdiffs: Engine<Interdiff>,
     pub(super) commits: Engine<CommitsBetween>,
@@ -239,6 +270,7 @@ pub(super) struct Derived {
 impl Derived {
     pub(super) fn new(tasks: &Tasks) -> Self {
         Self {
+            snapshots: Engine::new(KEPT_SNAPSHOTS),
             diffs: Engine::new(KEPT_DIFFS).observing(task(tasks, "Diffing the changes")),
             interdiffs: Engine::new(KEPT_INTERDIFFS).observing(task(tasks, "Comparing versions")),
             commits: Engine::new(KEPT_COMMITS).observing(task(tasks, "Comparing the commits")),
@@ -253,6 +285,29 @@ fn task<K>(tasks: &Tasks, title: &'static str) -> impl Fn(&K) -> Option<Arc<dyn 
 }
 
 impl Derived {
+    /// The tree of `commit`, read through `acquisition`: kept, joined while it is read, or read.
+    /// Two changesets off one merge base read the same tree once.
+    pub(super) async fn snapshot<G, S>(
+        &self,
+        acquisition: &Arc<Acquisition<G, S>>,
+        commit: &CommitId,
+    ) -> std::result::Result<Arc<Snapshot>, GitError>
+    where
+        G: GitRepo + Send + Sync + 'static,
+        S: LiveStore + Send + Sync + 'static,
+    {
+        let key = SnapshotOf { commit: commit.clone() };
+        let compute = |_| {
+            let acquisition = Arc::clone(acquisition);
+            let commit = commit.clone();
+            async move {
+                let snapshot = acquisition.git.commit_snapshot(&commit).await?;
+                Ok(Computed::new(Arc::new(snapshot), true))
+            }
+        };
+        Ok(self.snapshots.get(key, compute).await?.value)
+    }
+
     /// The diff of `old` and `new`, read through `acquisition`: kept, joined while it is
     /// computed, or computed.
     pub(super) async fn diff<G, S>(
@@ -289,6 +344,12 @@ where
     /// The diff of `old` and `new` as the session reads it.
     pub(super) async fn diff_of(&self, old: &Arc<Snapshot>, new: &Arc<Snapshot>) -> Result<Arc<Diffed>> {
         self.derived.diff(&self.acquisition, old, new).await
+    }
+
+    /// The tree of `commit` as the session reads it: a snapshot already read is not walked again,
+    /// and a walk under way is joined.
+    pub(super) async fn snapshot_of(&self, commit: &CommitId) -> Result<Arc<Snapshot>> {
+        Ok(self.derived.snapshot(&self.acquisition, commit).await?)
     }
 
     /// The interdiff of `key`, as [`LiveSession::diff_of`].

@@ -144,6 +144,8 @@ pub(crate) struct FakeGit {
     remerges: Arc<Mutex<HashMap<CommitId, Remerged>>>,
     /// How many diffs were asked for.
     diffs: Arc<AtomicUsize>,
+    /// How many commit trees were read.
+    snapshot_reads: Arc<AtomicUsize>,
     /// The blobs `read_blob` was asked for.
     reads: Arc<Mutex<Vec<BlobId>>>,
     /// Held by a test, diffs and blob reads wait until it lets go.
@@ -345,6 +347,8 @@ impl History for FakeGit {
         self.user.lock().unwrap().clone()
     }
     async fn commit_snapshot(&self, commit: &CommitId) -> std::result::Result<Snapshot, GitError> {
+        self.snapshot_reads.fetch_add(1, Ordering::Relaxed);
+        drop(self.paused.lock().await);
         let known = self.commits.lock().unwrap();
         match known.values().find(|(c, _)| c == commit) {
             Some((_, snapshot)) => Ok(snapshot.clone()),
@@ -4759,4 +4763,5 @@ mod parked;
 mod publish;
 mod pushes;
 mod settle;
+mod snapshots;
 mod sync;
