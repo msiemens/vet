@@ -305,10 +305,12 @@
 
 {#if leftOpen}
   <SideBar side="left" defaultWidth="var(--w-tree)">
-    {#if leftTool === "comments"}
+    <!-- The Comments tool draws its cards through the controller, so it waits for one like the files do. -->
+    {#if leftTool === "comments" && controller}
+      {@const owner = controller}
       <CommentsPanel
-        onselect={(thread) => void controller?.goToThread(thread)}
-        card={(thread, open, toggle) => controller?.threadCard(thread, open, toggle) ?? document.createElement("div")}
+        onselect={(thread) => void owner.goToThread(thread)}
+        card={(thread, open, toggle) => owner.threadCard(thread, open, toggle)}
       />
     {:else if loading || !changeset || !controller}
       <p class="empty">Loading {project}…</p>
