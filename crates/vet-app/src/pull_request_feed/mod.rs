@@ -16,11 +16,11 @@ use tokio::sync::Notify;
 
 use crate::fetch::{Credentials, Fetch, FetchMark};
 use crate::mutex::lock;
-use crate::platform::{Added, Platform, PlatformKind, Platforms, PullRequestCache, RemoteKey, Standing};
+use crate::platform::{Added, Platform, PlatformKind, Platforms, PullRequest, PullRequestCache, RemoteKey, Standing};
 use crate::ports::{Fetcher, LiveStore, ReviewWrites};
 use crate::pull_request::{
-    PullRequestList, delete_pull_request_refs, fetch_listed_heads, hosted_repositories, hosts_to_ask_about,
-    list_pull_requests, unlisted_fetched,
+    ListedPullRequest, PullRequestList, delete_pull_request_refs, fetch_listed_heads, hosted_repositories,
+    hosts_to_ask_about, list_pull_requests, row_of, unlisted_fetched, unlisted_row,
 };
 use crate::session::{SessionError, UnixClock};
 
@@ -63,6 +63,13 @@ pub enum FeedEvent {
     ChangesetsChanged,
     /// The feed published a different list, which the window reads again.
     ListChanged,
+}
+
+/// The pull request on view, as the platform last described it.
+#[derive(Clone, Debug)]
+pub struct OnView {
+    pub remote: RemoteKey,
+    pub pull_request: PullRequest,
 }
 
 /// A request to list the project's pull requests again, and what its caller expects of it.
@@ -123,15 +130,15 @@ pub trait Project {
     fn announce(&self, event: FeedEvent);
 }
 
-/// Asks the platforms for the project's repositories' open pull requests, the one on view among
-/// them though the platform's list leaves it out. Answers with the list and the mark the refs were
-/// at before the listing, which [`prune`] keeps what is fetched after it. A repository the platform
-/// cannot answer for is reported in `sources`, the others still list; a failure before any listing,
-/// such as unreadable remotes, fails the whole call.
+/// Asks the platforms for the project's repositories' open pull requests. Answers with the list, the
+/// pull request on view the moment before the listing, and the mark the refs were at before it,
+/// which [`prune`] keeps what is fetched after it. A repository the platform cannot answer for is
+/// reported in `sources`, the others still list; a failure before any listing, such as unreadable
+/// remotes, fails the whole call.
 async fn listed<H: Hostings, P: Project>(
     platforms: &H,
     project: &P,
-) -> Result<(PullRequestList, FetchMark), SessionError> {
+) -> Result<(PullRequestList, Option<(RemoteKey, u64)>, FetchMark), SessionError> {
     let fetch = platforms.fetch();
     let remotes = fetch.remotes().await?;
     // The platforms registry: the hosts Vet knows by name, and the hosts the viewer has an account
@@ -163,19 +170,11 @@ async fn listed<H: Hostings, P: Project>(
         );
     }
     let on_view = project.on_view().await;
-    let listing_on_view = on_view.as_ref().map(|(remote, number)| (remote, *number));
     let since = fetch.mark();
-    let list = list_pull_requests(&platforms.hosting(PlatformKind::GitHub), &github, listing_on_view)
+    let list = list_pull_requests(&platforms.hosting(PlatformKind::GitHub), &github)
         .await
-        .and(
-            list_pull_requests(
-                &platforms.hosting(PlatformKind::AzureDevOps),
-                &azure_devops,
-                listing_on_view,
-            )
-            .await,
-        );
-    Ok((list, since))
+        .and(list_pull_requests(&platforms.hosting(PlatformKind::AzureDevOps), &azure_devops).await);
+    Ok((list, on_view, since))
 }
 
 /// The feed of a project: the last listing, the requests to list again, and the cycles they run.
@@ -211,10 +210,23 @@ struct State<A> {
     /// The generations of `joins` and `manuals` that cycles have covered.
     joins_done: u64,
     manuals_done: u64,
-    /// The last listing.
+    /// The last listing, as the platforms gave it.
     listed: Option<PullRequestList>,
+    /// The row of the pull request on view when the platforms' listing leaves it out, which the
+    /// list shows beside the listed rows.
+    extra: Option<ListedPullRequest>,
+    /// Counts the changes of the pull request on view, so a cycle that listed before one does not
+    /// publish the row it made of the earlier.
+    on_view_changes: u64,
     /// Why the last cycle failed, kept while nothing is listed.
     error: Option<SessionError>,
+}
+
+impl<A> State<A> {
+    /// The list the readers see: the listed rows and the extra one.
+    fn shown(&self) -> Option<PullRequestList> {
+        self.listed.clone().map(|list| list.with_row(self.extra.as_ref()))
+    }
 }
 
 /// What the feed has to answer [`PullRequestFeed::list`] with.
@@ -243,6 +255,8 @@ impl<A> Default for State<A> {
             joins_done: 0,
             manuals_done: 0,
             listed: None,
+            extra: None,
+            on_view_changes: 0,
             error: None,
         }
     }
@@ -387,8 +401,8 @@ where
 
     fn current(&self) -> Current {
         let state = lock(&self.inner.state);
-        match &state.listed {
-            Some(list) => Current::Listed(list.clone()),
+        match state.shown() {
+            Some(list) => Current::Listed(list),
             None => match &state.error {
                 Some(error) => Current::Failed(error.clone()),
                 None => Current::Empty,
@@ -401,34 +415,100 @@ where
     /// of the last list for it, with its error in its source. The heads are fetched on every
     /// successful cycle, changed or not: a head fetch that failed is retried by the next one.
     async fn cycle(&self) -> Cycle {
-        let (fresh, since) = match listed(&self.inner.platforms, &self.inner.project).await {
+        let on_view_changes = lock(&self.inner.state).on_view_changes;
+        let (fresh, on_view, since) = match listed(&self.inner.platforms, &self.inner.project).await {
             Ok(got) => got,
             Err(error) => return Cycle::Failed(error),
         };
         let merged = self.keep_failed_repositories(fresh);
-        let (changed, announce) = {
+        let found = self.on_view_row(&merged, on_view.as_ref()).await;
+        let (shown, changed, announce) = {
             let mut state = lock(&self.inner.state);
-            let changed = state.listed.as_ref() != Some(&merged);
+            let before = state.shown();
+            // A pull request put on view while the cycle listed has the row it was put on view
+            // with, which is newer than the one the cycle made of the earlier.
+            let extra = if state.on_view_changes == on_view_changes {
+                found
+            } else {
+                state.extra.take()
+            };
+            state.extra = extra.filter(|row| !merged.has(&row.remote, row.row.number));
+            let shown = merged.clone().with_row(state.extra.as_ref());
+            state.listed = Some(merged);
+            let changed = before.as_ref() != Some(&shown);
             // A read waits for the first listing, so only a reader that was told of a failure or
             // holds an older list has anything to read again.
-            let announce = changed && (state.listed.is_some() || state.error.is_some());
+            let announce = changed && (before.is_some() || state.error.is_some());
             if changed {
-                state.listed = Some(merged.clone());
                 state.error = None;
             }
-            (changed, announce)
+            (shown, changed, announce)
         };
         if announce {
             self.inner.project.announce(FeedEvent::ListChanged);
         }
-        if changed && let Err(error) = prune(&self.inner.platforms, &self.inner.project, &merged, since).await {
+        if changed && let Err(error) = prune(&self.inner.platforms, &self.inner.project, &shown, since).await {
             tracing::warn!(%error, "deleting the refs of pull requests no longer listed failed");
         }
-        fetch_heads(&self.inner.platforms, &self.inner.project, &merged).await;
+        fetch_heads(&self.inner.platforms, &self.inner.project, &shown).await;
         if changed {
-            Cycle::Changed(merged)
+            Cycle::Changed(shown)
         } else {
             Cycle::Unchanged
+        }
+    }
+
+    /// The row of the pull request on view, when `listed` leaves it out. A repository the platform
+    /// cannot answer for keeps the row the pull request had.
+    async fn on_view_row(
+        &self,
+        listed: &PullRequestList,
+        on_view: Option<&(RemoteKey, u64)>,
+    ) -> Option<ListedPullRequest> {
+        let (remote, number) = on_view?;
+        let kind = platform_of(remote, &self.inner.platforms).await?;
+        let found = unlisted_row(&self.inner.platforms.hosting(kind), listed, remote, *number).await;
+        let failed = listed
+            .sources
+            .iter()
+            .any(|source| source.remote == *remote && source.error.is_some());
+        if found.is_some() || !failed {
+            return found;
+        }
+        lock(&self.inner.state)
+            .extra
+            .clone()
+            .filter(|row| row.remote == *remote && row.row.number == *number)
+    }
+
+    /// Tells the feed which pull request is on view, with the platform's description of it, so the
+    /// list shows its row beside the listed ones without asking the platform for it. None when the
+    /// changeset on view is no pull request. Announces the list when it differs from what readers
+    /// last saw.
+    pub async fn on_view_changed(&self, on_view: Option<OnView>) {
+        let row = match on_view {
+            Some(OnView { remote, pull_request }) => match platform_of(&remote, &self.inner.platforms).await {
+                Some(kind) => row_of(&self.inner.platforms.hosting(kind), &remote, pull_request).await,
+                None => None,
+            },
+            None => None,
+        };
+        let announce = {
+            let mut state = lock(&self.inner.state);
+            state.on_view_changes += 1;
+            let before = state.shown();
+            let extra = row.filter(|row| {
+                state
+                    .listed
+                    .as_ref()
+                    .is_none_or(|list| !list.has(&row.remote, row.row.number))
+            });
+            state.extra = extra;
+            let after = state.shown();
+            after != before && before.is_some()
+        };
+        if announce {
+            self.inner.project.announce(FeedEvent::ListChanged);
         }
     }
 

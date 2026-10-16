@@ -86,6 +86,9 @@ pub(crate) struct Mock {
     pub(crate) asking_changes: Option<String>,
     /// The pull request whose merge the platform holds back; the search does not say.
     pub(crate) blocked: Option<u64>,
+    /// A pull request the search leaves out though it is open and its detail answers, as for one
+    /// that is neither the viewer's nor waiting for them.
+    pub(crate) unlisted: Option<u64>,
     /// Whether the search was asked for what is expensive to work out for every pull request:
     /// the review threads, the reviewers' verdicts, the review decision or the merge state.
     pub(crate) search_asked_expensive_fields: bool,
@@ -147,7 +150,7 @@ fn pr_node(pr: &Pr) -> Value {
 
 fn search_json(mock: &Mock) -> String {
     json!({ "data": { "search": {
-        "nodes": mock.prs.iter().map(pr_node).collect::<Vec<_>>(),
+        "nodes": mock.prs.iter().filter(|pr| mock.unlisted != Some(pr.number)).map(pr_node).collect::<Vec<_>>(),
         "pageInfo": { "hasNextPage": false, "endCursor": null }
     } } })
     .to_string()

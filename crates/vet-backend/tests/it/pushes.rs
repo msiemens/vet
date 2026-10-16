@@ -48,6 +48,9 @@ struct Mock {
     /// The source branch is in a fork's repository.
     fork: bool,
     iterations: Vec<(i32, &'static str, String)>,
+    /// The list leaves the pull request out, as it does one that is neither the viewer's nor
+    /// waiting for them; the pull request itself still answers.
+    unlisted: bool,
 }
 
 fn identity(id: &str, address: &str) -> Value {
@@ -139,6 +142,9 @@ fn azure_devops(mock: Arc<Mutex<Mock>>, number: u64) -> Fake {
         }
         if path == PULLS {
             let mock = mock.lock().unwrap();
+            if mock.unlisted {
+                return Canned::json(&no_value());
+            }
             let value = serde_json::from_str::<Value>(&pull_request(&mock, number)).unwrap();
             return Canned::json(&json!({ "count": 1, "value": [value] }).to_string());
         }
@@ -404,6 +410,7 @@ fn fixture() -> (Arc<Mutex<Mock>>, Fake, tempfile::TempDir, tempfile::TempDir, S
         base: served.base.clone(),
         fork: false,
         iterations: vec![(1, "create", served.head1.clone())],
+        unlisted: false,
     }));
     let fake = azure_devops(mock.clone(), 7);
     let repo = project(&wrapper);
@@ -623,6 +630,41 @@ async fn a_push_noticed_by_the_feed_listing_leaves_the_changed_lines_unseen() {
     }
 }
 
+/// The pull request on view is not in the platform's list, and a push to it is taken in by the
+/// feed's cycle all the same: its head is fetched with the listed ones.
+#[tokio::test]
+async fn a_push_to_the_unlisted_pull_request_on_view_is_taken_in_by_the_feed() {
+    let (mock, fake, repo, scratch, served) = fixture();
+    mock.lock().unwrap().unlisted = true;
+    let rig = Rig::start(&fake, repo, scratch).await;
+    rig.open().await;
+    rig.toggle_file("a.txt").await;
+
+    push_again(&mock, &served);
+    rig.client
+        .call(Request::SetCredentials {
+            host: "dev.azure.com/contoso".into(),
+            token: Secret("pat_secret_2".into()),
+            validate: false,
+        })
+        .await
+        .unwrap();
+
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(10);
+    loop {
+        let m = rig.manifest().await;
+        if hunks(&m, "a.txt").len() == 3 {
+            return;
+        }
+        assert!(
+            tokio::time::Instant::now() < deadline,
+            "the push was not taken in: {:?}",
+            hunks(&m, "a.txt")
+        );
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+}
+
 /// The whole reported path, without asking for anything: an Azure DevOps pull request from a branch
 /// in the same repository, a review open in the review view on All changes with its files seen, a
 /// normal push, and Vet left to take it in by its fetch interval. The new version and revision must
@@ -826,6 +868,7 @@ async fn a_push_that_voids_trust_stops_the_executing_server() {
         base: served.base.clone(),
         fork: false,
         iterations: vec![(1, "create", served.head1.clone())],
+        unlisted: false,
     }));
     let fake = azure_devops(mock.clone(), 7);
     let repo = project(&wrapper);

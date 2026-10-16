@@ -154,6 +154,7 @@ impl Platform for Fake {
     }
 
     async fn pull_request(&self, remote: &RemoteKey, number: u64) -> Result<PullRequestDetail, PlatformError> {
+        self.log.lock().unwrap().push(format!("pull request {number}"));
         if self.failing.lock().unwrap().contains(remote) {
             return Err(PlatformError::SignedOut(remote.host.clone()));
         }
@@ -272,7 +273,14 @@ impl Fetcher for Readable {
 #[derive(Clone, Default)]
 struct ProjectFake {
     log: Log,
-    on_view: Option<(RemoteKey, u64)>,
+    on_view: Arc<Mutex<Option<(RemoteKey, u64)>>>,
+}
+
+impl ProjectFake {
+    /// Puts `number` of `remote` on view, or nothing.
+    fn view(&self, on_view: Option<(&RemoteKey, u64)>) {
+        *self.on_view.lock().unwrap() = on_view.map(|(remote, number)| (remote.clone(), number));
+    }
 }
 
 impl Project for ProjectFake {
@@ -281,7 +289,7 @@ impl Project for ProjectFake {
     fn activity(&self, _: &'static str) {}
 
     async fn on_view(&self) -> Option<(RemoteKey, u64)> {
-        self.on_view.clone()
+        self.on_view.lock().unwrap().clone()
     }
 
     async fn prunable(&self, unlisted: Vec<(RemoteKey, u64)>) -> Result<Vec<(RemoteKey, u64)>, SessionError> {
@@ -361,7 +369,7 @@ async fn the_cycle_lists_prunes_fetches_heads_and_prefetches_in_order() {
     };
     let project = ProjectFake {
         log: log.clone(),
-        on_view: None,
+        on_view: Arc::default(),
     };
     let feed = PullRequestFeed::new(
         side,
@@ -581,7 +589,7 @@ fn feed_of(
 fn project(log: &Log) -> ProjectFake {
     ProjectFake {
         log: log.clone(),
-        on_view: None,
+        on_view: Arc::default(),
     }
 }
 
@@ -886,4 +894,139 @@ async fn an_unchanged_cycle_fetches_a_head_a_failed_fetch_left_missing() {
         1,
         "the unchanged cycle fetched the missing head"
     );
+}
+
+/// The pull request `number` of `remote`, as the platform describes the one a viewer opens.
+fn opened(remote: &RemoteKey, number: u64) -> Option<OnView> {
+    let mut pull_request = pr(number);
+    pull_request.target_branch = "release".to_owned();
+    Some(OnView {
+        remote: remote.clone(),
+        pull_request,
+    })
+}
+
+#[tokio::test]
+async fn opening_a_pull_request_the_platform_does_not_list_adds_its_row_without_asking_and_leaving_drops_it() {
+    let log = Log::default();
+    let app = github("acme/app");
+    let platform = listing(&log, vec![(app.clone(), vec![7])]);
+    let (feed, _) = feed_of(
+        platform,
+        project(&log),
+        vec![info("origin", "https://github.com/acme/app")],
+        zero(),
+    );
+    let _run = tokio::spawn(feed.clone().run());
+    feed.manual().await;
+    let announced = counting(&log, "list_changed");
+
+    feed.on_view_changed(opened(&app, 3)).await;
+
+    assert_eq!(numbers(&feed.list().await.unwrap()), [7, 3]);
+    assert_eq!(
+        counting(&log, "list_changed"),
+        announced + 1,
+        "the new list is announced"
+    );
+    assert_eq!(counting(&log, "list"), 1, "nothing was listed");
+    assert_eq!(counting(&log, "pull request 3"), 0, "the platform was not asked for it");
+
+    // Opening one the platform lists adds no row.
+    feed.on_view_changed(opened(&app, 7)).await;
+    assert_eq!(numbers(&feed.list().await.unwrap()), [7]);
+    assert_eq!(
+        counting(&log, "list_changed"),
+        announced + 2,
+        "only the dropped row changed the list"
+    );
+
+    // Opening 3 again, then something that is no pull request.
+    feed.on_view_changed(opened(&app, 3)).await;
+    feed.on_view_changed(None).await;
+    assert_eq!(numbers(&feed.list().await.unwrap()), [7], "leaving drops the row");
+    assert_eq!(counting(&log, "list_changed"), announced + 4);
+}
+
+#[tokio::test]
+async fn a_refresh_keeps_the_row_of_the_pull_request_on_view_and_drops_it_once_the_platform_lists_it() {
+    let log = Log::default();
+    let app = github("acme/app");
+    let platform = listing(&log, vec![(app.clone(), vec![7])]);
+    let side = project(&log);
+    let (feed, _) = feed_of(
+        platform.clone(),
+        side.clone(),
+        vec![info("origin", "https://github.com/acme/app")],
+        zero(),
+    );
+    let _run = tokio::spawn(feed.clone().run());
+    feed.manual().await;
+    feed.on_view_changed(opened(&app, 3)).await;
+    side.view(Some((&app, 3)));
+    let announced = counting(&log, "list_changed");
+
+    feed.manual().await;
+    assert_eq!(numbers(&feed.list().await.unwrap()), [7, 3], "the refresh kept the row");
+    assert_eq!(
+        counting(&log, "list_changed"),
+        announced,
+        "an unchanged list is not announced"
+    );
+
+    // The platform lists it now: one row, not two.
+    platform.lists(vec![(app.clone(), vec![7, 3])]);
+    feed.manual().await;
+    assert_eq!(numbers(&feed.list().await.unwrap()), [7, 3]);
+
+    // Not on view any more, and not listed any more: the next refresh has no row for it.
+    side.view(None);
+    platform.lists(vec![(app.clone(), vec![7])]);
+    feed.manual().await;
+    assert_eq!(numbers(&feed.list().await.unwrap()), [7]);
+}
+
+#[tokio::test]
+async fn a_cycle_that_listed_before_a_pull_request_was_opened_keeps_the_row_it_was_opened_with() {
+    let log = Log::default();
+    let app = github("acme/app");
+    let platform = listing(&log, vec![(app.clone(), vec![7])]);
+    let gate = Arc::new(Notify::new());
+    platform.gate(gate.clone());
+    let (feed, _) = feed_of(
+        platform,
+        project(&log),
+        vec![info("origin", "https://github.com/acme/app")],
+        zero(),
+    );
+    let _run = tokio::spawn(feed.clone().run());
+
+    feed.timer();
+    tokio::task::yield_now().await; // the cycle waits inside its listing, with nothing on view
+    feed.on_view_changed(opened(&app, 3)).await;
+    gate.notify_one();
+
+    assert_eq!(numbers(&feed.list().await.unwrap()), [7, 3]);
+}
+
+#[tokio::test]
+async fn the_head_of_the_pull_request_on_view_is_fetched_though_the_platform_does_not_list_it() {
+    let log = Log::default();
+    let app = github("acme/app");
+    let platform = listing(&log, vec![(app.clone(), vec![7])]);
+    let side = project(&log);
+    side.view(Some((&app, 3)));
+    let (feed, refs) = feed_of(
+        platform,
+        side,
+        vec![info("origin", "https://github.com/acme/app")],
+        zero(),
+    );
+    let _run = tokio::spawn(feed.clone().run());
+
+    feed.manual().await;
+
+    let held: Vec<String> = refs.refs.lock().unwrap().iter().map(|tip| tip.name.clone()).collect();
+    assert!(held.contains(&PullRequestRefs::of(&app, 3).head), "{held:?}");
+    assert_eq!(counting(&log, "heads_fetched"), 1);
 }

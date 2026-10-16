@@ -3,8 +3,9 @@
 use futures::StreamExt;
 use futures::stream::FuturesOrdered;
 use vet_app::changeset::{RemoteKey, Source};
-use vet_app::platform::{Platform, PlatformError, commits_checks};
+use vet_app::platform::{Platform, PlatformError, PullRequest, commits_checks};
 use vet_app::pull_request::{self, FetchError, PullRequestList};
+use vet_app::pull_request_feed::OnView;
 use vet_mapping as mapping;
 use vet_protocol::{ChangesetKey, Event, ProjectId, Response};
 
@@ -140,12 +141,20 @@ impl Orchestrator {
         let open = self.ready(project).await?;
         let source = mapping::core_changeset_key(changeset).map_err(Error::Invalid)?;
         let mut renamed = false;
+        let mut on_view = None;
         if let Source::PullRequest { remote, number } = &source {
-            renamed = bring_in(&open.open, &open.session, remote, *number)
+            let brought = bring_in(&open.open, &open.session, remote, *number)
                 .await
                 .map_err(|e| Error::from(e).context(format!("cannot fetch pull request #{number}")))?;
+            renamed = brought.renamed;
+            on_view = Some(OnView {
+                remote: remote.clone(),
+                pull_request: brought.pull_request,
+            });
         }
         let moved = open.session.open_changeset(source.clone()).await?;
+        // Before the window is told of the changeset, so the list it reads then has the row.
+        open.open.feed().on_view_changed(on_view).await;
         if let Some(revision) = moved {
             open.subscribers.broadcast(Event::ChangesetOpened {
                 project,
@@ -182,13 +191,13 @@ fn log_sources(list: &PullRequestList) {
 
 /// Fetches the head of pull request `number` of `remote`, its target branch and its earlier
 /// pushes, tells the session the pushes, and stores how the platform names it. Answers whether
-/// that is not what was stored.
+/// that is not what was stored, and the pull request as the platform has it.
 pub(crate) async fn bring_in(
     open: &Open,
     session: &Live,
     remote: &RemoteKey,
     number: u64,
-) -> std::result::Result<bool, FetchError> {
+) -> std::result::Result<Brought, FetchError> {
     let held = Held(&open.accounts);
     let hosting = open
         .hosting_for(remote)
@@ -201,11 +210,23 @@ pub(crate) async fn bring_in(
     };
     session.remember_pushes(&source, brought.pushes);
     // The fetch is done; a title that cannot be stored is shown again after the next one.
-    Ok(session
+    let renamed = session
         .remember_pull_request_head(&source, brought.head)
         .await
         .unwrap_or_else(|error| {
             tracing::warn!(%error, "storing the title of a pull request failed");
             false
-        }))
+        });
+    Ok(Brought {
+        renamed,
+        pull_request: brought.pull_request,
+    })
+}
+
+/// What bringing in a pull request left to tell.
+pub(crate) struct Brought {
+    /// How the platform names it is not what was stored.
+    pub(crate) renamed: bool,
+    /// The pull request as the platform has it.
+    pub(crate) pull_request: PullRequest,
 }

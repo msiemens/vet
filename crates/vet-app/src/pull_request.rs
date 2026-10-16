@@ -213,35 +213,38 @@ impl PullRequestList {
         sort_newest_first(&mut self.rows);
         self
     }
+
+    /// This list with `extra` among its rows, newest first.
+    pub fn with_row(mut self, extra: Option<&ListedPullRequest>) -> Self {
+        if let Some(extra) = extra {
+            self.rows.push(extra.clone());
+            sort_newest_first(&mut self.rows);
+        }
+        self
+    }
+
+    /// Whether a row is of pull request `number` of `remote`.
+    pub fn has(&self, remote: &RemoteKey, number: u64) -> bool {
+        self.rows.iter().any(|l| l.remote == *remote && l.row.number == number)
+    }
 }
 
 fn sort_newest_first(rows: &mut [ListedPullRequest]) {
     rows.sort_by_key(|listed| std::cmp::Reverse((listed.row.updated_at, listed.row.number)));
 }
 
-/// The open pull requests of `repositories`, and `on_view` (a repository and a number) when it is
-/// one of them. A repository the platform cannot answer for is reported in `sources`; the others
-/// still list.
-pub async fn list_pull_requests<P: Platform>(
-    platform: &P,
-    repositories: &[RemoteKey],
-    on_view: Option<(&RemoteKey, u64)>,
-) -> PullRequestList {
+/// The open pull requests of `repositories`. A repository the platform cannot answer for is
+/// reported in `sources`; the others still list.
+pub async fn list_pull_requests<P: Platform>(platform: &P, repositories: &[RemoteKey]) -> PullRequestList {
     let mut rows = Vec::new();
     let mut sources = Vec::new();
     for remote in repositories {
-        let (mut listed, truncated, error) =
+        let (listed, truncated, error) =
             match list_rows(platform, remote, &PullRequestQuery::new(QueueTab::AllOpen)).await {
                 Ok(found) => (found.rows, found.truncated, None),
                 Err(e) => (Vec::new(), false, Some(e)),
             };
         if error.is_none() {
-            if let Some((_, number)) =
-                on_view.filter(|(r, n)| *r == remote && !listed.iter().any(|row| row.number == *n))
-                && let Some(row) = row_of(platform, remote, number).await
-            {
-                listed.push(row);
-            }
             rows.extend(listed.into_iter().map(|row| ListedPullRequest {
                 remote: remote.clone(),
                 row,
@@ -257,16 +260,37 @@ pub async fn list_pull_requests<P: Platform>(
     PullRequestList { rows, sources }
 }
 
-/// The row of one pull request, as the queue would list it; `None` if the platform cannot say.
-async fn row_of<P: Platform>(platform: &P, remote: &RemoteKey, number: u64) -> Option<PullRequestRow> {
-    let viewer = platform.viewer(remote).await.ok()?;
+/// The row of pull request `number` of `remote` when `list` leaves it out though it listed the
+/// repository: the queue shows the pull request on view even when it is neither the viewer's nor
+/// waiting for them. `None` when the list has it, did not list the repository, or the platform
+/// cannot say what the pull request is.
+pub async fn unlisted_row<P: Platform>(
+    platform: &P,
+    list: &PullRequestList,
+    remote: &RemoteKey,
+    number: u64,
+) -> Option<ListedPullRequest> {
+    let asked = list.sources.iter().any(|s| s.remote == *remote && s.error.is_none());
+    if !asked || list.has(remote, number) {
+        return None;
+    }
     let detail = platform.pull_request(remote, number).await.ok()?;
-    rows(
-        vec![detail.pull_request],
-        &viewer,
-        &PullRequestQuery::new(QueueTab::AllOpen),
-    )
-    .pop()
+    row_of(platform, remote, detail.pull_request).await
+}
+
+/// The row of `pull_request` of `remote`, as the queue would list it; `None` if the platform cannot
+/// name the viewer.
+pub async fn row_of<P: Platform>(
+    platform: &P,
+    remote: &RemoteKey,
+    pull_request: PullRequest,
+) -> Option<ListedPullRequest> {
+    let viewer = platform.viewer(remote).await.ok()?;
+    let row = rows(vec![pull_request], &viewer, &PullRequestQuery::new(QueueTab::AllOpen)).pop()?;
+    Some(ListedPullRequest {
+        remote: remote.clone(),
+        row,
+    })
 }
 
 /// Why a pull request could not be brought in.
@@ -293,6 +317,8 @@ impl std::fmt::Display for FetchError {
 /// What bringing in a pull request learned of it.
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub struct BroughtIn {
+    /// The pull request as the platform has it now, from which its row of the queue is made.
+    pub pull_request: PullRequest,
     /// How the platform names it now.
     pub head: PullRequestHead,
     /// The states of its source branch the platform lists, oldest first, the current one last. The
@@ -331,6 +357,7 @@ pub async fn fetch_pull_request<P: Platform, G: Fetcher>(
     fetch_earlier_pushes(fetch, credentials, git_remote, &refs, &detail.pushes).await;
     Ok(BroughtIn {
         head: PullRequestHead::of(&detail.pull_request),
+        pull_request: detail.pull_request,
         pushes: detail.pushes,
     })
 }
@@ -1137,7 +1164,7 @@ pub(crate) mod tests {
             truncated: vec![],
         };
 
-        let list = list_pull_requests(&platform, std::slice::from_ref(&app), None).await;
+        let list = list_pull_requests(&platform, std::slice::from_ref(&app)).await;
 
         let shown: Vec<_> = list.rows.iter().map(|r| (r.row.number, r.row.waiting_for_me)).collect();
         assert_eq!(
@@ -1163,19 +1190,25 @@ pub(crate) mod tests {
             failing: vec![],
             truncated: vec![],
         };
-        let list = list_pull_requests(&platform, std::slice::from_ref(&app), Some((&app, 3))).await;
+        let list = list_pull_requests(&platform, std::slice::from_ref(&app)).await;
 
-        let shown: Vec<_> = list.rows.iter().map(|r| r.row.number).collect();
+        let extra = unlisted_row(&platform, &list, &app, 3).await;
+        let shown: Vec<_> = list
+            .clone()
+            .with_row(extra.as_ref())
+            .rows
+            .iter()
+            .map(|r| r.row.number)
+            .collect();
         assert_eq!(shown, [3, 2], "newest first like the others");
 
         // Listed anyway, it is not listed twice.
-        let list = list_pull_requests(&platform, std::slice::from_ref(&app), Some((&app, 2))).await;
-        assert_eq!(list.rows.len(), 1);
+        assert!(unlisted_row(&platform, &list, &app, 2).await.is_none());
 
-        // Another repository's number is not this one's.
+        // Another repository's number is not this one's, and a repository that was not listed has
+        // no row added.
         let lib = github("acme/lib");
-        let list = list_pull_requests(&platform, std::slice::from_ref(&app), Some((&lib, 3))).await;
-        assert_eq!(list.rows.len(), 1);
+        assert!(unlisted_row(&platform, &list, &lib, 3).await.is_none());
     }
 
     #[tokio::test]
@@ -1187,7 +1220,7 @@ pub(crate) mod tests {
             truncated: vec![],
         };
 
-        let list = list_pull_requests(&platform, &[app.clone(), lib.clone()], None).await;
+        let list = list_pull_requests(&platform, &[app.clone(), lib.clone()]).await;
 
         assert_eq!(
             list.rows.iter().map(|r| (&r.remote, r.row.number)).collect::<Vec<_>>(),
@@ -1236,7 +1269,7 @@ pub(crate) mod tests {
         let refs: Vec<&str> = refs.iter().map(String::as_str).collect();
         let (fetch, _, _) = fetching_into(vec![], &refs);
 
-        let list = list_pull_requests(&platform, &[app.clone(), lib, svc], None).await;
+        let list = list_pull_requests(&platform, &[app.clone(), lib, svc]).await;
         let unlisted = unlisted_fetched(&fetch, &list).await.unwrap();
 
         assert_eq!(
@@ -1258,10 +1291,10 @@ pub(crate) mod tests {
         assert_eq!(stale, PullRequestRefs::of(&underscored, 5).head);
         let (fetch, _, _) = fetching_into(vec![], &[&stale]);
 
-        let list = list_pull_requests(&platform, &[dotted.clone(), underscored], None).await;
+        let list = list_pull_requests(&platform, &[dotted.clone(), underscored]).await;
         assert_eq!(unlisted_fetched(&fetch, &list).await.unwrap(), []);
 
-        let list = list_pull_requests(&platform, std::slice::from_ref(&dotted), None).await;
+        let list = list_pull_requests(&platform, std::slice::from_ref(&dotted)).await;
         assert_eq!(unlisted_fetched(&fetch, &list).await.unwrap(), [(dotted, 5)]);
     }
 

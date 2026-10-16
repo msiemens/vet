@@ -10,7 +10,9 @@ use vet_backend::Config;
 use vet_protocol::{ChangesetKey, Event, ProjectId, Request, Response, RowReview, Secret, ServerMessage, View};
 
 use crate::common::Client;
-use crate::prefetch::{add_ninth, answered, backend, backend_with, config, fixture, list, many_prs, remote, rows};
+use crate::prefetch::{
+    add_ninth, answered, backend, backend_with, config, fixture, list, many_prs, refresh, remote, rows,
+};
 
 /// A new token for the GitHub account, which is an account change.
 async fn change_account(client: &Client) {
@@ -161,6 +163,63 @@ async fn a_fetch_answers_after_the_list_was_refreshed() {
         numbers.contains(&9),
         "the list the answer left behind is the new one: {numbers:?}"
     );
+}
+
+async fn open_pull_request(client: &Client, project: ProjectId, number: u32) {
+    client
+        .call(Request::OpenChangeset {
+            project,
+            changeset: ChangesetKey::PullRequest {
+                remote: remote().to_string(),
+                number,
+            },
+        })
+        .await
+        .unwrap();
+}
+
+async fn numbers(client: &Client, project: ProjectId) -> Vec<u64> {
+    let mut numbers: Vec<u64> = rows(client, project).await.iter().map(|(n, _)| *n).collect();
+    numbers.sort_unstable();
+    numbers
+}
+
+#[tokio::test]
+async fn opening_a_pull_request_the_platform_does_not_list_adds_its_row_without_listing_and_leaving_drops_it() {
+    let (mock, fake, repo, _scratch) = fixture();
+    mock.lock().unwrap().unlisted = Some(8);
+    let (_handler, mut client) = backend(repo.path(), &fake.base()).await;
+    let project = client.open(repo.path()).await;
+    assert_eq!(numbers(&client, project).await, [7]);
+    quiet(&client, project).await;
+    list_changes(&mut client);
+    let asked = mock.lock().unwrap().lists;
+
+    open_pull_request(&client, project, 8).await;
+
+    assert_eq!(list_changes(&mut client), 1, "the window is told the list changed");
+    assert_eq!(numbers(&client, project).await, [7, 8]);
+    assert_eq!(mock.lock().unwrap().lists, asked, "opening listed nothing");
+
+    // Switching to a pull request the platform lists leaves the other without a row.
+    open_pull_request(&client, project, 7).await;
+    assert_eq!(list_changes(&mut client), 1);
+    assert_eq!(numbers(&client, project).await, [7]);
+    assert_eq!(mock.lock().unwrap().lists, asked, "switching listed nothing");
+}
+
+#[tokio::test]
+async fn a_refresh_keeps_the_row_of_the_unlisted_pull_request_on_view() {
+    let (mock, fake, repo, _scratch) = fixture();
+    mock.lock().unwrap().unlisted = Some(8);
+    let (_handler, client) = backend(repo.path(), &fake.base()).await;
+    let project = client.open(repo.path()).await;
+    list(&client, project).await;
+    open_pull_request(&client, project, 8).await;
+
+    refresh(&client, project).await;
+
+    assert_eq!(numbers(&client, project).await, [7, 8]);
 }
 
 #[tokio::test]

@@ -70,9 +70,10 @@ async fn follow_pull_request(open: &Arc<Open>, booted: &Booted) {
         return;
     };
     // The task and the platform's answer say what went wrong; the review on view stays as it is.
-    let Ok(renamed) = bring_in(open, &booted.session, &remote, number).await else {
+    let Ok(brought) = bring_in(open, &booted.session, &remote, number).await else {
         return;
     };
+    let renamed = brought.renamed;
     if let Ok(Some(revision)) = booted.session.observe().await {
         revision_changed(open, revision);
     } else if renamed {
