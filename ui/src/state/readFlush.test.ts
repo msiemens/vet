@@ -58,7 +58,7 @@ void test("the reads run on the next task, not when asked for", async () => {
   assert.notDeepEqual(log, []);
 });
 
-void test("the manifest comes first, the whole changeset second, the rest together, the scopes last", async () => {
+void test("the manifest comes first, the whole changeset second, then the rest and the scopes", async () => {
   const { actions, log } = recorder(["threads"]);
   const flush = new ReadFlush(actions, new Lifetime());
 
@@ -66,27 +66,52 @@ void test("the manifest comes first, the whole changeset second, the rest togeth
   await tick();
   await tick();
 
-  // Threads is slow; the others have started beside it and the scopes wait for all of them.
   assert.deepEqual(log.slice(0, 4), ["start manifest", "end manifest", "start whole", "end whole"]);
   assert.deepEqual(
     log.slice(4).filter((entry) => entry.startsWith("start")),
     ["start threads", "start versions", "start changesSince", "start commits"],
   );
-  assert.equal(log.includes("scopes"), false);
 });
 
-void test("the scopes read after the rest has finished", async () => {
-  const { actions, log, release } = recorder(["threads"]);
+void test("the scopes read after the manifest, whatever the slow reads do", async () => {
+  const { actions, log } = recorder(["threads"]);
   const flush = new ReadFlush(actions, new Lifetime());
 
   flush.want(everything);
   await tick();
   await tick();
-  release("threads");
-  await settled(flush);
 
-  assert.equal(log.at(-1), "scopes");
-  assert.ok(log.indexOf("end threads") < log.indexOf("scopes"));
+  assert.ok(log.indexOf("end manifest") < log.indexOf("scopes"));
+  assert.equal(log.includes("end threads"), false);
+});
+
+void test("a read that never answers does not delay the next pass's manifest", async () => {
+  const { actions, log } = recorder(["pullRequest"]);
+  const flush = new ReadFlush(actions, new Lifetime());
+
+  flush.want({ ...NO_READS, pullRequest: true });
+  await tick();
+  await tick();
+  flush.want({ ...NO_READS, manifest: true });
+  await tick();
+  await tick();
+
+  assert.deepEqual(log, ["start pullRequest", "start manifest", "end manifest"]);
+});
+
+void test("the flush is pending until a read it started has settled", async () => {
+  const { actions, release } = recorder(["versions"]);
+  const flush = new ReadFlush(actions, new Lifetime());
+
+  flush.want({ ...NO_READS, versions: true });
+  await tick();
+  await tick();
+  assert.equal(flush.pending, true);
+
+  release("versions");
+  await tick();
+  await tick();
+  assert.equal(flush.pending, false);
 });
 
 void test("the whole changeset is not read when the manifest fed it", async () => {

@@ -1,6 +1,6 @@
 // Runs the reads a session's events asked for, once per burst and in a fixed order: the manifest, the
-// whole changeset unless the manifest fed it, threads and the rest together, then the file-tab scopes,
-// which read after the manifest they depend on.
+// whole changeset unless the manifest fed it, then threads and the rest started together without waiting
+// for them, then the file-tab scopes, which read after the manifest they depend on.
 
 import { Debounced } from "../lib/debounced.ts";
 import type { Lifetime } from "./lifetime.ts";
@@ -24,6 +24,8 @@ export class ReadFlush {
   private wanted = NO_READS;
   private timer = new Debounced();
   private running = false;
+  /** Reads started and not yet settled. */
+  private underway = 0;
   private actions: ReadActions;
   private lifetime: Lifetime;
 
@@ -46,9 +48,17 @@ export class ReadFlush {
     if (!this.running) this.timer.schedule(0, () => void this.run());
   }
 
-  /** Reads are waiting or underway. */
+  /** Reads are waiting, or a pass or a read it started is underway. */
   get pending(): boolean {
-    return this.timer.pending || this.running;
+    return this.timer.pending || this.running || this.underway > 0;
+  }
+
+  private track(read: Promise<unknown>) {
+    this.underway++;
+    void read.then(
+      () => this.underway--,
+      () => this.underway--,
+    );
   }
 
   /** A call, so that the checks after an await are not taken for always false. */
@@ -66,14 +76,12 @@ export class ReadFlush {
         if (this.dead()) return;
         if (reads.whole && !fed) await this.actions.whole(reads.whole.revision);
         if (this.dead()) return;
-        const together: Promise<unknown>[] = [];
-        if (reads.threads) together.push(this.actions.threads());
-        if (reads.pullRequest) together.push(this.actions.pullRequest());
-        if (reads.versions) together.push(this.actions.versions());
+        // Nothing below is awaited: the next pass does not depend on it, and the stores keep only the latest read.
+        if (reads.threads) this.track(this.actions.threads());
+        if (reads.pullRequest) this.track(this.actions.pullRequest());
+        if (reads.versions) this.track(this.actions.versions());
         if (reads.changesSince) this.actions.changesSince();
-        if (reads.commits) together.push(this.actions.commits());
-        await Promise.allSettled(together);
-        if (this.dead()) return;
+        if (reads.commits) this.track(this.actions.commits());
         if (reads.scopes) this.actions.scopes();
       }
     } finally {
