@@ -19,7 +19,11 @@ async fn main() -> io::Result<()> {
         .await
         .inspect_err(|error| tracing::error!(%error, "cannot open the store"))
         .map_err(io::Error::other)?;
-    let orchestrator = Orchestrator::new(store, Config::default());
+    let config = Config {
+        cli_dirs: None,
+        ..Config::default()
+    };
+    let orchestrator = Orchestrator::new(store, config);
     orchestrator.collect_trees().await;
     let server = Server::bind().await?;
     announce(&server)?;

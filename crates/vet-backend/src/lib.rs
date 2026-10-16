@@ -12,6 +12,7 @@ mod background;
 mod caches;
 mod changesets;
 mod checks;
+mod cli;
 #[cfg(test)]
 mod contract;
 mod error;
@@ -36,7 +37,7 @@ mod sync;
 mod threads;
 mod trust;
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::pin::Pin;
 use std::sync::Arc;
 use std::time::{Duration, SystemTime};
@@ -52,7 +53,6 @@ use vet_app::session::LiveSession;
 use vet_infra::budget::{Budget, Budgets, REVIEW_IO};
 use vet_infra::clock::unix_now;
 use vet_infra::credentials::HttpValidator;
-use vet_infra::exec::TokioRunner;
 use vet_infra::git::GixRepo;
 use vet_infra::lsp::{LspLauncher, config as lsp_config};
 use vet_infra::materialize::Materialize;
@@ -67,6 +67,7 @@ use vet_semantic::ports::Backend;
 use vet_transport::{Events, Handler};
 
 use caches::PersistentAnswers;
+use cli::CliRunner;
 use error::{Error, Result};
 use events::Connection;
 use hosting::Platforms;
@@ -99,6 +100,10 @@ pub struct Config {
     /// How long after an action on a run the checks are read once more: the platform shows what it
     /// made of the action a moment later, so one read may still see the old state.
     pub checks_settle: Duration,
+    /// The directories `gh` and `az` are looked for in; `None` is the process's `PATH`. The default
+    /// is no directory, so that a build of the backend that is not the shipped one (the tests')
+    /// never reuses the sign-in of the machine it runs on; the shipped backend sets `None`.
+    pub cli_dirs: Option<Vec<PathBuf>>,
 }
 
 impl Default for Config {
@@ -113,6 +118,7 @@ impl Default for Config {
             prefetch_announce: Duration::from_secs(5),
             checks_pace: Duration::from_secs(30),
             checks_settle: Duration::from_secs(3),
+            cli_dirs: Some(Vec::new()),
         }
     }
 }
@@ -127,7 +133,7 @@ type Semantic =
 /// `Orchestrator::ready`.
 type Open = Entry<Connection, Wired>;
 type Projects = Registry<Connection, Wired>;
-type PlatformAccounts = Accounts<TokioRunner, HttpValidator>;
+type PlatformAccounts = Accounts<CliRunner, HttpValidator>;
 type GitHub = GitHubClient<Arc<PlatformAccounts>>;
 type AzureDevOps = AzureDevOpsClient<Arc<PlatformAccounts>>;
 
@@ -200,7 +206,9 @@ impl Orchestrator {
         let process_subscribers = Subscribers::<Connection>::default();
         let needed = process_subscribers.clone();
         let accounts = Arc::new(Accounts::new(
-            TokioRunner,
+            CliRunner {
+                dirs: config.cli_dirs.clone(),
+            },
             HttpValidator::default(),
             std::env::temp_dir(),
             move |host| {

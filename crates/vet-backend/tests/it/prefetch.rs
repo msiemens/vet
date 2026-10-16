@@ -79,6 +79,12 @@ pub(crate) struct Mock {
     pub(crate) checks_refusals: usize,
     /// How many check-run reads were answered, refusals included.
     pub(crate) checks_calls: usize,
+    /// When set, check-run reads that do not carry this token are refused as unauthorized (401).
+    pub(crate) checks_only_token: Option<String>,
+    /// The `Authorization` of every check-run read, refused ones included.
+    pub(crate) checks_authorizations: Vec<String>,
+    /// The `Authorization` of every request the fake received.
+    pub(crate) authorizations: Vec<String>,
     /// How many unresolved review threads every pull request has; the search does not say.
     pub(crate) unresolved_threads: usize,
     /// Who asked for changes on every pull request, which holds the review decision at changes
@@ -243,6 +249,8 @@ fn number_of(request: &Seen) -> u64 {
 /// A server that answers the viewer, the list, one pull request's detail and its discussion.
 fn github(mock: Arc<Mutex<Mock>>) -> Fake {
     Fake::start(move |request, _| {
+        let authorization = request.header("authorization").unwrap_or_default().to_owned();
+        mock.lock().unwrap().authorizations.push(authorization.clone());
         if request.path == "/user" {
             return Canned::json(&user_json()).with("Cache-Control", "no-store");
         }
@@ -251,6 +259,14 @@ fn github(mock: Arc<Mutex<Mock>>) -> Fake {
         }
         if request.path.contains("/check-runs") {
             let mut mock = mock.lock().unwrap();
+            mock.checks_authorizations.push(authorization.clone());
+            if mock
+                .checks_only_token
+                .as_ref()
+                .is_some_and(|only| !authorization.ends_with(only))
+            {
+                return Canned::status(401, r#"{"message":"Bad credentials"}"#);
+            }
             mock.checks_calls += 1;
             if mock.checks_refusals > 0 {
                 mock.checks_refusals -= 1;
@@ -802,6 +818,50 @@ async fn the_details_of_a_listed_pull_request_are_fetched_ahead_and_a_changed_on
     refresh(&client, project).await;
     assert_eq!(stored_description(repo.path(), 7).await.as_deref(), Some("third"));
     assert_eq!(answered(&mock), 3, "a changed pull request is fetched");
+}
+
+/// What the fake was shown as `Authorization` on requests after the credentials were set.
+fn authorizations(mock: &Mutex<Mock>) -> Vec<String> {
+    mock.lock().unwrap().authorizations.clone()
+}
+
+#[tokio::test]
+async fn the_token_a_test_sets_is_the_one_the_platform_receives_whatever_cli_the_machine_has() {
+    let (mock, fake, repo, _scratch) = fixture();
+    let (_handler, client) = backend(repo.path(), &fake.base()).await;
+    let project = client.open(repo.path()).await;
+
+    list(&client, project).await;
+
+    let seen = authorizations(&mock);
+    assert!(!seen.is_empty());
+    assert!(
+        seen.iter().all(|a| a.ends_with("gho_secret")),
+        "{} requests, {} with the token that was set",
+        seen.len(),
+        seen.iter().filter(|a| a.ends_with("gho_secret")).count()
+    );
+}
+
+#[tokio::test]
+async fn the_cli_a_backend_is_given_is_the_one_whose_token_is_used_before_a_pasted_one() {
+    let (mock, fake, repo, _scratch) = fixture();
+    let bin = tempfile::tempdir().unwrap();
+    let gh = bin.path().join("gh");
+    std::fs::write(&gh, "#!/bin/sh\ncase \"$2\" in\ntoken) echo gho_from_cli;;\nesac\n").unwrap();
+    std::fs::set_permissions(&gh, std::fs::Permissions::from_mode(0o755)).unwrap();
+    let config = Config {
+        cli_dirs: Some(vec![bin.path().to_owned()]),
+        ..config()
+    };
+    let (_handler, client) = backend_with(repo.path(), &fake.base(), config).await;
+    let project = client.open(repo.path()).await;
+
+    list(&client, project).await;
+
+    let seen = authorizations(&mock);
+    assert!(!seen.is_empty());
+    assert!(seen.iter().all(|a| a.ends_with("gho_from_cli")), "{}", seen.len());
 }
 
 /// The list is filled from what the details last read: a platform's list leaves out the
