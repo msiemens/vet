@@ -6,8 +6,8 @@ import type { View } from "../../src/generated/View.ts";
 import type { Request } from "../../src/generated/Request.ts";
 import { appState } from "../../src/app/appState.svelte.ts";
 import { findInFiles } from "../../src/features/search/FindInFiles.svelte.ts";
-import { changeset } from "../../src/state/changeset.svelte.ts";
 import { keyId } from "../../src/state/changesetKey.ts";
+import type { ChangesetSession } from "../../src/state/changesetSession.svelte.ts";
 import { STALE_NOTICE } from "../../src/lib/notice.ts";
 import { opened } from "../../src/state/opened.svelte.ts";
 import { shell } from "../../src/features/chrome/shell.svelte.ts";
@@ -26,6 +26,7 @@ import type { ViewChange } from "../../src/state/viewChange.ts";
 import { versions } from "../../src/state/versions.svelte.ts";
 import { newScope } from "../../src/state/viewScope.svelte.ts";
 import type { Harness } from "./harness.ts";
+import { onView } from "./onView.ts";
 import { type SessionName } from "./sessionNames.ts";
 
 const CHANGESET: View = { type: "changeset" };
@@ -40,27 +41,29 @@ const ONE = { marks: 1 };
 
 /** Marks or flags as a click in the views on screen does, or in the ones built for `from`. */
 const hunk = (h: Harness, path: string, index: number, from = h.shown()) =>
-  h.asElement(() => changeset.toggleHunk(from, path, index), from);
+  h.asElement(() => onView().toggleHunk(from, path, index), from);
 const flag = (h: Harness, path: string, index: number, from = h.shown()) =>
-  h.asElement(() => changeset.toggleFlag(from, path, index), from);
-const file = (h: Harness, path: string) => h.asElement(() => changeset.toggleFileSeen(h.shown(), path));
+  h.asElement(() => onView().toggleFlag(from, path, index), from);
+const file = (h: Harness, path: string) => h.asElement(() => onView().toggleFileSeen(h.shown(), path));
 const directory = (h: Harness, dir: string, seen: boolean) =>
-  h.asElement(() => changeset.setDirectorySeen(h.shown(), dir, seen));
+  h.asElement(() => onView().setDirectorySeen(h.shown(), dir, seen));
 
 /** The first file of the view on screen. */
-const first = () => changeset.paths[0];
+const first = () => (opened.session?.paths ?? [])[0];
 
 async function reviewByCommit(h: Harness) {
-  await changeset.openChangeset({ type: "branch", name: "feature" });
-  await h.until(() => changeset.facts?.target.changeset.type === "branch", "the branch");
-  await changeset.showLens("perCommit");
-  await h.until(() => changeset.shownCommit !== undefined, "the first commit");
+  await opened.open({ type: "branch", name: "feature" });
+  await h.until(() => opened.session?.facts?.target.changeset.type === "branch", "the branch");
+  await onView().showLens("perCommit");
+  await h.until(() => opened.session?.shownCommit !== undefined, "the first commit");
 }
 
-/** Records what the store tells the review screen changed about the view; `heard` takes what came since it was last asked. */
+/** Records what the sessions on view tell the review screen changed about the view; `heard` takes what came since it was last asked. */
 function listenForViewChanges() {
   const heard: ViewChange[] = [];
-  changeset.onViewChange((_, change) => heard.push(change));
+  const listen = (session: ChangesetSession | undefined) => session?.onViewChange((_, change) => heard.push(change));
+  listen(opened.session);
+  opened.onSession(listen);
   return () => heard.splice(0);
 }
 
@@ -73,7 +76,10 @@ function expectChanges(heard: ViewChange[], expected: ViewChange[]) {
 /** A new version of the working tree, as an edit on disk makes it. */
 async function settleVersion(h: Harness) {
   h.fixture.write("b.txt", "wt2", [7, 25, 33]);
-  await h.until(() => versions.items.length >= 2 && changeset.facts?.review.state === "open", "the second version");
+  await h.until(
+    () => versions.items.length >= 2 && opened.session?.facts?.review.state === "open",
+    "the second version",
+  );
 }
 
 export const sessions: Record<SessionName, (h: Harness) => Promise<void>> = {
@@ -95,13 +101,13 @@ export const sessions: Record<SessionName, (h: Harness) => Promise<void>> = {
 
   /** A push to the branch on view: what was seen before it is remapped onto the lines it left. */
   async push(h) {
-    await changeset.openChangeset({ type: "branch", name: "feature" });
-    await h.until(() => changeset.facts?.target.changeset.type === "branch", "the branch");
+    await opened.open({ type: "branch", name: "feature" });
+    await h.until(() => opened.session?.facts?.target.changeset.type === "branch", "the branch");
     await h.step("a file seen before the push", () => file(h, "a.txt"), ONE);
     await h.step("the branch is pushed to", async () => {
-      const before = changeset.layout?.shown.revision ?? -1;
+      const before = opened.session?.layout?.shown.revision ?? -1;
       h.fixture.push("a.txt", "p1", [2, 10]);
-      await h.until(() => (changeset.layout?.shown.revision ?? -1) > before, "the new revision");
+      await h.until(() => (opened.session?.layout?.shown.revision ?? -1) > before, "the new revision");
     });
   },
 
@@ -117,7 +123,7 @@ export const sessions: Record<SessionName, (h: Harness) => Promise<void>> = {
         throw new Error(`a new version told ${JSON.stringify(changes)}, not a newer revision`);
     });
     await h.step("range shown", async () => {
-      await changeset.setRange(defaultRange(versions.items));
+      await onView().setRange(defaultRange(versions.items));
       expectChanges(heard(), ["start"]);
     });
     await h.step("flagged in range", () => flag(h, first(), 0), ONE);
@@ -125,24 +131,24 @@ export const sessions: Record<SessionName, (h: Harness) => Promise<void>> = {
     await h.step("unseen in range", () => hunk(h, first(), 1), ONE);
     expectChanges(heard(), []);
     await h.step("back to the changeset", async () => {
-      await changeset.setRange(undefined);
+      await onView().setRange(undefined);
       expectChanges(heard(), ["start"]);
     });
     await h.step("seen in the new version", () => hunk(h, "b.txt", 2), ONE);
     await h.step(
       "a range of versions that are gone gives way to the changeset",
       async () => {
-        await changeset.setRange({ from: 98, to: 99 });
-        if (changeset.range) throw new Error("the range stayed");
+        await onView().setRange({ from: 98, to: 99 });
+        if (opened.session?.range) throw new Error("the range stayed");
       },
       { notice: "no such version 98", rejected: 1 },
     );
     await h.step(
       "a range the backend calls invalid is not replaced by the changeset",
       async () => {
-        await changeset.setRange({ from: 1, to: 1 });
-        const stayed = changeset.range !== undefined;
-        await changeset.setRange(undefined);
+        await onView().setRange({ from: 1, to: 1 });
+        const stayed = opened.session?.range !== undefined;
+        await onView().setRange(undefined);
         if (!stayed) throw new Error("the range was dropped");
       },
       { notice: "an interdiff compares an earlier version with a later one", rejected: 1 },
@@ -156,7 +162,7 @@ export const sessions: Record<SessionName, (h: Harness) => Promise<void>> = {
   async whole(h) {
     await h.step("hunk seen", () => hunk(h, "b.txt", 0), ONE);
     await h.step("version settled", () => settleVersion(h));
-    await h.step("a range is shown", () => changeset.setRange(defaultRange(versions.items)));
+    await h.step("a range is shown", () => onView().setRange(defaultRange(versions.items)));
     await h.step(
       "a burst of marks in a range sends no whole-changeset fetch",
       () => {
@@ -177,9 +183,9 @@ export const sessions: Record<SessionName, (h: Harness) => Promise<void>> = {
     await h.step(
       "a settle sends one whole-changeset fetch",
       async () => {
-        const before = changeset.layout?.shown.revision ?? -1;
+        const before = opened.session?.layout?.shown.revision ?? -1;
         h.fixture.push("a.txt", "p9", [2, 10, 30]);
-        await h.until(() => (changeset.layout?.shown.revision ?? -1) > before, "the new revision");
+        await h.until(() => (opened.session?.layout?.shown.revision ?? -1) > before, "the new revision");
       },
       { whole: 1 },
     );
@@ -194,17 +200,17 @@ export const sessions: Record<SessionName, (h: Harness) => Promise<void>> = {
     await h.step(
       "next commit",
       async () => {
-        await changeset.showCommit(1);
+        await onView().showCommit(1);
         expectChanges(heard(), ["start"]);
       },
       { commits: 1 },
     );
     await h.step("flagged in a commit", () => flag(h, first(), 0), { ...ONE, commits: 2 });
     await h.step("file seen in a commit", () => file(h, first()), { ...ONE, commits: 2 });
-    await h.step("last commit", () => changeset.showCommit(2), { commits: 1 });
-    await h.step("lens back to the whole", () => changeset.showLens("squash"), { commits: 0 });
+    await h.step("last commit", () => onView().showCommit(2), { commits: 1 });
+    await h.step("lens back to the whole", () => onView().showLens("squash"), { commits: 0 });
     await h.step("seen in the changeset", () => hunk(h, "a.txt", 0), { ...ONE, commits: 0 });
-    await h.step("by commit again", () => changeset.showLens("perCommit"), { commits: 1 });
+    await h.step("by commit again", () => onView().showLens("perCommit"), { commits: 1 });
   },
 
   /**
@@ -215,14 +221,14 @@ export const sessions: Record<SessionName, (h: Harness) => Promise<void>> = {
   async commitsTool(h) {
     const asked = () => h.sent.filter((r) => r.type === "setLens").length;
     await h.step("the branch is opened", async () => {
-      await changeset.openChangeset({ type: "branch", name: "feature" });
-      await h.until(() => changeset.facts?.target.changeset.type === "branch", "the branch");
+      await opened.open({ type: "branch", name: "feature" });
+      await h.until(() => opened.session?.facts?.target.changeset.type === "branch", "the branch");
     });
     await h.step("the Commits tool is chosen", async () => {
       const before = asked();
       shell.toggle("commits");
       await h.until(
-        () => changeset.lens === "perCommit" && changeset.shownCommit !== undefined,
+        () => opened.session?.lens === "perCommit" && opened.session.shownCommit !== undefined,
         "the by-commit review",
       );
       if (shell.left.tool !== "commits") throw new Error(`the rail shows ${shell.left.tool}, not Commits`);
@@ -232,7 +238,10 @@ export const sessions: Record<SessionName, (h: Harness) => Promise<void>> = {
     await h.step("another tool is chosen", async () => {
       const before = asked();
       shell.toggle("all");
-      await h.until(() => changeset.lens === "squash" && changeset.shownCommit === undefined, "the whole changeset");
+      await h.until(
+        () => opened.session?.lens === "squash" && opened.session.shownCommit === undefined,
+        "the whole changeset",
+      );
       if (shell.left.tool !== "all") throw new Error(`the rail shows ${shell.left.tool}, not All Files`);
       if (asked() - before !== 1)
         throw new Error(`leaving the Commits tool asked for the lens ${asked() - before} times`);
@@ -241,7 +250,7 @@ export const sessions: Record<SessionName, (h: Harness) => Promise<void>> = {
       const before = asked();
       await h.other.setLens("perCommit");
       await h.until(
-        () => changeset.lens === "perCommit" && changeset.shownCommit !== undefined,
+        () => opened.session?.lens === "perCommit" && opened.session.shownCommit !== undefined,
         "the by-commit review",
       );
       if (shell.left.tool !== "commits") throw new Error(`the rail shows ${shell.left.tool}, not Commits`);
@@ -250,33 +259,39 @@ export const sessions: Record<SessionName, (h: Harness) => Promise<void>> = {
     await h.step("the backend returns the lens to all changes", async () => {
       const before = asked();
       await h.other.setLens("squash");
-      await h.until(() => changeset.lens === "squash" && changeset.shownCommit === undefined, "the whole changeset");
+      await h.until(
+        () => opened.session?.lens === "squash" && opened.session.shownCommit === undefined,
+        "the whole changeset",
+      );
       if (shell.left.tool !== "all") throw new Error(`the rail shows ${shell.left.tool}, not the tool chosen last`);
       if (asked() - before !== 0) throw new Error("the window asked for the lens the backend set");
     });
     await h.step("the lens is remembered for the branch", async () => {
       const before = asked();
       await h.other.setLens("perCommit");
-      await changeset.openChangeset({ type: "workingTree" });
-      await h.until(() => changeset.facts?.target.changeset.type === "workingTree", "the working tree");
-      await changeset.openChangeset({ type: "branch", name: "feature" });
-      await h.until(() => changeset.lens === "perCommit" && changeset.shownCommit !== undefined, "the remembered lens");
+      await opened.open({ type: "workingTree" });
+      await h.until(() => opened.session?.facts?.target.changeset.type === "workingTree", "the working tree");
+      await opened.open({ type: "branch", name: "feature" });
+      await h.until(
+        () => opened.session?.lens === "perCommit" && opened.session.shownCommit !== undefined,
+        "the remembered lens",
+      );
       if (shell.left.tool !== "commits") throw new Error(`the rail shows ${shell.left.tool}, not Commits`);
       if (asked() - before !== 0) throw new Error("opening a remembered lens asked for the lens");
     });
     await h.step("a changeset of one commit cannot be reviewed by commit", async () => {
       h.fixture.resetHeadTo("main");
       h.fixture.commitWorkingTree();
-      await changeset.openChangeset({ type: "branch", name: "feature" });
-      await h.until(() => changeset.facts?.commits === 1, "the one-commit branch");
+      await opened.open({ type: "branch", name: "feature" });
+      await h.until(() => opened.session?.facts?.commits === 1, "the one-commit branch");
       await h.other.setLens("squash");
-      await h.until(() => changeset.lens === "squash", "the whole changeset");
+      await h.until(() => opened.session?.lens === "squash", "the whole changeset");
       const before = asked();
       shell.toggle("commits");
       if (shell.left.tool !== "changes") throw new Error(`the rail shows ${shell.left.tool}, not Changes`);
       if (asked() - before !== 0)
         throw new Error(`choosing the Commits tool asked for the lens ${asked() - before} times`);
-      if (changeset.lens !== "squash") throw new Error(`the lens became ${changeset.lens}`);
+      if (opened.session?.lens !== "squash") throw new Error(`the lens became ${opened.session?.lens}`);
     });
   },
 
@@ -284,29 +299,29 @@ export const sessions: Record<SessionName, (h: Harness) => Promise<void>> = {
   async pinned(h) {
     await h.step("opened the branch by commit", () => reviewByCommit(h), { commits: 1 });
     const commit = (index: number): View => ({ type: "commit", index });
-    const id = changeset.commits[0].commit.id;
+    const id = (opened.session?.commits ?? [])[0].commit.id;
     const scope = newScope(
       h.other,
       { type: "commit", id },
       () => undefined,
-      changeset.commitList,
-      () => changeset.currentShown()?.revision,
+      onView().commitList,
+      () => opened.session?.currentShown()?.revision,
     );
     const hunksOf = (layout: { files: readonly { path: string; hunks: readonly unknown[] }[] } | undefined) =>
       layout?.files.find((f) => f.path === "a.txt")?.hunks.length;
     await h.step(
       "another commit on screen",
       async () => {
-        const before = changeset.commits;
-        await changeset.showCommit(2);
+        const before = opened.session?.commits ?? [];
+        await onView().showCommit(2);
         // Wait for the store's list to be of the revision on screen, so the scope reuses it rather than racing its read.
-        await h.until(() => changeset.commits !== before, "the commits of the commit on screen");
+        await h.until(() => (opened.session?.commits ?? []) !== before, "the commits of the commit on screen");
         await scope.load();
         const own = await h.other.manifest(commit(0));
         const wanted = own.files.find((f) => f.path === "a.txt")?.hunks.length;
         if (!wanted || hunksOf(scope.layout) !== wanted || scope.commit?.commit.id !== id)
           throw new Error("the scope does not read its own commit");
-        if (hunksOf(changeset.currentLayout()) === wanted) throw new Error("the commits cannot be told apart");
+        if (hunksOf(onView().currentLayout()) === wanted) throw new Error("the commits cannot be told apart");
         const text = await h.other.fileText("b.txt", commit(0));
         if (text.content.type !== "text" || text.content.text.includes("c2"))
           throw new Error("a file the commit does not touch is not read as the commit leaves it");
@@ -340,9 +355,9 @@ export const sessions: Record<SessionName, (h: Harness) => Promise<void>> = {
           return manifest(view);
         };
         const revision = scope.currentShown()?.revision ?? -1;
-        const before = changeset.commits;
+        const before = opened.session?.commits ?? [];
         const answer = await h.other.toggleHunk(revision, "a.txt", 1, commit(0));
-        await h.until(() => changeset.commits !== before, "the commits after the mark");
+        await h.until(() => (opened.session?.commits ?? []) !== before, "the commits after the mark");
         scope.heard(answer, revision);
         await scope.whenLoaded();
         if (scope.state("a.txt")?.review.hunks[1] !== "seen") throw new Error("the scope did not follow the mark");
@@ -357,7 +372,7 @@ export const sessions: Record<SessionName, (h: Harness) => Promise<void>> = {
     await h.step(
       "the whole-changeset view takes a mark of its file as the store does",
       async () => {
-        const whole = changeset.whole;
+        const whole = onView().whole;
         const revision = whole.currentShown()?.revision ?? -1;
         const answer = await h.other.toggleHunk(revision, "b.txt", 0, CHANGESET);
         whole.heard(answer, revision);
@@ -370,7 +385,7 @@ export const sessions: Record<SessionName, (h: Harness) => Promise<void>> = {
     await h.step(
       "a comment from the whole-changeset view while a commit is on screen",
       async () => {
-        const whole = changeset.whole;
+        const whole = onView().whole;
         const shown = whole.currentShown();
         if (!shown) throw new Error("the whole changeset has not read");
         const target = { type: "file", side: "target", path: "a.txt" } as const;
@@ -385,24 +400,24 @@ export const sessions: Record<SessionName, (h: Harness) => Promise<void>> = {
     // A background read that races the changeset moving on keeps the scope and says nothing; the
     // store's reload reads the newer revision and brings the scope up to date then.
     await h.step("a scope read that races a revision change is silent and catches up on the next read", async () => {
-      let revision = changeset.currentShown()?.revision ?? -1;
+      let revision = opened.session?.currentShown()?.revision ?? -1;
       const racing = newScope(
         h.other,
         { type: "commit", id },
         () => undefined,
-        changeset.commitList,
+        onView().commitList,
         () => revision,
       );
       await racing.load();
       const wasRevision = racing.currentShown()?.revision ?? -1;
       if (wasRevision !== revision) throw new Error("the racing scope did not read its revision");
       h.fixture.push("a.txt", "p9", [2, 10, 30]);
-      await h.until(() => (changeset.layout?.shown.revision ?? -1) > wasRevision, "the changeset to move on");
+      await h.until(() => (opened.session?.layout?.shown.revision ?? -1) > wasRevision, "the changeset to move on");
       // The scope reads at the old revision, which the backend has moved past: it keeps its view and says nothing.
       await racing.load();
       if (racing.currentShown()?.revision !== wasRevision) throw new Error("the racing read replaced the scope's view");
       // The store's reload reads at the revision now on view, and the scope catches up with it.
-      revision = changeset.currentShown()?.revision ?? -1;
+      revision = opened.session?.currentShown()?.revision ?? -1;
       await racing.load();
       if (revision <= wasRevision) throw new Error("the changeset did not move to a newer revision");
       if ((racing.currentShown()?.revision ?? -1) !== revision) throw new Error("the scope did not catch up");
@@ -417,7 +432,7 @@ export const sessions: Record<SessionName, (h: Harness) => Promise<void>> = {
       () => {
         const from = h.shown();
         void hunk(h, "a.txt", 1, from);
-        void changeset.showCommit(2);
+        void onView().showCommit(2);
       },
       ONE,
     );
@@ -426,7 +441,7 @@ export const sessions: Record<SessionName, (h: Harness) => Promise<void>> = {
       () => {
         const from = h.shown();
         void flag(h, "a.txt", 0, from);
-        void changeset.showCommit(0);
+        void onView().showCommit(0);
       },
       ONE,
     );
@@ -435,7 +450,7 @@ export const sessions: Record<SessionName, (h: Harness) => Promise<void>> = {
       "mark refused once the next commit is asked for",
       () => {
         const from = h.shown();
-        void changeset.showCommit(1);
+        void onView().showCommit(1);
         void hunk(h, "a.txt", 0, from);
       },
       { notice: "Changes arrived — try again" },
@@ -456,9 +471,9 @@ export const sessions: Record<SessionName, (h: Harness) => Promise<void>> = {
       await h.other.createThread(revision, { type: "changeset" }, "from the other window", CHANGESET);
     });
     await h.step("version settled", () => settleVersion(h));
-    await h.step("range shown", () => changeset.setRange(defaultRange(versions.items)));
+    await h.step("range shown", () => onView().setRange(defaultRange(versions.items)));
     await h.step("other marks while in the range", () => mark("b.txt", 2));
-    await h.step("back to the changeset", () => changeset.setRange(undefined));
+    await h.step("back to the changeset", () => onView().setRange(undefined));
     await h.step("opened the branch by commit", () => reviewByCommit(h));
     await h.step("other marks while by commit", () => mark("a.txt", 0));
   },
@@ -484,17 +499,17 @@ export const sessions: Record<SessionName, (h: Harness) => Promise<void>> = {
     await h.step(
       "a changeset is opened",
       async () => {
-        await changeset.openChangeset({ type: "branch", name: "feature" });
-        await h.until(() => changeset.facts?.target.changeset.type === "branch", "the branch");
+        await opened.open({ type: "branch", name: "feature" });
+        await h.until(() => opened.session?.facts?.target.changeset.type === "branch", "the branch");
       },
       { listings: 0 },
     );
     await h.step(
       "a review is started",
       async () => {
-        await h.until(() => changeset.paths.length > 0, "the branch's files");
+        await h.until(() => (opened.session?.paths ?? []).length > 0, "the branch's files");
         await hunk(h, first(), 0);
-        await h.until(() => changeset.facts?.review.state === "open", "the review to start");
+        await h.until(() => opened.session?.facts?.review.state === "open", "the review to start");
       },
       { marks: 1, listings: 0 },
     );
@@ -510,11 +525,11 @@ export const sessions: Record<SessionName, (h: Harness) => Promise<void>> = {
       // the fixture's own are served by none.
       await h.until(() => serverList.servers.length > 0, "the servers");
       h.fixture.write("d.rs", "wt", [3]);
-      await h.until(() => changeset.paths.includes("d.rs"), "the Rust file in the working tree");
-      await changeset.openChangeset({ type: "branch", name: "feature" });
-      await h.until(() => changeset.facts?.target.changeset.type === "branch", "the branch");
-      await changeset.openChangeset({ type: "workingTree" });
-      await h.until(() => changeset.facts?.target.changeset.type === "workingTree", "the working tree");
+      await h.until(() => (opened.session?.paths ?? []).includes("d.rs"), "the Rust file in the working tree");
+      await opened.open({ type: "branch", name: "feature" });
+      await h.until(() => opened.session?.facts?.target.changeset.type === "branch", "the branch");
+      await opened.open({ type: "workingTree" });
+      await h.until(() => opened.session?.facts?.target.changeset.type === "workingTree", "the working tree");
       if (!problems.analysable.includes("d.rs")) throw new Error("the changeset has no file to analyse");
       await sleep(500);
       if (asked() || told(true)) throw new Error("the queue asked the language servers for something");
@@ -530,7 +545,7 @@ export const sessions: Record<SessionName, (h: Harness) => Promise<void>> = {
       reviewShown.set(false);
       await h.until(() => told(false) === 1, "the backend to be told");
       const before = asked();
-      await changeset.openChangeset({ type: "branch", name: "feature" });
+      await opened.open({ type: "branch", name: "feature" });
       await sleep(500);
       if (asked() !== before) throw new Error("the queue asked the language servers for something");
     });
@@ -594,13 +609,13 @@ export const sessions: Record<SessionName, (h: Harness) => Promise<void>> = {
     await h.step("changesets asked for one after another without waiting", async () => {
       const feature: ChangesetKey = { type: "branch", name: "feature" };
       const tree: ChangesetKey = { type: "workingTree" };
-      for (const key of [tree, feature, tree, feature, tree]) void changeset.openChangeset(key);
-      await changeset.openChangeset(feature);
+      for (const key of [tree, feature, tree, feature, tree]) void opened.open(key);
+      await opened.open(feature);
       await h.until(() => opened.session !== undefined && !opened.loading, "the last changeset");
       // What the invariants then compare with the backend is the changeset it has on view, whichever of the
       // requests it served last: nothing of the changesets passed through is left in it.
       const key = opened.session?.key;
-      if (!key || keyId(key) !== keyId(changeset.facts?.target.changeset ?? tree))
+      if (!key || keyId(key) !== keyId(opened.session?.facts?.target.changeset ?? tree))
         throw new Error("the session on view is not of the changeset the manifest is of");
     });
     await h.step(
@@ -620,7 +635,7 @@ export const sessions: Record<SessionName, (h: Harness) => Promise<void>> = {
         };
         const marking = hunk(h, "b.txt", 0);
         await h.until(() => arrived, "the mark to be answered");
-        await changeset.openChangeset({ type: "workingTree" });
+        await opened.open({ type: "workingTree" });
         await h.until(() => opened.session !== undefined && !opened.loading, "the next changeset");
         release();
         await marking;
@@ -641,7 +656,7 @@ export const sessions: Record<SessionName, (h: Harness) => Promise<void>> = {
           sent++;
           return create(...args);
         };
-        const switching = changeset.openChangeset({ type: "branch", name: "feature" });
+        const switching = opened.open({ type: "branch", name: "feature" });
         if (opened.session) throw new Error("the session outlived the request for another changeset");
         const created = await threads.create(shown, { type: "changeset" }, "late");
         await switching;

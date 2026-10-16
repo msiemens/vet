@@ -1,6 +1,7 @@
 // What the backend's manifest says, in the three scopes it mixes. The generated `Manifest` and
 // `FileChange` carry the view's structure, the live review state and the changeset's facts in one
-// shape; only `changeset.svelte.ts` and the backend client handle them. Everything else reads these
+// shape; only the changeset session, the whole-changeset view and the backend client handle them (the
+// opened holder passes a manifest it read on). Everything else reads these
 // types, so a snapshot cannot be taken for the live review state.
 
 import type { AnalysisTrust } from "../generated/AnalysisTrust";

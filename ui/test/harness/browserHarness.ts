@@ -127,8 +127,7 @@ export async function runBrowserSession(
   await page.goto(url);
   await until(`!!document.querySelector(".body")`, "the app");
   await evaluate(`(async () => {
-    const [changeset, opened, session, commands, versions, notices] = await Promise.all([
-      import("/src/state/changeset.svelte.ts"),
+    const [opened, session, commands, versions, notices] = await Promise.all([
       import("/src/state/opened.svelte.ts"),
       import("/src/state/session.svelte.ts"),
       import("/src/state/commands.ts"),
@@ -136,7 +135,6 @@ export async function runBrowserSession(
       import("/src/state/notices.svelte.ts"),
     ]);
     window.__t = {
-      changeset: changeset.changeset,
       opened: opened.opened,
       session: session.session,
       notices: notices.notices,
@@ -158,7 +156,7 @@ export async function runBrowserSession(
     };
   })()`);
   try {
-    await until(`!!__t.changeset.layout`, "the changeset");
+    await until(`!!__t.opened.session?.layout`, "the changeset");
     if (!onQueue) {
       await evaluate(`__t.commands.run("view.review")`);
       await until(`!!window.__vet && document.querySelectorAll(".cm-editor").length > 0`, "the editors");
@@ -191,7 +189,7 @@ export async function runBrowserSession(
     });
   };
   const check = async (): Promise<Difference[]> => {
-    const view = (await evaluate(`JSON.parse(JSON.stringify(__t.changeset.layout.shown.view))`)) as View;
+    const view = (await evaluate(`JSON.parse(JSON.stringify(__t.opened.session?.layout.shown.view))`)) as View;
     const manifest = await other.manifest(view);
     const rendered = await read();
     const found = compareView(rendered.views.changes, manifest);
@@ -254,10 +252,10 @@ export async function runBrowserSession(
       results.push({ step: stepName, differences });
     },
     async manyFiles(count, tag) {
-      const before = (await evaluate(`__t.changeset.layout?.shown.revision ?? -1`)) as number;
+      const before = (await evaluate(`__t.opened.session?.layout?.shown.revision ?? -1`)) as number;
       fixture.manyFiles(count, tag);
       await until(
-        `__t.changeset.paths.length >= ${count} && (__t.changeset.layout?.shown.revision ?? -1) > ${before}`,
+        `__t.opened.session?.paths.length >= ${count} && (__t.opened.session?.layout?.shown.revision ?? -1) > ${before}`,
         "the many files in the changeset",
       );
     },
@@ -276,19 +274,19 @@ export async function runBrowserSession(
       await until(`__t.versions.items.length >= 2`, "a version for the edit");
     },
     async revise(path, tag, edited) {
-      const before = (await evaluate(`__t.changeset.layout?.shown.revision ?? -1`)) as number;
+      const before = (await evaluate(`__t.opened.session?.layout?.shown.revision ?? -1`)) as number;
       fixture.write(path, tag, edited);
-      await until(`(__t.changeset.layout?.shown.revision ?? -1) > ${before}`, "a newer revision for the edit");
+      await until(`(__t.opened.session?.layout?.shown.revision ?? -1) > ${before}`, "a newer revision for the edit");
     },
     async pushBranch(path, tag, edited) {
-      const before = (await evaluate(`__t.changeset.layout?.shown.revision ?? -1`)) as number;
+      const before = (await evaluate(`__t.opened.session?.layout?.shown.revision ?? -1`)) as number;
       fixture.push(path, tag, edited);
-      await until(`(__t.changeset.layout?.shown.revision ?? -1) > ${before}`, "a revision for the push");
+      await until(`(__t.opened.session?.layout?.shown.revision ?? -1) > ${before}`, "a revision for the push");
     },
     async pushManyFiles(count, tag) {
-      const before = (await evaluate(`__t.changeset.layout?.shown.revision ?? -1`)) as number;
+      const before = (await evaluate(`__t.opened.session?.layout?.shown.revision ?? -1`)) as number;
       fixture.pushMany(count, tag);
-      await until(`(__t.changeset.layout?.shown.revision ?? -1) > ${before}`, "a revision for the push");
+      await until(`(__t.opened.session?.layout?.shown.revision ?? -1) > ${before}`, "a revision for the push");
     },
     async leaveBase(ref) {
       fixture.resetHeadTo(ref);
@@ -299,8 +297,8 @@ export async function runBrowserSession(
     },
     async openBranch() {
       fixture.commitWorkingTree();
-      await evaluate(`__t.changeset.openChangeset({ type: "branch", name: "feature" })`);
-      await until(`__t.changeset.facts?.commits === 4`, "the branch's commits");
+      await evaluate(`__t.opened.open({ type: "branch", name: "feature" })`);
+      await until(`__t.opened.session?.facts?.commits === 4`, "the branch's commits");
     },
     async probe() {
       return (await evaluate(`(() => {

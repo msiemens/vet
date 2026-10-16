@@ -5,7 +5,7 @@ import type { View } from "../../src/generated/View.ts";
 import type { Request } from "../../src/generated/Request.ts";
 import type { Shown } from "../../src/state/shown.ts";
 import { Backend } from "../../src/state/backend.ts";
-import { changeset } from "../../src/state/changeset.svelte.ts";
+import { opened } from "../../src/state/opened.svelte.ts";
 import { notices } from "../../src/state/notices.svelte.ts";
 import { queue } from "../../src/state/queue.svelte.ts";
 import { reviewShown } from "../../src/state/reviewShown.svelte.ts";
@@ -15,6 +15,7 @@ import "../../src/state/threads.svelte.ts";
 import "../../src/state/versions.svelte.ts";
 import { BackendProcess, Fixture, binary } from "./fixture.ts";
 import { checkInvariants, type Violation } from "./invariants.ts";
+import { onView } from "./onView.ts";
 import { type SessionName, startOnQueue } from "./sessionNames.ts";
 
 const REQUESTS_THAT_NAME_A_VIEW = new Set<Request["type"]>([
@@ -140,7 +141,7 @@ export async function runSession(name: SessionName, script: (h: Harness) => Prom
       });
     };
 
-    await changeset.refresh();
+    await (await opened.current())?.refresh();
     await queue.loadAll();
 
     // Every session but the queue's shows the review screen: its stores follow it, as the window does.
@@ -179,7 +180,7 @@ export async function runSession(name: SessionName, script: (h: Harness) => Prom
         await idle();
         const violations = [...wrongViews.splice(0), ...(await checkInvariants(other))];
         const step = (what: string, ui: unknown, backend: unknown) =>
-          violations.push({ invariant: "step", view: changeset.view.type, what, ui, backend });
+          violations.push({ invariant: "step", view: onView().view.type, what, ui, backend });
         const marks = sent.filter((r) => MARKS.has(r.type)).length - marksBefore;
         const wantMarks = expected.marks ?? 0;
         if (marks !== wantMarks) step("the number of review requests the step sent", marks, wantMarks);
@@ -205,7 +206,7 @@ export async function runSession(name: SessionName, script: (h: Harness) => Prom
         }
       },
       shown() {
-        const shown = changeset.currentShown();
+        const shown = opened.session?.currentShown();
         if (!shown) throw new Error("no changeset is open");
         return shown;
       },

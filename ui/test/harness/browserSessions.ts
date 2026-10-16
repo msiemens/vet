@@ -19,7 +19,7 @@ export const startOnQueue = new Set<string>([
 const ONE = { marks: 1 };
 
 const call = (method: string, path: string, hunk?: number) =>
-  `__t.changeset.${method}(__t.changeset.currentShown(), ${JSON.stringify(path)}${hunk === undefined ? "" : `, ${hunk}`})`;
+  `__t.opened.session.${method}(__t.opened.session.currentShown(),${JSON.stringify(path)}${hunk === undefined ? "" : `, ${hunk}`})`;
 
 export const sessions: Record<string, (d: Driver) => Promise<void>> = {
   /**
@@ -27,7 +27,7 @@ export const sessions: Record<string, (d: Driver) => Promise<void>> = {
    * lists nothing, a revision that settles there waits, and the tree loads when the screen comes up.
    */
   async allFiles(d) {
-    await d.until(`!!__t.changeset.layout`, "the changeset");
+    await d.until(`!!__t.opened.session?.layout`, "the changeset");
     await d.page(`__t.commands.run("view.tool.all")`);
     await d.page(`__t.session.backend.waitForQuiet()`);
     await d.sleep(500);
@@ -47,7 +47,7 @@ export const sessions: Record<string, (d: Driver) => Promise<void>> = {
    * while it is away waits too, and the files load when the screen comes up.
    */
   async hidden(d) {
-    await d.until(`!!__t.changeset.layout`, "the changeset");
+    await d.until(`!!__t.opened.session?.layout`, "the changeset");
     await d.page(`__t.session.backend.waitForQuiet()`);
     await d.sleep(500);
     const loaded = async () => (await d.page(`__wire.fileContents`)) as number;
@@ -221,15 +221,15 @@ export const sessions: Record<string, (d: Driver) => Promise<void>> = {
     await d.step("the timeline is open", () => d.page(`__t.commands.run("view.tool.timeline")`));
     await d.edit("a.txt", "agent", [2, 10, 18, 30, 35]);
     const all = await scrolledTo();
-    await keeps("a push is chosen", all, () => d.page(`__t.changeset.setRange({ from: 1, to: 2 })`));
-    await keeps("all changes again", all, () => d.page(`__t.changeset.showWhole()`));
+    await keeps("a push is chosen", all, () => d.page(`__t.opened.session.setRange({ from: 1, to: 2 })`));
+    await keeps("all changes again", all, () => d.page(`__t.opened.session.showWhole()`));
 
     await d.openBranch();
     await d.openText("a.txt");
     await show("unified");
     const whole = await scrolledTo();
-    await keeps("a commit is shown", whole, () => d.page(`__t.changeset.showLens("perCommit")`));
-    await keeps("all changes after the commit", whole, () => d.page(`__t.changeset.showLens("squash")`));
+    await keeps("a commit is shown", whole, () => d.page(`__t.opened.session.showLens("perCommit")`));
+    await keeps("all changes after the commit", whole, () => d.page(`__t.opened.session.showLens("squash")`));
   },
 
   /**
@@ -242,7 +242,7 @@ export const sessions: Record<string, (d: Driver) => Promise<void>> = {
     const TOTAL = 120;
     const far = `many/f100.dat`;
     const changed = `many/f118.dat`;
-    const files = () => d.page(`__t.changeset.paths.length`) as Promise<number>;
+    const files = () => d.page(`__t.opened.session.paths.length`) as Promise<number>;
     const requests = () => d.page(`__wire.fileContents`) as Promise<number>;
     const loaded = () => d.page(`new Set(__wire.filePaths).size`) as Promise<number>;
 
@@ -350,7 +350,7 @@ export const sessions: Record<string, (d: Driver) => Promise<void>> = {
     await d.step("the timeline is open", () => d.page(`__t.commands.run("view.tool.timeline")`));
     await d.step("a push is chosen: the scope chip is narrowed", async () => {
       await d.edit("b.txt", "agent", [7, 8, 25]);
-      await d.page(`__t.changeset.setRange({ from: 1, to: 2 })`);
+      await d.page(`__t.opened.session.setRange({ from: 1, to: 2 })`);
     });
     await d.step("HEAD left the base: the banner and the base note show", () => d.leaveBase("main"));
   },
@@ -470,7 +470,7 @@ export const sessions: Record<string, (d: Driver) => Promise<void>> = {
             scope: { label: "All changes" },
           },
           results: {
-            revision: __t.changeset.layout.shown.revision,
+            revision: __t.opened.session?.layout.shown.revision,
             files: [{ path: "b.txt", hunks: [], states: [], hits: 1, lines: [{ kind: "context", line: 3, text: "line 3", textStart: 0, hits: [{ from: 0, to: 4 }] }] }],
             hits: 1,
             truncated: false,
@@ -515,12 +515,12 @@ export const sessions: Record<string, (d: Driver) => Promise<void>> = {
 
     // 5. The by-commit view: a tab pinned at a commit and the Pipelines tool.
     await d.openBranch();
-    await d.until(`__t.changeset.facts?.commits === 4`, "the branch");
+    await d.until(`__t.opened.session?.facts?.commits === 4`, "the branch");
     await d.page(
       `(async () => { const { shell } = await import("/src/features/chrome/shell.svelte.ts"); shell.showLeft("commits"); return true; })()`,
     );
-    await d.until(`__t.changeset.lens === "perCommit" && __t.changeset.commits.length > 0`, "the commits");
-    const commit = (await d.page(`__t.changeset.commits[__t.changeset.shownCommit].commit.id`)) as string;
+    await d.until(`__t.opened.session?.lens === "perCommit" && __t.opened.session.commits.length > 0`, "the commits");
+    const commit = (await d.page(`__t.opened.session.commits[__t.opened.session.shownCommit].commit.id`)) as string;
     await openFile("a.txt");
     await fire(checks("job-a", await project(), commit));
     await showBottom("pipelines");
@@ -541,7 +541,7 @@ export const sessions: Record<string, (d: Driver) => Promise<void>> = {
     const pinnedBack = await tabs();
     if (JSON.stringify(pinnedBack) !== JSON.stringify(pinnedTabs))
       throw new Error(`the tabs were ${JSON.stringify(pinnedTabs)} and came back as ${JSON.stringify(pinnedBack)}`);
-    const view = await d.page(`__t.changeset.layout?.shown.view.type`);
+    const view = await d.page(`__t.opened.session?.layout?.shown.view.type`);
     if (view !== "commit") throw new Error(`the view came back as ${String(view)}, not the commit it was left at`);
   },
 
@@ -603,6 +603,97 @@ export const sessions: Record<string, (d: Driver) => Promise<void>> = {
   },
 
   /**
+   * Switching to another changeset and back: the changeset's tabs and scroll positions come back, none
+   * of the other's show while it is on view, the window's tool panels keep their settings, and the
+   * controller of the session left is destroyed.
+   */
+  async switching(d) {
+    const tabs = () =>
+      d.page(
+        `(async () => { const { appState } = await import("/src/app/appState.svelte.ts"); const c = appState.controller; return c && { open: [...c.tabs.open], active: c.tabs.active, view: c.activeMode }; })()`,
+      );
+    const settings = () =>
+      d.page(
+        `({
+          errors: document.querySelector('section[aria-label=Problems] button[title="Errors"]')?.getAttribute("aria-pressed"),
+          scope: [...document.querySelectorAll('section[aria-label=Problems] [aria-label=Scope] button')].find((b) => b.getAttribute("aria-pressed") === "true")?.textContent,
+        })`,
+      );
+    const listeners = () => d.page(`__t.session.resyncListeners.size`) as Promise<number>;
+    const switchTo = async (key: string, type: string) => {
+      await d.page(`__t.opened.open(${key})`);
+      await d.until(
+        `__t.opened.session?.facts?.target.changeset.type === ${JSON.stringify(type)} && document.querySelectorAll(".pane.active .cm-editor").length > 0`,
+        `the ${type} on view`,
+      );
+    };
+
+    // The working tree: the Changes tab scrolled, a file's text open and scrolled, Problems set up.
+    await d.until(`document.querySelector(".pane.active .scroll") !== null`, "the Changes tab");
+    await d.openText("a.txt");
+    await d.page(`document.querySelector(".pane.active .scroll").scrollTop = 240`);
+    await d.sleep(500);
+    const fileProbe = await d.probe();
+    await d.page(
+      `(async () => { const { shell } = await import("/src/features/chrome/shell.svelte.ts"); shell.showBottom("problems"); return true; })()`,
+    );
+    await d.until(`document.querySelector("section[aria-label=Problems]") !== null`, "the Problems tool");
+    await d.click('section[aria-label=Problems] button[title="Errors"]');
+    await d.click("section[aria-label=Problems] [aria-label=Scope] button:nth-child(2)");
+    const set = await settings();
+    if (JSON.stringify(set) === JSON.stringify({ errors: "true", scope: "Changed files" }))
+      throw new Error(`the Problems settings did not change: ${JSON.stringify(set)}`);
+    // The last change is the Changes tab chosen, and the switch follows at once: it saves what the pause did not.
+    await d.click("[role=tablist] [role=tab]");
+    const before = await tabs();
+    const held = await listeners();
+    await d.page(`(window.__left = __t.opened.session, true)`);
+
+    // The branch: nothing of the working tree shows, and the session left is over.
+    await switchTo(`{ type: "branch", name: "feature" }`, "branch");
+    const onBranch = await tabs();
+    if (JSON.stringify(onBranch) !== JSON.stringify({ open: ["changes"], active: "changes", view: "unified" }))
+      throw new Error(`the branch shows the tabs ${JSON.stringify(onBranch)}`);
+    const texts = (await d.page(`Object.keys(window.__vet.rendered().texts)`)) as string[];
+    if (texts.length) throw new Error(`the branch shows the text of ${texts.join(", ")}`);
+    const left = await d.page(`({ alive: window.__left.lifetime.alive, listening: window.__left.viewListeners.size })`);
+    if (JSON.stringify(left) !== JSON.stringify({ alive: false, listening: 0 }))
+      throw new Error(`the session left is still listened to: ${JSON.stringify(left)}`);
+    if (JSON.stringify(await settings()) !== JSON.stringify(set))
+      throw new Error(`the Problems settings were ${JSON.stringify(set)} and are ${JSON.stringify(await settings())}`);
+
+    // Back: the tabs and the places are the working tree's, and no controller of the branch is left.
+    await switchTo(`{ type: "workingTree" }`, "workingTree");
+    await d.until(`document.querySelectorAll(".pane.active .cm-editor").length > 0`, "the editors");
+    await d.sleep(500);
+    const after = await tabs();
+    if (JSON.stringify(after) !== JSON.stringify(before))
+      throw new Error(`the tabs were ${JSON.stringify(before)} and came back as ${JSON.stringify(after)}`);
+    const sameSpot = (a: Probe, b: Probe) => a.line === b.line && Math.abs(a.y - b.y) <= 1.5 && a.bar === b.bar;
+    await d.click("[role=tablist] [role=tab] >> nth=1");
+    await d.sleep(500);
+    const fileBack = await d.probe();
+    if (!sameSpot(fileProbe, fileBack))
+      throw new Error(`the file was at ${JSON.stringify(fileProbe)} and came back at ${JSON.stringify(fileBack)}`);
+
+    // Left on the Changes tab, its place comes back.
+    await d.click("[role=tablist] [role=tab]");
+    await d.page(`document.querySelector(".pane.active .scroll").scrollTop = 800`);
+    await d.sleep(500);
+    const changesProbe = await d.probe();
+    await switchTo(`{ type: "branch", name: "feature" }`, "branch");
+    await switchTo(`{ type: "workingTree" }`, "workingTree");
+    await d.sleep(1000);
+    // The place is restored by file and distance, which lands on the same file but not on the same pixel.
+    const scrolled = (await d.page(`document.querySelector(".pane.active .scroll").scrollTop`)) as number;
+    if (scrolled < 400) throw new Error(`the Changes tab was at ${changesProbe.line} and came back at the top`);
+    if (JSON.stringify(await settings()) !== JSON.stringify(set))
+      throw new Error(`the Problems settings were ${JSON.stringify(set)} and are ${JSON.stringify(await settings())}`);
+    const kept = await listeners();
+    if (kept !== held) throw new Error(`the window had ${held} resync listeners and has ${kept} after switching`);
+  },
+
+  /**
    * A queue action that opens the review screen is not dropped: opening a thread, a log and a place
    * from the queue each bring the screen up and reach it.
    */
@@ -618,8 +709,8 @@ export const sessions: Record<string, (d: Driver) => Promise<void>> = {
     const onQueue = `document.querySelector(".review") === null`;
 
     // A thread on a file, made by another window while the queue shows.
-    await d.until(`!!__t.changeset.layout`, "the changeset");
-    const revision = (await d.page(`__t.changeset.layout.shown.revision`)) as number;
+    await d.until(`!!__t.opened.session?.layout`, "the changeset");
+    const revision = (await d.page(`__t.opened.session?.layout.shown.revision`)) as number;
     await d.page(`(async () => {
       const { threads } = await import("/src/state/threads.svelte.ts");
       await threads.create({ revision: ${revision}, view: { type: "changeset" } }, { type: "file", side: "target", path: "a.txt" }, "a note on the file");
@@ -767,8 +858,8 @@ export const sessions: Record<string, (d: Driver) => Promise<void>> = {
    */
   async problems(d) {
     await d.openBranch();
-    await d.page(`__t.changeset.showLens("perCommit")`);
-    await d.until(`__t.changeset.shownCommit !== undefined`, "a commit on view");
+    await d.page(`__t.opened.session.showLens("perCommit")`);
+    await d.until(`__t.opened.session?.shownCommit !== undefined`, "a commit on view");
     await d.page(
       `(async () => { const { shell } = await import("/src/features/chrome/shell.svelte.ts"); shell.showBottom("problems"); return true; })()`,
     );
@@ -804,7 +895,7 @@ export const sessions: Record<string, (d: Driver) => Promise<void>> = {
           if (at.bottom > top + 1) return { path: s.querySelector(".path").textContent, y: Math.round(at.top - top), scrollTop: scroller.scrollTop };
         }
       })()`) as Promise<Place>;
-    const first = () => d.page(`__t.changeset.shownFiles[0].path`) as Promise<string>;
+    const first = () => d.page(`__t.opened.session?.shownFiles[0].path`) as Promise<string>;
     const scrolledAway = async (): Promise<Place> => {
       await d.page(
         `(() => { const s = document.querySelector(".pane.active .scroll"); s.scrollTop = s.scrollHeight / 2; })()`,
@@ -836,23 +927,29 @@ export const sessions: Record<string, (d: Driver) => Promise<void>> = {
     await d.until(`__t.versions.items.length >= 2`, "the second version");
 
     await scrolledAway();
-    await d.step("a push is chosen", () => d.page(`__t.changeset.setRange({ from: 1, to: 2 })`));
+    await d.step("a push is chosen", () => d.page(`__t.opened.session.setRange({ from: 1, to: 2 })`));
     await atTop("a range is shown");
     const range = await scrolledAway();
     await d.step("every file changes again: a new revision of the range", () => d.manyFiles(TOTAL, "v3"));
     await keeps("a new revision of a range", range);
-    await d.step("all changes again", () => d.page(`__t.changeset.showWhole()`));
+    await d.step("all changes again", () => d.page(`__t.opened.session.showWhole()`));
     await atTop("all changes after the range");
 
     await d.openBranch();
     await d.step("a push adds the files", () => d.pushManyFiles(TOTAL, "v4"));
     await d.step("a push changes every file", () => d.pushManyFiles(TOTAL, "v5"));
-    await d.page(`__t.changeset.showLens("perCommit")`);
-    await d.step("a long commit is shown", () => d.page(`__t.changeset.showCommit(4)`));
-    await d.until(`__t.changeset.shownCommit === 4 && __t.changeset.shownFiles.length > 100`, "the long commit");
+    await d.page(`__t.opened.session.showLens("perCommit")`);
+    await d.step("a long commit is shown", () => d.page(`__t.opened.session.showCommit(4)`));
+    await d.until(
+      `__t.opened.session?.shownCommit === 4 && __t.opened.session?.shownFiles.length > 100`,
+      "the long commit",
+    );
     await scrolledAway();
-    await d.step("another long commit is shown", () => d.page(`__t.changeset.showCommit(5)`));
-    await d.until(`__t.changeset.shownCommit === 5 && __t.changeset.shownFiles.length > 100`, "the next long commit");
+    await d.step("another long commit is shown", () => d.page(`__t.opened.session.showCommit(5)`));
+    await d.until(
+      `__t.opened.session?.shownCommit === 5 && __t.opened.session?.shownFiles.length > 100`,
+      "the next long commit",
+    );
     await atTop("another commit is shown");
   },
 
@@ -875,6 +972,7 @@ export const sessions: Record<string, (d: Driver) => Promise<void>> = {
     const after = (await d.page(`__wire.versions`)) as number;
     if (after - before !== 1)
       throw new Error(`changes since the last review read the versions ${after - before} times, not once`);
-    if ((await d.page(`!!__t.changeset.range`)) !== true) throw new Error("nothing was shown since the last review");
+    if ((await d.page(`!!__t.opened.session.range`)) !== true)
+      throw new Error("nothing was shown since the last review");
   },
 };

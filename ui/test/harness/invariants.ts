@@ -8,7 +8,6 @@ import type { RowReview } from "../../src/generated/RowReview.ts";
 import type { View } from "../../src/generated/View.ts";
 import type { Backend } from "../../src/state/backend.ts";
 import { keyId } from "../../src/state/changesetKey.ts";
-import { changeset } from "../../src/state/changeset.svelte.ts";
 import { opened } from "../../src/state/opened.svelte.ts";
 import { changesOf, reviewedOf } from "../../src/state/queueEntries.ts";
 import { queue } from "../../src/state/queue.svelte.ts";
@@ -46,11 +45,12 @@ const rowReview = (review: RowReview | undefined) =>
   };
 
 export async function checkInvariants(other: Backend): Promise<Violation[]> {
-  const layout = changeset.layout;
-  const facts = changeset.facts;
-  if (!layout || !facts || !changeset.viewCompletion)
+  const current = opened.session;
+  const layout = current?.layout;
+  const facts = current?.facts;
+  if (!current || !layout || !facts || !current.viewCompletion)
     return [{ invariant: "manifest", view: "changeset", what: "no manifest", ui: null, backend: null }];
-  const view = changeset.view;
+  const view = current.view;
   const found: Violation[] = [];
   const differ = (invariant: string, what: string, ui: unknown, backend: unknown) => {
     if (!same(ui, backend)) found.push({ invariant, view: view.type, what, ui, backend });
@@ -62,7 +62,7 @@ export async function checkInvariants(other: Backend): Promise<Violation[]> {
     other.listChangesets(),
     other.versions(),
     other.commits().then((r) => r.commits),
-    other.threads(changeset.range ? view : CHANGESET),
+    other.threads(current.range ? view : CHANGESET),
   ]);
 
   differ("shownView", "the view the layout is of", layout.shown.view, view);
@@ -76,23 +76,23 @@ export async function checkInvariants(other: Backend): Promise<Violation[]> {
   differ(
     "fileReview",
     "the paths of the view",
-    changeset.paths,
+    current.paths,
     fresh.files.map((f) => f.path),
   );
   for (const file of fresh.files) {
-    differ("fileReview", `state of ${file.path}`, changeset.state(file.path), {
+    differ("fileReview", `state of ${file.path}`, current.state(file.path), {
       review: file.review,
       completion: file.completion,
     });
   }
-  differ("viewCompletion", "completion of the view", changeset.viewCompletion, fresh.completion);
+  differ("viewCompletion", "completion of the view", current.viewCompletion, fresh.completion);
   differ("changesetCompletion", "completion of the changeset", facts.completion, whole.changesetCompletion);
   differ("base", "base of the view", baseOf(layout.base), baseOf(fresh.base));
   differ("reviewInfo", "review of the changeset", versionOf(facts), versionOf(fresh));
 
   // The queue panel and Problems read the store's whole-changeset view; the selected row's own
   // numbers come from it, whatever view the review shows.
-  const wholeFrame = changeset.wholeFrame;
+  const wholeFrame = current.wholeFrame;
   differ(
     "wholeFrame",
     "the whole-changeset view",
@@ -138,10 +138,10 @@ export async function checkInvariants(other: Backend): Promise<Violation[]> {
   differ(
     "commits",
     "progress of the commits",
-    wantedCommits ? unit(changeset.commits) : changeset.commits,
+    wantedCommits ? unit(current.commits) : current.commits,
     wantedCommits ? unit(commits) : [],
   );
-  if (threads.revision === backendThreads.revision && threads.key === rangeKey(changeset.range)) {
+  if (threads.revision === backendThreads.revision && threads.key === rangeKey(current.range)) {
     differ(
       "threads",
       "the threads",
