@@ -237,6 +237,9 @@ pub(super) struct State {
     /// What the changeset on view is: its target comes from here.
     pub(super) source: Source,
     pub(super) revision: u32,
+    /// Counts the moves of the snapshots on view. A new filter moves the revision, not this; it
+    /// rises across changesets on view as the revision does.
+    pub(super) snapshot: u32,
     /// The project's change counter as of the last command that changed this state; what a
     /// review update or a manifest read from it says it reflects. See [`Held`](super::hold::Held).
     pub(super) seq: u64,

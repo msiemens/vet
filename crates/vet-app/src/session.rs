@@ -191,6 +191,13 @@ type Result<T> = std::result::Result<T, SessionError>;
 /// Unix seconds now.
 pub type UnixClock = fn() -> i64;
 
+/// Where the changeset on view stands: its revision and how often its snapshots moved.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub struct Position {
+    pub revision: u32,
+    pub snapshot: u32,
+}
+
 pub struct LiveSession<G, S: LiveStore> {
     /// Author of the messages written here: git's `user.name`, else "You".
     author: String,
@@ -339,6 +346,7 @@ impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> L
         let state = State {
             source,
             revision: 0,
+            snapshot: 0,
             seq: 0,
             changeset,
             review: None,
@@ -478,6 +486,7 @@ impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> L
         Ok(Some(State {
             source,
             revision: 0,
+            snapshot: 0,
             seq: 0,
             changeset: Some(changeset),
             review: Some(OpenReview {
@@ -930,6 +939,16 @@ impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> L
         self.published.read().revision
     }
 
+    /// The revision on view and the count of snapshot moves, read together: a revision whose
+    /// snapshot did not move is a new filter's.
+    pub async fn position(&self) -> Position {
+        let st = self.published.read();
+        Position {
+            revision: st.revision,
+            snapshot: st.snapshot,
+        }
+    }
+
     /// The latest version of the open review; none while browsing.
     pub fn review_version(&self) -> Option<u32> {
         self.published.read().review.as_ref().map(|r| r.version)
@@ -1106,6 +1125,7 @@ impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> L
             review.updated_at = (self.clock)();
         }
         st.revision += 1;
+        st.snapshot += 1;
         st.changes = None;
         self.track_head(st).await;
         if let Some(diffed) = settlement.diffed

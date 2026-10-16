@@ -164,6 +164,7 @@ impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> L
         tree.filter = st.project_filter().clone();
         tree.project = None;
         tree.revision = st.revision.max(tree.revision) + 1;
+        tree.snapshot = st.snapshot.max(tree.snapshot) + 1;
         let mut outgoing = st.replace(incoming);
         // What is not on view is not shown: the working tree keeps only what its settle loop
         // needs, and every other changeset is let go.
@@ -209,6 +210,7 @@ impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> L
                 return Ok(None);
             }
             st.revision += 1;
+            st.snapshot += 1;
             st.changes = None;
             return Ok(Some(st.revision));
         }
@@ -302,6 +304,7 @@ impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> L
         st.base_commit = base_commit;
         st.head = tip;
         st.revision += 1;
+        st.snapshot += 1;
         st.changes = None;
         Ok(Some(st.revision))
     }
@@ -325,6 +328,7 @@ impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> L
         Ok(State {
             source: source.clone(),
             revision: 0,
+            snapshot: 0,
             seq: 0,
             changeset,
             review: None,
