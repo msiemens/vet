@@ -40,7 +40,8 @@ impl ReviewScreens {
 
 impl Orchestrator {
     /// The connection shows the review screen of the project or leaves it. Coming up starts the
-    /// servers the changeset on view needs.
+    /// servers the changeset on view needs, and copies the working tree's dirty content ahead of
+    /// a review once, since the queue copied nothing.
     pub(crate) async fn set_review_shown(
         &self,
         project: ProjectId,
@@ -50,7 +51,15 @@ impl Orchestrator {
         let open: Arc<Open> = self.find(project).await?;
         open.screens.set(from, shown);
         if shown {
-            start_servers_in_background(open);
+            start_servers_in_background(open.clone());
+            // The queue copied nothing: the review screen that comes back copies the tree once.
+            let copying = open.clone();
+            let boot = async move {
+                if let Ok(booted) = copying.booted().await {
+                    copying.copy_ahead(&booted.session);
+                }
+            };
+            tokio::spawn(boot);
         } else {
             // The changed symbols and problems are analysed for the review screen only. The checks
             // stay: the queue shows the selected pull request's checks too.

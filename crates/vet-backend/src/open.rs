@@ -341,10 +341,16 @@ impl Wired {
     }
 
     /// Copies the working tree's content into the store in the background, so the first mark
-    /// finds it there.
-    fn copy_ahead(&self, session: &Arc<Live>) {
+    /// finds it there. Only while the review screen shows the changeset: on the queue nothing is
+    /// copied, and a review screen that comes back copies once.
+    pub(crate) fn copy_ahead(&self, session: &Arc<Live>) {
+        if !self.screens.shown() {
+            return;
+        }
+        let live = self.background.start(self.plan.id, "copy");
         let session = session.clone();
         let task = tokio::spawn(async move {
+            let _live = live;
             if let Err(e) = session.copy_ahead().await {
                 tracing::warn!(error = %e, "could not copy the working tree's content ahead of a review");
             }
@@ -401,7 +407,10 @@ impl Wired {
         )
         .quiet_after(quiet.as_millis() as u64)
         .reporting_edits()
-        .flushable(self.settle_flush.clone());
+        .flushable(self.settle_flush.clone())
+        // Off view and without a review, the working tree is not scanned: an edit only marks it
+        // changed, and coming on view settles it once.
+        .wanted(session.settle_wanted());
         let task = {
             let (session, subscribers, entry) = (session.clone(), subscribers.clone(), entry.clone());
             let edit_subscribers = subscribers.clone();
@@ -782,6 +791,49 @@ mod tests {
         drop(background);
         tokio::time::timeout(within, copy).await.unwrap().unwrap().unwrap();
         assert_eq!(missing(&texts).await, []);
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn the_copy_ahead_runs_only_while_the_review_screen_shows_the_tree() {
+        // The tree is never quiet long enough for the settle loop to copy it by itself.
+        let config = Config {
+            quiet: Duration::from_secs(3600),
+            ..Config::default()
+        };
+        let (repo, texts) = edited_repo(4);
+        let data = tempfile::tempdir().unwrap();
+        let orchestrator = Orchestrator::new(open_store(data.path()).await.unwrap(), config);
+        let (events, _inbox) = Events::channel();
+        let connection = Connection(events.clone());
+        let (project, _) = orchestrator
+            .open(repo.path().to_str().unwrap(), connection.clone())
+            .await
+            .unwrap();
+        let open = orchestrator.find(project).await.unwrap();
+        let session = orchestrator.ready(project).await.unwrap().session.clone();
+        let missing = async || {
+            let ids = texts.iter().map(|t| BlobId::of(t.as_bytes())).collect();
+            orchestrator.store.missing_blobs(ids).await.unwrap()
+        };
+
+        // The queue is on screen: the quiet copy copies nothing.
+        open.copy_ahead(&session);
+        assert_eq!(
+            open.background.counts(project, "copy").0,
+            0,
+            "nothing is copied while the queue is on screen"
+        );
+
+        // The review screen that comes back copies the tree once.
+        orchestrator.set_review_shown(project, true, &connection).await.unwrap();
+        tokio::time::timeout(Duration::from_secs(20), async {
+            while !missing().await.is_empty() {
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .expect("the review screen copies the tree");
+        assert_eq!(open.background.counts(project, "copy").0, 1, "the screen copied once");
     }
 
     #[tokio::test]

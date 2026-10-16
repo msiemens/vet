@@ -604,18 +604,36 @@ async fn stored(data: &Path, content: &str) -> bool {
 }
 
 #[tokio::test]
-async fn the_working_trees_content_is_copied_into_the_store_before_a_review_starts() {
+async fn the_working_trees_content_is_copied_into_the_store_while_the_review_screen_shows_it() {
     let base = text(40, &[]);
     let dirty = text(40, &[5]);
     let fx = fixture(&[("a.txt", &base)], &[("a.txt", &dirty)]).await;
-    let mut client = Client::new(&fx.handler);
+    let client = Client::new(&fx.handler);
     let project = open(&client, fx.repo.path()).await;
+
+    // The queue is on screen: the tree is not copied.
     client.manifest(project).await;
-    assert!(stored(fx._data.path(), &dirty).await, "copied once the project opened");
+    client.wait_quiet(project).await;
+    let store = vet_infra::store::SqliteStore::for_test(fx._data.path()).await.unwrap();
+    let blob = vet_core::content::BlobId::of(dirty.as_bytes());
+    assert_eq!(
+        store.missing_blobs(vec![blob]).await.unwrap().len(),
+        1,
+        "not copied while the queue is on screen"
+    );
+
+    // The review screen that comes back copies the tree once.
+    client
+        .call(Request::SetReviewShown { project, shown: true })
+        .await
+        .unwrap();
+    assert!(
+        stored(fx._data.path(), &dirty).await,
+        "copied once the review screen shows it"
+    );
 
     let edited = text(40, &[5, 30]);
     write(fx.repo.path(), "a.txt", &edited);
-    client.settled().await;
     assert!(stored(fx._data.path(), &edited).await, "copied once the tree settled");
     assert_eq!(client.manifest(project).await.review, ReviewInfo::Browsing);
 }
