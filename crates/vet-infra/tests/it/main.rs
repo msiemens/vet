@@ -16,5 +16,6 @@ mod restore;
 mod semantic_cache;
 mod servers;
 mod store_contract;
+mod unreadable;
 mod versions;
 mod windows_shim;

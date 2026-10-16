@@ -98,11 +98,10 @@ impl<'r> Worktree<'r> {
         keep: bool,
     ) -> Result<Option<Item>, GitError> {
         let full = self.root.join(paths::to_path(path).map_err(err)?);
-        let at = |e: std::io::Error| err(format!("{}: {e}", full.display()));
         let mut md = match std::fs::symlink_metadata(&full) {
             Ok(md) => md,
             Err(e) if e.kind() == ErrorKind::NotFound => return Ok(None),
-            Err(e) => return Err(at(e)),
+            Err(e) => return self.unreadable(&full, tracked, &e),
         };
         // Windows reports other reparse points (cloud placeholders, deduplicated files, app
         // execution aliases) as symlinks that `read_link` cannot read. Like Git for Windows,
@@ -162,7 +161,10 @@ impl<'r> Worktree<'r> {
         if kind == EntryKind::Symlink {
             let bytes = match link_target {
                 Some(target) => gix::path::into_bstr(target).into_owned().into(),
-                None => std::fs::read(&full).map_err(at)?,
+                None => match std::fs::read(&full) {
+                    Ok(bytes) => bytes,
+                    Err(e) => return self.unreadable(&full, tracked, &e),
+                },
             };
             return Ok(Some(Item {
                 entry: entry(BlobId::of(&bytes), false),
@@ -202,7 +204,9 @@ impl<'r> Worktree<'r> {
         }
 
         let recorded_secs = unix_now();
-        let item = self.hash_file(path, &full, md.len(), keep, entry)?;
+        let Some(item) = self.hash_file(path, &full, md.len(), keep, tracked, entry)? else {
+            return Ok(None);
+        };
         if let Some(key) = key {
             self.next.insert(
                 repo_path,
@@ -217,34 +221,74 @@ impl<'r> Worktree<'r> {
         Ok(Some(item))
     }
 
+    /// An entry the working tree cannot be read: a tracked file keeps the content
+    /// git last recorded, so it is not treated as deleted; anything else is left
+    /// out. Both the path and the error are reported.
+    fn unreadable(
+        &self,
+        full: &Path,
+        tracked: Option<&gix::index::Entry>,
+        error: &std::io::Error,
+    ) -> Result<Option<Item>, GitError> {
+        tracing::warn!(path = %full.display(), error = %error, "skipping an entry the working tree cannot be read");
+        let Some(tracked) = tracked else {
+            return Ok(None);
+        };
+        let blob = self.blobs.blob_id(self.repo, tracked.id)?;
+        Ok(Some(Item {
+            entry: FileEntry {
+                blob,
+                mode: tracked.mode.bits(),
+                kind: if tracked.mode == Mode::SYMLINK {
+                    EntryKind::Symlink
+                } else {
+                    EntryKind::File
+                },
+                unfiltered: false,
+            },
+            unavailable: true,
+            bytes: None,
+        }))
+    }
+
     fn hash_file(
         &mut self,
         path: &BStr,
         full: &Path,
         len: u64,
         keep: bool,
+        tracked: Option<&gix::index::Entry>,
         entry: impl Fn(BlobId, bool) -> FileEntry,
-    ) -> Result<Item, GitError> {
-        let at = |e: std::io::Error| err(format!("{}: {e}", full.display()));
+    ) -> Result<Option<Item>, GitError> {
         if len > self.cap {
-            let blob = BlobId(Hash::of_reader(std::fs::File::open(full).map_err(at)?).map_err(at)?);
-            return Ok(Item {
+            let file = match std::fs::File::open(full) {
+                Ok(file) => file,
+                Err(e) => return self.unreadable(full, tracked, &e),
+            };
+            let blob = match Hash::of_reader(file) {
+                Ok(hash) => BlobId(hash),
+                Err(e) => return self.unreadable(full, tracked, &e),
+            };
+            return Ok(Some(Item {
                 entry: entry(blob, false),
                 unavailable: true,
                 bytes: None,
-            });
+            }));
         }
-        let raw = std::fs::read(full).map_err(at)?;
+        let raw = match std::fs::read(full) {
+            Ok(raw) => raw,
+            Err(e) => return self.unreadable(full, tracked, &e),
+        };
         let (converted, custom_filter) = self.convert(path, &raw)?;
         let (bytes, unfiltered) = match (converted, custom_filter) {
             (_, true) | (None, _) => (raw, custom_filter),
             (Some(converted), false) => (converted, false),
         };
-        Ok(Item {
+        Ok(Some(Item {
             entry: entry(BlobId::of(&bytes), unfiltered),
             unavailable: false,
             bytes: keep.then_some(bytes),
-        })
+        }))
     }
 
     /// Start a scan that reuses and refreshes the stat cache. Other uses of the
@@ -319,9 +363,37 @@ impl<'r> Worktree<'r> {
     }
 }
 
-/// Collects the dirwalk's entries, but never enters or reports a tool store.
-#[derive(Default)]
-struct SkipToolStores(gix::dir::walk::delegate::Collect);
+/// Collects the dirwalk's entries, but never enters or reports a tool store, and
+/// never enters a directory it cannot read.
+struct SkipToolStores {
+    collect: gix::dir::walk::delegate::Collect,
+    root: PathBuf,
+}
+
+impl SkipToolStores {
+    fn new(root: PathBuf) -> Self {
+        Self {
+            collect: gix::dir::walk::delegate::Collect::default(),
+            root,
+        }
+    }
+
+    /// Whether the walk may enter the directory at `rela_path`; one it cannot
+    /// read is skipped, with a warning naming it.
+    fn enterable(&self, rela_path: &BStr) -> bool {
+        let Ok(rela) = paths::to_path(rela_path) else {
+            return true;
+        };
+        let full = self.root.join(rela);
+        match std::fs::read_dir(&full) {
+            Ok(_) => true,
+            Err(e) => {
+                tracing::warn!(path = %full.display(), error = %e, "skipping a directory the working tree cannot be read");
+                false
+            }
+        }
+    }
+}
 
 impl gix::dir::walk::Delegate for SkipToolStores {
     fn emit(
@@ -332,7 +404,7 @@ impl gix::dir::walk::Delegate for SkipToolStores {
         if in_tool_store(&entry.rela_path) {
             return std::ops::ControlFlow::Continue(());
         }
-        self.0.emit(entry, collapsed_directory_status)
+        self.collect.emit(entry, collapsed_directory_status)
     }
 
     fn can_recurse(
@@ -341,15 +413,31 @@ impl gix::dir::walk::Delegate for SkipToolStores {
         for_deletion: Option<gix::dir::walk::ForDeletionMode>,
         worktree_root_is_repository: bool,
     ) -> bool {
-        !in_tool_store(&entry.rela_path) && self.0.can_recurse(entry, for_deletion, worktree_root_is_repository)
+        if in_tool_store(&entry.rela_path) {
+            return false;
+        }
+        let rela_path = entry.rela_path.clone().into_owned();
+        if !self
+            .collect
+            .can_recurse(entry, for_deletion, worktree_root_is_repository)
+        {
+            return false;
+        }
+        // The worktree root stays authoritative: an unreadable root must fail the walk.
+        rela_path.is_empty() || self.enterable(rela_path.as_bstr())
     }
 }
 
 /// The files git neither tracks nor ignores, tool stores left out. The dirwalk
 /// only knows an index entry is tracked if it is flagged up to date, so it may
-/// report tracked files too; callers skip those.
+/// report tracked files too; callers skip those. A directory that cannot be read
+/// is left out rather than treated as if it held nothing.
 fn untracked(repo: &gix::Repository, index: &gix::worktree::Index) -> Result<Vec<BString>, GitError> {
-    let mut delegate = SkipToolStores::default();
+    let root = repo
+        .workdir()
+        .ok_or_else(|| GitError::failed("bare repository"))?
+        .to_owned();
+    let mut delegate = SkipToolStores::new(root);
     let options = repo.dirwalk_options().map_err(err)?;
     repo.dirwalk(
         index,
@@ -360,7 +448,7 @@ fn untracked(repo: &gix::Repository, index: &gix::worktree::Index) -> Result<Vec
     )
     .map_err(err)?;
     Ok(delegate
-        .0
+        .collect
         .into_entries_by_path()
         .into_iter()
         .filter(|(found, _)| {
