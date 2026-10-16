@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import type { PullRequestRow } from "../generated/PullRequestRow";
 import type { PullRequestUpdate } from "../generated/PullRequestUpdate";
+import type { SessionEvent } from "./backend.ts";
 import { type QueueActions, queueEvent, withDetails } from "./queueEvents.ts";
 
 function row(number: number): PullRequestRow {
@@ -76,6 +77,24 @@ void test("opening a changeset and starting a review list the local rows and no 
   queueEvent({ type: "reviewStarted", project: 1, review: { state: "open", version: 1, updatedAt: 0 } }, actions);
 
   assert.deepEqual(did, ["load", "load"]);
+});
+
+void test("a mark has the queue follow only if it moved where the review last was", () => {
+  const did: string[] = [];
+  const actions: QueueActions = {
+    load: () => did.push("load"),
+    loadPullRequests: () => did.push("listPullRequests"),
+    takeLines: () => did.push("takeLines"),
+    takeDetails: () => did.push("takeDetails"),
+    follow: () => did.push("follow"),
+  };
+  const mark = (reviewedAt: number | null) =>
+    ({ type: "reviewChanged", project: 1, revision: 1, update: {}, reviewedAt }) as unknown as SessionEvent;
+
+  queueEvent(mark(null), actions);
+  assert.deepEqual(did, []);
+  queueEvent(mark(2), actions);
+  assert.deepEqual(did, ["follow"]);
 });
 
 void test("the details that were read show in the row they changed and in no other", () => {

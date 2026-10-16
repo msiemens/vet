@@ -48,8 +48,11 @@ export function queueEvent(event: SessionEvent, actions: QueueActions): void {
       actions.takeLines(event.changesets, event.lines);
       return;
     case "snapshotSettled":
-    case "reviewChanged":
       actions.follow();
+      return;
+    // The row on view shows its progress live; of the stored row a mark moves only where the review last was.
+    case "reviewChanged":
+      if (event.reviewedAt !== null) actions.follow();
       return;
     default:
       return;

@@ -248,8 +248,8 @@ export const sessions: Record<SessionName, (h: Harness) => Promise<void>> = {
     // And by commit: the commit's manifest, the commits' progress and the changeset's manifest too.
     const movedByCommit = { ...moved, "manifest(commit)": 1, commits: 1 };
     const finishedNotice = "Review finished with unseen changes left";
-    await h.step("a mark in the changeset view", () => hunk(h, "b.txt", 1), {
-      sent: { toggleHunk: 1, versions: 1, listChangesets: 1 },
+    await h.step("a repeated mark in the changeset view", () => hunk(h, "b.txt", 1), {
+      sent: { toggleHunk: 1 },
       exact: true,
     });
     await h.step(
@@ -258,6 +258,10 @@ export const sessions: Record<SessionName, (h: Harness) => Promise<void>> = {
       { sent: { createThread: 1, threads: 1, listChangesets: 1 }, exact: true },
     );
     await h.step("a settle in the changeset view", () => settleVersion(h), { sent: moved, exact: true });
+    await h.step("the first mark of a version", () => hunk(h, "b.txt", 2), {
+      sent: { toggleHunk: 1, versions: 1, listChangesets: 1 },
+      exact: true,
+    });
     await h.step("a narrowing in the changeset view", () => onView().reviewOnly("src"), {
       sent: { narrowReview: 1, ...moved },
       exact: true,
@@ -284,8 +288,8 @@ export const sessions: Record<SessionName, (h: Harness) => Promise<void>> = {
     });
     await h.step("the branch is opened by commit", () => reviewByCommit(h));
     await h.step("the review by commit is started", () => hunk(h, first(), 0), once("toggleHunk"));
-    await h.step("a mark by commit", () => hunk(h, first(), 1), {
-      sent: { toggleHunk: 1, versions: 1, commits: 1, listChangesets: 1 },
+    await h.step("a repeated mark by commit", () => hunk(h, first(), 1), {
+      sent: { toggleHunk: 1, commits: 1 },
       exact: true,
     });
     await h.step(

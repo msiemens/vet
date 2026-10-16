@@ -20,7 +20,8 @@ const names = (reads: Reads): string[] =>
   );
 
 const event = (e: object) => e as SessionEvent;
-const mark = (revision: number) => event({ type: "reviewChanged", project: 1, revision, update: {} });
+const mark = (revision: number, reviewedAt: number | null = null) =>
+  event({ type: "reviewChanged", project: 1, revision, update: {}, reviewedAt });
 
 void test("a settle reads the manifest, the whole changeset, threads, versions, changes since and the scopes", () => {
   const reads = readsFor(event({ type: "snapshotSettled", project: 1, revision: 6 }), state());
@@ -80,20 +81,27 @@ void test("a started review reads the versions and what changed since", () => {
   );
 });
 
-void test("a mark in the changeset view reads the versions and what changed since, and no commits", () => {
-  assert.deepEqual(names(readsFor(mark(5), state())), ["versions", "changesSince"]);
+void test("a mark that moved where the review last was reads the versions and what changed since", () => {
+  assert.deepEqual(names(readsFor(mark(5, 2), state())), ["versions", "changesSince"]);
+  assert.deepEqual(names(readsFor(mark(5, 2), state({ reviewShown: false }))), ["changesSince"]);
 });
 
-void test("a mark by commit reads the commits as well", () => {
-  assert.deepEqual(names(readsFor(mark(5), state({ byCommit: true }))), ["versions", "changesSince", "commits"]);
+void test("a mark that did not move it reads nothing in the changeset view", () => {
+  assert.deepEqual(names(readsFor(mark(5), state())), []);
+});
+
+void test("a mark by commit reads the commits, and the versions only if it moved where the review last was", () => {
+  assert.deepEqual(names(readsFor(mark(5), state({ byCommit: true }))), ["commits"]);
+  assert.deepEqual(names(readsFor(mark(5, 2), state({ byCommit: true }))), ["versions", "changesSince", "commits"]);
 });
 
 void test("a mark announced while a range or a commit is on view moves the commits' progress", () => {
-  assert.deepEqual(names(readsFor(mark(5), state({ showsChangeset: false }))), ["versions", "changesSince", "commits"]);
+  assert.deepEqual(names(readsFor(mark(5), state({ showsChangeset: false }))), ["commits"]);
 });
 
 void test("a mark of another revision than the one on view reads no commits", () => {
-  assert.deepEqual(names(readsFor(mark(4), state({ byCommit: true }))), ["versions", "changesSince"]);
+  assert.deepEqual(names(readsFor(mark(4), state({ byCommit: true }))), []);
+  assert.deepEqual(names(readsFor(mark(4, 2), state({ byCommit: true }))), ["versions", "changesSince"]);
 });
 
 void test("the events that other stores take, and data pushes, ask the session for nothing", () => {

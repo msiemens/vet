@@ -107,10 +107,11 @@ export function readsFor(event: SessionEvent, state: ReadState): Reads {
       return { ...NO_READS, versions: state.reviewShown, changesSince: true };
     case "reviewChanged":
       // A mark made in a range or a commit is announced as that of the changeset's file, which moves the commits' progress.
+      // The versions and what changed since depend on where the review last was, which only a mark that moved it changes.
       return {
         ...NO_READS,
-        versions: state.reviewShown,
-        changesSince: true,
+        versions: state.reviewShown && event.reviewedAt !== null,
+        changesSince: event.reviewedAt !== null,
         commits: event.revision === state.shownRevision && (state.showsChangeset ? state.byCommit : true),
       };
     default:
