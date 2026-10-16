@@ -18,7 +18,7 @@ use vet_core::merkle;
 
 use super::stat_cache::{Record, StatCache, StatKey, file_stamp};
 use super::tree::tree_entry;
-use super::{BlobCache, err, err_chain};
+use super::{BlobCache, chained, err};
 use crate::clock::unix_now;
 use crate::paths;
 
@@ -55,14 +55,12 @@ impl<'r> Worktree<'r> {
         stats: &'r StatCache,
         cap: u64,
     ) -> Result<Self, GitError> {
-        let index = repo.index_or_empty().map_err(|error| err_chain(&error))?;
+        let index = repo.index_or_empty().map_err(chained)?;
         let stack = repo
             .attributes_only(&index, Source::WorktreeThenIdMapping)
-            .map_err(|error| err_chain(&error))?
+            .map_err(chained)?
             .detach();
-        let (mut filter, attrs) = gix::filter::Pipeline::new(repo, stack)
-            .map_err(|error| err_chain(&error))?
-            .into_parts();
+        let (mut filter, attrs) = gix::filter::Pipeline::new(repo, stack).map_err(chained)?.into_parts();
         let options = filter.options_mut();
         // Custom drivers are never run (§6.3).
         options.drivers.clear();
@@ -73,8 +71,8 @@ impl<'r> Worktree<'r> {
             index,
             filter,
             attrs,
-            caps: repo.filesystem_options().map_err(|error| err_chain(&error))?,
-            stat: repo.stat_options().map_err(|error| err_chain(&error))?,
+            caps: repo.filesystem_options().map_err(chained)?,
+            stat: repo.stat_options().map_err(chained)?,
             root: repo
                 .workdir()
                 .ok_or_else(|| GitError::failed("bare repository"))?
@@ -99,7 +97,7 @@ impl<'r> Worktree<'r> {
         tracked: Option<&gix::index::Entry>,
         keep: bool,
     ) -> Result<Option<Item>, GitError> {
-        let full = self.root.join(paths::to_path(path).map_err(|error| err_chain(&error))?);
+        let full = self.root.join(paths::to_path(path).map_err(chained)?);
         let mut md = match std::fs::symlink_metadata(&full) {
             Ok(md) => md,
             Err(e) if e.kind() == ErrorKind::NotFound => return Ok(None),
@@ -328,11 +326,8 @@ impl<'r> Worktree<'r> {
     /// Built-in conversions (`eol`, `text`, `autocrlf`, `ident`), plus whether
     /// the path names a custom `filter` driver. `None` if nothing changed.
     fn convert(&mut self, path: &BStr, raw: &[u8]) -> Result<(Option<Vec<u8>>, bool), GitError> {
-        let rela = paths::to_path(path).map_err(|error| err_chain(&error))?;
-        let platform = self
-            .attrs
-            .at_path(path, None, &self.repo.objects)
-            .map_err(|error| err_chain(&error))?;
+        let rela = paths::to_path(path).map_err(chained)?;
+        let platform = self.attrs.at_path(path, None, &self.repo.objects).map_err(chained)?;
         let mut custom_filter = false;
         let (index, repo) = (&self.index, self.repo);
         let outcome = self
@@ -364,7 +359,7 @@ impl<'r> Worktree<'r> {
             ToGitOutcome::Buffer(buf) => Some(buf.to_vec()),
             ToGitOutcome::Process(mut read) => {
                 let mut out = Vec::new();
-                read.read_to_end(&mut out).map_err(|error| err_chain(&error))?;
+                read.read_to_end(&mut out).map_err(chained)?;
                 Some(out)
             }
         };
@@ -469,7 +464,7 @@ fn untracked<H: FnMut(&BStr)>(
         // One walk; the delegate borrows `before_read` only for this pass.
         let (last_dir, error) = {
             let mut delegate = SkipToolStores::new(skip.clone(), &mut before_read);
-            let options = repo.dirwalk_options().map_err(|error| err_chain(&error))?;
+            let options = repo.dirwalk_options().map_err(chained)?;
             let walked = repo.dirwalk(
                 index,
                 Vec::<BString>::new(),
@@ -499,21 +494,21 @@ fn untracked<H: FnMut(&BStr)>(
         // Only a failure to read a directory is worth another pass; anything
         // else is the scan's own problem.
         if error.downcast_any_ref::<std::io::Error>().is_none() {
-            return Err(err_chain(&error));
+            return Err(chained(error));
         }
         // A root that cannot be read stays fatal.
         let Some(path) = last_dir else {
-            return Err(err_chain(&error));
+            return Err(chained(error));
         };
         if path.is_empty() || skip.contains(&path) {
-            return Err(err_chain(&error));
+            return Err(chained(error));
         }
         // `last_dir` could be a wrong guess if the walk failed reading something
         // else. A directory that reads now is not the one to skip: skipping a
         // readable directory would hide the untracked files inside it.
         let full = paths::to_path(path.as_bstr()).map_or_else(|_| root.clone(), |rela| root.join(rela));
         if std::fs::read_dir(&full).is_ok() {
-            return Err(err_chain(&error));
+            return Err(chained(error));
         }
         skip.insert(path);
         if !error.classify().is_not_found() {
@@ -529,7 +524,7 @@ fn untracked<H: FnMut(&BStr)>(
 /// Every file of the tree as git sees it, without reading any: what the index
 /// holds and what is untracked and not ignored.
 pub(crate) fn list(repo: &gix::Repository) -> Result<Vec<RepoPath>, GitError> {
-    let index = repo.index_or_empty().map_err(|error| err_chain(&error))?;
+    let index = repo.index_or_empty().map_err(chained)?;
     let tracked = index.entries().iter().map(|e| e.path(&index).to_vec());
     let mut files: Vec<RepoPath> = tracked
         .chain(untracked(repo, &index, |_| {})?.into_iter().map(|p| p.to_vec()))
@@ -554,7 +549,7 @@ fn scan_with<H: FnMut(&BStr)>(
 ) -> Result<Scan, GitError> {
     let mut wt = Worktree::new(repo, blobs, stats, cap)?;
     wt.use_stat_cache();
-    let index = repo.index_or_empty().map_err(|error| err_chain(&error))?;
+    let index = repo.index_or_empty().map_err(chained)?;
     let mut entries = BTreeMap::new();
     let mut unavailable = Vec::new();
     let mut work: Vec<(BString, Option<gix::index::Entry>)> = Vec::new();

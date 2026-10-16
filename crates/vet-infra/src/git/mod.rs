@@ -173,10 +173,7 @@ impl GixRepo {
         f: impl FnOnce(&Inner) -> Result<T, GitError> + Send + 'static,
     ) -> Result<T, GitError> {
         let inner = self.0.clone();
-        self.1
-            .blocking(move || f(&inner))
-            .await
-            .map_err(|error| err_chain(&error))?
+        self.1.blocking(move || f(&inner)).await.map_err(chained)?
     }
 
     async fn write_batch(&self, root: &Path, batch: Vec<Pending>) -> Result<Vec<BlobId>, GitError> {
@@ -192,10 +189,10 @@ impl Inner {
         } else {
             gix::open(&self.root)
         }
-        .map_err(|error| err_chain(&error))?;
+        .map_err(chained)?;
         // Ref updates write reflog entries, which need a committer; this only fills in a missing one.
         repo.committer_or_set_fallback(FALLBACK_NAME, FALLBACK_EMAIL)
-            .map_err(|error| err_chain(&error))?;
+            .map_err(chained)?;
         Ok(repo)
     }
 
@@ -205,7 +202,7 @@ impl Inner {
         if let Some(opened) = self.opened.get() {
             return Ok(opened.to_thread_local());
         }
-        let opened = gix::ThreadSafeRepository::open(&self.root).map_err(|error| err_chain(&error))?;
+        let opened = gix::ThreadSafeRepository::open(&self.root).map_err(chained)?;
         Ok(self.opened.get_or_init(|| opened).to_thread_local())
     }
 
@@ -330,12 +327,8 @@ impl BlobSession for Session<'_> {
 
 impl History for GixRepo {
     async fn head(&self) -> Result<CommitId, GitError> {
-        self.blocking(|i| {
-            Ok(CommitId(
-                i.open()?.head_id().map_err(|error| err_chain(&error))?.to_string(),
-            ))
-        })
-        .await
+        self.blocking(|i| Ok(CommitId(i.open()?.head_id().map_err(chained)?.to_string())))
+            .await
     }
 
     async fn user_name(&self) -> Option<String> {
@@ -450,7 +443,7 @@ impl ChangesetRefs for GixRepo {
             let id = object_id(&commit)?;
             i.open()?
                 .reference(name, id, gix::refs::transaction::PreviousValue::Any, "vet changeset")
-                .map_err(|error| err_chain(&error))?;
+                .map_err(chained)?;
             Ok(())
         })
         .await
@@ -459,13 +452,10 @@ impl ChangesetRefs for GixRepo {
     async fn delete_changeset_refs(&self, changeset: ChangesetId) -> Result<(), GitError> {
         self.blocking(move |i| {
             let repo = i.open()?;
-            let platform = repo.references().map_err(|error| err_chain(&error))?;
+            let platform = repo.references().map_err(chained)?;
             let prefix = changeset_ref_prefix(changeset);
-            for reference in platform.prefixed(prefix.as_str()).map_err(|error| err_chain(&error))? {
-                reference
-                    .map_err(|error| err_chain(&error))?
-                    .delete()
-                    .map_err(|error| err_chain(&error))?;
+            for reference in platform.prefixed(prefix.as_str()).map_err(chained)? {
+                reference.map_err(chained)?.delete().map_err(chained)?;
             }
             Ok(())
         })
@@ -529,8 +519,8 @@ fn err(message: impl Display) -> GitError {
 
 /// A git error from an error with a cause chain, so the innermost cause is kept: an
 /// outer frame often names only the operation while the innermost holds what the OS said.
-fn err_chain(error: &(dyn std::error::Error + 'static)) -> GitError {
-    GitError::failed(redact(error))
+fn chained(error: impl std::error::Error + 'static) -> GitError {
+    GitError::failed(redact(&error))
 }
 
 /// The text of `error` and of every cause below it, with URLs redacted.
