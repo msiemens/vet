@@ -4,12 +4,14 @@
 
 #![cfg(debug_assertions)]
 
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use crate::common::{Client, background_live, config, write};
-use crate::pushes::{Rig, fixture, push_again, remote};
+use crate::common::{Client, background_live, background_started, config, write};
+use crate::pushes::{Mock, Rig, Served, fixture, push_again, remote};
 use crate::review_screen;
 use vet_backend::{Config, Injected, Orchestrator};
+use vet_infra::platform::fake::Fake;
 use vet_protocol::{ChangesetKey, ProjectId, Request, ReviewFilter};
 
 /// What a case does to the project while the review screen shows a pull request.
@@ -79,6 +81,64 @@ fn narrowed() -> ReviewFilter {
     }
 }
 
+/// Does `act` to the project of `rig`, whose pull request 7 is on view.
+async fn perform(act: Act, rig: &Rig, mock: &Arc<Mutex<Mock>>, served: &Served) {
+    let (client, project) = (&rig.client, rig.project);
+    match act {
+        Act::FinishReview => {
+            client.call(Request::FinishReview { project }).await.unwrap();
+        }
+        Act::SetFilter => {
+            client
+                .call(Request::SetProjectFilter {
+                    project,
+                    filter: narrowed(),
+                })
+                .await
+                .unwrap();
+        }
+        Act::Narrow => {
+            client
+                .call(Request::NarrowReview {
+                    project,
+                    changeset: ChangesetKey::PullRequest {
+                        remote: remote().into(),
+                        number: 7,
+                    },
+                    filter: Some(narrowed()),
+                })
+                .await
+                .unwrap();
+        }
+        Act::Exclude => {
+            client
+                .call(Request::ExcludePath {
+                    project,
+                    path: "a.txt".into(),
+                    directory: false,
+                })
+                .await
+                .unwrap();
+        }
+        Act::FetchMovesPullRequest => {
+            push_again(mock, served);
+            rig.fetch().await;
+        }
+        Act::OpenChangeset => {
+            client
+                .call(Request::OpenChangeset {
+                    project,
+                    changeset: ChangesetKey::WorkingTree,
+                })
+                .await
+                .unwrap();
+        }
+        Act::RefreshProblems => {
+            client.call(Request::RefreshProblems { project }).await.unwrap();
+        }
+    }
+}
+
 #[tokio::test]
 async fn the_analysis_starts_again_for_whatever_moves_the_revision_or_asks_for_it_and_for_nothing_else() {
     let cases = [
@@ -108,60 +168,7 @@ async fn the_analysis_starts_again_for_whatever_moves_the_revision_or_asks_for_i
             "{act:?}: the analysis ran again with nothing changed"
         );
 
-        let pull_request = ChangesetKey::PullRequest {
-            remote: remote().into(),
-            number: 7,
-        };
-        match act {
-            Act::FinishReview => {
-                client.call(Request::FinishReview { project }).await.unwrap();
-            }
-            Act::SetFilter => {
-                client
-                    .call(Request::SetProjectFilter {
-                        project,
-                        filter: narrowed(),
-                    })
-                    .await
-                    .unwrap();
-            }
-            Act::Narrow => {
-                client
-                    .call(Request::NarrowReview {
-                        project,
-                        changeset: pull_request,
-                        filter: Some(narrowed()),
-                    })
-                    .await
-                    .unwrap();
-            }
-            Act::Exclude => {
-                client
-                    .call(Request::ExcludePath {
-                        project,
-                        path: "a.txt".into(),
-                        directory: false,
-                    })
-                    .await
-                    .unwrap();
-            }
-            Act::FetchMovesPullRequest => {
-                push_again(&mock, &served);
-                rig.fetch().await;
-            }
-            Act::OpenChangeset => {
-                client
-                    .call(Request::OpenChangeset {
-                        project,
-                        changeset: ChangesetKey::WorkingTree,
-                    })
-                    .await
-                    .unwrap();
-            }
-            Act::RefreshProblems => {
-                client.call(Request::RefreshProblems { project }).await.unwrap();
-            }
-        }
+        perform(act, &rig, &mock, &served).await;
 
         // The restart is decided before the reply goes out.
         let now = starts(client, project);
@@ -248,7 +255,7 @@ async fn quiet_right_after_the_review_screen_comes_up_waits_for_the_analysis_it_
 }
 
 /// An edit of the working tree settles into a new revision without any request to tell the backend,
-/// and the analysis follows it.
+/// and the analysis and the work that follows the snapshots follow it.
 #[tokio::test]
 async fn a_revision_the_settled_working_tree_brings_restarts_the_analysis() {
     let rig = review_screen::Rig::start().await;
@@ -256,17 +263,93 @@ async fn a_revision_the_settled_working_tree_brings_restarts_the_analysis() {
     rig.show_review(true).await;
     // A clean tree has nothing to analyse: the first runs end at once.
     let before = at_rest(client, project).await;
+    let work = snapshot_work(client, project);
 
     write(rig.repo.path(), "src/lib.rs", "pub fn f() -> u32 {\n    7\n}\n");
 
     for _ in 0..6000 {
         let now = starts(client, project);
         if now.0 > before.0 && now.1 > before.1 {
+            let now = snapshot_work(client, project);
+            assert!(
+                now[0] > work[0] && now[1] > work[1],
+                "the settled snapshot did not retire and start the servers again: {work:?} {now:?}"
+            );
             return;
         }
         tokio::time::sleep(Duration::from_millis(10)).await;
     }
     panic!("the settled edit did not start the analysis again");
+}
+
+/// How often the retiring of servers, the start of servers and the checks started, which follow the
+/// snapshots.
+fn snapshot_work(client: &Client, project: ProjectId) -> [usize; 3] {
+    ["retire", "servers", "checks"].map(|kind| background_started(client, project, kind))
+}
+
+/// A pull request on view on the review screen, its analysis at rest.
+async fn shown_pull_request() -> (Rig, Fake, Arc<Mutex<Mock>>, Served) {
+    let (mock, fake, repo, scratch, served) = fixture();
+    let rig = Rig::start(&fake, repo, scratch).await;
+    rig.open().await;
+    rig.toggle_file("a.txt").await;
+    rig.client
+        .call(Request::SetReviewShown {
+            project: rig.project,
+            shown: true,
+        })
+        .await
+        .unwrap();
+    at_rest(&rig.client, rig.project).await;
+    rig.client
+        .call(Request::WaitForQuiet { project: rig.project })
+        .await
+        .unwrap();
+    (rig, fake, mock, served)
+}
+
+/// A new filter changes the files the analysis covers and no snapshot, so only the analysis starts
+/// again: the servers, their retiring and the checks do not depend on the filter.
+#[tokio::test]
+async fn a_new_filter_restarts_the_analysis_but_not_the_work_that_follows_the_snapshots() {
+    for act in [Act::SetFilter, Act::Narrow, Act::Exclude] {
+        let (rig, _fake, mock, served) = shown_pull_request().await;
+        let (client, project) = (&rig.client, rig.project);
+        let analysis = starts(client, project);
+        let work = snapshot_work(client, project);
+        assert!(
+            work.iter().all(|started| *started > 0),
+            "{act:?}: the work was not started before: {work:?}"
+        );
+
+        perform(act, &rig, &mock, &served).await;
+
+        restarted(client, project, |now| now.0 > analysis.0 && now.1 > analysis.1).await;
+        client.call(Request::WaitForQuiet { project }).await.unwrap();
+        assert_eq!(
+            snapshot_work(client, project),
+            work,
+            "{act:?}: work that does not depend on the filter started again"
+        );
+    }
+}
+
+#[tokio::test]
+async fn a_snapshot_that_moves_restarts_the_analysis_and_the_work_that_follows_the_snapshots() {
+    let (rig, _fake, mock, served) = shown_pull_request().await;
+    let (client, project) = (&rig.client, rig.project);
+    let analysis = starts(client, project);
+    let work = snapshot_work(client, project);
+
+    perform(Act::FetchMovesPullRequest, &rig, &mock, &served).await;
+
+    restarted(client, project, |now| now.0 > analysis.0 && now.1 > analysis.1).await;
+    let now = snapshot_work(client, project);
+    assert!(
+        now.iter().zip(work).all(|(now, before)| *now > before),
+        "not all of retire, servers and checks started again: {work:?} {now:?}"
+    );
 }
 
 #[tokio::test]

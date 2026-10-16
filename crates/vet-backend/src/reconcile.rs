@@ -15,7 +15,8 @@ use crate::supervisor::{Change, Inputs, Policy, State};
 use crate::{Open, checks, copy, problems, servers, symbols};
 
 /// Starts the loop that reconciles the project once its first scan is done, and again whenever the
-/// revision or an input changes. `entry` is how it reaches the project without keeping it open.
+/// revision or an input changes; a move of the snapshots moves the revision too, so watching the
+/// revision wakes it for both. `entry` is how it reaches the project without keeping it open.
 pub(crate) fn attach(
     supervisor: &Supervisor,
     policy: &Policy,
@@ -31,7 +32,7 @@ pub(crate) async fn reconcile(open: &Arc<Open>) {
     let mut turn = open.policy.reconciling().await;
     let state = match open.booted_now() {
         Some(booted) => State {
-            revision: Some(booted.session.revision().await),
+            position: Some(booted.session.position().await),
             shown: open.screens.shown(),
             pull_request: matches!(booted.session.source().await, Source::PullRequest { .. }),
         },

@@ -13,6 +13,7 @@ use std::time::Duration;
 use futures::future::BoxFuture;
 use tokio::sync::{MutexGuard, OwnedMutexGuard, watch};
 use vet_app::ports::{Clock, Watcher};
+use vet_app::session::Position;
 use vet_app::settle::{SettleFlush, Settling};
 use vet_app::supervise::{Supervisor, Trigger};
 
@@ -239,9 +240,13 @@ impl Inputs {
 }
 
 /// What a run of a keyed kind was started for.
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, Default, PartialEq, Eq)]
 struct Key {
+    /// The revision on view, for the kinds the filter changes the files of; zero for the others.
     revision: u32,
+    /// How often the snapshots moved, for the kinds that depend on the snapshots alone; zero for
+    /// the others, which the revision tells of every move.
+    snapshot: u32,
     policy: u32,
     servers: u32,
     /// Which asking for a rerun the run answers; zero for a kind that cannot be asked for one.
@@ -266,7 +271,7 @@ struct Ran {
 pub(crate) enum Change {
     /// The run, if one is alive, is the one wanted, or it ended for the key wanted.
     Keep,
-    /// Start a run for this revision, replacing an older one.
+    /// Start a run for this revision on view, replacing an older one.
     Start(u32),
     /// Nothing is wanted: end the run.
     Stop,
@@ -275,8 +280,8 @@ pub(crate) enum Change {
 /// What the project is in, as far as the keyed work depends on it.
 #[derive(Clone, Copy, Default)]
 pub(crate) struct State {
-    /// The revision on view; none until the project has scanned.
-    pub(crate) revision: Option<u32>,
+    /// The revision and snapshot count on view, read together; none until the project has scanned.
+    pub(crate) position: Option<Position>,
     /// Whether a connection shows the review screen.
     pub(crate) shown: bool,
     /// Whether the changeset on view is a pull request.
@@ -467,65 +472,74 @@ pub(crate) struct Reconciliation<'a> {
 
 impl Reconciliation<'_> {
     /// What to do with each keyed kind in `state`. The servers and the symbols and problems analysis
-    /// are for the review screen: they depend on the revision on view, the policy the servers run
-    /// under and replaced servers. Retiring the servers that run under a policy not allowed any more
-    /// is for every screen, since a question on any of them may have started one. The checks are
-    /// for the pull request on view, on any screen. The copy ahead is for the review screen, when
-    /// the quiet tree or the screen coming up asked for it, until the next tree settles.
+    /// are for the review screen: they depend on the policy the servers run under and on replaced
+    /// servers. The servers, the retiring and the checks depend on the snapshots alone, so a new
+    /// filter leaves them be. The symbols and problems depend on the revision, since the filter
+    /// decides which files they cover. Retiring the servers that run under a policy not allowed any
+    /// more is for every screen, since a question on any of them may have started one. The checks
+    /// are for the pull request on view, on any screen. The copy ahead is for the review screen,
+    /// when the quiet tree or the screen coming up asked for it, until the next tree settles; it
+    /// copies the working tree's content, which neither a filter nor a revision changes, so it
+    /// depends on neither.
     pub(crate) fn decide(&mut self, state: State) -> Decision {
-        let key = |revision| Key {
-            revision,
-            policy: self.inputs.policy,
-            servers: 0,
-            rerun: 0,
-            accounts: 0,
+        let inputs = self.inputs;
+        let snapshots = |position: Position| Key {
+            snapshot: position.snapshot,
+            policy: inputs.policy,
+            ..Key::default()
         };
-        let retire = state.revision.map(key);
-        let servers = state.revision.filter(|_| state.shown).map(|revision| Key {
-            servers: self.inputs.servers,
-            ..key(revision)
+        let retire = state.position.map(snapshots);
+        let shown = state.position.filter(|_| state.shown);
+        let servers = shown.map(|position| Key {
+            servers: inputs.servers,
+            ..snapshots(position)
         });
-        let problems = servers.map(|key| Key {
-            rerun: self.inputs.problems,
+        let symbols = shown.map(|position| Key {
+            revision: position.revision,
+            policy: inputs.policy,
+            servers: inputs.servers,
+            ..Key::default()
+        });
+        let problems = symbols.map(|key| Key {
+            rerun: inputs.problems,
             ..key
         });
-        let checks = state.revision.filter(|_| state.pull_request).map(|revision| Key {
-            policy: 0,
-            rerun: self.inputs.checks,
-            accounts: self.inputs.accounts,
-            ..key(revision)
+        let checks = state.position.filter(|_| state.pull_request).map(|position| Key {
+            snapshot: position.snapshot,
+            rerun: inputs.checks,
+            accounts: inputs.accounts,
+            ..Key::default()
         });
-        let copy = state
-            .revision
-            .filter(|_| state.shown && self.inputs.copying)
-            .map(|_| Key {
-                rerun: self.inputs.copies,
-                ..key(0)
-            });
+        let copy = state.position.filter(|_| state.shown && inputs.copying).map(|_| Key {
+            rerun: inputs.copies,
+            ..Key::default()
+        });
         let checks_after_action = matches!(
             (self.ran.checks, checks),
-            (Some(ran), Some(wanted)) if ran.revision == wanted.revision && ran.rerun != wanted.rerun
+            (Some(ran), Some(wanted)) if ran.snapshot == wanted.snapshot && ran.rerun != wanted.rerun
         );
+        let revision = state.position.map_or(0, |position| position.revision);
         Decision {
-            retire: change(&mut self.ran.retire, retire),
-            servers: change(&mut self.ran.servers, servers),
-            symbols: change(&mut self.ran.symbols, servers),
-            problems: change(&mut self.ran.problems, problems),
-            checks: change(&mut self.ran.checks, checks),
-            copy: change(&mut self.ran.copy, copy),
+            retire: change(&mut self.ran.retire, retire, revision),
+            servers: change(&mut self.ran.servers, servers, revision),
+            symbols: change(&mut self.ran.symbols, symbols, revision),
+            problems: change(&mut self.ran.problems, problems, revision),
+            checks: change(&mut self.ran.checks, checks, revision),
+            copy: change(&mut self.ran.copy, copy, revision),
             checks_after_action,
         }
     }
 }
 
-/// Remembers `wanted` as the key `ran` last ran for, and says what that asks of the run.
-fn change(ran: &mut Option<Key>, wanted: Option<Key>) -> Change {
+/// Remembers `wanted` as the key `ran` last ran for, and says what that asks of the run, which
+/// starts for the `revision` on view.
+fn change(ran: &mut Option<Key>, wanted: Option<Key>, revision: u32) -> Change {
     if *ran == wanted {
         return Change::Keep;
     }
     *ran = wanted;
     match wanted {
-        Some(key) => Change::Start(key.revision),
+        Some(_) => Change::Start(revision),
         None => Change::Stop,
     }
 }
@@ -534,9 +548,18 @@ fn change(ran: &mut Option<Key>, wanted: Option<Key>) -> Change {
 mod tests {
     use super::*;
 
+    /// A state whose snapshots moved with each revision.
     fn on_view(revision: u32, shown: bool, pull_request: bool) -> State {
+        let position = Position {
+            revision,
+            snapshot: revision,
+        };
+        at(position, shown, pull_request)
+    }
+
+    fn at(position: Position, shown: bool, pull_request: bool) -> State {
         State {
-            revision: Some(revision),
+            position: Some(position),
             shown,
             pull_request,
         }
@@ -547,7 +570,10 @@ mod tests {
         let policy = Policy::default();
         let decide = async |revision: Option<u32>| {
             let state = State {
-                revision,
+                position: revision.map(|revision| Position {
+                    revision,
+                    snapshot: revision,
+                }),
                 shown: revision.is_some(),
                 pull_request: false,
             };
@@ -602,6 +628,30 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn a_revision_without_a_moved_snapshot_restarts_only_the_analysis() {
+        let policy = Policy::default();
+        let decide = async |revision, snapshot| {
+            let state = at(Position { revision, snapshot }, true, true);
+            let decision = policy.reconciling().await.decide(state);
+            [
+                decision.retire,
+                decision.servers,
+                decision.checks,
+                decision.symbols,
+                decision.problems,
+            ]
+        };
+        let (keep, start) = (Change::Keep, Change::Start);
+
+        assert_eq!(decide(1, 1).await, [start(1); 5]);
+        // A new filter: the files of the analysis change, the snapshots stay.
+        assert_eq!(decide(2, 1).await, [keep, keep, keep, start(2), start(2)]);
+        assert_eq!(decide(3, 1).await, [keep, keep, keep, start(3), start(3)]);
+        // Moved snapshots restart everything.
+        assert_eq!(decide(4, 2).await, [start(4); 5]);
+    }
+
+    #[tokio::test]
     async fn the_checks_read_once_more_only_for_a_rerun_not_for_a_new_revision() {
         let policy = Policy::default();
         let decide = async |revision| {
@@ -620,28 +670,21 @@ mod tests {
     #[tokio::test]
     async fn the_copy_is_asked_for_by_a_quiet_tree_or_a_screen_coming_up_and_only_while_shown() {
         let policy = Policy::default();
-        let decide = async |shown: bool| {
-            let state = State {
-                revision: Some(1),
-                shown,
-                pull_request: false,
-            };
-            policy.reconciling().await.decide(state).copy
-        };
+        let decide = async |shown: bool| policy.reconciling().await.decide(on_view(1, shown, false)).copy;
 
         // The queue is on screen: a quiet tree asks, and nothing is copied.
         policy.tree_quiet();
         assert_eq!(decide(false).await, Change::Keep);
         // The screen that comes up copies, and what was asked for before is the same copy.
         policy.screen_changed(true);
-        assert_eq!(decide(true).await, Change::Start(0));
+        assert_eq!(decide(true).await, Change::Start(1));
         assert_eq!(decide(true).await, Change::Keep);
 
         // A tree that settles ends the copy of the one before; quiet again copies the new one.
         policy.tree_settled();
         assert_eq!(decide(true).await, Change::Stop);
         policy.tree_quiet();
-        assert_eq!(decide(true).await, Change::Start(0));
+        assert_eq!(decide(true).await, Change::Start(1));
 
         // Leaving the screen ends the copy, and a screen leaving asks for none.
         policy.screen_changed(false);

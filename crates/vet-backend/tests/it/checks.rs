@@ -347,8 +347,9 @@ async fn the_checks_are_read_again_shortly_after_an_action_that_the_platform_sho
     assert!(checks_calls(&mock) >= 3, "the settle read reached the new run");
 }
 
+#[cfg(debug_assertions)]
 #[tokio::test]
-async fn a_revision_move_on_a_pull_request_reads_the_checks_again() {
+async fn a_new_filter_on_a_pull_request_does_not_read_the_checks_again() {
     let (mock, fake, repo, _scratch) = fixture();
     mock.lock().unwrap().check_runs = CHECKS_SUCCESS.to_owned();
     let (_handler, mut client) = backend(repo.path(), &fake.base()).await;
@@ -356,7 +357,7 @@ async fn a_revision_move_on_a_pull_request_reads_the_checks_again() {
     let _ = next_checks(&mut client.inbox, project, Duration::from_secs(5))
         .await
         .expect("a round");
-    assert_eq!(checks_calls(&mock), 1);
+    assert_eq!(background_started(&client, project, "checks"), 1);
 
     client
         .call(Request::SetProjectFilter {
@@ -368,11 +369,14 @@ async fn a_revision_move_on_a_pull_request_reads_the_checks_again() {
         })
         .await
         .unwrap();
+    client.call(Request::WaitForQuiet { project }).await.unwrap();
 
-    let (again, ..) = next_checks(&mut client.inbox, project, Duration::from_secs(5))
-        .await
-        .expect("the checks are read again for the new revision");
-    assert_eq!(again[0].state, Some(CiState::Success));
+    assert_eq!(
+        background_started(&client, project, "checks"),
+        1,
+        "no snapshot moved, so the checks run is the one that was"
+    );
+    assert_eq!(checks_calls(&mock), 1);
 }
 
 #[tokio::test]
