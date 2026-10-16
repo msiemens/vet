@@ -217,20 +217,24 @@ async fn a_readable_sibling_that_sorts_first_survives_an_unreadable_directory() 
 }
 
 #[tokio::test]
-async fn a_failure_that_is_not_the_directory_itself_is_not_skipped_over() {
+async fn an_unreadable_ignore_file_skips_its_directory_and_reports_the_rest() {
     let dir = repo();
     let p = dir.path();
     std::fs::create_dir_all(p.join("sub")).unwrap();
-    std::fs::write(p.join("sub/kept.txt"), "kept\n").unwrap();
+    std::fs::write(p.join("sub/tracked.txt"), "tracked\n").unwrap();
+    std::fs::write(p.join("tracked.txt"), "tracked\n").unwrap();
+    git(p, &["add", "-A"]);
+    git(p, &["commit", "-q", "-m", "c"]);
     std::fs::write(p.join("sub/.gitignore"), "*.tmp\n").unwrap();
+    std::fs::write(p.join("sub/untracked.txt"), "untracked\n").unwrap();
+    std::fs::write(p.join("untracked.txt"), "untracked\n").unwrap();
 
-    // The walk fails reading the ignore file inside the readable `sub`, not reading
-    // `sub` itself: skipping `sub` would drop its untracked files.
     let _denied = Denied::new(&p.join("sub/.gitignore"));
-    let scan = reconcile(p).await;
+    let scan = reconcile(p).await.unwrap();
 
-    assert!(
-        scan.is_err(),
-        "a directory that reads fine must not be skipped, dropping its files"
+    assert_eq!(
+        names(&scan),
+        ["sub/tracked.txt", "tracked.txt", "untracked.txt"],
+        "the directory with the unreadable ignore file is skipped; the rest is reconciled"
     );
 }

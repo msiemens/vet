@@ -48,6 +48,44 @@ fn a_directory_that_vanishes_during_the_walk_is_left_out_and_the_scan_succeeds()
     );
 }
 
+#[cfg(unix)]
+#[test]
+fn an_unreadable_ignore_file_is_skipped_and_the_warning_names_it() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let (_dir, repo) = repo();
+    let root = repo.workdir().unwrap().to_owned();
+    std::fs::create_dir_all(root.join("sub")).unwrap();
+    std::fs::write(root.join("sub/.gitignore"), "*.tmp\n").unwrap();
+    std::fs::write(root.join("sub/kept.txt"), "kept\n").unwrap();
+    std::fs::write(root.join("kept.txt"), "kept\n").unwrap();
+
+    let capture = vet_log::capture::Capture::default();
+    let _log = capture.install(vet_log::filter(Some("warn")).0);
+    let deny = |path: &BStr| {
+        if path == b"sub".as_bstr() {
+            let ignore = root.join("sub/.gitignore");
+            let mut mode = std::fs::metadata(&ignore).unwrap().permissions();
+            mode.set_mode(0o000);
+            std::fs::set_permissions(&ignore, mode).unwrap();
+        }
+    };
+
+    let result = scan_with(&repo, &BlobCache::default(), &StatCache::default(), DEFAULT_CAP, deny).unwrap();
+
+    assert_eq!(
+        names(&result),
+        ["kept.txt"],
+        "the untracked files under the skipped directory are left out"
+    );
+    assert!(
+        capture.text().contains("sub/.gitignore") && capture.text().contains("os error"),
+        "the warning names the file that could not be read and the OS error: {}",
+        capture.text()
+    );
+    std::fs::set_permissions(root.join("sub/.gitignore"), std::fs::Permissions::from_mode(0o644)).unwrap();
+}
+
 #[test]
 fn a_file_that_vanishes_during_the_walk_is_left_out_without_a_warning() {
     let (_dir, repo) = repo();

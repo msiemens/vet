@@ -446,10 +446,10 @@ impl<H: FnMut(&BStr)> gix::dir::walk::Delegate for SkipToolStores<H> {
 
 /// The files git neither tracks nor ignores, tool stores left out. The dirwalk only
 /// knows an index entry is tracked if it is flagged up to date, so it may report
-/// tracked files too; callers skip those. A directory that cannot be read is left
-/// out rather than treated as if it held nothing: the walk is run again with it
-/// skipped, since the walk aborts on the first directory it cannot read and offers
-/// no way to continue.
+/// tracked files too; callers skip those. A directory the walk cannot read — its
+/// entries or the ignore file inside it — is left out rather than treated as if it
+/// held nothing: the walk is run again with it skipped, since gix aborts on the first
+/// thing it cannot read and offers no way to continue past it.
 fn untracked<H: FnMut(&BStr)>(
     repo: &gix::Repository,
     index: &gix::worktree::Index,
@@ -503,22 +503,45 @@ fn untracked<H: FnMut(&BStr)>(
         if path.is_empty() || skip.contains(&path) {
             return Err(chained(error));
         }
-        // `last_dir` could be a wrong guess if the walk failed reading something
-        // else. A directory that reads now is not the one to skip: skipping a
-        // readable directory would hide the untracked files inside it.
+        // `last_dir` names the directory the walk was reading when it failed, but it
+        // could be a wrong guess. The walk reads a directory's entries and the ignore
+        // file inside it; only a failure on one of those is really about this directory,
+        // and skipping a readable directory would hide the untracked files inside it.
         let full = paths::to_path(path.as_bstr()).map_or_else(|_| root.clone(), |rela| root.join(rela));
-        if std::fs::read_dir(&full).is_ok() {
-            return Err(chained(error));
-        }
+        let unreadable = if std::fs::read_dir(&full).is_err() {
+            full.clone()
+        } else {
+            let ignore = full.join(".gitignore");
+            if !ignore_unreadable(&ignore) {
+                return Err(chained(error));
+            }
+            ignore
+        };
         skip.insert(path);
         if !error.classify().is_not_found() {
             tracing::warn!(
-                path = %full.display(),
+                directory = %full.display(),
+                unreadable = %unreadable.display(),
                 error = %super::chain_text(&error),
                 "skipping a directory the working tree cannot be read"
             );
         }
     }
+}
+
+/// Whether gix would fail to read `path` as an ignore file. A file that is not there, or a
+/// directory in its place, is not a failure.
+fn ignore_unreadable(path: &Path) -> bool {
+    match std::fs::read(path) {
+        Ok(_) => false,
+        Err(error) => error.kind() != ErrorKind::NotFound && !names_a_directory(&error),
+    }
+}
+
+/// Whether the OS reports the path as a directory rather than a readable file.
+fn names_a_directory(error: &std::io::Error) -> bool {
+    matches!(error.kind(), ErrorKind::IsADirectory | ErrorKind::NotADirectory)
+        || cfg!(windows) && error.kind() == ErrorKind::PermissionDenied
 }
 
 /// Every file of the tree as git sees it, without reading any: what the index
