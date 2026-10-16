@@ -10,7 +10,7 @@ use vet_protocol::{Event, ProjectId};
 use crate::error::{Error, Result};
 use crate::events::Connection;
 use crate::feed::run_feed;
-use crate::{Open, Orchestrator, scan_in_background};
+use crate::{Open, Orchestrator};
 
 impl Orchestrator {
     /// The project id and the root of the repository containing `repo`. The first
@@ -27,7 +27,7 @@ impl Orchestrator {
             })
             .await?;
         // A connection that joins while edits wait was not there when it was told.
-        if !created && open.edits_waiting() {
+        if !created && open.policy.settle().edits_waiting() {
             joining.0.send(Event::EditsPending {
                 project: open.id,
                 pending: true,
@@ -37,7 +37,10 @@ impl Orchestrator {
             let _ = entry.set(Arc::downgrade(&open));
             let (projects, id, grace) = (self.projects.clone(), open.id, self.config.orphan_grace);
             tokio::spawn(async move { projects.reap(id, grace, &TokioClock::new()).await });
-            scan_in_background(open.clone());
+            let booting = open.clone();
+            open.supervisor.start("boot", async move {
+                let _ = booting.booted().await;
+            });
             // The timer is not a counted run: a client waiting for quiet must not wait for it.
             let timer = open.fetches.clone().every(self.config.fetch_interval);
             open.supervisor.start("fetch timer", timer);

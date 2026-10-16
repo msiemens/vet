@@ -281,10 +281,14 @@ async fn backend(data: &Path, fake: &Fake) -> (Arc<Orchestrator>, Client) {
 
 /// A backend whose remotes are fetched every `fetch_interval`.
 async fn backend_fetching_every(data: &Path, fake: &Fake, fetch_interval: Duration) -> (Arc<Orchestrator>, Client) {
-    let orchestrator = Arc::new(
-        Orchestrator::new(open_store(data).await.unwrap(), config_fetching_every(fetch_interval))
-            .with_platform_endpoints(None, Some(&fake.base())),
-    );
+    let orchestrator = Orchestrator::new(open_store(data).await.unwrap(), config_fetching_every(fetch_interval))
+        .with_platform_endpoints(None, Some(&fake.base()));
+    signed_in(orchestrator).await
+}
+
+/// `orchestrator` with a client that holds the credential the fake accepts.
+async fn signed_in(orchestrator: Orchestrator) -> (Arc<Orchestrator>, Client) {
+    let orchestrator = Arc::new(orchestrator);
     let client = Client::new(&orchestrator);
     client
         .call(Request::SetCredentials {
@@ -301,6 +305,31 @@ impl Rig {
     pub(crate) async fn start(fake: &Fake, repo: tempfile::TempDir, scratch: tempfile::TempDir) -> Self {
         let data = tempfile::tempdir().unwrap();
         let (_orchestrator, client) = backend(data.path(), fake).await;
+        let project = client.open(repo.path()).await;
+        Self {
+            client,
+            project,
+            _repo: repo,
+            _data: data,
+            _scratch: scratch,
+        }
+    }
+
+    /// As `start`, the symbols analysis of `path` failing as `failures` says, each try pausing
+    /// before the next: the analysis of a file stays under way for as long as those take.
+    #[cfg(debug_assertions)]
+    pub(crate) async fn start_failing(
+        fake: &Fake,
+        repo: tempfile::TempDir,
+        scratch: tempfile::TempDir,
+        path: &str,
+        failures: Vec<vet_backend::Injected>,
+    ) -> Self {
+        let data = tempfile::tempdir().unwrap();
+        let orchestrator = Orchestrator::new(open_store(data.path()).await.unwrap(), config())
+            .with_platform_endpoints(None, Some(&fake.base()))
+            .with_analysis_failing(path, failures);
+        let (_orchestrator, client) = signed_in(orchestrator).await;
         let project = client.open(repo.path()).await;
         Self {
             client,

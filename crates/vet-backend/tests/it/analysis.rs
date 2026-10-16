@@ -9,7 +9,7 @@ use std::time::Duration;
 use crate::common::{Client, background_live, config, write};
 use crate::pushes::{Rig, fixture, push_again, remote};
 use crate::review_screen;
-use vet_backend::{Config, Orchestrator};
+use vet_backend::{Config, Injected, Orchestrator};
 use vet_protocol::{ChangesetKey, ProjectId, Request, ReviewFilter};
 
 /// What a case does to the project while the review screen shows a pull request.
@@ -187,6 +187,66 @@ async fn the_analysis_starts_again_for_whatever_moves_the_revision_or_asks_for_i
     }
 }
 
+/// Waits for quiet, then says how often each analysis started and how many of them are alive.
+async fn quiet_analysis(client: &Client, project: ProjectId) -> ((usize, usize), (usize, usize)) {
+    client.call(Request::WaitForQuiet { project }).await.unwrap();
+    (
+        client.handler.background_counts(project, "symbols"),
+        client.handler.background_counts(project, "problems"),
+    )
+}
+
+#[tokio::test]
+async fn quiet_after_finish_review_is_answered_only_once_the_new_revisions_analysis_ended() {
+    let (_mock, fake, repo, scratch, _served) = fixture();
+    // Every try of a.txt fails for a reason that can pass, so each run of the symbols analysis
+    // stays under way for the pauses between its tries: one run takes three failures.
+    let failures = vec![Injected::Store; 6];
+    let rig = Rig::start_failing(&fake, repo, scratch, "a.txt", failures).await;
+    let (client, project) = (&rig.client, rig.project);
+    rig.open().await;
+    rig.toggle_file("a.txt").await;
+    client
+        .call(Request::SetReviewShown { project, shown: true })
+        .await
+        .unwrap();
+    let before = at_rest(client, project).await;
+
+    client.call(Request::FinishReview { project }).await.unwrap();
+    assert_eq!(
+        client.handler.background_counts(project, "symbols").1,
+        1,
+        "the new revision's analysis is under way when the reply goes out"
+    );
+    let (symbols, problems) = quiet_analysis(client, project).await;
+
+    assert!(
+        symbols.0 > before.0 && problems.0 > before.1,
+        "the analysis of the new revision did not start: {symbols:?} {problems:?}"
+    );
+    assert_eq!((symbols.1, problems.1), (0, 0), "quiet was answered while it ran");
+}
+
+#[tokio::test]
+async fn quiet_right_after_the_review_screen_comes_up_waits_for_the_analysis_it_started() {
+    let (_mock, fake, repo, scratch, _served) = fixture();
+    let rig = Rig::start(&fake, repo, scratch).await;
+    let (client, project) = (&rig.client, rig.project);
+    rig.open().await;
+    rig.toggle_file("a.txt").await;
+    client.call(Request::WaitForQuiet { project }).await.unwrap();
+    assert_eq!(starts(client, project), (0, 0), "no analysis off the review screen");
+
+    client
+        .call(Request::SetReviewShown { project, shown: true })
+        .await
+        .unwrap();
+    let (symbols, problems) = quiet_analysis(client, project).await;
+
+    assert!(symbols.0 > 0 && problems.0 > 0, "the analysis never started");
+    assert_eq!((symbols.1, problems.1), (0, 0), "quiet was answered while it ran");
+}
+
 /// An edit of the working tree settles into a new revision without any request to tell the backend,
 /// and the analysis follows it.
 #[tokio::test]
@@ -238,6 +298,21 @@ async fn hiding_the_review_screen_stops_the_analysis_and_closing_the_project_end
         .unwrap();
     ended(&client.handler, project, "symbols").await;
     ended(&client.handler, project, "problems").await;
+}
+
+#[tokio::test]
+async fn closing_the_project_ends_its_settle_loop() {
+    let rig = review_screen::Rig::start().await;
+    let (client, project) = (&rig.client, rig.project);
+    background_live(client, project, "settling", 1).await;
+    assert_eq!(client.handler.background_counts(project, "settling").0, 1);
+
+    tokio::time::timeout(Duration::from_secs(30), client.call(Request::CloseProject { project }))
+        .await
+        .expect("the project closes")
+        .unwrap();
+
+    assert_eq!(client.handler.background_counts(project, "settling"), (1, 0));
 }
 
 /// A window that disappears without saying so leaves the review screen "shown" to nobody, and

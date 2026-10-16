@@ -121,6 +121,16 @@ impl Supervisor {
         lock(&self.0.counts).values().map(|(_, live)| live).sum()
     }
 
+    /// How many runs are alive now, of every kind but `resident`: those that live as long as the
+    /// project and so say nothing of whether it has work.
+    pub fn live_except(&self, resident: &[&str]) -> usize {
+        lock(&self.0.counts)
+            .iter()
+            .filter(|(kind, _)| !resident.contains(kind))
+            .map(|(_, (_, live))| live)
+            .sum()
+    }
+
     /// How often runs of `kind` started and how many are alive now.
     pub fn counts(&self, kind: &'static str) -> (usize, usize) {
         lock(&self.0.counts).get(kind).copied().unwrap_or_default()

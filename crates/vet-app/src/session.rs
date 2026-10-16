@@ -78,7 +78,6 @@ mod views;
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::fmt;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
 
 use tokio::sync::Mutex;
 use vet_core::content::{EntryKind, RepoPath, Snapshot, SnapshotId, SnapshotStatus};
@@ -231,9 +230,6 @@ pub struct LiveSession<G, S: LiveStore> {
     /// What a copy ahead of a review reads and writes through: the session's acquisition over
     /// handles of their own, so that it draws on what nobody waits for.
     copying: Arc<Acquisition<G, S>>,
-    /// Whether `follow` is handling a settled result right now, read by whoever waits for the
-    /// session to go quiet.
-    settling_busy: Arc<AtomicBool>,
     /// What the settle loop asks before reconciling the working tree: while the tree is not on
     /// view and has no open review, edits only mark it changed and are not scanned.
     settle_wanted: Arc<Wanted>,
@@ -409,7 +405,6 @@ impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> L
             revisions: Arc::default(),
             exchange: Mutex::new(()),
             lines: Engine::new(Limits::entries(KEPT_LINE_DELTAS)),
-            settling_busy: Arc::default(),
             settle_wanted: Arc::new(Wanted::new(wanted)),
         }
     }
@@ -941,13 +936,6 @@ impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> L
         self.revisions.clone()
     }
 
-    /// Whether the settle loop is handling a settled result right now: a client that waits for
-    /// the session to go quiet must not answer in the gap between the result and what it
-    /// announces.
-    pub fn settling_busy(&self) -> bool {
-        self.settling_busy.load(Ordering::SeqCst)
-    }
-
     /// The settle loop's gate on the working tree: while the tree is not on view and has no open
     /// review, edits only mark it changed, and coming on view settles it once. The loop must take
     /// it ([`Settling::wanted`](crate::settle::Settling::wanted)) for the gate to apply.
@@ -1138,11 +1126,11 @@ impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> L
     ) {
         self.set_degraded(settling.degraded());
         loop {
-            self.settling_busy.store(false, Ordering::SeqCst);
+            settling.set_busy(false);
             let settled = settling.next_settled(&self.acquisition).await;
             // Handling what settled is work too, even when it is not a scan: a client waiting for
             // quiet must not answer between the result and the event it announces.
-            self.settling_busy.store(true, Ordering::SeqCst);
+            settling.set_busy(true);
             let scan = match settled {
                 Ok(Settled::Tree(scan)) => scan,
                 Ok(Settled::Quiet) => {

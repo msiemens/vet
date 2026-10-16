@@ -7,7 +7,7 @@
 
 use std::ops::Deref;
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, OnceLock, Weak};
 use std::time::{Duration, SystemTime};
 
@@ -20,7 +20,7 @@ use vet_app::progress::Tasks;
 use vet_app::registry::{Resident, Subscribers};
 use vet_app::semantics::{Links, Semantics};
 use vet_app::session::RevisionView;
-use vet_app::settle::{SettleFlush, Settling};
+use vet_app::settle::Settling;
 use vet_app::supervise::Supervisor;
 use vet_core::content::RepoPath;
 use vet_infra::budget::{Budget, Budgets, FETCH_IO};
@@ -51,6 +51,12 @@ use crate::{LanguageServers, Live, Open, Orchestrator, PlatformAccounts, Semanti
 /// The least time between two progress announcements of one task, so a step that
 /// reports per file reaches the UI a few times a second.
 const TASK_UPDATES: Duration = Duration::from_millis(250);
+
+/// The kind under which the first scan, and every later attempt at it, is counted.
+pub(crate) const BOOT: &str = "boot";
+
+/// The kind of the settle loop, which runs from the project's boot until it closes.
+pub(crate) const SETTLING: &str = "settling";
 
 /// What a project runs on once its first scan is done.
 pub(crate) struct Booted {
@@ -107,10 +113,6 @@ pub(crate) struct Wired {
     pub screens: ReviewScreens,
     plan: Plan,
     booted: OnceCell<Arc<Booted>>,
-    /// Whether edits of the working tree wait to settle, as the subscribers were last told.
-    edits_waiting: Arc<AtomicBool>,
-    /// Whether a ref write waits for its window before the branch on view is looked at again.
-    refs_waiting: Arc<AtomicBool>,
     /// The pull request feed: the last listing, and the cycle that keeps it. Its run ends with the
     /// session.
     feed: Feed,
@@ -139,15 +141,6 @@ pub(crate) struct Wired {
     /// The syncs of the pull request on view with its platform, which every cause that asks for
     /// one shares.
     pub(crate) sync: Syncs,
-    /// For tests: how many boots this project attempted and how many settle loops it started, so
-    /// a failed boot can be told from a boot that never happened, and a retry from a second loop.
-    /// A debug build only.
-    #[cfg(debug_assertions)]
-    pub(crate) boots: Arc<AtomicUsize>,
-    #[cfg(debug_assertions)]
-    pub(crate) settles: Arc<AtomicUsize>,
-    /// A client's request to reconcile the working tree now, taken by the settle loop.
-    pub(crate) settle_flush: Arc<SettleFlush>,
 }
 
 impl Wired {
@@ -156,31 +149,19 @@ impl Wired {
     /// kept: a boot that failed is given to the caller that asked for it, and
     /// the next caller that needs the project boots again.
     pub(crate) async fn booted(&self) -> Result<&Arc<Booted>> {
-        self.booted.get_or_try_init(|| self.boot()).await
+        self.booted
+            .get_or_try_init(|| async {
+                let _counted = self.supervisor.counted(BOOT);
+                self.boot().await
+            })
+            .await
     }
 
-    /// Whether edits of the working tree wait to settle into a snapshot.
-    pub(crate) fn edits_waiting(&self) -> bool {
-        self.edits_waiting.load(Ordering::SeqCst)
-    }
-
-    /// Whether a ref write waits for its window before the branch on view is looked at again.
-    pub(crate) fn refs_waiting(&self) -> bool {
-        self.refs_waiting.load(Ordering::SeqCst)
-    }
-
-    /// Whether the project has no background work running or pending: no task of its own, no
-    /// progress task of the session, no edit or ref write waiting to settle, no settled result the
-    /// session has yet to announce, and no reconcile a client asked for and the settle loop has not
-    /// made.
+    /// Whether the project has no background work running or pending: no run of the supervisor
+    /// but the settle loop, no progress task of the session, and the settle loop has nothing
+    /// waiting to settle, no result to announce and no reconcile asked for.
     pub(crate) fn quiet(&self) -> bool {
-        let settling = self.booted_now().is_none_or(|booted| !booted.session.settling_busy());
-        !self.tasks.any_running()
-            && self.supervisor.live() == 0
-            && !self.edits_waiting()
-            && !self.refs_waiting()
-            && settling
-            && !self.settle_flush.requested()
+        !self.tasks.any_running() && self.supervisor.live_except(&[SETTLING]) == 0 && !self.policy.settle().busy()
     }
 
     /// The session if it has scanned successfully already.
@@ -230,8 +211,6 @@ impl Wired {
     }
 
     async fn boot(&self) -> Result<Arc<Booted>> {
-        #[cfg(debug_assertions)]
-        self.boots.fetch_add(1, Ordering::SeqCst);
         let Plan {
             id,
             repo,
@@ -274,12 +253,10 @@ impl Wired {
             Some(session.settled_snapshot().await),
         )
         .quiet_after(quiet.as_millis() as u64)
-        .reporting_edits()
-        .refs_waiting(self.refs_waiting.clone())
-        .flushable(self.settle_flush.clone())
+        .reporting_edits();
         // Off view and without a review, the working tree is not scanned: an edit only marks it
         // changed, and coming on view settles it once.
-        .wanted(session.settle_wanted());
+        let settling = self.policy.settle().report(settling).wanted(session.settle_wanted());
         // Attached once, after the last step that can fail, so the analysis never follows a boot
         // that did not succeed.
         crate::reconcile::attach(
@@ -291,9 +268,11 @@ impl Wired {
         {
             let (session, subscribers, policy) = (session.clone(), subscribers.clone(), self.policy.clone());
             let edit_subscribers = subscribers.clone();
-            let waiting = self.edits_waiting.clone();
             let quiet_policy = policy.clone();
-            self.supervisor.replace("settling", async move {
+            let following = self.policy.clone();
+            let counted = self.supervisor.counted(SETTLING);
+            self.supervisor.replace(SETTLING, async move {
+                let _counted = counted;
                 session
                     .follow(
                         settling,
@@ -303,15 +282,13 @@ impl Wired {
                         },
                         || quiet_policy.tree_quiet(),
                         |pending| {
-                            waiting.store(pending, Ordering::SeqCst);
+                            following.settle().set_edits_waiting(pending);
                             edits_pending(&edit_subscribers, id, pending);
                         },
                     )
                     .await;
             });
         }
-        #[cfg(debug_assertions)]
-        self.settles.fetch_add(1, Ordering::SeqCst);
 
         // The semantic lane reads the same repository and store through handles of its own, so
         // what it reads draws on its budget and never on the review's.
@@ -472,13 +449,8 @@ impl Orchestrator {
         let _ = open.booted().await;
         // An edit the watcher has not delivered yet is work the client would otherwise miss: have
         // the settle loop look at the working tree as it is now.
-        open.settle_flush.request();
-        // The work a change of state calls for is started before it is asked whether any runs.
-        loop {
-            crate::reconcile::reconcile(&open).await;
-            if open.quiet() {
-                break;
-            }
+        open.policy.settle().request_flush();
+        while !crate::reconcile::idle(&open).await {
             tokio::time::sleep(Duration::from_millis(10)).await;
         }
         Ok(Response::Done)
@@ -542,8 +514,6 @@ impl Orchestrator {
                 entry,
             },
             booted: OnceCell::new(),
-            edits_waiting: Arc::default(),
-            refs_waiting: Arc::default(),
             checks_pace: self.config.checks_pace,
             checks_settle: self.config.checks_settle,
             open_files: Arc::default(),
@@ -556,11 +526,6 @@ impl Orchestrator {
             policy: Arc::default(),
             fetches,
             sync,
-            #[cfg(debug_assertions)]
-            boots: Arc::default(),
-            #[cfg(debug_assertions)]
-            settles: Arc::default(),
-            settle_flush: Arc::default(),
         })
     }
 }
@@ -793,13 +758,37 @@ mod tests {
             failed.is_err(),
             "the request that triggered the failed boot is answered with its failure"
         );
-        assert_eq!(open.boots.load(Ordering::SeqCst), 1, "one boot was attempted");
+        assert_eq!(open.supervisor.counts(BOOT).0, 1, "one boot was attempted");
 
         // The repository is back, so the next request boots again and succeeds.
         restore_repo(repo.path());
         let ready = orchestrator.ready(project).await;
         assert!(ready.is_ok(), "the next request boots again: {:?}", ready.err());
-        assert_eq!(open.boots.load(Ordering::SeqCst), 2, "the next request booted again");
+        assert_eq!(open.supervisor.counts(BOOT).0, 2, "the next request booted again");
+    }
+
+    #[tokio::test]
+    async fn a_failed_boot_is_not_retried_by_the_supervisor_before_the_next_request() {
+        let (repo, _texts) = edited_repo(1);
+        let (_data, orchestrator, project, open) = opened_repo(&repo).await;
+
+        // The boot the opening started fails: the repository is gone before it runs.
+        std::fs::remove_dir_all(repo.path()).unwrap();
+        while open.supervisor.counts(BOOT) != (1, 0) {
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+
+        // Restored, the repository would boot: only a request may try it.
+        restore_repo(repo.path());
+        for _ in 0..10 {
+            crate::reconcile::reconcile(&open).await;
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+        assert_eq!(open.supervisor.counts(BOOT), (1, 0), "nothing booted by itself");
+        assert!(open.booted_now().is_none());
+
+        assert!(orchestrator.ready(project).await.is_ok());
+        assert_eq!(open.supervisor.counts(BOOT), (2, 0));
     }
 
     #[tokio::test]
@@ -811,7 +800,7 @@ mod tests {
         let failed = orchestrator.ready(project).await;
         assert!(failed.is_err(), "the boot fails");
         assert_eq!(
-            open.settles.load(Ordering::SeqCst),
+            open.supervisor.counts(SETTLING).0,
             0,
             "a boot that failed before wiring starts no settle loop"
         );
@@ -819,11 +808,37 @@ mod tests {
         restore_repo(repo.path());
         let ready = orchestrator.ready(project).await;
         assert_eq!(
-            open.settles.load(Ordering::SeqCst),
+            open.supervisor.counts(SETTLING).0,
             1,
             "the retry starts exactly one settle loop"
         );
         assert!(ready.is_ok(), "the retry succeeds: {:?}", ready.err());
+    }
+
+    #[tokio::test]
+    async fn idle_starts_what_an_input_change_calls_for_before_it_looks_for_work() {
+        let (repo, _texts) = edited_repo(1);
+        let data = tempfile::tempdir().unwrap();
+        let orchestrator = Orchestrator::new(open_store(data.path()).await.unwrap(), Config::default());
+        let (events, _inbox) = Events::channel();
+        let connection = Connection(events);
+        let (project, _) = orchestrator
+            .open(repo.path().to_str().unwrap(), connection.clone())
+            .await
+            .unwrap();
+        let open = orchestrator.find(project).await.unwrap();
+        orchestrator.ready(project).await.unwrap();
+        while !crate::reconcile::idle(&open).await {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+
+        // The loop that reacts to an input has not run: nothing yielded since the change.
+        open.screens.set(&connection, true);
+        open.policy.screen_changed(true);
+        assert!(
+            !crate::reconcile::idle(&open).await,
+            "the analysis it calls for is under way"
+        );
     }
 
     #[tokio::test]
@@ -834,10 +849,10 @@ mod tests {
         let (first, second) = tokio::join!(orchestrator.ready(project), orchestrator.ready(project));
         assert!(first.is_ok() && second.is_ok(), "both requests are answered");
         assert_eq!(
-            open.boots.load(Ordering::SeqCst),
+            open.supervisor.counts(BOOT).0,
             1,
             "the requests shared the boot in flight"
         );
-        assert_eq!(open.settles.load(Ordering::SeqCst), 1, "exactly one settle loop runs");
+        assert_eq!(open.supervisor.counts(SETTLING).0, 1, "exactly one settle loop runs");
     }
 }

@@ -70,6 +70,14 @@ pub(crate) async fn reconcile(open: &Arc<Open>) {
     }
 }
 
+/// Whether the project has no work: what its state calls for is started first, so no change of an
+/// input falls between its being made and the loop reacting to it, then no run of any kind is
+/// alive or waiting and nothing of the settle loop is pending.
+pub(crate) async fn idle(open: &Arc<Open>) -> bool {
+    reconcile(open).await;
+    open.quiet()
+}
+
 /// Ends with the project.
 async fn keep(
     entry: Arc<OnceLock<Weak<Open>>>,

@@ -201,6 +201,8 @@ pub struct Settling<W, C> {
     wanted: Option<Arc<Wanted>>,
     /// Where the settle loop reports whether a ref write waits for its window to pass.
     refs_waiting: Option<Arc<AtomicBool>>,
+    /// Where the settle loop reports whether it is handling a result right now.
+    busy: Option<Arc<AtomicBool>>,
     /// The tree was touched while it was not wanted, so reconciling it whole is owed.
     owed: bool,
 }
@@ -220,6 +222,7 @@ impl<W: Watcher, C: Clock> Settling<W, C> {
             flush: None,
             wanted: None,
             refs_waiting: None,
+            busy: None,
             owed: false,
         }
     }
@@ -248,6 +251,20 @@ impl<W: Watcher, C: Clock> Settling<W, C> {
     fn set_refs_waiting(&self, waiting: bool) {
         if let Some(flag) = &self.refs_waiting {
             flag.store(waiting, Ordering::SeqCst);
+        }
+    }
+
+    /// Reports to `busy` whether the settle loop is handling a result right now, so a client that
+    /// waits for quiet does not answer in the gap between a result and what it announces.
+    pub fn reporting_busy(mut self, busy: Arc<AtomicBool>) -> Self {
+        self.busy = Some(busy);
+        self
+    }
+
+    /// Says whether the settle loop is handling a result; for the loop that drives this.
+    pub fn set_busy(&self, busy: bool) {
+        if let Some(flag) = &self.busy {
+            flag.store(busy, Ordering::SeqCst);
         }
     }
 

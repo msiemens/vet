@@ -6,12 +6,14 @@
 //!
 //! This is the decision only; `reconcile` carries it out.
 
-use std::sync::atomic::{AtomicU32, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use futures::future::BoxFuture;
 use tokio::sync::{MutexGuard, OwnedMutexGuard, watch};
+use vet_app::ports::{Clock, Watcher};
+use vet_app::settle::{SettleFlush, Settling};
 use vet_app::supervise::{Supervisor, Trigger};
 
 use crate::mutex::lock;
@@ -293,6 +295,58 @@ pub(crate) struct Decision {
     pub(crate) checks_after_action: bool,
 }
 
+/// What the settle loop, which lives as long as the project, shows of its work: the state of a
+/// project is not at rest while any of it is set. It is read by those who wait for quiet and
+/// written by the loop.
+#[derive(Default)]
+pub(crate) struct Settle {
+    /// Edits of the working tree wait to settle, as the subscribers were last told.
+    edits: Arc<AtomicBool>,
+    /// A ref write waits for its window before the branch on view is looked at again.
+    refs: Arc<AtomicBool>,
+    /// The loop handles a result right now.
+    busy: Arc<AtomicBool>,
+    /// A client's request to reconcile the working tree now, taken by the loop.
+    flush: Arc<SettleFlush>,
+}
+
+impl Settle {
+    /// Whether edits of the working tree wait to settle into a snapshot.
+    pub(crate) fn edits_waiting(&self) -> bool {
+        self.edits.load(Ordering::SeqCst)
+    }
+
+    pub(crate) fn set_edits_waiting(&self, waiting: bool) {
+        self.edits.store(waiting, Ordering::SeqCst);
+    }
+
+    /// Asks the loop to look at the working tree as it is now.
+    pub(crate) fn request_flush(&self) {
+        self.flush.request();
+    }
+
+    /// Whether the loop has work: edits or a ref write waiting to settle, a result it is handling,
+    /// or a reconcile asked for that it has not made.
+    pub(crate) fn busy(&self) -> bool {
+        self.edits_waiting()
+            || self.refs.load(Ordering::SeqCst)
+            || self.busy.load(Ordering::SeqCst)
+            || self.flush.requested()
+    }
+
+    /// `settling`, reporting to this state and taking its flush requests.
+    pub(crate) fn report<W, C>(&self, settling: Settling<W, C>) -> Settling<W, C>
+    where
+        W: Watcher,
+        C: Clock,
+    {
+        settling
+            .refs_waiting(self.refs.clone())
+            .reporting_busy(self.busy.clone())
+            .flushable(self.flush.clone())
+    }
+}
+
 /// What the supervisor keeps running for the state of a project. The mechanism that holds the runs
 /// is `vet_app::supervise::Supervisor`.
 #[derive(Default)]
@@ -300,9 +354,14 @@ pub(crate) struct Policy {
     inputs: watch::Sender<Inputs>,
     ran: tokio::sync::Mutex<Ran>,
     starts: Starts,
+    settle: Settle,
 }
 
 impl Policy {
+    pub(crate) fn settle(&self) -> &Settle {
+        &self.settle
+    }
+
     pub(crate) fn subscribe(&self) -> watch::Receiver<Inputs> {
         self.inputs.subscribe()
     }

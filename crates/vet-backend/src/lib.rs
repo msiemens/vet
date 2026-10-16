@@ -757,13 +757,6 @@ impl Orchestrator {
     }
 }
 
-/// Scans a project that has not scanned yet, so opening does not wait for the scan.
-fn scan_in_background(open: Arc<Open>) {
-    tokio::spawn(async move {
-        let _ = open.booted().await;
-    });
-}
-
 /// Opens the store and collects what its retention, as the settings in the store have it, no
 /// longer keeps. A failed collection only leaves the garbage for the next start. The collection
 /// runs before the orchestrator exists, so it draws on a budget of its own; the store is moved
