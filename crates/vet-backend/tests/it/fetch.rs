@@ -660,6 +660,142 @@ async fn a_closed_project_stops_fetching() {
     );
 }
 
+/// A project whose `origin` is reached through a wrapper that notes every fetch in a log and holds
+/// it until the gate file exists, so a fetch can be seen to be under way and counted.
+#[cfg(debug_assertions)]
+struct Gated {
+    remote: Remote,
+    log: PathBuf,
+    gate: PathBuf,
+}
+
+#[cfg(debug_assertions)]
+impl Gated {
+    fn new() -> Self {
+        use std::os::unix::fs::PermissionsExt;
+
+        let remote = Remote::new();
+        let dir = remote._dir.path();
+        let (log, gate, wrapper) = (dir.join("fetches"), dir.join("gate"), dir.join("ssh-gated.sh"));
+        // The wait ends with the directory, so a fetch nobody opened the gate for does not outlive
+        // the test.
+        let script = format!(
+            "#!/bin/sh\necho run >> '{}'\nwhile [ ! -e '{}' ] && [ -d '{}' ]; do sleep 0.02; done\n\
+             exec git-upload-pack '{}'\n",
+            log.display(),
+            gate.display(),
+            dir.display(),
+            remote.bare.display()
+        );
+        std::fs::write(&wrapper, script).unwrap();
+        std::fs::set_permissions(&wrapper, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let project = &remote.project;
+        git(project, &["remote", "set-url", "origin", "ssh://git@example.com/x.git"]);
+        git(project, &["config", "core.sshCommand", wrapper.to_str().unwrap()]);
+        git(project, &["config", "ssh.variant", "ssh"]);
+        Self { remote, log, gate }
+    }
+
+    /// How many fetches reached the remote.
+    fn fetches(&self) -> usize {
+        std::fs::read_to_string(&self.log).map_or(0, |text| text.lines().count())
+    }
+
+    async fn until_fetching(&self, fetches: usize) {
+        let waiting = async {
+            while self.fetches() < fetches {
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        };
+        tokio::time::timeout(Duration::from_secs(30), waiting)
+            .await
+            .expect("the remote was never fetched");
+    }
+
+    fn open_gate(&self) {
+        std::fs::write(&self.gate, "").unwrap();
+    }
+}
+
+#[cfg(debug_assertions)]
+#[tokio::test]
+async fn a_viewer_fetch_during_a_timer_fetch_joins_it() {
+    let gated = Gated::new();
+    let (handler, _data) = orchestrator(LONG).await;
+    let client = Client::new(&handler);
+    let project = client.open(&gated.remote.project).await;
+    // The fetch at open is the timer's, and it waits at the gate.
+    gated.until_fetching(1).await;
+
+    let (viewer, ()) = tokio::join!(client.call(Request::Fetch { project }), async {
+        tokio::time::sleep(Duration::from_millis(300)).await;
+        gated.open_gate();
+    });
+
+    assert!(matches!(viewer, Ok(Response::Done)));
+    assert_eq!(gated.fetches(), 1, "the viewer's fetch was a fetch of its own");
+    assert_eq!(background_started(&client, project, "fetch"), 1);
+}
+
+#[cfg(debug_assertions)]
+#[tokio::test]
+async fn the_timer_counts_down_again_after_a_viewer_fetch() {
+    let gated = Gated::new();
+    gated.open_gate();
+    let (handler, _data) = orchestrator(Duration::from_millis(2000)).await;
+    let client = Client::new(&handler);
+    let project = client.open(&gated.remote.project).await;
+    background_ended(&client, project, "fetch").await;
+    let started = || background_started(&client, project, "fetch");
+
+    // Halfway to the next tick the viewer fetches: the tick that was due at 2 s is not.
+    tokio::time::sleep(Duration::from_millis(1000)).await;
+    client.call(Request::Fetch { project }).await.unwrap();
+    assert_eq!(started(), 2);
+    tokio::time::sleep(Duration::from_millis(1500)).await;
+    assert_eq!(started(), 2, "the countdown went on from the first fetch");
+
+    let waiting = async {
+        while started() < 3 {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    };
+    tokio::time::timeout(Duration::from_secs(10), waiting)
+        .await
+        .expect("the timer fetched again");
+}
+
+#[cfg(debug_assertions)]
+#[tokio::test]
+async fn closing_the_project_ends_a_slow_fetch_within_the_bound() {
+    let gated = Gated::new();
+    let data = tempfile::tempdir().unwrap();
+    let config = Config {
+        fetch_interval: LONG,
+        shutdown_bound: Duration::from_millis(100),
+        ..config()
+    };
+    let handler = Arc::new(Orchestrator::new(open_store(data.path()).await.unwrap(), config));
+    let client = Client::new(&handler);
+    let project = client.open(&gated.remote.project).await;
+    gated.until_fetching(1).await;
+
+    let closing = std::time::Instant::now();
+    client.call(Request::CloseProject { project }).await.unwrap();
+
+    assert!(
+        closing.elapsed() < Duration::from_secs(1),
+        "closing took {:?}",
+        closing.elapsed()
+    );
+    assert_eq!(
+        handler.background_counts(project, "fetch").1,
+        0,
+        "the fetch outlived the project"
+    );
+    gated.open_gate();
+}
+
 /// A local branch `feature` with a commit of its own, off the clone's `main`, opened as a changeset.
 async fn open_feature(remote: &Remote, client: &Client, project: ProjectId) {
     git(&remote.project, &["checkout", "-q", "-b", "feature"]);

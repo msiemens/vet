@@ -248,14 +248,6 @@ fn title(remotes: &[RemoteInfo]) -> String {
     }
 }
 
-/// Calls `tick` now and then every `interval` after the previous call ended, for ever.
-pub async fn every<F: Future<Output = ()>>(interval: Duration, mut tick: impl FnMut() -> F) {
-    loop {
-        tick().await;
-        tokio::time::sleep(interval).await;
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use std::sync::{Arc, Mutex as StdMutex};

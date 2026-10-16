@@ -12,7 +12,7 @@ use vet_app::supervise::Supervisor;
 
 use crate::mutex::lock;
 use crate::supervisor::{Change, Inputs, Policy, State};
-use crate::{Open, checks, problems, servers, symbols};
+use crate::{Open, checks, copy, problems, servers, symbols};
 
 /// Starts the loop that reconciles the project once its first scan is done, and again whenever the
 /// revision or an input changes. `entry` is how it reaches the project without keeping it open.
@@ -51,6 +51,11 @@ pub(crate) async fn reconcile(open: &Arc<Open>) {
     match decision.checks {
         Change::Start(_) => checks::start(open, decision.checks_after_action),
         Change::Stop => open.supervisor.stop(checks::KIND),
+        Change::Keep => {}
+    }
+    match decision.copy {
+        Change::Start(_) => copy::start(open),
+        Change::Stop => open.supervisor.stop(copy::KIND),
         Change::Keep => {}
     }
     match decision.symbols {

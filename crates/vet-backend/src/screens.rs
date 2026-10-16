@@ -40,9 +40,8 @@ impl ReviewScreens {
 
 impl Orchestrator {
     /// The connection shows the review screen of the project or leaves it. The changed symbols and
-    /// problems are analysed for the review screen only, which the supervisor's policy follows.
-    /// Coming up copies the working tree's dirty content ahead of a review once, since the queue
-    /// copied nothing.
+    /// problems are analysed for the review screen only, and the working tree's dirty content is
+    /// copied ahead of a review there, which the supervisor's policy follows.
     pub(crate) async fn set_review_shown(
         &self,
         project: ProjectId,
@@ -51,17 +50,7 @@ impl Orchestrator {
     ) -> Result<Response> {
         let open: Arc<Open> = self.find(project).await?;
         open.screens.set(from, shown);
-        open.policy.screen_changed();
-        if shown {
-            // The queue copied nothing: the review screen that comes back copies the tree once.
-            let copying = open.clone();
-            let boot = async move {
-                if let Ok(booted) = copying.booted().await {
-                    copying.copy_ahead(&booted.session);
-                }
-            };
-            tokio::spawn(boot);
-        }
+        open.policy.screen_changed(shown);
         Ok(Response::Done)
     }
 

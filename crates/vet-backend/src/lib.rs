@@ -15,6 +15,7 @@ mod checks;
 mod cli;
 #[cfg(test)]
 mod contract;
+mod copy;
 mod error;
 mod events;
 mod feed;

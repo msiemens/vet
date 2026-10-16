@@ -1,6 +1,7 @@
 //! Language servers run for the review screen: a changeset that comes on view while the window
 //! shows the queue starts none, and the review screen starts them. The server is a script that
-//! writes its process id as a line when it is launched and never answers.
+//! writes its process id as a line when it is launched and never answers. So does the copy of the
+//! working tree's content ahead of a review.
 
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
@@ -257,4 +258,105 @@ async fn a_closed_project_ends_its_server_starts_and_starts_no_more() {
         launched,
         "a server was launched after the project closed"
     );
+}
+
+/// A config whose settled tree is quiet after a moment, so the quiet copy is seen to run.
+#[cfg(debug_assertions)]
+fn quick_quiet() -> Config {
+    Config {
+        quiet: Duration::from_millis(300),
+        ..config()
+    }
+}
+
+#[cfg(debug_assertions)]
+impl Rig {
+    /// Edits the working tree to `value`, which is content to copy ahead of a review.
+    fn edit(&self, value: u32) {
+        write(
+            self.repo.path(),
+            "src/lib.rs",
+            &format!("pub fn f() -> u32 {{\n    {value}\n}}\n"),
+        );
+    }
+
+    async fn quiet(&self) {
+        self.client
+            .call(Request::WaitForQuiet { project: self.project })
+            .await
+            .unwrap();
+    }
+
+    fn copies(&self) -> (usize, usize) {
+        self.client.handler.background_counts(self.project, "copy")
+    }
+}
+
+#[cfg(debug_assertions)]
+#[tokio::test]
+async fn the_copy_ahead_runs_only_while_the_review_screen_is_shown_and_leaving_it_ends_it() {
+    let rig = Rig::start_with(quick_quiet()).await;
+    rig.edit(2);
+    rig.quiet().await;
+    // The tree settled and stayed quiet while the queue was on screen.
+    tokio::time::sleep(Duration::from_millis(1500)).await;
+    assert_eq!(rig.copies().0, 0, "the quiet tree was copied on the queue");
+
+    // A copy that cannot finish: the background budget is taken.
+    let held = rig.client.handler.budgets().background_io.acquire_all().await;
+    rig.show_review(true).await;
+    assert_eq!(rig.copies(), (1, 1), "the review screen coming up starts the copy");
+
+    rig.show_review(false).await;
+    background_live(&rig.client, rig.project, "copy", 0).await;
+    assert_eq!(rig.copies().0, 1, "leaving the screen started a copy");
+    drop(held);
+}
+
+#[cfg(debug_assertions)]
+#[tokio::test]
+async fn a_tree_that_settles_ends_the_unfinished_copy_of_the_one_before() {
+    // The tree is never quiet long enough for the next copy to start by itself.
+    let rig = Rig::start_with(Config {
+        quiet: Duration::from_secs(3600),
+        ..config()
+    })
+    .await;
+    rig.edit(2);
+    rig.quiet().await;
+    let held = rig.client.handler.budgets().background_io.acquire_all().await;
+    rig.show_review(true).await;
+    assert_eq!(rig.copies(), (1, 1), "the copy waits for the budget");
+
+    rig.edit(3);
+
+    background_live(&rig.client, rig.project, "copy", 0).await;
+    assert_eq!(
+        rig.copies().0,
+        1,
+        "the copy started again before the new tree was quiet"
+    );
+    drop(held);
+}
+
+#[cfg(debug_assertions)]
+#[tokio::test]
+async fn a_tree_that_stays_quiet_while_the_review_screen_is_shown_is_copied_again() {
+    let rig = Rig::start_with(quick_quiet()).await;
+    rig.edit(2);
+    rig.quiet().await;
+    rig.show_review(true).await;
+    background_live(&rig.client, rig.project, "copy", 0).await;
+    assert_eq!(rig.copies().0, 1);
+
+    rig.edit(3);
+
+    let waiting = async {
+        while rig.copies().0 < 2 {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    };
+    tokio::time::timeout(Duration::from_secs(30), waiting)
+        .await
+        .expect("the quiet tree was not copied");
 }

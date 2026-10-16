@@ -45,7 +45,7 @@ use crate::feed::Feed;
 use crate::hosting::{Announcer, Hosting, Platforms};
 use crate::mutex::lock;
 use crate::screens::ReviewScreens;
-use crate::supervisor::{Policy, Syncs};
+use crate::supervisor::{Fetches, Policy, Syncs};
 use crate::{LanguageServers, Live, Open, Orchestrator, PlatformAccounts, Semantic};
 
 /// The least time between two progress announcements of one task, so a step that
@@ -132,8 +132,10 @@ pub(crate) struct Wired {
     /// checks, the copy ahead and the server starts. They end with the project.
     pub(crate) supervisor: Supervisor,
     /// What the supervisor keeps running for the state of the project: the servers, their
-    /// retiring, the analysis and the checks of the changeset on view.
-    pub(crate) policy: Policy,
+    /// retiring, the analysis, the checks and the copy ahead of the changeset on view.
+    pub(crate) policy: Arc<Policy>,
+    /// The fetches of the project's remotes, whoever asks for them.
+    pub(crate) fetches: Fetches,
     /// The syncs of the pull request on view with its platform, which every cause that asks for
     /// one shares.
     pub(crate) sync: Syncs,
@@ -227,28 +229,6 @@ impl Wired {
         *lock(&self.open_files) = paths;
     }
 
-    /// Copies the working tree's content into the store in the background, so the first mark
-    /// finds it there. Only while the review screen shows the changeset: on the queue nothing is
-    /// copied, and a review screen that comes back copies once.
-    pub(crate) fn copy_ahead(&self, session: &Arc<Live>) {
-        if !self.screens.shown() {
-            return;
-        }
-        let session = session.clone();
-        let copy = async move {
-            if let Err(e) = session.copy_ahead().await {
-                tracing::warn!(error = %e, "could not copy the working tree's content ahead of a review");
-            }
-        };
-        // A newer tree's copy replaces the older.
-        self.supervisor.replace("copy", self.supervisor.track("copy", copy));
-    }
-
-    /// Stops the copy of an older tree, unless a mark is waiting for it.
-    fn stop_copying(&self) {
-        self.supervisor.stop("copy");
-    }
-
     async fn boot(&self) -> Result<Arc<Booted>> {
         #[cfg(debug_assertions)]
         self.boots.fetch_add(1, Ordering::SeqCst);
@@ -309,26 +289,19 @@ impl Wired {
             session.revisions().subscribe(),
         );
         {
-            let (session, subscribers, entry) = (session.clone(), subscribers.clone(), entry.clone());
+            let (session, subscribers, policy) = (session.clone(), subscribers.clone(), self.policy.clone());
             let edit_subscribers = subscribers.clone();
             let waiting = self.edits_waiting.clone();
-            let quiet_entry = entry.clone();
-            let quiet_session = session.clone();
+            let quiet_policy = policy.clone();
             self.supervisor.replace("settling", async move {
                 session
                     .follow(
                         settling,
                         |revision| {
                             settled(&subscribers, id, revision);
-                            if let Some(open) = entry.get().and_then(Weak::upgrade) {
-                                open.stop_copying();
-                            }
+                            policy.tree_settled();
                         },
-                        || {
-                            if let Some(open) = quiet_entry.get().and_then(Weak::upgrade) {
-                                open.copy_ahead(&quiet_session);
-                            }
-                        },
+                        || quiet_policy.tree_quiet(),
                         |pending| {
                             waiting.store(pending, Ordering::SeqCst);
                             edits_pending(&edit_subscribers, id, pending);
@@ -515,7 +488,7 @@ impl Orchestrator {
     pub(crate) async fn close(&self, id: ProjectId, from: &Connection) -> Result<()> {
         if let Ok(open) = self.projects.find(id).await {
             open.screens.set(from, false);
-            open.policy.screen_changed();
+            open.policy.screen_changed(false);
         }
         Ok(self.projects.close(id, from).await?)
     }
@@ -545,6 +518,7 @@ impl Orchestrator {
         let supervisor = self.background.supervisor(id);
         let feed = self.pull_request_feed(fetch.clone(), entry.clone(), supervisor.clone());
         let sync = crate::sync::trigger(&supervisor, entry.clone());
+        let fetches = crate::fetch::fetches(&supervisor, entry.clone());
         Ok(Wired {
             fetch,
             feed,
@@ -579,7 +553,8 @@ impl Orchestrator {
             #[cfg(debug_assertions)]
             analysis_failures: self.analysis_failures.clone(),
             supervisor,
-            policy: Policy::default(),
+            policy: Arc::default(),
+            fetches,
             sync,
             #[cfg(debug_assertions)]
             boots: Arc::default(),
@@ -713,14 +688,15 @@ mod tests {
             .await
             .unwrap();
         let open = orchestrator.find(project).await.unwrap();
-        let session = orchestrator.ready(project).await.unwrap().session.clone();
+        orchestrator.ready(project).await.unwrap();
         let missing = async || {
             let ids = texts.iter().map(|t| BlobId::of(t.as_bytes())).collect();
             orchestrator.store.missing_blobs(ids).await.unwrap()
         };
 
         // The queue is on screen: the quiet copy copies nothing.
-        open.copy_ahead(&session);
+        open.policy.tree_quiet();
+        crate::reconcile::reconcile(&open).await;
         assert_eq!(
             open.supervisor.counts("copy").0,
             0,

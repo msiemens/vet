@@ -6,11 +6,15 @@
 //!
 //! This is the decision only; `reconcile` carries it out.
 
-use std::sync::Arc;
 use std::sync::atomic::{AtomicU32, Ordering};
+use std::sync::{Arc, Mutex};
+use std::time::Duration;
 
+use futures::future::BoxFuture;
 use tokio::sync::{MutexGuard, OwnedMutexGuard, watch};
-use vet_app::supervise::Trigger;
+use vet_app::supervise::{Supervisor, Trigger};
+
+use crate::mutex::lock;
 
 /// What asked for a sync.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -46,6 +50,163 @@ pub(crate) enum SyncOutcome {
 /// for a newer one and end by themselves when the project closes.
 pub(crate) type Syncs = Trigger<Vec<Reason>, SyncOutcome>;
 
+/// Who asked for a fetch: what its follow-ups still do when no ref moved. A fetch several asked
+/// for is the strongest's.
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Debug)]
+pub(crate) enum Asked {
+    /// The timer: a fetch that moved a ref is announced and followed; either way the comments of
+    /// the pull request on view are synced, which change without a push.
+    Timer,
+    /// The viewer, through `Request::Fetch`: the fetch is reported whenever a remote was reached.
+    Viewer,
+}
+
+/// The fetches of one project, one at a time. A request that comes while a fetch is on its way
+/// joins it, and the fetch is the strongest asker's; the fetch is not a `Trigger` since a later
+/// request is answered by a run that began before it, the refs being what is wanted. Once the
+/// fetch has told who asked (`Sealing::asked`) a request waits for it and asks again, so no
+/// asker's follow-ups are missed. A fetch writes review state, so it is never aborted for a newer
+/// request and ends by itself when the project closes.
+#[derive(Clone)]
+pub(crate) struct Fetches(Arc<Fetching>);
+
+struct Fetching {
+    supervisor: Supervisor,
+    kind: &'static str,
+    run: Box<dyn Fn(Sealing) -> BoxFuture<'static, ()> + Send + Sync>,
+    current: Mutex<Option<Current>>,
+    /// Counts the fetches that ended, so the countdown to the next one starts over.
+    ended: watch::Sender<u32>,
+}
+
+struct Current {
+    asked: Asked,
+    sealed: bool,
+    done: watch::Sender<bool>,
+}
+
+/// How a request stands with the fetch.
+enum Began {
+    /// Joined or started a fetch, which answers it when it is done.
+    Answered(watch::Receiver<bool>),
+    /// A fetch is past taking askers: wait for it, then ask again.
+    Later(watch::Receiver<bool>),
+}
+
+/// Held by the run of a fetch to learn who asked.
+pub(crate) struct Sealing(Arc<Fetching>);
+
+impl Sealing {
+    /// The strongest of those who asked. A request after this gets a fetch of its own.
+    pub(crate) fn asked(&self) -> Asked {
+        let mut slot = lock(&self.0.current);
+        let current = slot.as_mut().expect("a fetch that runs is current");
+        current.sealed = true;
+        current.asked
+    }
+}
+
+/// Clears the current fetch when its run is over, however it ends; waiting requests are answered
+/// only by a run that finished.
+struct Over {
+    fetching: Arc<Fetching>,
+    finished: bool,
+}
+
+impl Drop for Over {
+    fn drop(&mut self) {
+        let current = lock(&self.fetching.current).take();
+        if self.finished
+            && let Some(current) = current
+        {
+            current.done.send_replace(true);
+            self.fetching.ended.send_modify(|ended| *ended = ended.wrapping_add(1));
+        }
+    }
+}
+
+impl Fetches {
+    /// Fetches whose runs are `run`, each counted under `kind`.
+    pub(crate) fn new(
+        supervisor: Supervisor,
+        kind: &'static str,
+        run: impl Fn(Sealing) -> BoxFuture<'static, ()> + Send + Sync + 'static,
+    ) -> Self {
+        Self(Arc::new(Fetching {
+            supervisor,
+            kind,
+            run: Box::new(run),
+            current: Mutex::new(None),
+            ended: watch::channel(0).0,
+        }))
+    }
+
+    /// Fetches for `asked`: joins the fetch on its way or starts one, and answers when it is done.
+    /// False if the project closed before that.
+    pub(crate) async fn fetch(&self, asked: Asked) -> bool {
+        loop {
+            match self.begin(asked) {
+                Began::Answered(mut done) => return done.wait_for(|done| *done).await.is_ok(),
+                Began::Later(mut done) => {
+                    if done.wait_for(|done| *done).await.is_err() {
+                        return false;
+                    }
+                }
+            }
+        }
+    }
+
+    fn begin(&self, asked: Asked) -> Began {
+        let done = {
+            let mut slot = lock(&self.0.current);
+            match slot.as_mut() {
+                Some(current) if current.sealed => return Began::Later(current.done.subscribe()),
+                Some(current) => {
+                    current.asked = current.asked.max(asked);
+                    return Began::Answered(current.done.subscribe());
+                }
+                None => {
+                    let (done, receiver) = watch::channel(false);
+                    *slot = Some(Current {
+                        asked,
+                        sealed: false,
+                        done,
+                    });
+                    receiver
+                }
+            }
+        };
+        self.spawn();
+        Began::Answered(done)
+    }
+
+    fn spawn(&self) {
+        let fetching = self.0.clone();
+        let over = Over {
+            fetching: fetching.clone(),
+            finished: false,
+        };
+        let work = fetching
+            .supervisor
+            .track(fetching.kind, (fetching.run)(Sealing(fetching.clone())));
+        fetching.supervisor.cooperate(fetching.kind, async move {
+            let mut over = over;
+            work.await;
+            over.finished = true;
+        });
+    }
+
+    /// Fetches now and then once `interval` has passed since the last fetch ended, whoever asked
+    /// for it, until the project closes.
+    pub(crate) async fn every(self, interval: Duration) {
+        let mut ended = self.0.ended.subscribe();
+        while self.fetch(Asked::Timer).await {
+            ended.borrow_and_update();
+            while tokio::time::timeout(interval, ended.changed()).await.is_ok() {}
+        }
+    }
+}
+
 /// The inputs that are counters: each change of one is a change of the state the work depends on.
 #[derive(Clone, Copy, Default, PartialEq, Eq)]
 pub(crate) struct Inputs {
@@ -61,6 +222,18 @@ pub(crate) struct Inputs {
     checks: u32,
     /// Bumped when the credentials of the host of the pull request on view changed.
     accounts: u32,
+    /// Bumped each time a copy of the working tree's content ahead of a review is asked for.
+    copies: u32,
+    /// Whether that copy is still wanted: a tree that settles again withdraws it, since it would
+    /// be a copy of an older tree.
+    copying: bool,
+}
+
+impl Inputs {
+    fn ask_for_copy(&mut self) {
+        self.copies = self.copies.wrapping_add(1);
+        self.copying = true;
+    }
 }
 
 /// What a run of a keyed kind was started for.
@@ -83,6 +256,7 @@ struct Ran {
     symbols: Option<Key>,
     problems: Option<Key>,
     checks: Option<Key>,
+    copy: Option<Key>,
 }
 
 /// What to do with the runs of one kind.
@@ -114,6 +288,7 @@ pub(crate) struct Decision {
     pub(crate) symbols: Change,
     pub(crate) problems: Change,
     pub(crate) checks: Change,
+    pub(crate) copy: Change,
     /// Whether a started checks run answers an action on a run, so it reads once more later.
     pub(crate) checks_after_action: bool,
 }
@@ -132,10 +307,25 @@ impl Policy {
         self.inputs.subscribe()
     }
 
-    /// A connection showed or left the review screen.
-    pub(crate) fn screen_changed(&self) {
-        self.inputs
-            .send_modify(|inputs| inputs.screens = inputs.screens.wrapping_add(1));
+    /// A connection showed or left the review screen. A review screen that comes up asks for the
+    /// copy ahead, since the queue copied nothing.
+    pub(crate) fn screen_changed(&self, shown: bool) {
+        self.inputs.send_modify(|inputs| {
+            inputs.screens = inputs.screens.wrapping_add(1);
+            if shown {
+                inputs.ask_for_copy();
+            }
+        });
+    }
+
+    /// A new snapshot of the working tree settled: a copy of the tree before it is of no use.
+    pub(crate) fn tree_settled(&self) {
+        self.inputs.send_modify(|inputs| inputs.copying = false);
+    }
+
+    /// The settled tree stayed as it is for the quiet period, so its content may be copied.
+    pub(crate) fn tree_quiet(&self) {
+        self.inputs.send_modify(Inputs::ask_for_copy);
     }
 
     /// What analysis may execute changed.
@@ -221,7 +411,8 @@ impl Reconciliation<'_> {
     /// are for the review screen: they depend on the revision on view, the policy the servers run
     /// under and replaced servers. Retiring the servers that run under a policy not allowed any more
     /// is for every screen, since a question on any of them may have started one. The checks are
-    /// for the pull request on view, on any screen.
+    /// for the pull request on view, on any screen. The copy ahead is for the review screen, when
+    /// the quiet tree or the screen coming up asked for it, until the next tree settles.
     pub(crate) fn decide(&mut self, state: State) -> Decision {
         let key = |revision| Key {
             revision,
@@ -245,6 +436,13 @@ impl Reconciliation<'_> {
             accounts: self.inputs.accounts,
             ..key(revision)
         });
+        let copy = state
+            .revision
+            .filter(|_| state.shown && self.inputs.copying)
+            .map(|_| Key {
+                rerun: self.inputs.copies,
+                ..key(0)
+            });
         let checks_after_action = matches!(
             (self.ran.checks, checks),
             (Some(ran), Some(wanted)) if ran.revision == wanted.revision && ran.rerun != wanted.rerun
@@ -255,6 +453,7 @@ impl Reconciliation<'_> {
             symbols: change(&mut self.ran.symbols, servers),
             problems: change(&mut self.ran.problems, problems),
             checks: change(&mut self.ran.checks, checks),
+            copy: change(&mut self.ran.copy, copy),
             checks_after_action,
         }
     }
@@ -357,6 +556,38 @@ mod tests {
         assert_eq!(decide(2).await, (Change::Start(2), false));
         policy.accounts_changed();
         assert_eq!(decide(2).await, (Change::Start(2), false));
+    }
+
+    #[tokio::test]
+    async fn the_copy_is_asked_for_by_a_quiet_tree_or_a_screen_coming_up_and_only_while_shown() {
+        let policy = Policy::default();
+        let decide = async |shown: bool| {
+            let state = State {
+                revision: Some(1),
+                shown,
+                pull_request: false,
+            };
+            policy.reconciling().await.decide(state).copy
+        };
+
+        // The queue is on screen: a quiet tree asks, and nothing is copied.
+        policy.tree_quiet();
+        assert_eq!(decide(false).await, Change::Keep);
+        // The screen that comes up copies, and what was asked for before is the same copy.
+        policy.screen_changed(true);
+        assert_eq!(decide(true).await, Change::Start(0));
+        assert_eq!(decide(true).await, Change::Keep);
+
+        // A tree that settles ends the copy of the one before; quiet again copies the new one.
+        policy.tree_settled();
+        assert_eq!(decide(true).await, Change::Stop);
+        policy.tree_quiet();
+        assert_eq!(decide(true).await, Change::Start(0));
+
+        // Leaving the screen ends the copy, and a screen leaving asks for none.
+        policy.screen_changed(false);
+        assert_eq!(decide(false).await, Change::Stop);
+        assert_eq!(decide(false).await, Change::Keep);
     }
 
     #[tokio::test]

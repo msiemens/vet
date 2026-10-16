@@ -1,10 +1,11 @@
 //! Fetching a project's remotes, on demand and on a timer, and telling its
 //! subscribers that the branches may have moved.
 
-use std::sync::Arc;
-use std::time::Duration;
+use std::sync::{Arc, OnceLock, Weak};
 
+use futures::FutureExt;
 use vet_app::changeset::Source;
+use vet_app::supervise::Supervisor;
 use vet_protocol::{Event, ProjectId, Response};
 
 use crate::changesets::bring_in;
@@ -12,42 +13,57 @@ use crate::error::Result;
 use crate::events::revision_changed;
 use crate::hosting::Held;
 use crate::open::Booted;
-use crate::supervisor::Reason;
+use crate::supervisor::{Asked, Fetches, Reason, Sealing};
 use crate::{Open, Orchestrator};
 
 impl Orchestrator {
-    /// Fetches now, then waits for the pull request feed to list again. A fetch that fails fails
-    /// its task and not this request.
+    /// Fetches now, joining a fetch under way, then waits for the pull request feed to list again.
+    /// A fetch that fails fails its task and not this request.
     pub(crate) async fn fetch(&self, id: ProjectId) -> Result<Response> {
         let open = self.find(id).await?;
-        fetch_and_report(&open, Asked::Viewer).await;
+        open.fetches.fetch(Asked::Viewer).await;
         open.feed().manual().await;
         Ok(Response::Done)
     }
 }
 
-/// Who asked for a fetch: what its follow-ups still do when no ref moved.
-#[derive(Clone, Copy, PartialEq, Eq)]
-enum Asked {
-    /// The viewer, through `Request::Fetch`: the fetch is reported whenever a remote was reached.
-    Viewer,
-    /// The timer: a fetch that moved a ref is announced and followed; either way the comments of
-    /// the pull request on view are synced, which change without a push.
-    Timer,
+/// The kind of the project's fetches in its supervisor.
+const KIND: &str = "fetch";
+
+/// The fetches of a project, reaching it through `entry` so a fetch that waits keeps nothing open.
+pub(crate) fn fetches(supervisor: &Supervisor, entry: Arc<OnceLock<Weak<Open>>>) -> Fetches {
+    Fetches::new(supervisor.clone(), KIND, move |sealing| {
+        let entry = entry.clone();
+        async move {
+            if let Some(open) = entry.get().and_then(Weak::upgrade) {
+                fetch_and_report(&open, sealing).await;
+            }
+        }
+        .boxed()
+    })
 }
 
 /// Fetches the remotes, then tells every subscriber that the branches may have moved, follows the
 /// pull request on view for a push, and syncs its threads. A remote that failed is named by the
 /// failed task, where the footer shows it; what the others brought counts. A timer fetch that
 /// moved no ref skips the announcement and the follow but still syncs the threads, which change
-/// without a push.
-async fn fetch_and_report(open: &Arc<Open>, asked: Asked) {
-    let Ok(ran) = open.fetch.run(&Held(&open.accounts)).await else {
-        return;
-    };
+/// without a push, and has the feed list again. Cooperates with the project closing: it ends
+/// before its next step instead.
+async fn fetch_and_report(open: &Arc<Open>, sealing: Sealing) {
+    let ran = open.fetch.run(&Held(&open.accounts)).await;
+    let asked = sealing.asked();
+    if let Ok(ran) = ran {
+        follow_fetch(open, asked, ran.fetched, ran.updated).await;
+    }
+    if asked == Asked::Timer {
+        open.feed().timer();
+    }
+}
+
+async fn follow_fetch(open: &Arc<Open>, asked: Asked, fetched: usize, updated: usize) {
     let moved = match asked {
-        Asked::Viewer => ran.fetched > 0,
-        Asked::Timer => ran.updated > 0,
+        Asked::Viewer => fetched > 0,
+        Asked::Timer => updated > 0,
     };
     if !moved && asked == Asked::Viewer {
         return;
@@ -55,12 +71,17 @@ async fn fetch_and_report(open: &Arc<Open>, asked: Asked) {
     let Ok(booted) = open.booted().await else {
         return;
     };
+    if open.supervisor.closed() {
+        return;
+    }
     if moved {
         open.subscribers
             .broadcast(Event::ChangesetsChanged { project: open.id });
         follow_pull_request(open, booted).await;
     }
-    open.sync.request(vec![Reason::Fetched]).wait().await;
+    if !open.supervisor.closed() {
+        open.sync.request(vec![Reason::Fetched]).wait().await;
+    }
 }
 
 /// If a pull request is on view, fetches it again and, when its head or target moved, has the
@@ -79,23 +100,4 @@ async fn follow_pull_request(open: &Arc<Open>, booted: &Booted) {
     } else if renamed {
         open.subscribers.broadcast(Event::TargetChanged { project: open.id });
     }
-}
-
-/// Fetches now and then every `interval`, for as long as the session is open. After each fetch the
-/// pull request feed is asked to list again, whatever screen shows.
-pub(crate) fn fetch_periodically(open: &Arc<Open>, interval: Duration) {
-    let session = Arc::downgrade(open);
-    // One tick's work is the background task, not the loop that waits between ticks: a client
-    // waiting for quiet must not wait for the loop, which lives as long as the session.
-    let fetching = vet_app::fetch::every(interval, move || {
-        let session = session.clone();
-        async move {
-            if let Some(open) = session.upgrade() {
-                let tick = open.supervisor.track("fetch", fetch_and_report(&open, Asked::Timer));
-                tick.await;
-                open.feed().timer();
-            }
-        }
-    });
-    open.supervisor.replace("fetching", fetching);
 }
