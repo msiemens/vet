@@ -7,7 +7,7 @@
 
 use std::ops::Deref;
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, OnceLock, Weak};
 use std::time::{Duration, SystemTime};
 
@@ -193,7 +193,7 @@ pub(crate) struct Wired {
     /// The connections that show the review screen, which the language servers run for.
     pub screens: ReviewScreens,
     plan: Plan,
-    booted: OnceCell<Result<Arc<Booted>>>,
+    booted: OnceCell<Arc<Booted>>,
     settling: TaskSlot,
     /// Whether edits of the working tree wait to settle, as the subscribers were last told.
     edits_waiting: Arc<AtomicBool>,
@@ -229,20 +229,24 @@ pub(crate) struct Wired {
     pub(crate) analysis_failures: Arc<crate::analysis::Failures>,
     /// How often each background task of this project was started and how many run now.
     pub(crate) background: Arc<Background>,
+    /// For tests: how many boots this project attempted and how many settle loops it started, so
+    /// a failed boot can be told from a boot that never happened, and a retry from a second loop.
+    /// A debug build only.
+    #[cfg(debug_assertions)]
+    pub(crate) boots: Arc<AtomicUsize>,
+    #[cfg(debug_assertions)]
+    pub(crate) settles: Arc<AtomicUsize>,
     /// A client's request to reconcile the working tree now, taken by the settle loop.
     pub(crate) settle_flush: Arc<SettleFlush>,
 }
 
 impl Wired {
     /// The session and its semantic layer, once the first scan is done. The
-    /// first caller scans; the others wait for it. A scan that failed fails
-    /// every caller with the same message.
+    /// first caller scans; the others wait for it. Only a scan that succeeded is
+    /// kept: a boot that failed is given to the caller that asked for it, and
+    /// the next caller that needs the project boots again.
     pub(crate) async fn booted(&self) -> Result<&Arc<Booted>> {
-        self.booted
-            .get_or_init(|| self.boot())
-            .await
-            .as_ref()
-            .map_err(Clone::clone)
+        self.booted.get_or_try_init(|| self.boot()).await
     }
 
     /// Whether edits of the working tree wait to settle into a snapshot.
@@ -271,7 +275,7 @@ impl Wired {
 
     /// The session if it has scanned successfully already.
     pub(crate) fn booted_now(&self) -> Option<&Arc<Booted>> {
-        self.booted.get()?.as_ref().ok()
+        self.booted.get()
     }
 
     /// The client of the platform `kind`.
@@ -373,6 +377,8 @@ impl Wired {
     }
 
     async fn boot(&self) -> Result<Arc<Booted>> {
+        #[cfg(debug_assertions)]
+        self.boots.fetch_add(1, Ordering::SeqCst);
         let Plan {
             id,
             repo,
@@ -452,6 +458,8 @@ impl Wired {
             })
         };
         self.settling.keep(task.abort_handle());
+        #[cfg(debug_assertions)]
+        self.settles.fetch_add(1, Ordering::SeqCst);
 
         // The semantic lane reads the same repository and store through handles of its own, so
         // what it reads draws on its budget and never on the review's.
@@ -534,7 +542,7 @@ impl Resident for Wired {
         self.checking.stop();
         self.symbols.stop();
         self.problems.stop();
-        if let Some(Ok(booted)) = self.booted.get() {
+        if let Some(booted) = self.booted.get() {
             booted.semantics.shutdown().await;
         }
         // The servers are gone, so their trees can be collected.
@@ -693,6 +701,10 @@ impl Orchestrator {
             #[cfg(debug_assertions)]
             analysis_failures: self.analysis_failures.clone(),
             background: self.background.clone(),
+            #[cfg(debug_assertions)]
+            boots: Arc::default(),
+            #[cfg(debug_assertions)]
+            settles: Arc::default(),
             settle_flush: Arc::default(),
         })
     }
@@ -887,5 +899,89 @@ mod tests {
             panic!("no tasks listed");
         };
         assert!(listed.is_empty());
+    }
+
+    /// Puts a repository with one committed file back at `repo`, for a boot after the directory
+    /// was removed.
+    fn restore_repo(repo: &std::path::Path) {
+        std::fs::create_dir_all(repo).unwrap();
+        git(repo, &["init", "-q", "-b", "main"]);
+        std::fs::write(repo.join("f0.txt"), "file 0\n").unwrap();
+        git(repo, &["add", "-A"]);
+        git(repo, &["commit", "-q", "-m", "base"]);
+    }
+
+    /// An orchestrator over a fresh data directory, with `repo` open and its subscriber held.
+    /// The data directory is returned to keep the store alive.
+    async fn opened_repo(repo: &tempfile::TempDir) -> (tempfile::TempDir, Orchestrator, ProjectId, Arc<Open>) {
+        let data = tempfile::tempdir().unwrap();
+        let orchestrator = Orchestrator::new(open_store(data.path()).await.unwrap(), Config::default());
+        let (events, _inbox) = Events::channel();
+        let (project, _root) = orchestrator
+            .open(repo.path().to_str().unwrap(), Connection(events))
+            .await
+            .unwrap();
+        let open = orchestrator.find(project).await.unwrap();
+        (data, orchestrator, project, open)
+    }
+
+    #[tokio::test]
+    async fn a_failed_boot_is_told_to_its_request_and_the_next_request_boots_it() {
+        let (repo, _texts) = edited_repo(1);
+        let (_data, orchestrator, project, open) = opened_repo(&repo).await;
+
+        // The repository is gone, so the boot the request triggers cannot scan.
+        std::fs::remove_dir_all(repo.path()).unwrap();
+        let failed = orchestrator.ready(project).await;
+        assert!(
+            failed.is_err(),
+            "the request that triggered the failed boot is answered with its failure"
+        );
+        assert_eq!(open.boots.load(Ordering::SeqCst), 1, "one boot was attempted");
+
+        // The repository is back, so the next request boots again and succeeds.
+        restore_repo(repo.path());
+        let ready = orchestrator.ready(project).await;
+        assert!(ready.is_ok(), "the next request boots again: {:?}", ready.err());
+        assert_eq!(open.boots.load(Ordering::SeqCst), 2, "the next request booted again");
+    }
+
+    #[tokio::test]
+    async fn the_retry_after_a_failed_boot_starts_exactly_one_settle_loop() {
+        let (repo, _texts) = edited_repo(1);
+        let (_data, orchestrator, project, open) = opened_repo(&repo).await;
+
+        std::fs::remove_dir_all(repo.path()).unwrap();
+        let failed = orchestrator.ready(project).await;
+        assert!(failed.is_err(), "the boot fails");
+        assert_eq!(
+            open.settles.load(Ordering::SeqCst),
+            0,
+            "a boot that failed before wiring starts no settle loop"
+        );
+
+        restore_repo(repo.path());
+        let ready = orchestrator.ready(project).await;
+        assert_eq!(
+            open.settles.load(Ordering::SeqCst),
+            1,
+            "the retry starts exactly one settle loop"
+        );
+        assert!(ready.is_ok(), "the retry succeeds: {:?}", ready.err());
+    }
+
+    #[tokio::test]
+    async fn two_requests_during_one_boot_share_it() {
+        let (repo, _texts) = edited_repo(1);
+        let (_data, orchestrator, project, open) = opened_repo(&repo).await;
+
+        let (first, second) = tokio::join!(orchestrator.ready(project), orchestrator.ready(project));
+        assert!(first.is_ok() && second.is_ok(), "both requests are answered");
+        assert_eq!(
+            open.boots.load(Ordering::SeqCst),
+            1,
+            "the requests shared the boot in flight"
+        );
+        assert_eq!(open.settles.load(Ordering::SeqCst), 1, "exactly one settle loop runs");
     }
 }
