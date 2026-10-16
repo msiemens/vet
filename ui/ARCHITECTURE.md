@@ -59,17 +59,19 @@ The host passes the repository to open (command line, `VET_REPO`, or `#repo=` in
 
 Each store follows the events of what it shows:
 
-- `state/backend.ts` — `snapshotSettled`, `changesetOpened`: aborts the semantic requests of older revisions.
+- `state/backend.ts` — `snapshotMoved`, `filterChanged`, `reviewFinished`, `changesetOpened`: aborts the semantic requests of older revisions.
 - `opened.svelte.ts` — `changesetOpened`: ends the session on view and makes the announced changeset's (`openedProtocol.ts`); every other event goes to the session on view.
 - `changesetSession.svelte.ts` — decides the reads for every event in one place: `sessionReads.ts` maps an event and the session's state to the reads it needs, and `readFlush.ts` runs them on the next task, once per burst. A pass awaits the manifest, then the whole changeset unless the manifest fed it, then starts threads, the pull request info, versions, changes since and commits without waiting, and has the file tabs' scopes read. What the event itself carries is applied at once: `lensChanged` the lens's view, `reviewChanged` one file or the totals in a commit, `reviewStarted` and `restoreFailed` the facts' review and failures. The reads per event:
-  - `snapshotSettled`: the manifest, the whole changeset, threads, versions, changes since, the scopes.
+  - `snapshotMoved`: the manifest, the whole changeset, threads, the scopes, and versions and changes since when it names a `version` (a review is open).
+  - `filterChanged`: the manifest, the whole changeset, changes since, the scopes. No snapshot moved, so the threads held are carried to the new revision instead of read.
+  - `reviewFinished`: the manifest, the whole changeset, threads, versions, changes since, the scopes.
   - `targetChanged`: the manifest, the whole changeset, the scopes.
   - `lensChanged`: the manifest, unless a range stays on view.
   - `threadsChanged`: threads and the pull request info.
   - `platformStatus`: the pull request info.
   - `reviewStarted`: versions, changes since.
   - `reviewChanged`: versions and changes since only when its `reviewedAt` says the mark moved where the review last was (the first seen-mark of a version), and the commits when they show its progress.
-- `queue.svelte.ts` — `changesetOpened`, `reviewStarted`, `changesetsChanged`: lists the local changesets again; `threadsChanged`: lists them without recounting; `pullRequestListChanged`: reads the pull requests again; `pullRequestsChanged`: patches the rows it names; `changesetLinesChanged`: the counts pushed so far; `snapshotSettled`, and `reviewChanged` with `reviewedAt`: follows the row on view.
+- `queue.svelte.ts` — `changesetOpened`, `reviewStarted`, `changesetsChanged`, `reviewFinished`: lists the local changesets again; `threadsChanged`: lists them without recounting; `pullRequestListChanged`: reads the pull requests again; `pullRequestsChanged`: patches the rows it names; `changesetLinesChanged`: the counts pushed so far; `snapshotMoved`, and `reviewChanged` with `reviewedAt`: follows the row on view; `filterChanged`: nothing, as a row counts lines between commits and the row on view shows its progress live.
 - `versions.svelte.ts` (a session's versions, while the review screen is shown), `reviewChanges.svelte.ts` (a session's changes since a version, for its whole life, as the queue panel shows them), `pullRequest.svelte.ts` (only a pull request's session has one) and `threads.svelte.ts` (the changeset's threads and, while the review screen shows a range, the range's) — read when the session's flush says so, and when the session starts or resyncs.
 - `pipelines.svelte.ts` (a session's chosen run, job and folds) — `accountsChanged`: forgets which accounts were refused; the steps drop when the review screen hides.
 - `checks.svelte.ts` (a session's checks) — `checksChanged`: takes the checks.

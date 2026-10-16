@@ -53,7 +53,7 @@ The backend is layered: `vet-core` holds the domain, `vet-protocol` the protocol
 2. `open.rs` wires the project's adapters: the git repo and store on their lanes' budgets, the watcher, the platform clients, and the semantic lane.
 3. Watching starts before the initial scan, so no edit falls between them; the scan runs in the background, and requests that need the root wait for it.
 4. The project opens on the queue, browsing the live diff against its base, with nothing stored.
-5. The first scan settles into the changeset's first snapshot: the revision moves on and the backend announces `SnapshotSettled`.
+5. The first scan settles into the changeset's first snapshot: the revision moves on and the backend announces `SnapshotMoved`.
 
 ### An edit becoming a new version
 
@@ -61,7 +61,7 @@ The backend is layered: `vet-core` holds the domain, `vet-protocol` the protocol
 2. `Settling` (`vet-app/src/settle.rs`) turns a burst of writes into one settled scan after the tree is quiet; reconciliation is metadata-first, hashing only uncertain entries.
 3. The settled tree refreshes the session's `HEAD` and, with a review open, records it as the version's `tip` and makes the snapshot the next version.
 4. Review state is remapped from the recorded spans onto the new revision, in memory.
-5. The backend announces `SnapshotSettled`; a settled tree is announced only while the working tree is on view, and `EditsPending` says whether edits wait to become a version.
+5. The backend announces `SnapshotMoved`, with the open review's version; a settled tree is announced only while the working tree is on view, and `EditsPending` says whether edits wait to become a version.
 6. A `RefsMoved` makes the session look at the changeset on view again: for a branch, if the tip or merge base differs, the target and base follow and the change is the next version; a pull request gains one version per push its platform lists.
 
 ### A review action reaching the store and every window
@@ -77,7 +77,7 @@ The backend is layered: `vet-core` holds the domain, `vet-protocol` the protocol
 ### A pull request fetched into versions
 
 1. A pull request is a changeset; opening one fetches into Vet's own refs first (`refs/vet/pr/…`), as a task, and fails with a message fit to show. GitHub's head is `refs/pull/<n>/head` (forks included); Azure DevOps's is the source branch, or the head commit id when the branch is in a fork.
-2. The base is the merge base of the head with the fetched target; each push the platform lists is a version, the newest announced as `SnapshotSettled`. A push whose commits the platform dropped is a version without content. A background fetch keeps every remote current, on demand and every five minutes while a project is open, and announces `ChangesetsChanged`.
+2. The base is the merge base of the head with the fetched target; each push the platform lists is a version, the newest announced as `SnapshotMoved`. A push whose commits the platform dropped is a version without content. A background fetch keeps every remote current, on demand and every five minutes while a project is open, and announces `ChangesetsChanged`.
 3. The title and draft are stored with the changeset when the platform tells of them, so a restored view is headed without asking again. What the platform last said besides its threads is answered from the store first; details whose `updatedAt` changed are fetched ahead, paced, and stopped while the account is limited.
 4. The platform port (`vet-app/src/platform/port.rs`) is the only platform knowledge outside the adapters (`vet-infra/src/platform/github`, `azure_devops`); `hosting.rs` forwards to the adapter of the pull request on view, so no handler above the port names a platform.
 5. Sync reads the platform's threads in common terms, decides as data what each status and comment becomes, and applies it; the platform is asked with the session's lock released. A viewer's status change wins; an edit is sent at once; an edit made on both sides is kept as two texts until the viewer chooses; a deleted thread is removed with a notice for the drafts lost.
@@ -123,7 +123,7 @@ The backend is layered: `vet-core` holds the domain, `vet-protocol` the protocol
 
 - The transport is one authenticated WebSocket on loopback: a `Hello` carrying the per-launch token and protocol version is the first frame, requests are handled concurrently and can be cancelled, and replies and events share one ordered outbox per connection.
 - The outbox holds 10 000 messages; a send that finds it full closes the connection rather than grow, and the window reconnects and resyncs. Nothing is replayed.
-- The backend pushes project events (`SnapshotSettled`, `ChangesetOpened`, `ReviewChanged`, `ReviewStarted`, `LensChanged`, `TargetChanged`, `ChangesetsChanged`, `PullRequestListChanged` (the feed published a different list), `PullRequestsChanged` (sent once the prefetch or a sync read details that the platform's list leaves out, carrying what they add to the rows, so the queue patches them), `ChangesetLinesChanged`, `ThreadsChanged`, `EditsPending`, `FileSymbols`, `FileDiagnostics`, `ChecksChanged`, `RestoreFailed`, `ServersChanged`, `ServerRuntimes`, `ServerInstallOutput`, `PlatformStatus`, `Task`, `Notification`) to a project's subscribers, and process events (`CredentialsNeeded`, `AccountsChanged`, `RecentProjectsChanged`, `SettingsChanged`, `PreferenceChanged`) to every connection that asked to `Subscribe`.
+- The backend pushes project events (`SnapshotMoved` (the working tree settled, the branch on view moved or a fetch brought the pull request on view a push; with the open review's version), `FilterChanged` (the filter, an excluded path or a narrowing moved the revision, no snapshot), `ReviewFinished`, `ChangesetOpened`, `ReviewChanged`, `ReviewStarted`, `LensChanged`, `TargetChanged`, `ChangesetsChanged`, `PullRequestListChanged` (the feed published a different list), `PullRequestsChanged` (sent once the prefetch or a sync read details that the platform's list leaves out, carrying what they add to the rows, so the queue patches them), `ChangesetLinesChanged`, `ThreadsChanged`, `EditsPending`, `FileSymbols`, `FileDiagnostics`, `ChecksChanged`, `RestoreFailed`, `ServersChanged`, `ServerRuntimes`, `ServerInstallOutput`, `PlatformStatus`, `Task`, `Notification`) to a project's subscribers, and process events (`CredentialsNeeded`, `AccountsChanged`, `RecentProjectsChanged`, `SettingsChanged`, `PreferenceChanged`) to every connection that asked to `Subscribe`.
 - A **revision** increases with every settled snapshot, observed move, filter change, changeset switch and finished review. A request about positions carries the revision it was made at and fails as stale otherwise, and `Revisions` lets semantic work for an older one be dropped.
 - `WaitForQuiet` answers once the project has no background work at all, ordered after the earlier events on the connection.
 
