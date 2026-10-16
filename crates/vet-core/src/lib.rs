@@ -1,4 +1,4 @@
-//! Pure domain model: content-addressed snapshots and the review model (I1, I3).
+//! Pure domain model: content-addressed snapshots and the review model (I2).
 //!
 //! Nothing here knows about git refs, commit hashes, the filesystem, or time.
 

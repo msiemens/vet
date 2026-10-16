@@ -5,7 +5,7 @@
 //! worktree from the revision's texts where the query carries them, so answers
 //! keep the positions the revision was counted with, and from disk where it
 //! has no text of a file. Nothing is cached here; whether an answer may be
-//! reused is decided where answers are kept (I2), which asks the server only
+//! reused is decided where answers are kept (I1), which asks the server only
 //! whether it was at work on its own.
 //!
 //! A query may be dropped at any await. Sync is safe against that because

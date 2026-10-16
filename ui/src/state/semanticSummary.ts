@@ -1,4 +1,4 @@
-// What the status footer says about the semantic layer: whether a server has answered and, per I6,
+// What the status footer says about the semantic layer: whether a server has answered and, per I3,
 // that a file has no usable language server instead of silently showing nothing.
 
 import type { Unavailable } from "../generated/Unavailable";

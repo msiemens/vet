@@ -1,4 +1,4 @@
-//! Language servers on this machine (§7.1): what each language resolves to,
+//! Language servers on this machine (§6.1): what each language resolves to,
 //! the user's custom paths, and installing the pinned servers.
 
 use std::collections::HashMap;

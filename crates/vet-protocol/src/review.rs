@@ -8,7 +8,7 @@ use crate::{
     RestoreFailure,
 };
 
-/// What the review shows and counts (§5.2). A path passes if it is under one of
+/// What the review shows and counts (§4.6). A path passes if it is under one of
 /// `roots` (or there are none), matches `include` (or there is none) and does not
 /// match `exclude`. A glob without a `/` matches the file name at any depth, a
 /// leading `/` anchors it at the root; `*` and `?` stop at `/`, `**` does not. Unless
@@ -239,7 +239,7 @@ pub struct ReviewUpdate {
 }
 
 /// Why a view of a changeset shows no file. Decided by the backend from what it knows of the view
-/// and the changeset (SPEC I5); the shell only words it.
+/// and the changeset; the shell only words it.
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
 #[ts(export)]
@@ -299,19 +299,19 @@ pub struct Manifest {
     /// Completion of the whole changeset.
     pub completion: Completion,
     /// Changed lines and non-text items the filter hides, so "complete" never
-    /// implies every change was seen (§5.2).
+    /// implies every change was seen (§5.3).
     pub excluded_lines: u32,
     pub excluded_items: u32,
     /// Set when the backend polls the tree instead of watching it, so changes
-    /// show up late (§4.1, §6.4); the shell shows a banner.
+    /// show up late (§1, §4.2); the shell shows a banner.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub degraded: Option<WatchDegraded>,
     /// Dependency restores that failed so far; the shell says analysis is limited
-    /// (§7.5). `Event::RestoreFailed` updates it.
+    /// (§6.5). `Event::RestoreFailed` updates it.
     #[serde(default)]
     pub restore_failures: Vec<RestoreFailure>,
-    /// What analysis of the changeset may execute (§7.5). `TargetChanged` updates it.
+    /// What analysis of the changeset may execute (§6.5). `TargetChanged` updates it.
     pub trust: AnalysisTrust,
     /// Set for the manifest of an interdiff view.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -331,7 +331,7 @@ pub struct Manifest {
     pub empty: EmptyReason,
 }
 
-/// What may execute project code when the changeset on view is analysed (§7.5).
+/// What may execute project code when the changeset on view is analysed (§6.5).
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
 #[ts(export)]

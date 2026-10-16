@@ -1,6 +1,6 @@
 // The review filter page's drafts: what the viewer has typed into the pattern lists that is not
 // saved yet, and the words for what the backend counted for it. Globs are the backend's to
-// judge (SPEC I5); nothing here reads one.
+// judge; nothing here reads one.
 
 import type { PatternMatch } from "../../generated/PatternMatch";
 import { plural } from "../../lib/format.ts";

@@ -84,6 +84,6 @@ pub struct InterdiffInfo {
     pub rebased: bool,
     /// Marks and comments are possible: `to` is the latest version.
     pub markable: bool,
-    /// What does not work in this view and why, fit to show (SPEC I6).
+    /// What does not work in this view and why, fit to show (SPEC I3).
     pub limits: Vec<String>,
 }

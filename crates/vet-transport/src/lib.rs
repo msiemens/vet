@@ -1,4 +1,4 @@
-//! Authenticated loopback WebSocket server (SPEC §4.1).
+//! Authenticated loopback WebSocket server (see `ARCHITECTURE.md`).
 //!
 //! Binds `127.0.0.1` on an OS-chosen port with a per-launch random token. The
 //! first frame on every connection must be a `Hello` carrying that token and the

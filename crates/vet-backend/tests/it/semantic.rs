@@ -1000,7 +1000,7 @@ pub fn main() -> u32 {
         .output()
         .unwrap();
     assert!(lock.status.success(), "{}", String::from_utf8_lossy(&lock.stderr));
-    // The edit stays uncommitted: no git object holds its text (§6.1).
+    // The edit stays uncommitted: no git object holds its text (§4.1).
     git(repo.path(), &["add", ".gitignore", "Cargo.toml", "Cargo.lock"]);
     git(repo.path(), &["commit", "-q", "-m", "base"]);
 
@@ -1080,7 +1080,7 @@ async fn a_definition_of_a_file_the_worktree_moved_is_asked_again_at_the_newer_r
     assert!(lock.status.success(), "{}", String::from_utf8_lossy(&lock.stderr));
     git(repo.path(), &["add", "-A"]);
     git(repo.path(), &["commit", "-q", "-m", "base"]);
-    // The edits stay uncommitted: no git object holds their text (§6.1).
+    // The edits stay uncommitted: no git object holds their text (§4.1).
     write(repo.path(), "src/fresh.rs", FRESH);
     write(repo.path(), "src/copied.rs", COPIED);
 

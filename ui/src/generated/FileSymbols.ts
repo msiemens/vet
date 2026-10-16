@@ -5,7 +5,7 @@ import type { SymbolInfo } from "./SymbolInfo";
 import type { Unavailable } from "./Unavailable";
 
 /**
- * What the changeset did to the symbols of one file (derived, §7.3).
+ * What the changeset did to the symbols of one file (derived, §6.3).
  */
 export type FileSymbols = { revision: number, path: string, 
 /**

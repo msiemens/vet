@@ -1,5 +1,5 @@
 // Whether the review screen is the one on show. The language servers of a changeset are for the
-// review screen, so the backend is told when it is shown (SPEC §7.1), but only once the changeset it
+// review screen, so the backend is told when it is shown (SPEC §6.2), but only once the changeset it
 // will show is the one on view; what asks them in the background waits for the screen.
 
 import { untrack } from "svelte";

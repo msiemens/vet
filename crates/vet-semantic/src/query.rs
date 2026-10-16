@@ -1,4 +1,4 @@
-//! Primitive queries (§7.3): the side being viewed is asked directly; base and
+//! Primitive queries (§6.3): the side being viewed is asked directly; base and
 //! target are two sides of a [`Pair`], queried in parallel with [`crate::join`].
 //! Derived analyses consume the [`Primitives`] trait, not the pool.
 
@@ -30,7 +30,7 @@ pub enum SemanticError {
     NoBackend(RepoPath),
     Pool(PoolError),
     Query(QueryError),
-    /// The language's server does not offer the operation, so it was not asked (I6).
+    /// The language's server does not offer the operation, so it was not asked (I3).
     NotOffered {
         feature: Feature,
         /// The server as a person knows it.

@@ -1,5 +1,5 @@
 // Review-state decorations on every changed line (including the deleted lines of
-// the unified view) and hunk header bars (SPEC §10).
+// the unified view) and hunk header bars (SPEC §8.4).
 
 import { getChunks, getOriginalDoc } from "@codemirror/merge";
 import { StateEffect, StateField, type Extension, type Range, type Text } from "@codemirror/state";

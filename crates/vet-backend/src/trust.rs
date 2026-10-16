@@ -1,4 +1,4 @@
-//! Requests about trust (§7.5): what analysis of a project's changesets may execute.
+//! Requests about trust (§6.5): what analysis of a project's changesets may execute.
 
 use vet_protocol::{Event, ProjectId, Response};
 

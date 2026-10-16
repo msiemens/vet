@@ -1,4 +1,4 @@
-// The shell's side of the transport (SPEC §4.1, I5): authenticate, correlate requests with
+// The shell's side of the transport (`ARCHITECTURE.md`): authenticate, correlate requests with
 // responses, and connect again when the socket drops. Rendering code builds on this; it contains
 // no product logic.
 

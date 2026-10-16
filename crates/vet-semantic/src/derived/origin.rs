@@ -1,4 +1,4 @@
-//! Which diagnostics a change introduced (§7.3): the target's diagnostics of a file against the
+//! Which diagnostics a change introduced (§6.3): the target's diagnostics of a file against the
 //! base's. A target diagnostic is pre-existing if the base has one with equal severity, source,
 //! code and message (whitespace-collapsed) on a line that maps to it, and new otherwise. While the
 //! base side cannot be had the origin is unknown, never new.

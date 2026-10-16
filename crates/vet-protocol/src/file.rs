@@ -5,7 +5,7 @@ use ts_rs::TS;
 
 use crate::Highlights;
 
-/// Progress against the review filter (§5.2): changed lines (counted per side),
+/// Progress against the review filter (§5.3): changed lines (counted per side),
 /// text hunks and non-text items. A shell shows these as they are.
 #[derive(Clone, Copy, Default, PartialEq, Debug, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]

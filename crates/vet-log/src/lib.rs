@@ -30,7 +30,7 @@ const FILE: &str = "vet.log";
 /// How many days stay.
 const KEPT_FILES: usize = 5;
 
-/// Vet's data directory (§8) in the platform's place for application data.
+/// Vet's data directory (§9) in the platform's place for application data.
 pub fn data_dir() -> Option<PathBuf> {
     dirs::data_dir().map(|d| d.join("vet"))
 }

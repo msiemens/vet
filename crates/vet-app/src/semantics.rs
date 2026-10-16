@@ -1,4 +1,4 @@
-//! Semantic queries of a session (§7.3): the side being viewed is asked
+//! Semantic queries of a session (§6.3): the side being viewed is asked
 //! directly, derived analyses combine the answers with the revision's diff.
 //! Positions and results belong to a revision; a stale one is refused like any
 //! other request. Base answers come from the session's base snapshot. Target
@@ -61,7 +61,7 @@ const CALLS_BOUNDS: Bounds = Bounds {
 pub struct Answer<T> {
     pub revision: u32,
     pub result: Result<T, SemanticError>,
-    /// The server that answered and whether the answer was reused (I6); none if no
+    /// The server that answered and whether the answer was reused (I3); none if no
     /// server did, or the answer is made of more than one server's.
     pub provenance: Option<Provenance>,
     /// No server of the answer was at work on its own while it answered (see
@@ -864,7 +864,7 @@ where
     }
 
     /// Diagnostics of a file of the target side, each with its origin against the base side's
-    /// (derived, §7.3). A file the change leaves alone is compared with itself on the base.
+    /// (derived, §6.3). A file the change leaves alone is compared with itself on the base.
     pub async fn judged_diagnostics(
         &self,
         view: &RevisionView<G, S>,
@@ -915,7 +915,7 @@ where
     }
 
     /// Stops the servers that may execute project code under a policy the revision no longer
-    /// has: trust was withdrawn (§7.5).
+    /// has: trust was withdrawn (§6.5).
     pub async fn retire_disallowed(&self, view: &RevisionView<G, S>, revision: u32) -> Fallible<()> {
         let sides = view.semantic_sides(revision).await?;
         let (base, target) = served(&view.trust(&sides.source).await?, &sides);
@@ -960,7 +960,7 @@ where
 
     /// What the changeset did to the symbols of the changed file `path`, from the texts of its
     /// sides: a revision that changed one file asks a server for that file only, and the
-    /// symbols of a text are kept (I2).
+    /// symbols of a text are kept (I1).
     pub async fn file_symbols(
         &self,
         view: &RevisionView<G, S>,
@@ -1675,7 +1675,7 @@ mod tests {
     }
 
     /// The live tree's edit is uncommitted, its lines moved again in the worktree before the
-    /// query: git holds no object of it (§6.1) and the store was written only when the
+    /// query: git holds no object of it (§4.1) and the store was written only when the
     /// revision's content came to be kept. What the queries are fed stands or falls with that.
     #[tokio::test]
     async fn the_queries_of_a_live_tree_get_the_settled_edits_texts_kept_before_they_read_them() {

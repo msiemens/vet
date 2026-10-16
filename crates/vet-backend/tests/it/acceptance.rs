@@ -1,8 +1,8 @@
-//! Acceptance tests for SPEC §12 POC criteria 1 (anchor robustness, I3) and 4
-//! (reconciliation), one test per sub-case, against real temporary repositories
-//! and real git operations (amend, rebase, mv, rm, update-index).
+//! Acceptance tests for anchor robustness (I2) and reconciliation (SPEC §4.2), one test per
+//! sub-case, against real temporary repositories and real git operations (amend, rebase, mv,
+//! rm, update-index).
 //!
-//! Criterion 1 goes through the protocol like a shell would. Criterion 4 needs to
+//! Anchor robustness goes through the protocol like a shell would. Reconciliation needs to
 //! lose watcher events, which the real watcher cannot be told to do, so those
 //! tests drive a `LiveSession` over real git with a scripted `Watcher`; the one
 //! test that goes through the real watcher is a write storm.

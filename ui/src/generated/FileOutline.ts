@@ -3,7 +3,7 @@ import type { OutlineSymbol } from "./OutlineSymbol";
 import type { Unavailable } from "./Unavailable";
 
 /**
- * Every symbol of a file, changed or not (derived, §7.3).
+ * Every symbol of a file, changed or not (derived, §6.3).
  */
 export type FileOutline = { revision: number, path: string, 
 /**

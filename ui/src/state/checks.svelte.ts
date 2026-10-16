@@ -1,6 +1,6 @@
 // The checks (CI runs) of the commits the review view shows, as the platform of the pull request
 // on view has them. The backend refreshes them itself while the review screen shows the changeset
-// and pushes each round (SPEC §7.3, A13); this only applies what it hears.
+// and pushes each round (SPEC §7.5, A13); this only applies what it hears.
 
 import { SvelteMap } from "svelte/reactivity";
 import type { CommitChecks } from "../generated/CommitChecks";

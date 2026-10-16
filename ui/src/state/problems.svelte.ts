@@ -1,7 +1,7 @@
 // The Problems tool's state: the diagnostics of the whole changeset, which the backend analyses
 // file by file in the background once the review screen shows it, comparing each with the base and
-// pushing each answer (SPEC §7.3, A13). The semantic store holds the answers; this joins them with
-// the hunks' review state and says how complete the picture is (SPEC §7.3, I6).
+// pushing each answer (SPEC §6.6, A13). The semantic store holds the answers; this joins them with
+// the hunks' review state and says how complete the picture is (SPEC §6.3, I3).
 
 import type { Unavailable } from "../generated/Unavailable";
 import { opened } from "./opened.svelte";

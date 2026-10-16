@@ -36,7 +36,7 @@ pub(crate) fn start(open: &Arc<Open>) {
 }
 
 /// Starts the run that stops the servers of the revision on view that run under a policy it does
-/// not allow (§7.5). It replaces an older run.
+/// not allow (§6.5). It replaces an older run.
 pub(crate) fn retire(open: &Arc<Open>) {
     let retiring = open.clone();
     let task = async move {

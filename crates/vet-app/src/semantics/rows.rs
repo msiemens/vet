@@ -1,4 +1,4 @@
-//! The places of a semantic answer as rows to list (§7.3): each with its line, and where it
+//! The places of a semantic answer as rows to list (§6.3): each with its line, and where it
 //! stands against the changeset on a side. What a row shows is decided here; the protocol
 //! answer maps it one to one (`vet_mapping::semantic::location_rows`).
 

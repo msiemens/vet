@@ -1,10 +1,10 @@
 //! `vet_semantic::ports::Restorer`: installs the dependencies of a materialized
-//! snapshot with each tool's own fetch command (§7.2). Nothing here sets a cache
+//! snapshot with each tool's own fetch command (§6.2). Nothing here sets a cache
 //! location: every tool keeps its default, which is the user's own cache and so
 //! shared across snapshots and with the user's builds.
 //!
 //! Unless the policy lets restores execute (`allow_executing_restores`, a trusted
-//! project or PR, §7.5), no command runs project code: not a build script, not a
+//! project or PR, §6.5), no command runs project code: not a build script, not a
 //! package's install script, not a build backend. The commands below are those
 //! of the fetch-only restore; an executing one drops the flags that prevent
 //! execution (`--ignore-scripts`, `--ignore-pnpmfile`, `--mode=skip-build`,

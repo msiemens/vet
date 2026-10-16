@@ -1,4 +1,4 @@
-//! Which symbols changed (§7.3): `documentSymbol` on both sides of each changed
+//! Which symbols changed (§6.3): `documentSymbol` on both sides of each changed
 //! file, intersected with the diff hunks.
 
 use vet_core::content::{FileDiff, LineRange};

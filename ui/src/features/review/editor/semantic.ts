@@ -1,5 +1,6 @@
-// The semantic layer in an editor (SPEC §7): hover, go to definition (Mod+click, and Mod+B as the
-// `review.goToDefinition` command, as in the JetBrains keymap) and diagnostics. The editor shows one side's text; `side` says which
+// The semantic layer in an editor (SPEC §6.3, §8.4): hover, go to definition (Mod+click, and
+// Mod+B as the `review.goToDefinition` command, as in the JetBrains keymap) and diagnostics. The
+// editor shows one side's text; `side` says which
 // snapshot its positions are in (the target editor, or the base editor of a side-by-side view).
 // Diagnostics exist for the target side only.
 

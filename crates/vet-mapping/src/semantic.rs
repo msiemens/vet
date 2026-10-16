@@ -81,7 +81,7 @@ fn symbol(info: &SymbolInfo) -> p::SymbolInfo {
     }
 }
 
-/// Vet's conclusion by file name (SPEC I6): the file's path and the containers the symbol is in.
+/// Vet's conclusion by file name (SPEC I3): the file's path and the containers the symbol is in.
 /// The symbol's own name is not a container of itself.
 fn test(sym: &Sym) -> bool {
     vet_core::testfile::is_test(&sym.file.to_string_lossy(), containers(sym))

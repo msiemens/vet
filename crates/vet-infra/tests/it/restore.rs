@@ -257,7 +257,7 @@ async fn a_copy_with_the_same_lockfile_links_the_working_trees_node_modules_and_
     server.shutdown().await;
 
     // A lockfile that does not match `package.json`: `npm ci` refuses it and `npm install
-    // --no-save` stands in for it (§7.2): it installs the dependencies and leaves the lock
+    // --no-save` stands in for it (§6.2): it installs the dependencies and leaves the lock
     // file alone, and the restore is reported as stood in for, not failed.
     write(
         copy.path(),

@@ -1,7 +1,7 @@
-//! What a server offers (§7.1), read from its `initialize` result. A server that
+//! What a server offers (§6.1), read from its `initialize` result. A server that
 //! cannot be fed documents cannot work with Vet at all and is refused; every other
 //! operation is optional, and a query for one the server lacks is answered with
-//! "not offered" (I6), never with an empty answer.
+//! "not offered" (I3), never with an empty answer.
 
 use lsp_types::{
     CallHierarchyServerCapability, HoverProviderCapability, ImplementationProviderCapability, OneOf,

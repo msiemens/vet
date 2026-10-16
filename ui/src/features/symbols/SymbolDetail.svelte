@@ -1,7 +1,7 @@
 <script lang="ts">
   // What is known about the symbol on show: it need not be a changed one. Every location opens its
   // file. The signature and hover are the language server's own answers, the rest is derived
-  // (SPEC §7.3, §7.4).
+  // (SPEC §6.3, §6.4).
   import type { Side } from "../../generated/Side";
   import { codeBlock } from "../../lib/codeBlock";
   import { splitPath } from "../../lib/paths";

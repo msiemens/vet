@@ -1,4 +1,4 @@
-//! Reachability (§7.4): a bounded incoming-call search from a changed or added
+//! Reachability (§6.4): a bounded incoming-call search from a changed or added
 //! symbol, stopping at the first configured entry point.
 
 use std::collections::{HashMap, VecDeque};

@@ -1,4 +1,4 @@
-//! The identity of a language server (I2): a hash of everything its answers
+//! The identity of a language server (I1): a hash of everything its answers
 //! depend on apart from the tree it runs on. Two servers with equal
 //! fingerprints answer equal questions equally, so an answer is reused only
 //! under the fingerprint it was given under.

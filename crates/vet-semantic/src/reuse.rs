@@ -1,4 +1,4 @@
-//! Reuse of answers (I2, §7.6). An answer is kept under a key that names
+//! Reuse of answers (I1). An answer is kept under a key that names
 //! everything it depends on, and is reused if and only if a recomputed key is
 //! equal. Nothing is ever judged valid by time, by events or by a guess: a changed
 //! input is a different key, and the old answer is left to age out.
@@ -158,7 +158,7 @@ impl Key {
     }
 }
 
-/// Answers kept between launches, behind the in-memory ones (I2, §7.6). A stored
+/// Answers kept between launches, behind the in-memory ones (I1). A stored
 /// value is exactly what was admitted to memory under the same key. It is
 /// disposable: whatever it cannot give is asked of a server.
 pub trait SemanticCache: Send + Sync {

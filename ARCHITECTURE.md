@@ -4,14 +4,15 @@ What Vet does is in `SPEC.md`; the UI is built as `ui/ARCHITECTURE.md` says. Thi
 
 ## What must always hold
 
-Each rule is an invariant in `SPEC.md` §2.
+A rule that carries out an invariant of `SPEC.md` §2 names it; the others are architecture rules.
 
-- **Git is read-only.** Vet reads the object graph and the filesystem in-process (gix, no git subprocesses or hooks) and fetches into `refs/vet/*` only; it never writes `refs/heads/*`, the index, the worktree or `HEAD`. It never detects who wrote something: every writer is opaque (I4).
-- **Review state is content-anchored.** Spans and anchors are recorded as marked and are not remapped in place; remapping starts from the recorded spans whenever the target changes, uses exact mapping only, and its result lives in memory. Content a remap cannot place exactly is left unseen (I3).
-- **Trust gates code execution.** Whether servers and restores may execute project code is the analysis policy (`SPEC.md` §7.5), part of the key of every kept tree, restore record and cached answer, so a fetch-only answer is never reused as an executing one.
-- **The semantic layer knows no git** (I1). It sees content-addressed snapshots (`SnapshotId`, a Merkle id over its entries) and materialized directories; what a snapshot came from lives in `Acquisition` (I1).
-- **Semantic primitives come only from language servers** (I6): derived analyses are labelled and recomputed from their inputs, and an operation a server does not offer is answered as not offered, never as empty. An answer is reused only under a key that names everything it depends on (I2).
-- **The window is a thin client** (I5). All product logic sits behind the transport; the shell port touches rendering only.
+- **Git is read-only.** Vet reads the object graph and the filesystem in-process (gix, no git subprocesses or hooks) and fetches into `refs/vet/*` only; it never writes `refs/heads/*`, the index, the worktree or `HEAD`.
+- **Review state is content-anchored.** Spans and anchors are recorded as marked and are not remapped in place; remapping starts from the recorded spans whenever the target changes, uses exact mapping only, and its result lives in memory. Content a remap cannot place exactly is left unseen (I2).
+- **Trust gates code execution.** Whether servers and restores may execute project code is the analysis policy (`SPEC.md` §6.5), part of the key of every kept tree, restore record and cached answer, so a fetch-only answer is never reused as an executing one.
+- **The semantic layer knows no git.** It sees content-addressed snapshots (`SnapshotId`, a Merkle id over its entries) and materialized directories; a snapshot's provenance lives in `Acquisition`. No function of the semantic layer takes a commit hash, a ref name or an origin.
+- **Semantic primitives come only from language servers** (I3): derived analyses are labelled and recomputed from their inputs, and an operation a server does not offer is answered as not offered, never as empty. Cache keys cover every input (I1).
+- **The window is a thin client.** All product logic sits behind the transport; the shell port touches rendering only, and no decision in the backend depends on the window.
+- **Writers are opaque.** Vet learns everything from git and the filesystem and never detects which tool or person changed a file.
 - **The dependency direction is enforced**: `ci/check-deps.sh` holds an allowlist per crate, and the pure crates (`vet-core`, `vet-protocol`, `vet-engine`, `vet-semantic`) pull in no IO, git, database or async runtime.
 
 ## Building blocks
@@ -35,14 +36,16 @@ The backend is layered: `vet-core` holds the domain, `vet-protocol` the protocol
 
 ### The review model
 
-- A **snapshot** is a content-addressed tree. What it came from lives in `Acquisition` (I1); the review model and the semantic layer see snapshots only.
+- A **snapshot** is a content-addressed tree. Its provenance lives in `Acquisition`; the review model and the semantic layer see snapshots only.
 - A **changeset** is what one thing adds on top of a base: the working tree, a branch, or a pull request. One is on view per project.
 - The **base** is fixed by the changeset's kind and never chosen, so a queue row and its view agree. A branch's is the merge base with the default branch (its own tip when there is none); a pull request's is the merge base with the fetched target. A base follows its branch when that moves, never its tip, so the review shows what the changeset adds.
 - The working tree's base is the `HEAD` it was opened at, pinned while browsing (so it survives a restart) and cleared when a review finishes; commits on top do not move it. `Base::head_off_base` says when `HEAD` no longer builds on the base, because the changes then include work from elsewhere; `Base::contained_in` says when the base already holds the tip, and the changeset is empty.
 - A **review** numbers its states from version 1 and discards the changeset's earlier versions; version 0 is the virtual base it started from, not stored. Each version stores the files it changed against the version before, so the timeline needs no diff per row.
 - A **view** is what a request reads or marks: the changeset, an interdiff between two versions, or one commit. An interdiff compares `from`'s target, rebased onto `to`'s base, with `to`'s target, so what only a base move explains drops out; the engine keeps it under the four snapshots it compares, not per revision.
 - A branch or pull request is read in a **lens**: `Squash` (All changes, the default) or `PerCommit`, one commit at a time. A merge is compared with the automatic merge of its parents, so it shows what the author resolved.
-- A **span** records a seen or flagged range as marked and is never remapped in place; remapping from the recorded spans uses exact mapping only, so a seen region split by an edit becomes seen parts around unseen ones (I3). A span records the commit whose diff it was marked in; comments are always made in the changeset.
+- A **span** records a seen or flagged range as marked and is never remapped in place; remapping from the recorded spans uses exact mapping only, so a seen region split by an edit becomes seen parts around unseen ones (I2). A span records the commit whose diff it was marked in; comments are always made in the changeset.
+- An **anchor** records its side, snapshot, file and range, with hashes of the range's exact bytes, of its normalized text (LF line endings, trailing whitespace stripped) and of the normalized lines around it.
+- A comment is remapped straight from its snapshot to the one shown. Exact first, the first that works: the file unchanged at its path with equal bytes; the range mapped through the diff, renames included, with equal bytes; the same with equal normalized text (`Exact { whitespace_changed }`). Otherwise candidates come from the context window within the file and from the content of the other changed files, scored together: one clear winner is `Inferred` with its `Strategy` (`ContextWindow`, `CrossFileMove`) and confidence, several close ones `Ambiguous`. Rewritten lines fall back to the new lines between the nearest unchanged neighbours (`Inferred { ContextWindow, Low }`), deleted ones to where they were (`Inferred { Deleted, Low }`).
 - A span seen against an earlier base counts as unseen until re-confirmed; the base-side lines as they were when it was marked can be inspected. A flag is a span too, kept out of the seen coverage and not degrading.
 
 ## How it runs
@@ -64,6 +67,15 @@ The backend is layered: `vet-core` holds the domain, `vet-protocol` the protocol
 5. The backend announces `SnapshotMoved`, with the open review's version; a settled tree is announced only while the working tree is on view, and `EditsPending` says whether edits wait to become a version.
 6. A `RefsMoved` makes the session look at the changeset on view again: for a branch, if the tip or merge base differs, the target and base follow and the change is the next version; a pull request gains one version per push its platform lists.
 
+What makes the watcher ask for a full reconciliation:
+
+| Platform                    | Watcher                 | Reconciles on                                                        |
+| --------------------------- | ----------------------- | -------------------------------------------------------------------- |
+| macOS                       | FSEvents                | `MustScanSubDirs`, `UserDropped`/`KernelDropped`, `RootChanged`      |
+| Windows                     | `ReadDirectoryChangesW` | buffer overflow (a zero-byte result), an invalid handle              |
+| Linux / WSL (ext4)          | inotify                 | `IN_Q_OVERFLOW`; too many watches switches to polling, with a notice |
+| WSL, repository on `/mnt/*` | polling only            | every poll                                                           |
+
 ### A review action reaching the store and every window
 
 1. The request's handler calls a session command; the first action starts the review at version 1 (`ReviewStarted`), later ones change it (`ReviewChanged`, whose `reviewed_at` says when the mark moved where the review last was, so a window reads the versions again only then).
@@ -79,7 +91,7 @@ The backend is layered: `vet-core` holds the domain, `vet-protocol` the protocol
 1. A pull request is a changeset; opening one fetches into Vet's own refs first (`refs/vet/pr/…`), as a task, and fails with a message fit to show. GitHub's head is `refs/pull/<n>/head` (forks included); Azure DevOps's is the source branch, or the head commit id when the branch is in a fork.
 2. The base is the merge base of the head with the fetched target; each push the platform lists is a version, the newest announced as `SnapshotMoved`. A push whose commits the platform dropped is a version without content. A background fetch keeps every remote current, on demand and every five minutes while a project is open, and announces `ChangesetsChanged`.
 3. The title and draft are stored with the changeset when the platform tells of them, so a restored view is headed without asking again. What the platform last said besides its threads is answered from the store first; details whose `updatedAt` changed are fetched ahead, paced, and stopped while the account is limited.
-4. The platform port (`vet-app/src/platform/port.rs`) is the only platform knowledge outside the adapters (`vet-infra/src/platform/github`, `azure_devops`); `hosting.rs` forwards to the adapter of the pull request on view, so no handler above the port names a platform.
+4. The platform port (`vet-app/src/platform/port.rs`) is the only platform knowledge outside the adapters (`vet-infra/src/platform/github`, `azure_devops`); `hosting.rs` forwards to the adapter of the pull request on view, so no handler above the port names a platform. Each platform describes itself as `PlatformTraits` (`changeset_threads`, `conversation_feed`, `posting`, `verdicts`, `verdict_separate`, `blocking`, `revision_scoped`; `SPEC.md` §7.2), which the UI branches on. A linked thread keeps the platform's id and status, whether it is resolvable and whether it blocks the merge.
 5. Sync reads the platform's threads in common terms, decides as data what each status and comment becomes, and applies it; the platform is asked with the session's lock released. A viewer's status change wins; an edit is sent at once; an edit made on both sides is kept as two texts until the viewer chooses; a deleted thread is removed with a notice for the drafts lost.
 6. Each outgoing comment is stored as a draft, posting or failed, written as posting before the platform is asked, so a post Vet did not see through is reconciled at the next sync. A batched platform posts all drafts as one review; a per-comment platform posts one by one and stops at the first refusal. A vote kept apart from posting is staged and sent after the comments.
 7. The backend keeps the checks of the commits on view fresh itself and pushes them; no check or log is stored. Credentials are per account, in memory only, tried in order (a signed-in `gh`/`az`, then the shell's keychain token), validated when entered; a token goes to its host's API and nowhere else. Only the shipped backend looks for `gh`/`az` on `PATH` (`Config::cli_dirs`); a backend built from `Config::default()`, as the tests do, finds none and uses only the credentials it is given.
@@ -87,13 +99,23 @@ The backend is layered: `vet-core` holds the domain, `vet-protocol` the protocol
 ### A semantic question answered
 
 1. `vet-semantic` is pure; `vet-infra` implements its ports over language-server processes.
-2. The request runs through `Revisions::until_superseded`: work for an older revision is dropped, its server requests cancelled, and the request fails as stale.
+2. The request runs through `Revisions::until_superseded`: work for an older revision is dropped, its server requests cancelled (`$/cancelRequest`), and the request fails as stale.
 3. The semantic lane reads a `RevisionView`, a clone of the acquisition and the published pointer. It cannot take the write token or reach the review database, so it never makes a command wait.
-4. Servers are pooled by target, backend and policy, kept warm and evicted by cost; a start is one shared flight per pool key and generation, and each server has a request budget. The pool supervises what it started: a server that dies is started again once, and one that dies again stays stopped until a manual restart, which the window is told. A policy that forbids executing project code refuses the backends that would.
-5. An answer is reused only under a key that names its inputs: the document text for one-document answers, or the snapshot, policy, restore and query for cross-file ones. The live tree has no project key, so its project-wide answers are asked fresh; persisted answers live in a disposable `semantic-cache.sqlite`.
-6. An answer is admitted only if the server was idle and its readiness did not change; errors are never kept. An operation the server does not offer is answered as not offered before the server is asked (I6).
-7. The live tree is served in place; every other snapshot from a kept tree the `Materializer` built, with each language's restore recorded beside it and checked against the current tools and policy before reuse.
-8. The backend analyses the changeset's files itself while the review screen shows it, open files first, pushing symbols and diagnostics as they come; derived analyses (changed symbols, calls, usages, reachability, removal impact) are recomputed from the cached primitives over the diff. Languages and their servers are in `vet-infra/src/language.rs` (`SPEC.md` §7.1).
+4. Servers are pooled by target, backend and policy, kept warm and evicted by cost; a start is one shared flight per pool key and generation, and each server has a request budget. The pool supervises what it started: a server that dies is started again once, and one that dies again stays stopped until a manual restart, which the window is told. A policy that forbids executing project code refuses the backends that would. A server that fails to start repeats its failure for a backoff that starts at 5 s and doubles per failure in a row, up to 5 min; an install, a new path or a restart clears it.
+5. Cache keys (I1):
+   - a file's symbols: the server fingerprint, the file extension and the text's blob id; kept in memory and on disk;
+   - hover, definition, references, call hierarchy and diagnostics on a materialized snapshot: the server fingerprint, snapshot, policy, restore and query; kept in memory and on disk;
+   - workspace symbols on a materialized snapshot: the same key, in memory only;
+   - the live tree has no project key, so its project-wide answers are asked fresh;
+   - derived results are not kept; they are recomputed from the cached primitives over the diff.
+
+   Persisted answers live in a disposable `semantic-cache.sqlite` (WAL), apart from the review database.
+
+6. An answer is admitted only if the server was idle and its readiness did not change; errors are never kept. An operation the server does not offer is answered as not offered before the server is asked (I3).
+7. The live tree is served in place. Questions are asked at one revision's positions, so the server gets that revision's file texts, kept like a review's content from the texts the diff read; a file Vet has no text of is read from disk by the server. An answer naming such a file that changed on disk after the revision settled is dropped and asked again at the next revision, once per revision, while the caller waits; a file Vet read nothing of for the revision cannot be checked and stays in the answer.
+8. Every other snapshot is served from a kept tree the `Materializer` built, with each language's restore recorded beside it and checked against the current tools and policy before reuse. A kept tree in use by a running Vet is locked.
+9. Restores run nothing by default (`cargo fetch`, and the package managers with `--ignore-scripts`, `--ignore-pnpmfile`, Yarn's `--mode=skip-build` with scripts off, uv's `--no-build`); the same flags hold where the policy allows executing, and only `dotnet restore` (MSBuild) needs that policy. When `npm ci` refuses a lock file out of sync with `package.json`, `npm install --no-save` with the same flags stands in. A failed step reports the part of the output that explains it (npm's error without its usage text, otherwise the first and last lines).
+10. The backend analyses the changeset's files itself while the review screen shows it, open files first, pushing symbols and diagnostics as they come; a file whose analysis fails for a passing reason is tried three times with a short pause. Derived analyses (changed symbols, calls, usages, reachability, removal impact) are recomputed from the cached primitives over the diff. Languages and their servers are in `vet-infra/src/language.rs` (`SPEC.md` §6.1). rust-analyzer and `roslyn-language-server` are pinned versions; the TypeScript and Svelte servers run over tsserver; the JSON server comes from `vscode-langservers-extracted`.
 
 ### Listing the queue
 
@@ -146,9 +168,9 @@ The backend is layered: `vet-core` holds the domain, `vet-protocol` the protocol
 
 ### Storage and retention
 
-- The store is SQLite (`vet-infra/src/store`), migrated at open. It keeps snapshots and their trees; changesets, their versions and the files each version changed; the review's spans, anchors and threads; trust; the last thing a platform said of each pull request; the review filter; and the backend's settings and the window's preferences.
+- The store is SQLite in WAL mode (`vet-infra/src/store`), migrated at open. It keeps snapshots and their trees; changesets, their versions and the files each version changed; the review's spans, anchors and threads; trust; the last thing a platform said of each pull request (at most 256, least recently read dropped first); the review filter; and the backend's settings and the window's preferences.
 - Content is content-addressed, written temp → fsync → rename and referenced only once durable. The schema changes only by migrations applied in order, so an older database is upgraded in place and a newer one is never opened or deleted.
-- `vet-app/src/gc.rs` decides what is kept: a changeset expires once its last review closed longer ago than the retention (30 days by default, adjustable) unless a review, thread or pending vote is open; content and snapshots have an hour of grace. Session refs keep each version's commits alive in git; a pull request no longer listed, whose refs were fetched, has them dropped unless it is on view or its review is open.
+- `vet-app/src/gc.rs` decides what is kept: a changeset expires once its last review closed longer ago than the retention (30 days by default, adjustable) unless a review, thread or pending vote is open; content and snapshots have an hour of grace. Session refs (`refs/vet/sessions/<session-id>/{base,target}`) keep each version's commits alive in git; a pull request no longer listed, whose refs were fetched, has them dropped unless it is on view or its review is open.
 - One contract of the store ports (`vet-app/src/store_contract.rs`) runs against the in-memory fake and against `SqliteStore`; the settings and gc ports run against the real store alone.
 - The semantic cache is one disposable SQLite file under a viewer-set budget; kept trees are one per snapshot and policy under a disk budget, the settings showing the use and a Clear action.
 
@@ -172,5 +194,5 @@ The backend is layered: `vet-core` holds the domain, `vet-protocol` the protocol
 - A change to review state: a session command that takes the write token and publishes; a derived value: a `vet-engine` kind awaited without the token. Blocking work and processes go through `budget` and `exec`.
 - A new store table: an entity and a migration in `vet-infra/src/store`, behind the store ports in `vet-app/src/ports.rs`.
 - A semantic query: a primitive on `LanguageServer`, a key in `reuse.rs`, a `Feature` if servers may lack it, a derived analysis in `vet-semantic/src/derived`.
-- A new language server: a `Language` in `vet-infra/src/language.rs` (what it serves, its install and restore, its setup in `lsp/setup.rs`).
+- A new language server: a `Language` in `vet-infra/src/language.rs` (binary, file types, root markers, whether it executes project code (assumed yes unless known), its install and restore, its setup in `lsp/setup.rs`), then a check of which features the server offers. Special cases for a server are added one by one, for problems actually seen.
 - A new hosting platform: an adapter of the port in `vet-infra/src/platform`, its host and remote parsing in `vet-app/src/platform`.

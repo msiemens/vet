@@ -1,4 +1,4 @@
-//! `vet_app::ports::GcStore`: the SQL behind garbage collection (§8). What to
+//! `vet_app::ports::GcStore`: the SQL behind garbage collection (§9). What to
 //! delete is decided by `vet_app::gc`.
 
 use std::collections::{HashMap, HashSet};

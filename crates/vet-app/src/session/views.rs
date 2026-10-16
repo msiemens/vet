@@ -224,11 +224,11 @@ pub struct ManifestView {
     pub changeset_files: u32,
     /// The completion of the changeset as a whole, whatever view the manifest is of.
     pub changeset_completion: Completion,
-    /// Why this view shows no file; the shell words it (SPEC I5).
+    /// Why this view shows no file; the shell words it.
     pub empty: EmptyReason,
 }
 
-/// Why a view of a changeset shows no file. The backend decides it; the shell only words it (SPEC I5).
+/// Why a view of a changeset shows no file. The backend decides it; the shell only words it.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum EmptyReason {
     /// The review filter leaves out every changed file.
@@ -259,8 +259,8 @@ pub(super) enum ViewKind {
     Range,
 }
 
-/// Why a view shows no file, from what was read of it (SPEC I5: the backend decides, the shell
-/// words). `excluded` is whether the review filter leaves out every changed file; `contained` is
+/// Why a view shows no file, from what was read of it: the backend decides, the shell
+/// words. `excluded` is whether the review filter leaves out every changed file; `contained` is
 /// the branch that already holds the tip, as (its tip is the branch's tip, the pull request is
 /// merged); `open_version` is the open review's latest version, none while browsing.
 pub(super) fn empty_reason(
@@ -318,7 +318,7 @@ pub struct InterdiffView {
     pub rebased: bool,
     /// Marks and comments land in the changeset of version `to`, which only the latest has.
     pub markable: bool,
-    /// What does not work in this view and why, fit to show (SPEC I6).
+    /// What does not work in this view and why, fit to show (SPEC I3).
     pub limits: Vec<String>,
 }
 

@@ -1,4 +1,4 @@
-//! Threads of a pull request exchanged with its platform (SPEC M1 "Thread sync"): pulled in when
+//! Threads of a pull request exchanged with its platform (SPEC §7.4): pulled in when
 //! the pull request opens, on fetch and after a review is submitted; edits to posted comments
 //! pushed at once; drafts posted together as one review. The platform is asked with the session's
 //! lock released, so what the viewer does meanwhile is never held up by the network.
@@ -76,7 +76,7 @@ pub struct DiscussionView {
     pub discussion: Discussion,
     /// Threads the platform has that are open and can be resolved.
     pub unresolved_threads: u32,
-    /// What stands between the pull request and its merge, as the last sync found it (§11).
+    /// What stands between the pull request and its merge, as the last sync found it (§7.2).
     pub blocking: Vec<Blocker>,
 }
 

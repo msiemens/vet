@@ -1,5 +1,5 @@
 //! `vet_app::ports::GitRepo` over gitoxide. No git subprocesses, hooks,
-//! fsmonitor, or filter and diff drivers (§6.3); a fetch runs the credential
+//! fsmonitor, or filter and diff drivers (§4.3); a fetch runs the credential
 //! helpers the user configured and, over SSH, the system `ssh`. All filesystem,
 //! hashing and gix work runs on the blocking pool.
 
@@ -37,7 +37,7 @@ use stat_cache::StatCache;
 
 pub(crate) use blob_cache::BlobCache;
 
-/// Default capture size cap (§6.1).
+/// Default capture size cap (§4.1).
 pub const DEFAULT_CAP: u64 = 50 * 1024 * 1024;
 
 /// The root of the working tree containing `path`, found the way git does and

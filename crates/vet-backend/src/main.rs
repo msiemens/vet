@@ -1,5 +1,5 @@
 //! Binds the loopback WebSocket and prints the per-launch token to stdout for
-//! the shell to read (§4.1), then serves protocol v1 from the real components.
+//! the shell to read (`ARCHITECTURE.md`), then serves protocol v1 from the real components.
 
 use std::io;
 

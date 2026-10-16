@@ -1,4 +1,4 @@
-//! Anchors, review state, threads (SPEC §5). Content-anchored, never line-anchored (I3).
+//! Anchors, review state, threads (SPEC §5). Content-anchored, never line-anchored (I2).
 
 use serde::{Deserialize, Serialize};
 
@@ -126,7 +126,7 @@ pub enum Outgoing {
     Failed { error: String },
 }
 
-/// One of the ways to close a review, in terms that hold for every platform (SPEC §11). The
+/// One of the ways to close a review, in terms that hold for every platform (SPEC §7.2). The
 /// adapters own how their platform spells one on the wire, and the UI owns the words shown. How
 /// each reads: `Comment` "Comment", `Approve` "Approve", `RequestChanges` "Request changes",
 /// `ApproveWithSuggestions` "Approve with suggestions", `WaitForAuthor` "Wait for author",

@@ -1,5 +1,5 @@
-// What a row of the commit list shows of a commit, as the backend described it (SPEC I5: no
-// progress or classification is worked out here).
+// What a row of the commit list shows of a commit, as the backend described it: no
+// progress or classification is worked out here.
 
 import type { CommitUnit } from "../../generated/CommitUnit";
 import { shortTime } from "../../lib/shortTime.ts";

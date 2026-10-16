@@ -1,595 +1,524 @@
-# Vet — Core Spec
-
-## 1. Product definition
-
-Vet is a **review-first IDE** for the agentic coding age. The unit of work is the _changeset_, not the file. The human's role is _verifier_, not author. Agents run elsewhere; Vet is the checkpoint between agent output and merged code.
-
-**Primary activities, in priority order:**
-
-1. Review changesets (dirty trees, local commits, stacks, PRs)
-2. Verify semantics (navigation, impact, reachability, base-vs-target queries)
-3. Close the loop (annotations → platform comments or agent task files)
-
-**Permanent non-goals:**
-
-- Agent authoring/orchestration integration
-- Harness-specific integrations or provenance inference (observation-only)
-- Being a general-purpose authoring IDE
-- Multi-user/team collaboration (personal tool)
-
-**Threat model:** agents are non-adversarial but fallible. Vet guards against _accidents_, not against attacks. The one exception is what does not come from your own project: pull requests from a fork, and, in a project you have not marked trusted, pull requests at all. Vet does not analyze them with code-executing backends until you choose to trust them (§7.5).
-
-**Platforms:** macOS, Windows, and WSL2, including the split where the shell runs on Windows and the backend runs in WSL (§4.1).
-
----
-
-## 2. Core invariants — frozen
-
-| #      | Invariant                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   | Test                                                                                                                                                                                                                                                                                                                                                                                                                   |
-| ------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **I1** | **The semantic layer never knows git.** Acquisition maps git state into immutable snapshots; provenance lives in the acquisition/review layer.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              | No semantic-layer API accepts commit hashes, ref names, or origin flags.                                                                                                                                                                                                                                                                                                                                               |
-| **I2** | **A semantic answer is reused only under a key that names everything it depends on.** Semantic answers come from language servers running against the live worktree or a complete, materialized snapshot. Every answer Vet keeps, in memory or on disk, is stored under a key built from the complete inputs of the query that produced it: the exact text it was asked about (by blob id) for answers that depend on one document; the side's snapshot, the analysis policy and the restore of its dependencies for answers that resolve across files; and always the identity of the server (binary, version, settings, toolchain, and the user-level configuration outside the repository it reads). An answer is reused if and only if a recomputed key is equal; validity is never judged by time, events or heuristics. Answers from the live worktree are reused only when they depend on the exact text Vet sent. Every cache can be deleted at any time without changing anything but speed. The server identity and the standing of a restore are observed once per generation (a launch, a settings change, an install, a server restart or clearing the caches starts a new one), as a running server already is, and are part of every key observed within it. | For every cached query kind, changing any one key input makes a fresh server query, and keeping all of them answers from the cache without one. The same scenario run with every cache disabled and with caching on gives identical results. An answer the server gave while it was not ready is never stored. Deleting the cache file and the materialized directories leaves review state and all results unchanged. |
-| **I3** | **Annotations and review state are content-anchored, never line-anchored. Outcomes distinguish `Exact` / `Inferred` / `Stale` / `Ambiguous`. `Seen` applies only to content identical to the content that was reviewed — new or modified content is never silently marked seen.**                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           | Annotations survive amend, rebase, force-push, renames, moves, agent edits — repositioned with recorded confidence, never silently orphaned. A seen region split by new edits yields seen parts for identical content and unseen parts for the rest.                                                                                                                                                                   |
-| **I4** | **All writers are opaque.** Everything is learned from observing the git object graph and filesystem. Never detect, parse, or infer harness behavior.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       | Identical behavior whether the writer is Claude Code, Aider, a human, or `sed`.                                                                                                                                                                                                                                                                                                                                        |
-| **I5** | **The shell is a thin client.** All product logic sits behind the orchestrator's IPC boundary.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              | A shell port touches rendering only. No backend, store, or acquisition decision may reference the shell.                                                                                                                                                                                                                                                                                                               |
-| **I6** | **Semantic _primitives_ — types, references, diagnostics, call edges — come exclusively from authoritative language backends; there is no heuristic tier. Vet may build _derived analyses_ over those primitives, but derived results are labeled as such and their derivation is inspectable.**                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            | Every primitive traceable to a vendor backend. Derived claims display their inputs. An operation a server does not offer is shown as not offered by that language's server, never as an empty answer; a server that cannot take documents is refused loudly.                                                                                                                                                           |
-
----
-
-## 3. Object model
-
-```
-Snapshot          immutable, content-hashed view of a worktree
-  └─ entries:     BTreeMap<Path, FileEntry{ blob, mode, kind }>  // kind: file | symlink | submodule
-  └─ id:          hash over the sorted entry set
-LogicalTip        an evolving tip (the dirty tree, a branch, a PR) whose value is a
-                  time-ordered sequence of settled Snapshots. This sequence IS the
-                  edit timeline.
-Changeset         (base: SnapshotId, target: SnapshotId)
-ReviewFilter      review roots + include/exclude patterns, set per repository. A
-                  VIEW over a changeset; never part of snapshot identity.
-Pin               recorded {head, tree_hash} when a review starts (version 1); the
-                  dirty content of that snapshot copied into the content store
-Anchor            content anchor for one range on one side (I3); used by threads
-Thread            a comment thread on a line range, a file, or the whole changeset;
-                  optionally linked to a platform thread
-ReviewedSpan      the durable unit of review coverage: a range of content the user
-                  marked seen, on one or both sides. Hunks are a display concept;
-                  "hunk seen" is derived from spans. Flags and concerns are comments.
-Session           a working tree on view against a base: browsing until a review
-                  starts (§5.3), then an open review of one Changeset that owns
-                  its pin, versions and review state
-```
-
-**Provenance separation (I1):** snapshots are pure content. Origin, `base_head`, branch/PR metadata, and timeline order live in the acquisition layer, keyed by `SnapshotId`.
-
----
-
-## 4. Architecture
-
-```
-┌─────────────────────────────────────────────────┐
-│ Shell (thin client — I5)                        │
-│   Web UI (Svelte + CodeMirror 6) in Tauri       │
-├──────── IPC boundary: WebSocket (§4.1) ─────────┤
-│ Orchestrator (Rust)                             │
-│  ┌──────────────┬───────────────┬─────────────┐ │
-│  │ Acquisition  │ Semantic      │ Review      │ │
-│  │ snapshots,   │ server pool,  │ anchors,    │ │
-│  │ watcher,     │ queries       │ remap,      │ │
-│  │ reconcile,   │               │ spans       │ │
-│  │ pins, refs,  │               │             │ │
-│  │ materializer │               │             │ │
-│  └──────────────┴───────────────┴─────────────┘ │
-│  ┌────────────────────────────────────────────┐ │
-│  │ Platform adapters: GitHub, ADO (sync out)  │ │
-│  ├────────────────────────────────────────────┤ │
-│  │ Storage: content store + SQLite (§8)       │ │
-│  └────────────────────────────────────────────┘ │
-└─────────────────────────────────────────────────┘
-```
-
-### 4.1 Topologies and IPC
-
-The orchestrator, language servers, stores, and **the worktree under review** always live on the same side, the _backend side_. Only the shell may be elsewhere.
-
-| Topology                  | Shell            | Backend side                                  | Status                                                                                                       |
-| ------------------------- | ---------------- | --------------------------------------------- | ------------------------------------------------------------------------------------------------------------ |
-| macOS native              | Tauri            | macOS                                         | supported                                                                                                    |
-| Windows native            | Tauri            | Windows                                       | supported                                                                                                    |
-| WSL split                 | Tauri on Windows | WSL2, worktree on the Linux filesystem (ext4) | supported                                                                                                    |
-| WSL, worktree on `/mnt/*` | Tauri on Windows | WSL2                                          | **degraded**: watcher unreliable across 9P, polling reconciliation, performance targets void, visible banner |
+# Vet — Spec
 
-**Transport:** one protocol over one transport, a WebSocket bound to loopback, in every topology. The shell spawns the backend (directly, or via `wsl.exe` in the split) and reads a per-launch random token from its stdout. Every connection must present the token. There is no unauthenticated endpoint. In the WSL split, Windows reaches the socket through WSL2 localhost forwarding.
+This file describes what Vet does and the rules it must always follow. How Vet is built is in `ARCHITECTURE.md` (backend) and `ui/ARCHITECTURE.md` (UI).
 
-**Why Tauri and not a plain browser:** browsers reserve shortcuts the JetBrains keymap needs (Ctrl+W closes the tab). Because the UI is a web bundle, it still loads in a browser for development, but that is not a supported target.
+In this file, the **current changeset** is the one changeset of a project that Vet has open at a time. The **review screen** is the screen that shows its changes; the **queue** is the screen that lists changesets.
 
-**Agents** may run on either side. Writes from Windows into the WSL filesystem (`\\wsl$`) are observed like any other write (I4).
+## 1. Product
 
----
+Vet is a desktop app for reviewing code changes, in particular changes made by coding agents. It shows changesets rather than files, and the reviewer reads and marks code rather than writing it. Agents run outside Vet.
 
-## 5. Review model
+What it does, in order of priority:
 
-### 5.1 Anchors (I3)
+1. Review changesets: uncommitted changes, local commits, branches, pull requests.
+2. Answer questions about the code: navigation, impact, reachability, the old version against the new one.
+3. Comment, with comments synced to GitHub or Azure DevOps.
 
-```rust
-struct Anchor {
-    side: Side,                    // Base | Target of the changeset it was created in
-    snapshot: SnapshotId,
-    file: Path,
-    range: Range,
-    content_hash_raw: Hash,        // exact bytes of the annotated range
-    content_hash_norm: Hash,       // LF line endings, trailing whitespace stripped
-    context_hashes: Vec<Hash>,     // surrounding lines, normalized
-}
+**Non-goals:**
 
-enum AnchorState {
-    Exact { whitespace_changed: bool },
-    Inferred { strategy: Strategy, confidence: Confidence },
-    Stale { reason: StaleReason },           // context changed / file deleted
-    Ambiguous { candidates: Vec<Location> }, // duplicate matches — distinct from Stale
-}
+- Writing code or running agents.
+- Integrations with specific agent tools, or guessing which tool made a change.
+- Being a general-purpose IDE.
+- Collaboration between several users. Vet is a personal tool.
 
-enum Strategy { ContextWindow, CrossFileMove, Deleted }
+**Threat model:** agents are assumed to make mistakes, not to attack. Vet does not defend against malicious code, with one exception: code from outside your own project. That is pull requests from a fork and, in a project you have not marked trusted, all pull requests. Vet does not run anything that executes such code until you trust it (§6.5).
 
-enum CommentTarget {
-    Range(Anchor),          // lines on one side; goes through anchor resolution
-    File { side: Side, path: Path },
-    Changeset,              // the changeset as a whole
-}
+**Platforms.** The backend, the language servers, Vet's storage and the repository under review always run on the same machine, the _backend side_. Only the window (the shell) may run elsewhere.
 
-struct Thread {
-    id: ThreadId,
-    target: CommentTarget,
-    messages: Vec<Message>,          // author, body, time; first is the opener
-    status: Open | Resolved,         // local status
-    platform: Option<PlatformThread>,
-}
+| Setup     | Window           | Backend side                             | Status    |
+| --------- | ---------------- | ---------------------------------------- | --------- |
+| macOS     | Tauri            | macOS                                    | supported |
+| Windows   | Tauri            | Windows                                  | supported |
+| WSL split | Tauri on Windows | WSL2, repository on the Linux filesystem | supported |
 
-struct PlatformThread {
-    remote_id: String,
-    remote_status: Option<String>,   // shown as-is, e.g. ADO "Won't fix"
-    resolvable: bool,                // false for a flat conversation comment
-    blocks_merge: bool,              // as reported by the platform (§11)
-}
-```
+## 2. Invariants
 
-Only `Range` targets are resolved by the algorithm below and can become `Stale` or `Ambiguous`. `File` targets follow git-detected renames and become `Stale` only when the file is deleted; `Changeset` targets never detach.
+### I1 Cache keys cover every input
 
-**Resolution algorithm.** An anchor resolves into the same `side` of the changeset it is displayed against, directly from its recorded snapshot to the target snapshot (never through intermediate snapshots).
+The key of a cached language-server answer holds:
 
-- **Exact strategies, ordered, first success wins:**
-  1. Identical blob at the same path, raw hash verified over the range.
-  2. Diff-mapped range (old → new file at the same or a git-detected renamed path) with raw-hash verification.
-  3. Diff-mapped range matching only on the normalized hash → `Exact { whitespace_changed: true }`.
-- **Inferred strategies, evidence-based:** collect candidates from both a context-window search within the file and a cross-file content match across the changeset's changed files (catches moves). One dominant candidate → `Inferred` with strategy and confidence. Competing plausible candidates → `Ambiguous`.
-- **Following the hunk.** When the anchored lines changed and no better candidate exists, using the old → new line alignment, the anchor attaches to the lines of the new text between the nearest unchanged line before it and the one after it (the hunk that replaced them), however large: `Inferred { ContextWindow, Low }`. When nothing replaced the lines, they were deleted: the anchor sits on the line where they were, `Inferred { Deleted, Low }`, and the UI says "line deleted". Both show the "moved" badge and can be confirmed; they are never silent.
-- **None → `Stale`** only when the file was deleted or no text around the anchor survived.
-- Inferred candidates are scored together, never first-success-wins.
+- for an answer about one file: the blob id of that file's text;
+- for an answer that looks across files: the snapshot, the analysis policy (§6.5) and the dependency restore;
+- always: the server's fingerprint (binary, version, settings, toolchain, and any user configuration outside the repository that it reads).
 
-### 5.2 Review state
+Further rules:
 
-```rust
-struct ReviewedSpan {
-    base:   Option<Anchor>,   // reviewed base-side lines; None for pure additions
-    target: Option<Anchor>,   // reviewed target-side lines; None for pure deletions
-    state:  Seen | SeenAgainstOldBase | Flagged,
-}
-```
+- No time-based or event-based invalidation: a cached answer is valid exactly while its key matches.
+- For the working tree, which changes under the server, only per-file answers are cached.
+- Caches are disposable: deleting one only makes Vet slower.
+- Vet computes the server's fingerprint and the restore's state once, and again after a launch, a settings change, a restore, a server restart or clearing the caches.
 
-Marking a hunk (or a selection) seen records one `ReviewedSpan` covering its lines on both sides. `Seen` and `SeenAgainstOldBase` spans record coverage; flagging a concern is a comment (§5.1). A hunk shows as seen when every changed line in it is covered by a `Seen` span.
+Tests:
 
-**Flags.** A hunk can be flagged for later review: a `Flagged` span over its lines on both sides, which covers nothing. A flag is independent of seen (a hunk can be both), is only removed by flagging again, and is never cleared by marking seen or unseen. Flags are stored with the review and remapped exactly as seen spans are, except that a flag never degrades: a hunk is flagged while any of its changed lines is covered by a `Flagged` span, so a flagged hunk that is split or edited by a push stays flagged. Finishing the review drops them with the other marks.
+- For each kind of cached answer, changing any one input is a cache miss, and changing none is a hit.
+- The same scenario gives the same results with all caches off and with caching on.
+- Partial answers (§6.3) are never stored.
+- Deleting the cache file and the materialized snapshots (§6.2) changes no review state and no result.
 
-**Remapping is a partition (constitutional, per I3).** When the changeset changes, each span is remapped side by side using the line-level diff between its recorded file and the current file (following git-detected renames). Only Exact strategies apply. Inferred moves never carry review state. Each reviewed line whose content is identical and maps into the current changeset stays covered. Every other line is uncovered, so one span can become several spans, or none. If a reviewed line's mapping is not unique (for example, repeated identical lines whose surrounding context changed), it is uncovered rather than left to the diff algorithm's tie-breaking. A seen 20-line region that gets a 3-line edit becomes up to two seen spans around 3 unseen lines.
+### I2 Review state is anchored to content, not line numbers
 
-**Base changes.** If a span's target lines are still identical but any of its base lines changed, its descendants are marked `SeenAgainstOldBase`. They are rendered distinctly, count as **unseen** toward completion, and can be re-confirmed in one action.
+When the code changes, comments and review marks are remapped, and each ends up `Exact`, `Inferred`, `Stale` or `Ambiguous`. "Seen" stays only on content that is identical to what was reviewed: new or changed content is never marked seen without the reviewer doing it.
 
-This catches base changes **within the reviewed region only**. Semantic changes elsewhere surface through impact queries (§7.3), not review state. Losing review progress is acceptable; manufacturing false "already reviewed" confidence is not.
+- Test: comments survive amend, rebase, force-push, renames, moves and agent edits. They are remapped with the confidence recorded, and never silently lost.
+- Test: when new edits split a seen region, the identical parts stay seen and the rest becomes unseen.
 
-**Non-text changes.** A file-level change with no reviewable text (mode, symlink target, submodule commit, binary or oversized content, a pure rename, an added or deleted empty file) is one review item, acknowledged like a hunk and stored the same way, keyed by the before and after entries.
+### I3 Facts about code come only from language servers
 
-**Completion** is relative to the active `ReviewFilter`: a changeset is complete when every changed line that passes the filter is covered by a `Seen` span and every non-text change that passes it is acknowledged. The UI always shows how many changes the filter excludes, so "complete" never implies every change was seen.
+Types, references, diagnostics and calls come only from language servers; Vet does not guess them. Vet may compute further results from them (_derived_ results), but labels them as derived and shows what they were computed from.
 
-### 5.3 Session lifecycle
+- Test: every fact can be traced to a language server, and every derived result shows its inputs.
+- Test: an operation a server does not support is shown as "not supported by this language's server", never as an empty result. A server that cannot receive file contents is refused with a visible error.
 
-- **Browsing:** opening a repository shows the live working tree against the base, and records no versions, no retained content and no session refs. The only thing kept is the base the workspace is pinned to (§6.5), so that closing and reopening Vet before the first mark does not move it.
-- **Open:** a review starts implicitly with the first review action: marking something seen (span, hunk or file), acknowledging a non-text change, or creating a thread. Un-marking and reading do not start one. The snapshot current at that moment is **version 1**, the review's start snapshot; the pin records its `HEAD` and tree, and the base (§6.5) is the review's. Each later settled snapshot is the next version (v2, v3, …). **A pull request's versions are the pushes its platform recorded** (GitHub's force-pushes and the state each replaced, Azure DevOps' iterations), from the first push: a review that starts has one version per push already made, the current head being the last, and each later push is the next version, however many pushes came between two fetches. Their commits are fetched from the platform. A push whose commits the platform no longer gives (dropped after a force-push) is still a version, one without content: it is listed, cannot be opened, and the pushes around it are compared with the nearest version that has content. A local branch's versions are the tips Vet saw. Content retention and session refs (§6.1) apply from the start. A complete review (§5.2) stays open and keeps tracking.
-- **Closed:** "Finish review" is an explicit action, allowed with changes still unseen; it records whether the review was complete. It releases the session refs and stops versioning. Further edits are browsing again until the next review action starts a new review. Closed sessions follow the retention rule (§8).
-- **Resume:** opening a repository with an open review resumes it (the tree settles as the next version and review state remaps, §5.2); with none, it opens browsing.
+## 3. Concepts
 
----
+- **Snapshot:** the contents of a working tree at one moment: every file with its content, mode and kind (file, symlink or submodule). It never changes.
+- **Edit timeline:** the settled snapshots of something that changes over time (the working tree, a branch, a pull request), in order.
+- **Changeset:** a base snapshot and a target snapshot.
+- **Interdiff:** a diff of two diffs: how the changes of one version of a changeset differ from the changes of another. Since it compares changes rather than files, a rebase alone gives an empty interdiff.
+- **Review filter:** which files to review (review roots, include and exclude patterns), set per repository. It is applied when a changeset is shown and is never part of a snapshot.
+- **Pin:** the commit and tree recorded when a review starts (version 1), with the uncommitted content of that snapshot copied into the content store.
+- **Anchor:** where a comment or mark is attached: one range of content on one side (I2).
+- **Thread:** a comment thread on a line range, a file or the whole changeset, optionally linked to a thread on the platform.
+- **Reviewed span:** a range of content the reviewer marked seen or flagged, on one or both sides. Vet stores spans; whether a hunk is seen is worked out from them. A concern is a comment, not a mark.
+- **Session:** a working tree against a base: browsing until a review starts (§4.5), then an open review of one changeset with its pin, versions and marks.
 
-## 6. Acquisition layer
+**Provenance:** a snapshot holds file contents only. Its origin, its base commit, branch and pull request details, and its place in the timeline are stored separately, by snapshot id.
 
-### 6.1 Snapshots and scope
+## 4. Changesets and versions
 
-- **Snapshot contents:** a file is in a snapshot iff it is under the repository root **and** (tracked by git **or** untracked and not git-ignored). Files over the capture size cap (default 50 MB) are still hashed in full, so snapshot identity stays exact, but their content is not retained and they appear as `content unavailable`. Ignored paths can be opted in explicitly. The untracked contents of folders a tool owns by name (`.pnpm-store/`) are never part of a snapshot; this list is explicit and fixed. No relevance inference of any kind (I4). Executable-bit and symlink changes are first-class `(mode, kind)` entries. Submodules are recorded as pinned commits; descent is opt-in.
-- **Review filter:** review roots, binary hiding, and user patterns are a `ReviewFilter` applied when _displaying_ a changeset. It is a project setting, stored per repository and applied to every changeset of it. Changing it never changes snapshot identity, so it never disturbs anchors or review state.
-  - **Generated files** are excluded like a matching exclude pattern, unless the filter's "review generated files" setting is on: lockfiles and tool output by file name (`Cargo.lock`, `yarn.lock`, `*.pb.go`, `*.min.js`, …, at any depth), files with `linguist-generated` set in `.gitattributes` (those of the side the file is on; `-linguist-generated` keeps a file in), and files whose first five lines (within the first KiB) contain `<auto-generated`, `@generated` or Go's `// Code generated … DO NOT EDIT.`.
-- **Pin at review start (§5.3):** record `{head, tree_hash}` of version 1 and copy its dirty and untracked content into Vet's content store. Dirty content is **never** written into the git object database, so untracked secrets never become pushable objects. The changeset is the base to the latest settled snapshot; version 1 is the one current when the review started.
-- **Content retention:** when a snapshot settles while a review is open, every blob of it that git cannot reconstruct (dirty and untracked content) is copied into the content store, so every snapshot on the session's timeline stays reconstructible. In addition, every blob that appears on either side of a displayed diff, or under an anchor or span, is copied when first displayed, so review state and anchors never depend on git keeping old objects alive.
-- **Session refs:** while a review is open, it holds `refs/vet/sessions/<session-id>/{base,target}` on the commits its snapshots are built from, so they stay materializable. The refs are deleted when the review is finished.
-- **Availability:** a snapshot is _materializable_ only while every one of its blobs is available (from git or the content store). After that, semantic queries on it are disabled with a visible reason. Vet never starts a server on a partial tree.
+### 4.1 Snapshots
 
-### 6.2 Watcher, settling, and reconciliation
-
-- **Watcher = latency optimization, never authority.** Filesystem events drive incremental re-hashing.
-- **Settling:** after a write burst, a snapshot is _settled_ once the touched files' size and mtime stay stable across a debounce window (about 1–2 s). Each settled snapshot is appended to its `LogicalTip`; this sequence is the edit timeline. Same-file concurrent edits within one window are unresolvable by design.
-- **Authoritative reconciliation** runs at open, on watcher overflow or rescan signals (§6.4), on resume or restart, and before declaring a snapshot settled. It must _establish correct snapshot identity_, metadata-first (filesystem stat, git index, cached hashes), hashing only uncertain entries. Dropped or coalesced events can never corrupt review state, only delay it.
-
-### 6.3 Platform-faithful entries
-
-- **Git access goes through an in-process library (gitoxide).** Vet spawns no git subprocesses for acquisition and never runs hooks, `fsmonitor` commands, or filter or diff drivers.
-- **Paths:** repository-relative, `/`-separated, keyed by their exact bytes (as git records them for tracked files, as the filesystem reports them for untracked ones). Unicode normalization is used only for display and for matching git's `core.precomposeUnicode` behavior on macOS. Paths that differ only in case or only in normalization are flagged `PathCollision`; a snapshot containing one is not materialized on a filesystem that would merge them, and the UI says so.
-- **Content:** an entry's blob is what git would store, applying **built-in** conversions only (`eol`, `text`, `core.autocrlf`, `ident`); otherwise every file under `autocrlf` would appear dirty. For paths with a custom filter driver (for example Git LFS): if the stat matches the index, the entry is the index blob; otherwise it is the raw worktree bytes, marked `unfiltered`.
-- **Mode and kind:** where the filesystem cannot represent them (`core.filemode=false`, `core.symlinks=false`, typical on Windows), they come from the index for tracked files. Untracked files get mode `100644`, kind `file`.
-
-### 6.4 Watcher backends
-
-| Platform                  | Mechanism               | Forces reconciliation                                                                  |
-| ------------------------- | ----------------------- | -------------------------------------------------------------------------------------- |
-| macOS                     | FSEvents                | `MustScanSubDirs`, `UserDropped`/`KernelDropped`, `RootChanged`                        |
-| Windows                   | `ReadDirectoryChangesW` | buffer overflow (zero-byte result), handle invalidation                                |
-| Linux / WSL (ext4)        | inotify                 | `IN_Q_OVERFLOW`, watch-limit exhaustion (falls back to polling, with a visible notice) |
-| WSL, worktree on `/mnt/*` | polling only            | every poll interval (degraded topology)                                                |
-
-### 6.5 History and base resolution
-
-- **Audit trail:** Vet's own timeline of settled snapshots is the durable record of what happened. The reflog is supplementary provenance (which commit a snapshot came from, interdiffs across amends and rebases) and may be expired by git.
-- **Base resolution:** every changeset is what it adds on top of a base, and the base is fixed by the kind of changeset; it is never chosen. A pull request's base is where it branched off its target branch, as the platform shows it (the merge base with the fetched target). A local branch's is its merge base with the default branch (a branch stacked on another is compared with the default branch too). An agent workspace's (the working tree) is `HEAD` at the moment the workspace changeset was opened, pinned and kept across restarts: commits the agent makes on top do not move it, so the workspace shows everything done since, committed or not. The pin lasts until the workspace's review is finished (the review's own base stays until then); the next time the workspace is opened it pins the `HEAD` it finds. The merge base is never the target's tip, which would show what the target gained since as reverse changes. A changeset whose tip the target already contains is empty, and says so (§10, Nothing changed). The default branch is not offered as a changeset: it is what the others are compared with. A branch's or a pull request's base follows its merge base when that moves (a rebase, a merge of the target), as a new version. Comparing two arbitrary refs is not a review and not offered. A changeset's line counts in the queue are that base against its tip, by the same rule as the view, so a row and its view agree; until they are counted, a pull request's row shows the platform's own additions and deletions. The base is part of the session once a review is open (§5.3).
-- **`HEAD` off the base:** when the workspace's `HEAD` no longer descends from its pinned base (the agent rebased, reset or checked out something else), the changes shown include work that came from elsewhere. A banner says so for as long as it holds, without an action, and the header marks the base (§10).
-
----
-
-## 7. Semantic layer
-
-### 7.1 Backends — LSP, uniformly (I6)
-
-| Language   | Backend                                                                                                                                                                                                                            | 3rd-party hover docs       |
-| ---------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------- |
-| Rust       | rust-analyzer (pinned)                                                                                                                                                                                                             | cargo registry sources     |
-| TypeScript | `typescript-language-server` (LSP adapter over tsserver) → TS7 native server (speaks LSP)                                                                                                                                          | JSDoc from `.d.ts`         |
-| Svelte     | svelte-language-server (→ tsserver; loads the project's `svelte.config.js`)                                                                                                                                                        | as TS + component docs     |
-| Angular    | Angular Language Server (`.html` templates only, and only below an `angular.json`: the nearest one up from the file, else no server serves the HTML; TypeScript files, inline templates included, stay with the TypeScript server) | as TS + template symbols   |
-| Python     | Pyright (→ `ty` if/when stable)                                                                                                                                                                                                    | docstrings + typeshed      |
-| C#         | `roslyn-language-server` (pinned)                                                                                                                                                                                                  | XML docs in NuGet packages |
-| YAML       | yaml-language-server                                                                                                                                                                                                               | schema descriptions (§7.5) |
-| JSON       | vscode-json-languageserver (`vscode-langservers-extracted`)                                                                                                                                                                        | schema descriptions (§7.5) |
-| Shell      | bash-language-server (with ShellCheck when installed)                                                                                                                                                                              | none                       |
-| Dockerfile | dockerfile-language-server-nodejs (offline, unlike Docker's own server, which needs Buildx and asks Docker Scout)                                                                                                                  | instruction docs           |
-
-A file is served by the language whose extension it has, or, for files like `Dockerfile`, whose file name it has; no two languages claim the same one. The backend decides which language serves a file (a kind of file that several projects share, such as the `.html` of an Angular app, goes by the project's own files) and tells the window, which does not match names itself. It also tells what each language's server is doing for the base and the target side of the changeset on view (starting, indexing with the server's progress, ready, failed), pushed on every change: the footer shows that, and nothing waits for a server by a guessed time.
-
-```rust
-enum Backend {
-    GenericLsp(ServerConfig),
-    // Quirk arms added reluctantly, per observed incompatibility,
-    // narrowly scoped. No registry, no plugin surface, no trait hierarchy.
-}
-
-struct ServerConfig {
-    binary, filetypes, root_markers,
-    executes_project_code_during_analysis: bool,   // default true (conservative)
-    // ...
-}
-```
-
-Adding a language means adding a config entry plus a one-time manual check of which operations its server offers. The orchestrator reads `ServerCapabilities` at startup.
-
-**Required:** text document synchronization, since Vet feeds the server the documents it asks about; a server without it is refused loudly.
-
-**Optional, per feature:** `documentSymbol`, `definition`, `references`, `implementation`, `hover`, `callHierarchy` (incoming and outgoing), `workspace/symbol`. Diagnostics (push or pull) are always asked for: servers publish them without announcing it. A request for an operation the server did not advertise is not sent; it is answered as _not offered by this language's server_ (I6) and every consumer says so where it would have shown the answer: go-to-definition says it (a hover popup stays silent, as it does for a symbol the server knows nothing about), the Symbol panel's callers and callees say that call hierarchy is not available, a workspace symbol search reports the languages whose servers cannot be searched. A server that offers only some operations (a diagnostics-only server, a YAML server without references) still serves the rest.
-
-### 7.2 Server pool and reuse (I2)
-
-- **The live target** (the dirty tree) is served by a server running on the worktree itself. Its answers are asked fresh for every request, except answers that depend only on a document's text (its symbols): those are asked with the text of the revision's blob and reused by that blob (§7.6). A question is asked at positions of the revision, so queries of one revision feed their server the texts of that revision's target snapshot instead of what the worktree's files hold by then; before they read them, the revision's changed content is kept by the same retention that keeps a review's (§6.1), from the texts its diff read. A file whose blob no copy exists of keeps the disk's text. An answer of it that names such a file is dropped and its question asked again once a newer revision is known — once per revision, for as long as the caller waits for it, and nothing of the asking is shown — when the disk has moved since the revision settled; a file of which nothing was read for the revision cannot be told apart and keeps its place in the answer.
-- **Any other snapshot** (a pinned base, an older timeline entry, a PR's base or head) is served by a server on a directory obtained from Acquisition via `materialize(SnapshotId) → root`. The semantic layer never sees how the directory was produced (I1). Acquisition builds it from the snapshot's commit plus the content store, and refuses if the snapshot is not materializable (§6.1).
-- **Pool:** servers are keyed by `(SnapshotId or live worktree, backend, policy)`, kept warm while in use. When more servers run than fit, the one cheapest to warm up again (a quick yaml server before rust-analyzer) and used longest ago is stopped first, a costly one outliving several cheap ones but not forever; the servers the changeset on view needs for its changed languages are never stopped to make room. Answers outlive their server: they are kept by query key (§7.6), not per server. A server that fails to start is not tried again by every query: the failure is answered as it was for a wait that starts at 5 seconds and doubles with each failure in a row up to 5 minutes, and a restart of the language (installing it, changing its path, "Restart") ends the wait. Changing backend settings restarts the affected servers; their answers stop matching because the server identity in the key changed, and nothing is deleted.
-- **Materialized snapshots are kept between launches** under Vet's data directory, one tree per snapshot and analysis policy shared by all languages, with a record of each language's restore. Reopening a review with the same base starts its servers without copying or restoring again. A restore record is checked against the current tools and the policy before reuse. Kept trees are garbage-collected under a disk budget (§8).
-- **Restore:** a materialized snapshot needs installed dependencies for its server to work. Fetch-without-execution is the default and covers documentation needs (cargo registry, `.d.ts`, typeshed, NuGet XML docs): no install script, `.pnpmfile.cjs`, build backend or MSBuild evaluation runs. Where the analysis policy lets restores execute (§7.5), the commands drop what prevents that: `--ignore-scripts`, `--ignore-pnpmfile`, Yarn's `--mode=skip-build` and disabled scripts, uv's `--no-build`; and `dotnet restore` (MSBuild) runs only there. `cargo fetch` runs nothing either way. When `npm ci` refuses because the lock file is out of sync with `package.json`, `npm install --no-save` stands in for it (same script flags, lock file untouched, locked versions kept) and a banner notes the out-of-sync lock file: "Dependencies installed with npm install: the lock file is out of sync", milder than the analysis-limited one. Where a real failure comes with it, the analysis-limited banner stays and lists the note among its details. A failed step shows the part of the tool's output that says why (npm's error without its usage text, else the first and last lines); the whole output is in the debug log.
-
-### 7.3 Queries
-
-An answer a server gives while it is at work on its own (indexing, analysing after an edit) is _incomplete_: it is never kept. The diagnostics of a file given so are marked, and asked again once the server is done. Primitive rows pass backend answers through. Derived rows combine primitives with the diff; per I6 they are labeled derived in the UI and show their inputs. A place a server names outside the repository (a dependency, the toolchain's sources) shows its line only if the file is of the language of the server that named it (§7.1: by extension or name; the Svelte and Angular servers may also name TypeScript files): a Rust server cannot show a YAML file, a TypeScript server no Rust file. Any other file is listed without text.
-
-| Question                                         | Kind      | How                                                                                                                                                                                                                                                                                                                                                                                                             |
-| ------------------------------------------------ | --------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Hover, go-to-definition, references, diagnostics | primitive | the server for the side being viewed                                                                                                                                                                                                                                                                                                                                                                            |
-| Base-side navigation, side by side with target   | primitive | base server and target server queried in parallel                                                                                                                                                                                                                                                                                                                                                               |
-| Search Everywhere (double-shift)                 | primitive | `workspace/symbol` on the target server                                                                                                                                                                                                                                                                                                                                                                         |
-| Which symbols changed                            | derived   | per changed file, `documentSymbol` of both sides' texts; symbols whose ranges intersect diff hunks                                                                                                                                                                                                                                                                                                              |
-| Usages of a symbol                               | derived   | `references` of the symbol shown, each with the symbol it is in, on the target server, async                                                                                                                                                                                                                                                                                                                    |
-| Impact of a removal                              | derived   | `references` for each removed symbol on the base server; each call site is then classified in the target as **gone**, **modified**, **likely broken** (identical and unresolved), **binding changed** (identical but resolves elsewhere), or **unknown**                                                                                                                                                        |
-| Semantic-graph diff                              | derived   | outgoing calls and references of each changed symbol on both sides, compared by container-qualified name. A renamed symbol appears as removed + added next to the textual diff; Vet does not infer renames or moves.                                                                                                                                                                                            |
-| Is a diagnostic new or pre-existing              | derived   | diagnostics of each changed file on both sides. A target diagnostic is pre-existing if the base has one with equal severity, source, code and message (whitespace-collapsed) on a line that maps to it; otherwise it is new. It is _unknown_, never new, while the base side's diagnostics are unavailable or were given while its server was at work; the target's diagnostics show at once as origin pending. |
-| Changed callers and callees of a changed symbol  | derived   | incoming and outgoing calls on the target, followed through changed symbols only. Unchanged direct callers are listed as possibly affected.                                                                                                                                                                                                                                                                     |
-| Whether a symbol or place is a test              | derived   | the file's path conventions (`tests/`, `*_test.go`, `*.test.ts`, `*Tests.cs`, …) and a `tests` module it is in. Vet's conclusion by file name, shown as "test by file name".                                                                                                                                                                                                                                    |
-
-### 7.4 Reachability — a derived analysis (I6)
-
-The reviewer's question is "is this new or changed code actually reached?" Vet answers it with a **bounded incoming-call search** from each changed or added symbol, stopping at the first configured entry point, bounded by depth and node count. Results are labeled **derived**:
-
-- `reached` → shows the path to the entry point;
-- `unreached within bound` → shows the bound and the entry-point config;
-- `unknown` → backend gaps (DI, reflection, and serialization are known false-positive sources, worst in C#).
-
-Whole-repo dead code is not a Vet analysis; it appears only when a language server itself reports it as a diagnostic (for example rustc's `dead_code` via rust-analyzer).
-
-### 7.5 Trust
-
-What analysis may execute project code. Not a security boundary.
-
-The analysis policy has two parts: whether language servers may execute project code (build scripts, proc macros, MSBuild design-time builds), and whether restores may (§7.2). It is part of the keys of kept trees, restore records and cached answers, so a fetch-only restore is never reused as an executing one, and the reverse. Changing trust restarts the servers the changeset on view needs under the new policy, and stops the running servers that execute project code under a policy the changeset on view no longer has (withdrawn trust), those in use as soon as their request ends.
-
-- **Trusted project:** a per-repository setting ("Trust this project", on the Trust page of Settings), off by default. For a trusted project the working tree, local branches and pull requests whose head is in the repository itself (not in a fork) are analysed with executing restores and servers that execute project code, without asking.
-- **Project not trusted:** the working tree and local branches keep servers that execute project code, because they are the reviewer's own, but their restores are fetch-only. A pull request is **limited** until trusted: fetch-only restores, and only servers with `executes_project_code_during_analysis = false` start; other languages show a visible "analysis limited" marker, and a banner says why and offers "Trust this PR".
-- **Pull requests from a fork** (the head is in a repository other than the one the pull request is opened against, or the platform's data on it was never stored) are limited in a trusted project too.
-- **Trust this PR** lifts the limit, restores and servers alike, for the PR's **current head commit**. Any new push to the PR voids the trust and restores the restrictions. A pull request that a trusted project's repository itself holds is trusted by the project and a push does not void that. There is no action to withdraw trust from a PR; unchecking "Trust this project" withdraws the project's.
-- A pull request's base side executes only where its project is trusted, or where the pull request is trusted at its current head (the base is an ancestor of that head); trusting a PR covers its head commit alone.
-
-**TypeScript's compiler.** The TypeScript server answers through a `tsserver.js` that node runs, and the project may ship its own `typescript`. Where servers may not execute project code, only the `typescript` Vet installs, else the one installed beside the server itself (a user's own install), is used, never the project's; with neither the server is reported missing, with the language servers settings offering the install. The Angular server likewise loads `@angular/language-service` as a program: where servers may not execute project code it is pointed only at Vet's own copies (installed with the server) and never at the project's `node_modules`; without Vet's copy it is reported missing. The settings page shows the server as it would run for the changeset on view.
-
-**Schemas.** The YAML and JSON servers check files against JSON schemas and would fetch them from the network (SchemaStore, a `$schema` key, a modeline). That is a download decided by the repository's content, so it follows trust: schema downloads are allowed only where restores may execute (a trusted project, a trusted PR). Everywhere else network fetching is off and the servers are served a fixed set bundled with Vet (GitHub Actions workflows, Azure Pipelines, Kubernetes, docker-compose, `package.json`, `tsconfig.json`); a schema outside it is refused with a visible diagnostic naming the address, never silently skipped. Where a schema comes from is part of the server's identity, and answers obtained online are not reused by later sessions, so answers under different schema policies never mix.
-
-### 7.6 Reuse of answers (I2)
-
-| Query                                                                                 | Depends on                                                            | Key                                                                 | Kept            |
-| ------------------------------------------------------------------------------------- | --------------------------------------------------------------------- | ------------------------------------------------------------------- | --------------- |
-| Document symbols (either side, any tree)                                              | the document text, the language, the server                           | `(server identity, file extension, BlobId of the text sent)`        | memory and disk |
-| Hover, definition, references, call hierarchy, diagnostics on a materialized snapshot | the whole snapshot, its restored dependencies, the server, the policy | `(server identity, SnapshotId, policy, restore fingerprint, query)` | memory and disk |
-| Workspace symbols on a materialized snapshot                                          | as above                                                              | as above                                                            | memory          |
-| Any project-wide query on the live worktree                                           | the live tree, which changes under the server                         | —                                                                   | never reused    |
-| Derived analyses                                                                      | their primitives and the diff                                         | none of their own: recomputed from the cached primitives            | not kept        |
-
-An answer the server gave while it reported work in progress or had not finished starting is never stored. A cached primitive keeps the identity of the server that produced it, and a derived result shows it among its inputs (I6). A new revision cancels the semantic work still running for the old one.
-
----
-
-## 8. Storage and retention
-
-- **Location:** the backend side's native filesystem (in WSL, the Linux home directory, never `/mnt/*`), in standard per-platform data directories.
-- **Content store:** content-addressed files written temp → fsync → rename, referenced from metadata only once durable.
-- **SQLite (WAL mode):** snapshots and their timeline order, sessions, reviewed spans, comments, which projects are trusted, and for each PR whether it is from a fork and the head commit it is trusted at. Also what a platform last said of a pull request besides its threads (its description, reviewers, labels, conversation and state, with the head and `updatedAt` they were read at), so a revisit shows them before the platform is asked again; the table is bounded at 256 and the pull requests read longest ago go first.
-- **Migrations:** the database's schema changes only by migrations applied in order, each changing the tables of an existing database in place; a database of an older Vet is upgraded and keeps its contents. A database written by a newer Vet is not opened, and never deleted.
-- **Settings and preferences:** everything Vet remembers that is not review data is in the same database, apart from secrets (personal access tokens stay in the operating system's keychain) and the window's size and position (a file of the host). The backend's own settings (semantic cache budget, how long finished reviews are kept) are app-wide. The window's preferences are values it keeps under keys of its own, either for the whole app (theme, soft wrap, key bindings, panel and dialog sizes, table columns and sort, folded sections, the queue's and the switcher's tab, Search Everywhere's Unchanged files toggle, the structure tool's sort and filter, and when the Comments tool of each pull request was last open) or for one project (its open tabs per changeset, and the results chosen last in Search Everywhere). A change is kept at once and announced to every window connected to the backend, which follows it.
-- **Retention:** content is kept while any open session, unresolved or unsynced comment, or reviewed span references it; closed sessions are kept 30 days (configurable). Unreferenced content is garbage-collected.
-- **Semantic cache:** one SQLite file (`semantic-cache.sqlite`, WAL), apart from the review database. It holds reusable answers (§7.6) under a size budget (default 256 MB, adjustable in Settings), evicted least recently used. It is disposable: deleting it, or a format Vet does not recognise, only costs speed.
-- **Materialized snapshots:** one tree per snapshot and analysis policy, with completion and restore records. A tree in use by a running Vet is locked; others are kept while an open session refers to them, then removed least recently used to stay under a disk budget (default 20 GB, adjustable in Settings) and after 14 days unused. Settings shows the current use next to a "Clear semantic caches" action.
-
----
-
-## 10. Review UX
-
-- **Home = queue.** Changesets ordered by blocking status, then recency. Each shows completion against the active filter plus the count of changes the filter excludes (§5.2). Review state survives rebases and force-pushes. A pull request's details are kept as the platform last gave them: selecting one shows them at once and refreshes them, and after the list loads the details of the newest listed pull requests whose `updatedAt` changed since the copy that is kept are fetched ahead, paced, and stopped while their account is limited or failing (a pull request that is merely gone is passed over). The work ends with the project; a list that changed starts it over, one that did not leaves it running.
-- **The pull request list is kept fresh in the background.** It is listed again on the fetch interval (whatever screen shows), by the refresh button and when an account changes, never just because the queue, the switcher or Search Everywhere opens. Reading the list never waits for a platform once it has been listed. A timer or account-change refresh leaves an account that is rate limited alone until its retry time; the refresh button always asks. A repository whose listing fails keeps its last rows and shows the error. The pull request on view is listed even when the platform's list leaves it out, from what opening it read.
-- **Visual design:** light and dark themes from the design tokens (`ui/src/lib/theme/tokens.css`), with desktop-style controls (hover, pressed and toggled states, no text selection outside content).
-- **Editor tabs** (titled with their `+N −M` line counts): a fixed first tab, named after what it shows like the scope chip ("All changes", "Push v2", "Pushes v2–v3"; its tooltip counts the changed files), streams the changes shown as hunks with a few lines of context, unchanged regions collapsed and expandable; a file has one tab (closable; one per commit it is opened at, below), whatever it shows of it, and the tab has a view mode: Unified, Split (the file's full diff) or File (the file's text with its changes drawn in, read-only). The Unified/Split/File control, Alt+Shift+1/2/3 and the View menu change the active tab's mode and never open or close a tab; each mode keeps its own caret and scroll, and the caret's line carries over. A file the changeset does not change (reached by Go to Definition, or from the tree) has a tab in File mode only. A file opened while a commit is selected (by commit) has a tab that stays at that commit, whichever commit or All changes is selected later: it shows the file as that commit leaves it, with that commit's hunks and marks (Jump to Source and flagged-hunk stepping from it stay at that commit), but no threads and no commenting, and the tab carries a commit glyph and, under the tab strip, a one-line strip (the commit's short hash, subject, author and time; "merge" for a merge) with the tooltip "Comments are made in All changes". A file is one tab per commit it is opened at, so the same file at two commits (or also on the whole changeset) is several tabs, and their titles then show the short hash; the tooltip names the commit in full. A file opened on the whole changeset stays on it when a commit is selected. A tab whose commit is no longer in the changeset (a rewritten branch) closes. Jump to Source switches the file's tab to File mode at the line, opening it in that mode if it is not open: double-click or Enter in the tree or the Symbol list, double-click on a file header or a diff, a hunk header's button, or F4 at the caret (same line). Go to thread shows the thread in the file's tab, in the mode that tab is in, when the file has a tab open (not one that stays at a commit, which shows no threads), else in the Changes tab; the file's own threads sit above the first line in File mode, as above the first hunk in a diff. Hunk navigation (Ctrl+Alt+Down/Up), marking seen (Space) and commenting work in every mode. Go to definition is Cmd+click or Cmd+B (Ctrl off macOS), on either side; a new comment is Ctrl+Alt+C (or the editor's context menu) on the selection, else on the caret's line, in every view, using the last editor the reviewer was in even after focus moved to a toolbar or the tree; a hunk's Comment button comments the whole hunk, or the selection when there is one inside that hunk. Settings open with Ctrl+Alt+S (⌘, on macOS).
-- **Header:** `project  ⎇ changeset  [base]  [scope]`, with the review's progress and Finish Review at the right end, showing the progress of what is on screen. Two separate components, with no arrow or slash between them. The **base** is shown only for a pull request into a branch other than the default ("into release/2.1") and while `HEAD` is off the workspace's base (§6.5, with a warning mark and the base's short hash); it is plain text, not interactive, and its tooltip gives the base commit's hash, subject and age. The **scope chip** says what the review view shows: "All changes", "Push v2", "Pushes v2–v3" or "Commit 5a6b7c8" (the commit's subject in the tooltip); it carries no version number. A cross on it, and Esc, go back to all changes (there is none on "All changes"); a click opens or focuses the timeline. For a workspace it ends in a dot while it shows the working tree, hollow while edits wait to become a version. The header has no menu to choose a base and no "back" button; the footer does not repeat the comparison.
-- **Tool windows** on left and right rails, resizable; clicking the active tool's icon hides its window and keeps the tool selected.
-- **Hunk view** with decorations: review state from spans (including `SeenAgainstOldBase`), coverage of changed lines, changed-symbol reachability (labeled derived), whitespace-only anchor notes, diagnostics as gutter markers with a count in the status footer. Marking seen is a toggle: a seen hunk can be un-marked.
-- **Non-text changes** (mode, symlink target, submodule commit, binary, content unavailable) render as a change card with a hunk-style header: same "mark seen" action and key, included in hunk navigation, images with a before/after preview. A file with both kinds shows its card above the first hunk.
-- **Inferred anchors** show a neutral "moved" badge with the confidence; the tooltip names the strategy and the original location. "Confirm" re-anchors at the current position (→ `Exact`). Low-confidence ones are also grouped under "Moved" in the comments tool window.
-- **Settings** has two groups of pages: Application (General, Appearance, Keymap, Language servers, Accounts) and Project, named after the open project (Trust, Review filter); the Project group is greyed with "Open a project first" while none is open. The limited-pull-request banner offers "Trust project…" (not for a fork's pull request, which project trust does not lift), which opens Settings on the Trust page. "Project Settings…" (disabled without an open project) does the same from the app menu and from the foot of the project switcher.
-- **Review filter** is edited on the project's Review filter page: review roots as a list, each with the changed files of the changeset on view below it (counted by the backend; a typed folder is checked against the repository's folders, and "Browse…" picks one in a popover with a tree of them), include and exclude globs as two lists, each pattern with the files and lines it matches in the changeset on view (computed by the backend from the draft, never by the UI) or why it is invalid, the hide-binary and review-generated checkboxes, and the live excluded count. It is also edited from the file tree ("Exclude from review" changes the project's filter). "Review only this folder" narrows the review on view instead: the narrowing replaces the project's filter for this review only, lives in memory (it ends with a change to the project's filter and when another changeset comes on view) and shows as an "Only src/api ×" chip in the Changes tool's header, whose cross resets it. Excluded files collapse into one group in the file tree, which shows the excluded count and opens to the files with the reason for each (the project's rule, or "outside the narrowing").
-- **Nothing changed.** A Changes tab that lists no file is never blank: it says why, in one block of the same parts for every reason (a glyph, a title, one sentence, at most one panel of rows, at most two buttons), and only with rows for facts the backend has. The reasons: a workspace with no edits yet (the watched folder, `HEAD`, what it is compared with), a workspace whose edits were undone (its versions, each to show), a branch or pull request the target already holds (the commit that merged it, or that it has no commit of its own yet), a merged pull request (its source branch, merge commit and the viewer's threads), a filter that hides every file (the files by rule, each group with "Review these", which narrows the review to them), a narrowing with nothing inside (the folders where the changes are, each "Review only this", and a way back), a commit that changes no file, and a push that changed nothing (the two versions with their bases). The stepping and Unified/Split controls are disabled while the tab is empty, the header's progress reads "nothing to review" rather than 0 %, and Finish Review stays available.
-- **Timeline:** the `LogicalTip`'s settled snapshots, newest first, with a muted, unselectable row for the base under v1. A version without content (a pull request's push whose commits are gone) is a dimmed row that cannot be clicked, with "unavailable" where the files of the others are named. One click on a row shows that push's own changes, from the version before it (the base for v1); a shift-click extends a block of pushes; clicking the only push shown, Esc or the chip's cross goes back to all changes. Filled rows are the pushes whose changes are shown, a ring marks the version they are compared against. "Since my review" is a button that shows the pushes after the version last reviewed. Choosing a row leaves the by commit lens.
-- **Semantic diff is a projection, never the canonical representation.** The byte-level diff is the source of truth; normalization, move detection, and formatting-churn suppression are views over it, and every normalized-away change is one click away.
-- **Annotations** sync to platforms or export as agent task files. A full editor is retained for small fixes (fixup commits / suggestion blocks).
-- **Search Everywhere:** one popup under the header for names, with the tabs All, Changesets, Files, Symbols, Threads and Actions, a count on each tab while a query is typed, and an Unchanged files toggle (off by default, remembered) that adds the files the changeset does not change and their workspace symbols (§7.3) to Files, Symbols and All. It opens with double Shift on All, Ctrl/⌘+P on Files, Ctrl/⌘+Alt+O on Symbols and Ctrl/⌘+Shift+A on Actions; Switch Changeset keeps Ctrl/⌘+Shift+O. Names match as in speed search (word starts, then runs); a changed file or symbol outranks an unchanged one and one not yet fully seen outranks one that is, open threads come before resolved ones, and the last 30 results chosen in a project (kept per project) only decide between close matches. All lists each kind's best few with "Show all N", the kinds ordered by their best result; with nothing typed it lists the recent results and the changed files seen least. A `:line` after a file's name opens it there. Actions are the registered commands; one that cannot run stays in the list, dimmed, with its reason. Enter opens a file as the tree does (in the view on screen, so a tab pinned to a commit while a commit is selected, which a chip and the footer say), Shift+Enter shows a changed file or symbol in All changes; a symbol opens in the changeset's target, never at a pinned commit. The last row hands the query over to find in files.
-- **JetBrains-feel package:** parse the JB keymap XML; double-shift Search Everywhere; Alt+Enter intentions; Ctrl+W via tree-sitter; tool windows Alt+1..9; JetBrains Mono.
-
----
-
-## 11. Platform adapters
-
-GitHub + ADO: list PRs, fetch their heads and targets into Vet's own refs (read-only), read and post comments, read CI per commit. The backend keeps the checks of the changeset on view fresh itself, while the queue or the review screen shows it, and pushes them; a rate limit the account knows is waited out, and an action on a run is followed by a read shortly after because the platform shows its result late. Local review state (spans) is never synced. Threads are synced both ways: remote threads and replies are pulled in, local drafts are posted on request. Because anchored content is retained (§6.1), comment positions remap correctly across rebases where GitHub orphans them.
-
-Each adapter describes its platform with a fixed set of properties. Vet core and the UI branch on these properties, never on the platform's name:
-
-```rust
-struct PlatformTraits {
-    changeset_threads: Resolvable | Flat | Either, // a comment on the whole PR
-    conversation_feed: bool,         // a flat feed beside threads (comments + events)
-    posting: PerComment | BatchedReview,
-    verdicts: Vec<Verdict>,          // the platform's own choices, in its order
-    verdict_separate: bool,          // vote set independently of posting
-    blocking: Vec<BlockingSource>,   // UnresolvedThreads | OpenTasks | Labels
-    revision_scoped: bool,           // comments recorded on a patch set
-}
-```
-
-|                     | GitHub                            | Azure DevOps                                               | GitLab                         | Bitbucket                | Gerrit                               |
-| ------------------- | --------------------------------- | ---------------------------------------------------------- | ------------------------------ | ------------------------ | ------------------------------------ |
-| `changeset_threads` | Flat                              | Resolvable                                                 | Either                         | Resolvable               | Resolvable                           |
-| `conversation_feed` | yes                               | no                                                         | yes                            | no                       | no                                   |
-| `posting`           | BatchedReview                     | PerComment                                                 | BatchedReview                  | PerComment               | BatchedReview                        |
-| `verdicts`          | comment, approve, request changes | approve, approve with suggestions, wait for author, reject | approve                        | approve, request changes | label votes (e.g. Code-Review −2…+2) |
-| `verdict_separate`  | no                                | yes                                                        | yes                            | yes                      | no                                   |
-| `blocking`          | UnresolvedThreads (if required)   | UnresolvedThreads (if policy)                              | UnresolvedThreads (if setting) | OpenTasks                | Labels, UnresolvedThreads            |
-| `revision_scoped`   | no                                | no                                                         | no                             | no                       | yes                                  |
-
-GitHub and ADO ship in M1; the other columns show the model covers them, and are adapter work only. Platform details (especially merge checks) are verified against each platform's API when its adapter is built.
-
-How the UI follows the traits:
-
-- **Review and Conversation tabs** in the comments tool window, on every platform with a pull request: Review holds the threads on files and lines; Conversation holds what concerns the pull request as a whole — with `conversation_feed`, the platform's flat feed (comments and review summaries with their verdict), own comments editable there and answered by a new comment rather than a reply; without it, the changeset threads with replies and Resolve.
-- **The comments tool window** shows "Submit review" with the verdict menu for `BatchedReview`, or "Post" for `PerComment`, next to the drafts it posts; a separate vote control appears beside it when `verdict_separate` is true.
-- **Blocking marker** on a thread, and the queue's blocking status, mean whatever `blocking` says. A Bitbucket task is a flag on its thread.
-- **Revision-scoped platforms**: Vet still anchors to its own snapshots; a remote comment's patch set maps to the snapshot built from that patch set.
-
-`blocks_merge` feeds the queue's blocking status (§10).
-
----
-
-## 12. Phasing
-
-### 12.0 Shell spike
-
-Historical: the spike's benchmark and mock backend were removed on 2026-10-09.
-
-**Decided:** a Svelte web UI with CodeMirror 6 (plus `@codemirror/merge`), hosted in Tauri. The spike confirms this choice rather than comparing candidates.
-
-**Run:** Tauri on WebView2 (Windows, WSL split) and on WKWebView (macOS), against a mock orchestrator over the real WebSocket transport.
-
-**Corpus:** one real changeset from your own repos with at least 300 files and 3,000 hunks, including one file over 10k lines; review-state decorations on every changed line and at least 3 inline decorations per hunk; unified and side-by-side views.
-
-**Pass criteria** (p95 on each webview):
-
-| Metric                                        | Threshold            |
-| --------------------------------------------- | -------------------- |
-| Open changeset → first hunk painted           | < 300 ms             |
-| Keystroke → paint                             | < 16 ms              |
-| Hunk-to-hunk navigation → painted             | < 50 ms              |
-| Sustained scroll through the full changeset   | ≤ 5 % dropped frames |
-| Toggle `Seen` on a 1,000-line file            | < 50 ms              |
-| Hover round-trip over the WSL-split transport | < 100 ms             |
-| Renderer memory, full changeset open          | < 1 GB               |
-
-**Input correctness** (pass/fail): German layout on Windows and macOS. Dead keys compose correctly. AltGr characters (`{ [ ] } \ @ ~ |`) type correctly and do not trigger Ctrl+Alt bindings. IME composition doesn't corrupt decorations.
-
-**Fallbacks:** if CM6 fails a threshold, try Monaco. If something fails only on WKWebView, rerun in Electron; if it passes there, Electron becomes the host on all platforms. **Timebox:** 5 working days.
-
-### POC — vertical slice (dirty tree, Rust + TS + Python + C#, no hosts)
-
-**POC platforms:** macOS native, Windows native, and the WSL split.
-
-**Acceptance criteria:**
-
-1. **Anchor robustness (I3):** rename, edited anchor range, duplicate matching content (→ `Ambiguous`), cross-file move (→ `Inferred`), amend, rebase, and file deletion, exercising all four `AnchorState` outcomes. Plus:
-   - **split:** mark a 20-line region seen, then edit 3 lines in its middle → two seen spans around 3 unseen lines;
-   - **revert:** edit a seen line, then restore it byte for byte → seen again;
-   - **base change:** rebase so the base side of a seen region changes while its target side doesn't → `SeenAgainstOldBase`;
-   - **deletion:** a seen pure-deletion region survives an unrelated rebase;
-   - **line endings:** a CRLF-only change → `Exact { whitespace_changed: true }` for comments;
-   - **filter change:** changing the review filter leaves all review state intact, and completion shows the excluded count;
-   - **repeated lines:** a seen `return 0` that appears twice, with its surrounding context rewritten → unseen;
-   - **mode only:** a changeset whose only change is `100644 → 100755` is not complete until that change is acknowledged;
-   - **Windows filesystem:** with `core.filemode=false` / `core.symlinks=false`, mode and kind come from the index (§6.3); paths differing only in case are flagged `PathCollision` and not materialized.
-2. **Semantics:** after an agent edit settles, hover, references and diagnostics reflect it. Base-side go-to-definition works side by side with target for a dirty-tree session. Callers, usages and reachability are shown for a symbol; a removed function's remaining call sites are found and classified. An older timeline snapshot from an open session can be materialized and queried.
-3. **Reconciliation:** simulate dropped watcher events (kill, inotify overflow, FSEvents `MustScanSubDirs`, `ReadDirectoryChangesW` buffer overflow) → the rescan produces the correct snapshot, and review state is never silently wrong. A Windows-side write into the WSL worktree is observed or reconciled.
-4. **Shell and topology:** the POC meets the spike's thresholds with real orchestrator data on every POC platform; the WSL split works end to end over the authenticated transport.
-
-Also included: fetch-only restore with shared caches.
-
-### M1 — daily driver
-
-Grouped by area; areas and the items within each are in priority order.
-
-#### Reviewing changes
-
-- Sticky headers in every diff view: while scrolling, the current file's header and the current hunk's bar stay pinned at the top until the next one pushes them out
-- The file tree marks the file the viewer is in (the one pinned at the top of the Changes tab, or the file tab's), and the Changes tab reopens the review at the scroll position it was left at
-- Double-clicking a line in the Changes tab opens the file's tab at that line, highlighted
-- The file icon of a file in the Changes tab opens the file's tab, like the hunk bar's; a changed file's tab switches between file and diff view
-- A changed file's file view marks its added, changed and removed lines (removed ones where they were), coloured by review state; a mark opens the hunk's old lines with the hunk bar's actions (toggle seen, comment, open in the diff), so a change can be marked seen in context. Next/previous hunk and Space work there as in the diff (design to be iterated)
-- Hunks can be flagged for later review (§5.2): a flag button beside the seen toggle in the hunk bars and in the File view's hunk toolbar (active while flagged), Toggle Flag in the Review menu, Next and Previous Flagged Hunk in the Navigate menu (across files, in All Changes and in file tabs), and Finish Review… warns with the number of flagged hunks left and offers to go to the first one; finishing anyway is allowed
-- Edit and remove your own comments; removing the first comment removes its thread
-- Analysis results (diagnostics and other hints) are not shown in collapsed unchanged regions
-- Line highlight in the editor: the clicked line stays highlighted
-- Long lines are reachable in every view (the Changes tab, diff and file tabs, both panes of a split view): horizontal scrolling when soft wrap is off, with hunk bars, cards and thread cards staying in view; soft wrap for prose (Markdown, reStructuredText, plain text), with a setting for it in the redesigned settings; a changed line that runs past the visible width is marked whether or not it wraps
-
-#### Changesets and history
-
-- GitHub + ADO adapters (§11): pull requests as changesets, their threads synced both ways, CI per commit
-  - Login reuses a signed-in CLI (`gh auth token`; `az account get-access-token` for Azure DevOps), else a personal access token (also for GitHub Enterprise hosts); no OAuth or device-code login. Tokens live in the OS keychain, never in Vet's store; in the WSL split the shell keeps them and hands them to the backend
-  - The pull-request list is per project (the repository's remote): "Waiting for me" by default (review requested from the viewer or their team, not reviewed since the last push), then Mine, Assigned, All open, with filters for author, label, draft and CI state. Each row shows title, author, branch → target, CI state, unresolved threads, the viewer's review state ("new pushes since your review") and when it was updated
-  - Thread sync: the viewer's status change wins over the platform's if made since the last sync; an edit to a posted comment is pushed at once, and if the comment also changed on the platform since the last sync both texts are shown for the viewer to choose; a thread deleted on the platform is removed from Vet (a local draft reply in it is dropped with a notice); drafts are posted on Submit as one review (GitHub) or one by one (ADO), never as a pending review on the platform; a comment the platform refused is marked failed with the reason and is posted again with the next Submit, or discarded on its own (a comment being posted cannot be discarded)
-- Committed changesets (branches and pull requests), shown as all changes at once (the squash, the default and what completion counts) or by commit. By commit, a clean merge of the target branch is a collapsed marker with nothing to review, and a merge with conflict resolutions shows only the resolution (as `git show --remerge-diff`)
-- One changeset on view per project; switching to another changeset and back restores its open tabs, scroll positions and current file
-- Interdiffs; snapshot timeline, as a bottom panel (not a sidebar tool window). A changeset has versions (a local session's snapshots, a pull request's pushes); a push, or a block of pushes, is chosen in the timeline and shows as a mode of the review view with a way back (§10). "Changes since my last review" is the default action on a changeset and carries the seen marks over. When the base moved (a rebase), the interdiff leaves out what the base move explains, as `git range-diff` does per commit. The queue panel's count of the files changed since the last review is that same comparison, so a change the author took back and what only a base move explains are not counted
-- Git fetch (in-process, read-only): on demand and periodically, so remote branches and pull request heads are current; Vet never pulls, merges or rebases
-- Changeset queue home, reached through a Queue / Review toggle in the app header (not a sidebar tool window): every open pull request of the project's repository and local branches, with more metadata and filtering than the title bar's changeset switcher, of which it is the full-page view
-
-#### Semantics and navigation
-
-- Diagnostics are marked new or pre-existing by comparing the target's with the base's; new ones, those the change introduced, are counted separately and shown first
-- Problems panel: the diagnostics of the whole changeset in one list, new ones first, as a bottom tool window (Alt+6, one bottom tool at a time; all bottom tools share one dock whose height the viewer resizes by a splitter above it, with the mouse or the arrow keys, and Vet remembers) with its own icon in the left rail; the icon's badge and the status footer count the changeset's new errors and warnings ("No new problems" when there are none, "N problems · comparing" while the comparison with the base is underway). A file whose base cannot be analysed has its problems listed apart as of unknown origin, never as new, and the footer names how many files that is. The backend analyses it in the background once the review screen shows the changeset, the files with an open tab first, comparing each file with the base side itself, and pushes each answer as it comes: the target side first with the origins pending, then the comparison. The window does not ask per file; Retry asks the backend to analyse again, and so does an analysis that fails for a reason that can pass — a store read, a server that is starting, indexing or was restarted, a query that failed — which the backend asks again up to three times with a short pause between before it pushes the failure; a file that is unavailable for a lasting reason (no server for its language, an untrusted project, a binary or too-large file, one the changeset does not change, a snapshot that cannot be rebuilt) is pushed at once. Scope (changed files, open files, this file), severity, new/all and text filters; grouping by origin, file or severity; problems in hunks not yet seen or on changed lines only. A click shows the problem in the current tab without taking focus; Enter or double click is Jump to Source; F2 and Shift+F2 (Next and Previous Problem) step through the problems of the file on view from the caret, wrapping around within the file. A tab pinned to a commit is never used
-- Pipelines tool: the runs of the commit on view with their jobs and steps, as a bottom tool window (Alt+8, only while a pull request is on view) with its own icon in the left rail, whose badge counts the commit's checks and turns red while one fails. The header's checks button shows the commit's state and opens or focuses the tool; it never stays pressed. Runs fold; the chosen job's steps show beside them, the failing step marked, with "Open log (at failure)" and, for any finished job, a log tab titled "<job> · log" (with the attempt after a re-run). Checks a service sets without a run are listed as "status from a service". The toolbar re-runs the failed jobs, re-runs the whole run and cancels a run that has not finished, in the platform's own words ("Re-run failed jobs" on GitHub, "Retry failed stages" on Azure DevOps); a job that failed has its own re-run on hover. An action that does not apply is disabled with the reason as its tooltip. A token that may not change runs turns every action off until the token changes, and while the platform limits requests the tool shows what it last loaded and says when it asks again. The backend reads the checks again itself every 30 s while a run is unfinished, and again shortly after an action, and pushes what it finds; the tool shows what it hears. Fork-run approval, annotations and starting a workflow are not part of it
-- For a changed symbol: its changed callers (recursively, through changed symbols only) and changed callees, and its unchanged direct callers flagged as possibly affected; an info mark at the callers says, in words for any language, what the server's call hierarchy cannot see (calls through interfaces or virtual methods, callbacks, reflection, generated code)
-- Changed symbols are listed in the Changes tree under their files, which are collapsed by default and show their symbol count; one button in the tree's header expands or collapses all (a file that appears later follows the last choice). Only named containers nest: an unchanged container that holds a changed symbol is shown muted, without a change letter, and clicking it only opens or closes it. A removed symbol (base side only) is struck through in place under its container. The change letter M, A or D stands in the status column of the symbol's row. Symbols carry no review state: seen marks stay on hunks and files
-- Each file shows a spinner in the tree while its symbols are being found, and the tree's header a count of the files done and a progress bar; symbols appear under each file as its analysis ends. The backend computes them itself, in the background once the review screen shows the changeset, the files with an open tab first, and pushes each file's answer as it comes; the window does not ask per file, and a file whose analysis fails for a reason that can pass — a store read, a server that is starting, indexing or was restarted, a query that failed — is analysed again up to three times with a short pause between before the failure is pushed, while one unavailable for a lasting reason (no server for its language, an untrusted project, no text to analyse) is pushed at once. The file stays loading until the last try. The Symbol panel has no loading state of its own
-- The Symbol panel shows one symbol, changed or not: the one under the cursor of an editor, or the one last clicked in the tree, whichever came last. With the cursor in no symbol (a function, type, module, field or constant) it is empty; where the language has no usable server, the panel says so. Its head names the symbol, its change, its container and namespace, and its file, which a click opens. Below it is one tree whose roots open and close and are remembered, all open at first: signature; changed callers; changed callees; possibly affected; reached from; usages. Rows are the Changes tree's: the member's name in the code font, its type, line and (in a wide panel) file in the UI font, never cut; a root shows five rows, then "N more" opens the rest. Callers nest by call, so a caller's callers are under it; possibly affected and usages group by type (by file for a free function), several lines of one member share its row, and tests, found by path convention (a `tests` directory, `*Tests.cs`, `*.test.ts`, `*_test.rs`, a `tests` module), are softer and, in those two roots, gathered in a Tests branch after the rest. The Usages root has a button that finds all its usages in the Find tool. For a removed symbol it shows the remaining references (base side) instead, in two branches: those that need attention (likely broken, binds elsewhere, unknown), open, and those already handled (deleted, edited), shut
-- Moving the cursor into a changed symbol in any editor (Changes, a diff or file tab) selects it in the tree: its file opens, its row scrolls into view, and no focus moves
-- Double click, Enter or Jump to Source (F4) on a changed symbol in the tree opens its definition (the base side's for a removed symbol); ← and → open, close and move through the rows; speed search in the tree also matches symbol names; a click on a changed caller or callee in the Symbol panel selects it in the tree
-- Find usages (Alt+F7): a list of a symbol's references, any symbol, not only changed ones, in the Find tool. The Find tool is a bottom tool (Alt+7) that keeps result sets as tabs: Find usages, the Symbol panel's Usages button and "Open in Find window" (⌘↵) of the Show Usages popup and of Find in Files each fill one. A new result replaces the tab that is not pinned (its title in italics); a pinned tab stays, and the same query again reruns its tab. Rows group by file, showing the review state of the hunk the line is in, the enclosing symbol and the line with the match; a line of the old code is marked "base" and opens on the diff's old side. Changeset and Not seen narrow the list, a filter field matches text, symbol and path (Esc clears it, then returns to the editor), and a preview shows the code around the chosen row. A list cut at 200 rows offers "Show all". Rerun (⌘R) asks again; when the code changed since a set ran the tab carries a dot and a banner says so, and a rerun says how many rows are new and gone. Rows open as results of Find in Files do; Find usages is not offered in a tab pinned to a commit
-- Go to definition shows its target: the symbol under the pointer is underlined while Cmd/Ctrl is held
-- Hover popups styled as part of the app: the design tokens' sheet surface, border, radius and shadow, a readable maximum width and height with scrolling, consistent spacing between signature, docs and diagnostics, in both themes
-- Syntax highlighting in hover popups (the server's Markdown rendered, code blocks highlighted)
-- File structure view: every symbol of the current file as a tree, as the Structure tool window on the right (Alt+0; one right tool at a time) and as a popup (Ctrl/Cmd+F12) over the editor, both showing the same list. Rows look like the Changes tree: change letter M, A or D, kind glyph, removed symbols struck through in place, symbols the changeset did not change one step softer, fields and constants included. Header toggles: changed only (the changed symbols and the containers that place them) and A–Z sorting; both are remembered, folds are per tab. A target button, like Reveal File in Tree in All files, selects the symbol the editor's caret is in once (the list does not follow the caret on its own). Speed search filters by name; Esc in the window or the popup returns the focus to the editor. A click selects a row and makes it the Symbol panel's symbol; double click, Enter or Jump to Source (F4) opens its definition (Enter in the popup also closes it). A file pinned to a commit shows the outline at that commit without change marks; a file without language support gets the Symbol panel's empty state
-
-#### Language servers and performance
-
-- Language servers, and the restores they need, start for a changeset when the review screen shows it, not when the queue puts it on view: moving over the queue's rows starts nothing, and nothing in the background (problems, symbols, outlines, marks in the editors) asks a server while the queue is on screen. Showing the review starts the servers of the changeset on view; while it is shown, a revision that settles, a fetch that moves the pull request on view or a change of trust starts the servers it needs. A question the viewer asks, such as a symbol search in the palette, starts what it needs on any screen
-- Review work waits for the review screen. While the queue is on screen, Vet keeps current only what the queue shows: its lists, line counts and pull request details, and for the changeset on view the queue panel's file list, the files changed since the last review, checks, comments and pull request details. A working tree that is not on view and has no open review is not scanned; it is scanned once when it comes on view. The dirty content of a working tree is copied ahead of a review only while the review screen shows it. While a review of the working tree is open, every settled snapshot is still recorded as its next version (§5.3).
-- Language-server status per server (starting, indexing with the server's progress, ready, failed, not installed), in the footer with details on click
-- Language-server answers are reused across restarts under keys naming everything they depend on (§7.6): symbols by content on any tree, and hover, definition, references, call hierarchy and diagnostics on materialized snapshots
-- Materialized base snapshots and their dependency restore are kept between launches, keyed by snapshot, so reopening a review with the same base starts its servers without copying or restoring again
-- Semantic results track what they depend on (file contents, the project, server version), so a new revision recomputes only what its changes affect instead of discarding everything
-- Svelte/Angular backends (config entries + capability assert); C# is in the POC
-- Requests whose answer is no longer wanted (a hover the pointer left, a query for an outdated revision) are cancelled from the UI down to the language server (`$/cancelRequest`)
-
-#### Search and keyboard
-
-- Search in the open view (⌘F): a find bar docked in All changes, Unified, Split and File views, with match case, whole word and regular expression, the side to look in (both, target, base) and only changed lines, next and previous with counts, and the matches marked in the text and the scroll bar; stepping opens the unchanged lines that hide a match, and All changes searches the unchanged text of every file too. One query per window, with a position per tab
-- Search in the project (Find in Files, ⌘⇧F): a dialog with the same options, a file mask, and a place to search (All changes, a version range, one commit, or the whole repository without ignored files); filters for side, only changed lines and changed lines not yet seen; results grouped by file with review progress and status, a preview of the code around the chosen match, and the first 1,000 matches listed. A result opens in All changes when that is on show, else in the file's own tab (Alt+Enter: always there), with the find bar carrying the query. Lines are matched one at a time; the find bar uses JavaScript's regular expressions and Find in Files Rust's
-- Keyboard shortcuts for every action, shown in menus and tooltips, with a Keymap page in Settings (beyond the JetBrains-feel package's keymap import)
-- Speed search: typing in any menu, dropdown, list or tree filters it (camel-hump matching, matches highlighted, Escape clears; trees keep the folders on the path to a match), as in IntelliJ
-- JetBrains-feel package
-
-#### App shell
-
-- Background work is visible, as in JetBrains IDEs: a progress indicator in the footer while a project opens and while work runs (scanning, diffing, servers starting and indexing, restores), naming the step, with the details on click; the review shows as early as it can instead of behind a loading screen
-- Project switcher and changeset switcher in the title bar, redesigned (design to follow): the project switcher lists recent projects plus "Open…"; the changeset switcher picks what is under review
-- File-type icons for files and folders in the file tree and on tabs, by extension and well-known names (a folder's icon open or closed)
-- The main menu is the map of what Vet does and where its shortcuts are learned: File, View, Navigate, Changeset, Review and Help, with an app menu, Edit and Window around them in the macOS menu bar (the host's native one); on Windows and Linux the title bar's ☰ draws it, also on the welcome screen, and Alt pressed and released alone opens it, then a first letter opens a menu. An item that does not apply is disabled, with the reason as its tooltip in the drawn menu, never hidden. Tool windows are numbered left tools, then bottom, then right, top to bottom: Alt+1…8 (Changes, All files, Commits, Comments, Timeline, Problems, Find, Pipelines), Alt+9 (Symbol) and Alt+0 (Structure), Close Tab is Ctrl/⌘+W, Previous/Next Tab are Alt+←/→ (⇧⌘[ and ⇧⌘] on macOS, where ⌥←/→ moves the caret by word) and, on every platform, Ctrl+PageUp/PageDown. The View menu's view mode is one radio group, Unified / Side-by-Side / File, on Alt+Shift+1/2/3 (matched by the physical key, so every layout works); Post Comments… (Submit Review… where the platform submits a review) is Ctrl/⌘+Shift+K; Ctrl+Alt+V opens a picker of the platform's votes at the toolbar's outgoing button, where the platform keeps the vote apart from the comments; Ctrl+Alt+L switches between Changes Since My Last Review and the Whole Changeset; Alt+F2 reveals the file in the tree. Alt with Shift held never opens the menu bar (on Windows Alt+Shift switches the keyboard layout)
-- Native context menus (the OS's, through the host's menu API) everywhere the app has one: the file tree, the editors and diff views, tabs; they replace the webview's default menu and show each item's shortcut. Without a host (plain browser) the app draws the same items
-- The split between the right sidebar's panels can be dragged, keeping its position
-- Resizable dialogs (Settings first), keeping their size
-
-### M2
-
-- Stacked changesets: branch stacks (each branch building on the one before) reviewed as a stack
-- Themes and colour schemes as two settings, as in IntelliJ: an app theme (light, dark, Darcula, following the system) for the chrome, and an editor colour scheme (Default, Darcula, Solarized light and dark, high contrast) for syntax, diff and review-state colours. Syntax highlighting grows to the categories a scheme needs (comment, constant, variable, parameter, property, operator, punctuation, attribute, namespace, tag, …). Custom schemes by importing IntelliJ colour schemes and VS Code themes into an editable scheme file; no in-app colour editor
-- Several projects open at once, each in its own window, with the welcome screen as a window of its own (until then one window switches between the welcome screen and a project, keeping a position and size for each)
-- Trust (§7.5): fork PRs, and PRs of a project not trusted, are limited until trusted; a new push voids a PR's trust; restores execute only under a trusted project or PR
-- Semantic-graph diff
-- Review-questions assistant (read-only; answers cite hunks)
-- Worktree groups
-- Export annotations as agent task files
-- Coding agents integrated into the UI through the Agent Client Protocol (ACP)
-- Minimap
-- The language-server client's JSON-RPC transport uses `async-lsp` instead of its own framing, once upstream supports cancelling outgoing requests and our `lsp-types` version
-- CI annotations on lines: the platform's check annotations (path, lines, severity, message) shown in the hunk view like diagnostics, anchored to the commit they were produced for
-
-### Later
-
-Spec/test-diff-centric views; more languages via config; `ty` adoption when stable.
-
----
-
-## 13. Performance (falsifiable)
-
-Targets apply to supported topologies; the `/mnt/*` WSL topology is exempt.
-
-| Milestone                                                                 | Target                                                                                      |
-| ------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------- |
-| Open changeset → UI interactive                                           | < 300 ms                                                                                    |
-| Diff available                                                            | < 1 s                                                                                       |
-| Live target server: hover/definition                                      | backend-bound; Vet adds < 20 ms                                                             |
-| Materialize a snapshot (worktree + overlay)                               | < 2 s for a 10k-file repo; server start is async with visible progress                      |
-| Usages and call queries (`references` + incoming calls) of a symbol       | < 10 s p50, async; slow symbols shown as pending                                            |
-| Reconciliation establishes correct snapshot identity                      | < 1 s, excluding time to hash changed bytes                                                 |
-| Hashing changed bytes (read + hash, files in OS cache)                    | ≥ 1 GB/s                                                                                    |
-| A review action (mark, comment) or a manifest, whatever the semantic load | < 100 ms; the load test holds every semantic resource stuck and requires them all to answer |
-
-**Benchmark corpus:** your own repos, your own hardware, on each POC topology.
-
----
-
-## 14. Open questions
-
-1. **Reachability tuning:** per-language entry-point configs and search bounds are ongoing craft.
-2. **Comment sync conflicts:** the M1 policy (Changesets and history); confirm against real PR flow.
-3. **Risk ordering:** whether the queue should rank changesets by a risk model, and what signals it would use.
-4. **Base-server cost:** if materializing and starting a second server per session proves too slow for some backend (likely Roslyn on large solutions), consider loading base-side files as overlays into the target server for that backend only.
+- **What is in a snapshot:** every file under the repository root that git tracks, plus every untracked file that git does not ignore.
+  - Files larger than 50 MB (configurable) are hashed in full, so two snapshots never look equal by mistake, but Vet does not keep their content and shows them as `content unavailable`.
+  - Ignored files can be included explicitly.
+  - Untracked files in folders that belong to a tool by name (`.pnpm-store/`) are never included. This list is fixed.
+  - Vet never guesses which files matter.
+  - A change of the executable bit or of a symlink is a change like any other. A submodule is recorded as its commit; Vet does not look inside it unless asked.
+- **When a review starts (§4.5)**, Vet records the commit and tree of version 1 and copies its uncommitted and untracked content into Vet's content-addressed store (the _content store_, §9). Vet never writes uncommitted content into git's object database, so untracked secrets never end up in something that could be pushed. The changeset is the base against the latest settled snapshot.
+- **Keeping content:**
+  - While a review is open, every new snapshot's content that git cannot rebuild (uncommitted and untracked files) is copied into the content store, so every version of the review can be shown again later.
+  - Content shown on either side of a diff, or under a comment or a seen mark, is copied when first shown. Review state therefore never depends on git keeping old objects.
+  - The working tree's uncommitted content is copied ahead of a review only while the review screen shows it.
+- **Session refs:** while a review is open, Vet keeps refs on the commits its snapshots come from, so git's garbage collection never removes them. They are deleted when the review is finished.
+- **Materializing a snapshot** (writing it to a directory to run a language server on it) works only while all of its file contents are available, from git or from the content store. If any are missing, the language features for that snapshot are disabled with a visible reason. Vet never starts a server on an incomplete copy.
+
+### 4.2 Watching and settling
+
+- **Watching:** Vet watches the working tree for file changes and re-hashes what changed. Watching only makes Vet faster; reconciliation (below) decides what the snapshot is.
+- **Settling:** a burst of writes is debounced: a snapshot is _settled_ once the changed files' size and modification time have stayed the same for about 1–2 seconds. Each settled snapshot is added to the edit timeline. If two writers change the same file within that window, the result is one snapshot, and the two cannot be told apart.
+- **Reconciliation:** Vet scans the whole working tree when it opens it, when the watcher reports that it lost events, after a resume or restart, and before a snapshot settles. Lost watcher events can delay review state but never make it wrong. Where the watcher cannot cover the tree, Vet polls instead and shows a notice.
+- A working tree that is not the current changeset and has no open review is not scanned. Vet scans it once when it becomes the current changeset.
+- A folder Vet cannot read does not stop the scan. Vet skips it with a warning: tracked files in it are taken from git's index and marked as content unavailable, and untracked files in it are left out. A folder that disappears during the scan counts as deleted.
+
+### 4.3 Files as git sees them
+
+- **Git:** Vet reads git inside its own process. It never starts git, and never runs hooks, `fsmonitor` commands, or filter or diff drivers.
+- **Paths** are relative to the repository root, use `/`, and are compared by their exact bytes (as git stores them for tracked files, as the filesystem reports them for untracked ones). Unicode normalization is used only for display and to match git's `core.precomposeUnicode` on macOS. Two paths that differ only in case or only in Unicode normalization are flagged as a `PathCollision`; Vet does not materialize such a snapshot on a filesystem that would merge them, and says so.
+- **Content:** a file's content is what git would store, after git's built-in conversions only (`eol`, `text`, `core.autocrlf`, `ident`). Otherwise every file under `autocrlf` would look changed. For files with a custom filter (for example Git LFS): if the file's size and date match git's index, Vet uses the index's content; otherwise it uses the bytes on disk and marks them `unfiltered`.
+- **Mode and kind:** where the filesystem cannot store them (`core.filemode=false`, `core.symlinks=false`, usual on Windows), they come from git's index for tracked files. Untracked files get mode `100644` and kind `file`.
+- **Fetch:** Vet fetches from the remotes inside its own process, read-only, on request and every few minutes, so remote branches and pull requests are current. It never pulls, merges or rebases.
+
+### 4.4 Bases
+
+- **History:** Vet's own timeline of settled snapshots is the record of what happened. The reflog is extra information (which commit a snapshot came from, comparisons across amends and rebases); git may delete it.
+- **The base depends on the kind of changeset. The user does not choose it.**
+  - A pull request's base is the point where it branched off its target branch, as the platform shows it (the merge base with the fetched target branch).
+  - A local branch's base is its merge base with the default branch. A branch built on another branch is also compared with the default branch.
+  - The working tree's base is `HEAD` at the moment it was opened. Vet keeps this base across restarts. Commits an agent makes on top do not move it, so the working tree shows everything done since, committed or not. The base stays until the review of the working tree is finished; the next time the working tree is opened, Vet takes the `HEAD` it finds then. Before a review starts, this base is the only thing Vet keeps, so closing and reopening Vet before the first mark does not move it.
+- The base is never the tip of the target branch, because that would show what the target gained since as reverse changes. A changeset whose tip the target already contains is empty, and Vet says so (§8.5).
+- The default branch is not offered as a changeset: the others are compared with it. Comparing two arbitrary commits is not a review and is not offered.
+- When a branch's or pull request's merge base moves (a rebase, a merge of the target), the base moves with it, as a new version.
+- The line counts in the queue use the same base as the review screen, so the two agree. Until Vet has counted them, a pull request's row shows the platform's own counts.
+- **`HEAD` off the base:** when the working tree's `HEAD` no longer descends from its base (the agent rebased, reset or checked out something else), the changes shown include work from elsewhere. A banner says so for as long as this is true, and the header marks the base (§8.2).
+
+### 4.5 Reviews and versions
+
+- **Browsing:** opening a repository shows the working tree against its base. Vet records no versions, keeps no content and creates no refs.
+- **A review starts** with the first review action: marking something seen (a range, a hunk or a file), acknowledging a non-text change, or adding a comment. Removing a mark and reading do not start a review.
+  - The snapshot at that moment is version 1. Vet records its commit and tree, and the base (§4.4) becomes the review's base. Each later settled snapshot is the next version (v2, v3, …).
+  - A pull request's versions are the pushes its platform recorded (GitHub's force-pushes, Azure DevOps' iterations), from the first push. A review that starts has one version per push made so far, the current head being the last. Each later push is a new version, however many pushes happened between two fetches. Vet fetches their commits from the platform.
+  - A push whose commits the platform no longer has (dropped after a force-push) is still a version, but without content. It is listed and cannot be opened, and the pushes around it are compared with the nearest version that has content.
+  - A local branch's versions are the tips Vet saw.
+  - Keeping content and session refs (§4.1) apply from the start. A review stays open, and keeps recording versions, after it is complete (§5.3).
+  - While a review of the working tree is open, every settled snapshot becomes a version, whichever screen is shown.
+- **Finishing a review** is an explicit action, allowed with changes still unseen. Vet records whether the review was complete, deletes the session refs and stops recording versions. Later edits are browsing again until the next review action starts a new review. Finished reviews are kept as §9 says.
+- **Reopening** a repository with an open review continues it: the working tree settles as the next version and the marks are remapped (§5.2). Without an open review, Vet opens in browsing.
+- **Changes between versions:** a version, or a range of versions, can be shown on its own, as an interdiff (§3). The queue's count of files changed since the last review uses the same interdiff, so a change the author undid, and a change that only comes from the base move, are not counted.
+- **By commit:** a branch or pull request is shown either as all its changes at once (the default, and what completion counts) or commit by commit. By commit, a clean merge of the target branch is a collapsed marker with nothing to review, and a merge with conflict resolutions shows only the resolutions (as `git show --remerge-diff`).
+
+### 4.6 The review filter
+
+- The review filter decides which files of a changeset are reviewed: review roots, whether binary files are hidden, and include and exclude patterns. It is a project setting, stored per repository and used for every changeset. Changing it never changes snapshots, so it never disturbs comments or marks.
+- **Generated files** are excluded like files matching an exclude pattern, unless the filter's "review generated files" option is on. Vet treats these as generated:
+  - lockfiles and tool output by file name (`Cargo.lock`, `yarn.lock`, `*.pb.go`, `*.min.js`, …, in any folder);
+  - files marked `linguist-generated` in `.gitattributes` (on the side the file is on; `-linguist-generated` keeps a file in);
+  - files whose first five lines (within the first KiB) contain `<auto-generated`, `@generated` or Go's `// Code generated … DO NOT EDIT.`.
+- **Review only this folder** narrows the current review instead of changing the filter. The narrowing replaces the project's filter for this review only, is not saved, and ends when the project's filter changes or another changeset becomes current.
+- §8.10 describes how the filter is edited.
+
+## 5. Review state
+
+### 5.1 Anchors and comments
+
+- **What a comment is on:** a line range on one side (an anchor), a whole file on one side, or the whole changeset.
+- **A thread** has its messages (author, text, time; the first opens the thread) and a status in Vet, open or resolved. A thread linked to the platform also shows the platform's own status as the platform names it (for example Azure DevOps' "Won't fix"), whether it can be resolved there (not a comment in a flat conversation), and whether it blocks the merge (§7.2).
+- Only comments on a line range are remapped as below, and only they can become `Stale` or `Ambiguous`. A comment on a file follows the file through renames git detects, and becomes `Stale` only when the file is deleted. A comment on the whole changeset never moves.
+
+**Remapping a comment.** A comment is remapped on the same side of the changeset it is shown in, directly from the snapshot it was made in to the snapshot shown, never through the versions in between. The result is one of:
+
+- **`Exact`:** the commented bytes are where the diff maps the range, at the same path or a path git detected as a rename. If only whitespace differs, the comment is exact with "whitespace changed".
+- **`Inferred`:** Vet found one clearly best place, by the surrounding lines or by the same content in another changed file (a move), and records how it found it and how sure it is. When the commented lines were rewritten, the comment moves to the lines that replaced them, with low confidence. When they were deleted, it stays where they were, and the UI says "line deleted".
+- **`Ambiguous`:** several places are about equally good.
+- **`Stale`:** the file was deleted, or none of the surrounding text survived.
+
+Vet never moves a comment without showing it:
+
+- In the UI, an `Inferred` comment shows a "moved" badge with Vet's confidence; its tooltip says how it was found and where it was. "Confirm" fixes it at its new place (→ `Exact`). Comments remapped with low confidence are also listed under "Moved" in the Comments tool window.
+
+### 5.2 Seen, flags and remapping
+
+- **A span** covers reviewed lines on the old side, the new side or both (a pure addition has no old side, a pure deletion no new side). It is `Seen`, `SeenAgainstOldBase` or `Flagged`.
+- **Marking a hunk seen** (or a selection) stores one span covering its lines on both sides. A hunk shows as seen when every changed line in it is covered by a `Seen` span. Marking seen can be undone. A concern is a comment (§5.1), not a mark.
+- **Flags.** A hunk can be flagged for later: a `Flagged` span over its lines, which does not count as seen. A flag is independent of seen (a hunk can be both). Only flagging again removes it; marking seen or unseen does not. Flags are stored and moved like seen marks, except that they never shrink: a hunk stays flagged while any of its changed lines is flagged, so a flagged hunk that a push splits or edits stays flagged. Finishing the review removes flags with the other marks.
+- **When the code changes (I2),** each span is remapped side by side, using the line diff between the file it was made in and the current file, following renames git detects.
+  - Only exact matches carry marks. A move Vet only inferred never carries a seen mark.
+  - Each reviewed line whose content is unchanged and still in the changeset stays seen. Every other line becomes unseen. One span can therefore become several, or none.
+  - If a reviewed line could map to more than one place (for example, repeated identical lines whose surroundings changed), it becomes unseen, rather than leaving the choice to the diff algorithm.
+  - A seen region of 20 lines with 3 lines edited in the middle becomes up to two seen spans around 3 unseen lines.
+- **Base changes.** If a span's new lines are unchanged but any of its old lines changed, its marks become `SeenAgainstOldBase`. They look different, count as unseen for completion, and can be confirmed again in one action. This only covers changes inside the reviewed lines; changes elsewhere show up in the impact questions (§6.3), not in the marks. When in doubt, Vet marks a line unseen rather than keeping it seen.
+- **Non-text changes.** A change to a file with no text to review (mode, symlink target, submodule commit, binary or oversized content, a pure rename, an added or deleted empty file) is one item. It is acknowledged like a hunk and stored the same way, identified by the file's entries before and after.
+
+### 5.3 Completion
+
+Completion counts only what the review filter includes. A changeset is complete when every changed line the filter includes is covered by a `Seen` span, and every non-text change it includes is acknowledged. The UI always shows how many changes the filter excludes, so "complete" never suggests that everything was seen.
+
+## 6. Language features
+
+### 6.1 Language servers (I3)
+
+| Language   | Server                            | Docs in hover for dependencies |
+| ---------- | --------------------------------- | ------------------------------ |
+| Rust       | rust-analyzer                     | cargo registry sources         |
+| TypeScript | typescript-language-server        | JSDoc from `.d.ts`             |
+| Svelte     | svelte-language-server            | as TypeScript, plus components |
+| Angular    | Angular Language Server           | as TypeScript, plus templates  |
+| Python     | Pyright                           | docstrings and typeshed        |
+| C#         | roslyn-language-server            | XML docs in NuGet packages     |
+| YAML       | yaml-language-server              | schema descriptions (§6.5)     |
+| JSON       | vscode-json-languageserver        | schema descriptions (§6.5)     |
+| Shell      | bash-language-server              | none                           |
+| Dockerfile | dockerfile-language-server-nodejs | instruction docs               |
+
+- The Svelte server loads the project's `svelte.config.js`.
+- The Angular server handles only `.html` templates under an `angular.json` (the nearest one up from the file); without one, no server handles the HTML. TypeScript files, inline templates included, use the TypeScript server.
+- The Shell server runs ShellCheck when it is installed.
+- The Dockerfile server works offline (Docker's own server needs Buildx and calls Docker Scout).
+
+- A file belongs to the language of its extension or, for files like `Dockerfile`, its name. No two languages claim the same one. The backend decides which language a file belongs to and tells the window; the window does not match file names itself. A kind of file several projects share, such as an Angular app's `.html`, is decided by the project's own files.
+- The user can set the path of a known server. There are no plugins for other languages.
+- **Required:** the server must accept file contents from Vet (text document sync), because Vet sends it the files it asks about. Vet refuses a server without it, with a visible error.
+- **Optional, per feature:** `documentSymbol`, `definition`, `references`, `implementation`, `hover`, `callHierarchy` (incoming and outgoing), `workspace/symbol`. Vet always asks for diagnostics (pushed or pulled), because servers publish them without announcing it.
+- Vet does not send a request for a feature the server does not support. Instead it answers "not supported by this language's server" (I3), and every place that would show the answer says so:
+  - Go to Definition says it (a hover popup stays empty, as it does for a symbol the server knows nothing about);
+  - the Symbol panel says call hierarchy is not available for its callers and callees;
+  - a workspace symbol search lists the languages whose servers cannot be searched.
+
+  A server that supports only some features (only diagnostics, or a YAML server without references) is still used for the rest.
+
+- **Status:** for the old and the new side of the current changeset, the backend reports what each language's server is doing (starting, indexing with its progress, ready, failed, not installed), whenever it changes. The footer shows this, with details on click. Nothing waits for a server for a fixed time.
+- **Cancelling:** a request whose answer is no longer needed (a hover the pointer left, a question about an outdated revision) is cancelled at the language server too.
+
+### 6.2 Servers for each snapshot (I1)
+
+- **When servers start.** Language servers, and the dependency restores they need, start for a changeset when the review screen shows it, not when the queue selects it. Moving through the queue's rows starts nothing, and no background work (problems, symbols, outlines, marks in the editors) asks a server while the queue is shown. Showing the review screen starts the servers of the current changeset; while it is shown, a new snapshot, a fetch that moves the current pull request, or a change of trust starts the servers they need. A search the user starts, such as a symbol search in Search Everywhere, starts what it needs on any screen.
+- **The working tree** is served by a server running in the working tree itself. Its answers are about the revision on screen, even when the files on disk have moved on since.
+- **Any other snapshot** (a pinned base, an older version, a pull request's base or head) is served by a server in a directory where Vet has materialized the snapshot. The language-server layer only gets the directory and never sees how it was made. Vet materializes it from the snapshot's commit and its content store, and refuses if content is missing (§4.1).
+- **Running servers** are kept per snapshot (or working tree), server and analysis policy, and stay running while used.
+  - When too many run, servers that are quick to start again, and those unused longest, stop first. Vet never stops a server the current changeset needs for its changed files.
+  - Answers outlive their server (I1).
+  - A server that fails to start is not tried again by every question. Installing it, changing its path or "Restart" tries again at once.
+  - Changing a server's settings restarts it. Its cached answers no longer match because the server's fingerprint changed; nothing is deleted.
+- **Materialized snapshots are kept between launches** in Vet's data directory: one directory per snapshot and analysis policy, shared by all languages, with a record of each language's dependency restore. Reopening a review with the same base starts its servers without materializing or restoring again. Before reusing a restore, Vet checks it against the current tools and the policy. Old directories are deleted to stay within a disk budget (§9).
+- **Dependency restore.** A materialized snapshot needs its dependencies restored for its server to work.
+  - By default Vet only downloads them and runs nothing. That is enough for documentation (cargo registry, `.d.ts`, typeshed, NuGet XML docs): no install script, `.pnpmfile.cjs`, build backend or MSBuild step runs.
+  - Where the policy allows running project code (§6.5), install scripts and build steps still never run. Only a C# restore (which runs MSBuild) needs that policy.
+  - When the npm lock file does not match `package.json`, Vet installs the locked versions anyway, without touching the lock file. A banner says "Dependencies installed with npm install: the lock file is out of sync", milder than the "analysis limited" banner. If something also failed, the "analysis limited" banner stays and lists this note in its details.
+  - A failed step shows the part of the tool's output that explains it. The full output is in the debug log.
+
+### 6.3 Questions Vet answers
+
+- An answer the server gives while it is busy (indexing, or analysing after an edit) is a _partial answer_: it may be incomplete, so Vet never caches it. Diagnostics given that way are marked, and Vet asks again when the server is done.
+- Some answers come straight from a server. Others Vet computes from server answers and the diff; these are labeled derived and show what they were computed from (I3).
+- When a server points at a file outside the repository (a dependency, the toolchain's sources), Vet shows the line only if the file is of that server's language (§6.1; the Svelte and Angular servers may also point at TypeScript files). Other files are listed without their text.
+
+**From a server:**
+
+- **Hover, go to definition, references, diagnostics:** the server of the side being viewed.
+- **Navigation on the old side, next to the new side:** both sides' servers, asked at the same time.
+- **Workspace symbols** (Search Everywhere): `workspace/symbol` on the new side's server.
+
+**Derived:**
+
+- **Which symbols changed:** for each changed file, `documentSymbol` on both sides; a symbol changed if its range overlaps a hunk.
+- **Usages of a symbol:** `references` on the new side, in the background, each with the symbol it is in.
+- **What a removal breaks:** `references` of each removed symbol on the old side. Each place is then checked on the new side and classed as:
+  - **gone**;
+  - **modified**;
+  - **likely broken:** unchanged, and no longer resolves;
+  - **binding changed:** unchanged, but now resolves to something else;
+  - **unknown**.
+- **Is a diagnostic new:** diagnostics of each changed file on both sides.
+  - A new-side diagnostic is old if the old side has one with the same severity, source, code and message (whitespace collapsed) on a line that maps to it. Otherwise it is new.
+  - It is _unknown_, never new, while the old side's diagnostics are missing or partial.
+  - New-side diagnostics show at once, marked "origin pending".
+- **Changed callers and callees of a changed symbol:** incoming and outgoing calls on the new side, followed through changed symbols only. Unchanged direct callers are listed as possibly affected.
+- **Is it a test:** by the file's path (`tests/`, `*_test.go`, `*.test.ts`, `*Tests.cs`, …) or an enclosing `tests` module. Shown as "test by file name".
+
+### 6.4 Reachability (derived, I3)
+
+Reachability says whether new or changed code is reached at all. From each changed or added symbol, Vet follows incoming calls backwards until it hits a configured entry point, within limits on depth and number of symbols. The result is labeled derived:
+
+- `reached` shows the path to the entry point;
+- `unreached within bound` shows the limits and the entry points used;
+- `unknown` names what servers cannot see (dependency injection, reflection and serialization often hide real calls, worst in C#).
+
+Finding dead code in the whole repository is not a Vet feature. Vet shows it only when a language server reports it as a diagnostic (for example rustc's `dead_code` through rust-analyzer).
+
+### 6.5 Trust
+
+Trust decides whether Vet may run project code while analysing. It is not a security boundary.
+
+- The analysis policy has two parts: whether language servers may run project code (build scripts, proc macros, MSBuild design-time builds), and whether dependency restores may (§6.2). The policy is part of the key of materialized snapshots, restore records and cached answers, so a restore that ran nothing is never reused as one that ran code, and the other way round.
+- When trust changes, Vet starts the servers the current changeset needs under the new policy, and stops the running servers that run project code under a policy the current changeset no longer has. A server in use stops as soon as its request ends.
+- **Trusted project:** a per-repository setting ("Trust this project" on the Trust page of Settings), off by default. In a trusted project, the working tree, local branches, and pull requests whose head is in the repository itself (not a fork) are analysed with restores and servers that run project code, without asking.
+- **Project not trusted:** the working tree and local branches still use servers that run project code, because they are the reviewer's own code, but their restores run nothing. A pull request is limited until trusted: restores run nothing, and only servers that do not run project code start. Other languages show an "analysis limited" marker, and a banner says why and offers "Trust this PR" and "Trust project…" (which opens Settings on the Trust page).
+- **Pull requests from a fork** (the head is in another repository than the one the pull request targets, or Vet never stored the platform's data on it) are limited in a trusted project too, and their banner does not offer "Trust project…".
+- **Trust this PR** lifts the limit, for restores and servers alike, for the pull request's current head commit. A new push removes the trust again. A pull request whose head is in a trusted project's own repository is trusted by the project, and a push does not change that. There is no action to remove trust from a pull request; unticking "Trust this project" removes the project's.
+- A pull request's old side runs project code only if its project is trusted, or the pull request is trusted at its current head (the old side is an ancestor of that head). Trusting a pull request covers its head commit only.
+- **TypeScript.** The TypeScript server runs a `tsserver.js` through node, and the project may bring its own `typescript`. Where servers may not run project code, Vet uses only the `typescript` it installed itself, or else one installed next to the server (the user's own), never the project's. Without either, the server is reported missing, and the language server settings offer to install it. The Angular server likewise loads `@angular/language-service`: where servers may not run project code, Vet points it only at its own copies (installed with the server), never at the project's `node_modules`, and without them reports it missing. The settings page shows each server as it would run for the current changeset.
+- **Schemas.** The YAML and JSON servers check files against JSON schemas and would download them (SchemaStore, a `$schema` key, a modeline). Since the repository decides what is downloaded, this follows trust: downloads are allowed only where restores may run code (a trusted project, a trusted pull request). Everywhere else downloading is off, and the servers get a fixed set of schemas that ships with Vet (GitHub Actions workflows, Azure Pipelines, Kubernetes, docker-compose, `package.json`, `tsconfig.json`). Any other schema is refused with a visible diagnostic naming its address, never skipped silently. Where schemas come from is part of the server's fingerprint, and answers obtained with downloads are not reused in later sessions, so answers under different schema rules never mix.
+
+### 6.6 Background analysis
+
+While the review screen shows the current changeset, the backend analyses it in the background and sends each result as soon as it has it. The window does not ask file by file.
+
+- **Changed symbols:** the changed symbols of each changed file, files with an open tab first.
+- **Problems:** the diagnostics of each changed file, files with an open tab first. First the new side, marked "origin pending", then the comparison with the old side (§6.3).
+- If a file's analysis fails for a reason that may pass (a storage read, a server that is starting, indexing or restarted, a request that failed), Vet tries again a few times before it reports the failure. A file that cannot be analysed for a lasting reason (no server for its language, an untrusted project, a binary or too-large file, a file the changeset does not change, a snapshot that cannot be materialized) is reported at once.
+- The analysis follows the current revision. A filter change restarts it for the files the filter now includes. Retry in the Problems tool runs it again.
+
+## 7. Platforms
+
+### 7.1 Accounts
+
+- GitHub (including Enterprise hosts) and Azure DevOps. Vet uses a signed-in command-line tool if there is one (`gh auth token`; `az account get-access-token` for Azure DevOps), otherwise a personal access token. There is no browser or device-code login.
+- Tokens are kept in the operating system's keychain, never in Vet's storage. In the WSL split, the window keeps them and hands them to the backend. A token is sent only to its own host's API.
+- Signing in or out for a host syncs the open pull requests of that host again and reads their checks again.
+
+### 7.2 Platform traits
+
+Each platform is described by a fixed set of properties. Vet and its UI decide by these properties, never by the platform's name:
+
+|                                    | GitHub                            | Azure DevOps                                               |
+| ---------------------------------- | --------------------------------- | ---------------------------------------------------------- |
+| Comments on the whole pull request | a flat conversation               | resolvable threads                                         |
+| A conversation feed                | yes                               | no                                                         |
+| Posting                            | one review with all comments      | comment by comment                                         |
+| Votes                              | comment, approve, request changes | approve, approve with suggestions, wait for author, reject |
+| Vote set apart from posting        | no                                | yes                                                        |
+| What blocks the merge              | unresolved threads, if required   | unresolved threads, if a policy says so                    |
+| Comments belong to a patch set     | no                                | no                                                         |
+
+How the UI uses them:
+
+- **Review and Conversation tabs** in the Comments tool window, for every pull request. Review holds the comments on files and lines. Conversation holds what is about the pull request as a whole: with a conversation feed, the platform's flat list (comments and review summaries with their vote), where your own comments can be edited and are answered with a new comment instead of a reply; without one, the comments on the whole changeset, with replies and Resolve.
+- **Posting:** the Comments tool window shows "Submit review" with a vote menu where comments are posted as one review, or "Post" where they are posted one by one, next to the drafts it will send. Where the vote is set apart, a separate vote control appears next to it.
+- **Blocking:** the blocking marker on a thread, and the queue's blocking status, follow what blocks the merge on that platform.
+- **Platforms that tie comments to a patch set:** Vet still attaches comments to its own snapshots; a platform comment's patch set maps to the snapshot built from that patch set.
+
+### 7.3 Pull requests
+
+- Pull requests are changesets. Vet fetches their heads and targets into its own refs, read-only.
+- **The backend keeps the list.** It lists the pull requests again every fetch interval (whatever screen is shown), when the refresh button is pressed and when an account changes, but not just because the queue, the switcher or Search Everywhere opens. Once listed, reading the list never waits for the platform.
+- A timed or account-change refresh skips a rate-limited account until its retry time; the refresh button always asks.
+- A repository whose listing fails keeps its last rows and shows the error.
+- The current pull request is always listed, even when the platform's list leaves it out, from what Vet read when it opened it.
+- **Details:** Vet keeps each pull request's details as the platform last gave them (description, reviewers, labels, conversation, state). Selecting one shows them at once and refreshes them. After listing, Vet fetches in advance the details of the newest pull requests whose `updatedAt` changed since its copy, at a slow pace, and pauses while their account is rate limited or failing. A pull request that is gone is skipped. If the list changed, this starts again from the top; if not, it continues.
+
+### 7.4 Comment sync
+
+- Comments sync both ways: comments and replies on the platform are pulled into Vet, and drafts in Vet are posted when the user posts them. Seen marks are never synced. Because Vet keeps the commented content (§4.1), comments stay in the right place across rebases where the platform loses them.
+- If the user changed a thread's status in Vet since the last sync, that status wins over the platform's.
+- An edit to a posted comment is sent at once. If the comment also changed on the platform since the last sync, Vet shows both texts and the user picks one.
+- A thread deleted on the platform is deleted in Vet; a draft reply in it is dropped with a notice.
+- Drafts are posted on Submit, as one review (GitHub) or one by one (Azure DevOps), never as a pending review on the platform. A comment the platform refused is marked failed with the reason; it is posted again with the next Submit, or can be discarded on its own. A comment being posted cannot be discarded.
+- Users can edit and delete their own comments. Deleting the first comment deletes the thread.
+- A failed sync shows in the footer until a sync succeeds or another changeset becomes current.
+
+### 7.5 Checks
+
+- Vet reads CI results per commit. While the queue or the review screen shows the current pull request, the backend keeps its checks up to date and sends them: every 30 seconds while a run is unfinished, and shortly after an action on a run, because the platform shows the result with a delay.
+- When the account is rate limited, Vet waits until the limit ends. A failed checks refresh shows in the footer until a refresh succeeds or another changeset becomes current.
+- §8.7 describes how checks are shown (the Pipelines tool).
+
+## 8. The window
+
+### 8.1 Queue
+
+- **The queue is the start screen**, reached through a Queue / Review switch in the header. It lists every open pull request of the project's repository and the local branches, with more details and filtering than the changeset switcher in the title bar. Its tabs are All, Blocking, Local and Pull requests, with a text search.
+- Rows are sorted by blocking status, then by date. A row shows the title, author, branch, CI state, comments and when it was updated, with a status chip such as "waiting for you". It also shows how much is reviewed under the current filter, and how many changes the filter excludes (§5.3).
+- The panel next to the list shows the selected changeset: for a pull request its description, reviewers and checks; the files changed since the last review; and its comments.
+- Marks survive rebases and force-pushes.
+- A project has one current changeset. Switching to another and back restores its open tabs, scroll positions and current file. Switching changesets, closing or opening a project, or quitting asks first while a comment box holds text that was not added ("Discard your comment?", with Keep editing as the default).
+
+### 8.2 Header
+
+- The header reads `project  ⎇ changeset  [base]  [scope]`, with the review's progress and Finish Review on the right, showing the progress of what is on screen. Project and changeset are separate controls, with no arrow or slash between them.
+- The **base** is shown only for a pull request into a branch other than the default ("into release/2.1"), and while `HEAD` is off the working tree's base (§4.4, with a warning mark and the base's short hash). It is plain text, not a control. Its tooltip gives the base commit's hash, subject and age.
+- The **scope chip** says what the review screen shows: "All changes", "Push v2", "Pushes v2–v3" or "Commit 5a6b7c8" (the commit's subject in the tooltip). It shows no version number. A cross on it, and Esc, go back to all changes (there is no cross on "All changes"); a click opens or focuses the timeline. For the working tree it ends in a dot while it shows the working tree, hollow while edits are not yet a version.
+- The header has no base chooser and no "back" button. The footer does not repeat what is compared.
+- The header's checks button shows the commit's checks state and opens or focuses the Pipelines tool. It never stays pressed.
+
+### 8.3 Tabs and views
+
+- **The Changes tab** is the fixed first tab. It is named like the scope chip ("All changes", "Push v2", "Pushes v2–v3"; the tooltip counts the changed files). It shows the changes as hunks with a few lines of context; unchanged regions are collapsed and can be expanded. While scrolling, the current file's header and the current hunk's bar stay at the top until the next one pushes them out. Tab titles show `+N −M` line counts.
+- **File tabs.** A file has one tab (closable), whatever it shows. The tab has a view mode: Unified, Split (the file's whole diff) or File (the file's text with its changes marked, read-only).
+  - The Unified/Split/File control, Alt+Shift+1/2/3 and the View menu change the active tab's mode, and never open or close a tab. Each mode keeps its own cursor and scroll position, and the cursor's line carries over.
+  - A file the changeset does not change (opened by Go to Definition, or from the file tree) has a File tab only.
+  - File mode marks added, changed and removed lines (removed ones where they were), coloured by review state. Clicking a mark shows the hunk's old lines with the hunk bar's actions (seen, flag, comment, open in the diff), so a change can be marked seen right there.
+- **Tabs at a commit.** A file opened while a commit is selected (by commit) gets a tab that stays at that commit, whichever commit or All changes is selected later.
+  - It shows the file as that commit leaves it, with that commit's hunks and marks; Jump to Source and flagged-hunk stepping from it stay at that commit. It shows no comments and allows no commenting.
+  - The tab has a commit icon. Under the tab strip, one line shows the commit's short hash, subject, author and time ("merge" for a merge), with the tooltip "Comments are made in All changes".
+  - A file opened at several commits (or also on the whole changeset) has a tab for each; their titles then show the short hash, and the tooltip names the full commit.
+  - A file opened on the whole changeset stays there when a commit is selected. A tab whose commit is no longer in the changeset (after a rewrite) closes.
+- **Opening a file.** Jump to Source switches the file's tab to File mode at the line, opening the tab in that mode if needed. It is reached by double-click or Enter in the tree or the Symbol list, double-click on a file header or a diff, a hunk header's button, or F4 at the cursor (same line). Double-clicking a line in the Changes tab opens the file's tab at that line, highlighted. The file icon in a file header opens the file's tab.
+- **Go to comment** shows the comment in the file's tab, in that tab's mode, if the file has a tab open (not a tab at a commit, which shows no comments); otherwise in the Changes tab. A comment on the whole file sits above the first line in File mode, and above the first hunk in a diff.
+- **Long lines** can be read in every view: horizontal scrolling when soft wrap is off, with hunk bars, cards and comment cards staying in view; soft wrap for prose (Markdown, reStructuredText, plain text) by default, with a setting. A changed line wider than the view is marked, wrapped or not.
+- The clicked line stays highlighted. Diagnostics and other hints are not shown in collapsed unchanged regions.
+
+### 8.4 Hunks and review actions
+
+- **A hunk shows** its review state (including `SeenAgainstOldBase`), which changed lines are covered, whether changed symbols are reached (labeled derived), notes on whitespace-only changes, and diagnostics as gutter markers, counted in the footer.
+- **Non-text changes** (mode, symlink target, submodule commit, binary, content unavailable) show as a card with a hunk-style header: the same "mark seen" action and key, included in hunk navigation, and a before/after preview for images. A file with both shows the card above the first hunk.
+- **Keys:** hunk navigation (Ctrl+Alt+Down/Up), mark seen (Space) and commenting work in every mode. Go to Definition is Cmd+click or Cmd+B (Ctrl on Windows and Linux), on either side; the symbol under the pointer is underlined while Cmd/Ctrl is held. A new comment is Ctrl+Alt+C (or the editor's context menu), on the selection or else the cursor's line, in every view, in the last editor used even if focus moved to a toolbar or the tree since. A hunk's Comment button comments the whole hunk, or the selection if there is one inside the hunk.
+- **Flags:** a flag button next to the seen button in the hunk bars and in File mode's hunk toolbar (highlighted while flagged); Toggle Flag in the Review menu; Next and Previous Flagged Hunk in the Navigate menu, across files, in All changes and in file tabs. Finish Review… warns with the number of flagged hunks left and offers to go to the first one; finishing anyway is allowed.
+- **Hover popups** look like the rest of the app (surface, border, radius and shadow), with a maximum width and height and scrolling, and even spacing between signature, docs and diagnostics, in both themes. The server's Markdown is rendered, with code blocks highlighted.
+- **Diff:** Vet shows and marks the byte-level diff. Hiding whitespace, detecting moves or hiding formatting changes are only ways of displaying it, and every hidden change is one click away.
+
+### 8.5 Nothing changed
+
+A Changes tab with no files is never blank. It says why, always with the same parts (an icon, a title, one sentence, at most one panel of rows, at most two buttons), and shows rows only for facts the backend has. The reasons:
+
+- the working tree has no edits yet (it shows the watched folder, `HEAD`, and what it is compared with);
+- the working tree's edits were undone (its versions, each can be shown);
+- the target already contains the branch or pull request (the commit that merged it, or that it has no commits of its own yet);
+- the pull request was merged (its source branch, the merge commit and your comments);
+- the filter hides every file (the files by rule, each group with "Review these", which narrows the review to them);
+- the narrowing leaves nothing (the folders with changes, each with "Review only this", and a way back);
+- the commit changes no file;
+- the push changed nothing (the two versions with their bases).
+
+While the tab is empty, the stepping and Unified/Split controls are disabled, the header's progress reads "nothing to review" instead of 0 %, and Finish Review stays available.
+
+### 8.6 Timeline
+
+- A bottom panel (Alt+5) listing the settled snapshots, newest first, with a grey row for the base under v1 that cannot be selected. A version without content (a push whose commits are gone) is a dimmed row that cannot be clicked, with "unavailable" where the other rows name their files.
+- Clicking a row shows that push's own changes, compared with the version before it (the base for v1). Shift-click extends the selection to a range of pushes. Clicking the only push shown, Esc, or the scope chip's cross goes back to all changes. Filled rows are the pushes shown; a ring marks the version they are compared with. Selecting a row leaves the by-commit view.
+- "Since my review" shows the pushes after the version last reviewed. Ctrl+Alt+L switches between that and the whole changeset.
+
+### 8.7 Tool windows
+
+Tool windows sit on left and right rails and can be resized. Clicking the active tool's icon hides its window but keeps it selected. Bottom tools share one area, one at a time; its height is set with a splitter above it (mouse or arrow keys) and remembered. Shortcuts follow the order left, bottom, right: Alt+1…8 (Changes, All files, Commits, Comments, Timeline, Problems, Find, Pipelines), Alt+9 (Symbol) and Alt+0 (Structure).
+
+- **Changes tree.** The changed files, with the file you are in marked (the one at the top of the Changes tab, or the active file tab's). Changed symbols are listed under their files, which are collapsed at first and show how many symbols they have. A button in the tree's header expands or collapses all (a file that appears later follows the last choice).
+  - Only named containers nest. An unchanged container that holds a changed symbol is shown greyed, without a change letter, and clicking it only opens or closes it. A removed symbol (only on the old side) is struck through in place under its container. The letter M, A or D stands in the symbol's status column. Symbols have no seen marks of their own: marks stay on hunks and files.
+  - Each file shows a spinner while its symbols are being found (until the last retry, §6.6), and the tree's header shows how many files are done, with a progress bar.
+  - Moving the cursor into a changed symbol in any editor selects it in the tree: its file opens and its row scrolls into view, without moving focus. Double click, Enter or Jump to Source (F4) on a changed symbol opens its definition (the old side's for a removed symbol). ← and → open, close and move through the rows. Speed search also matches symbol names.
+  - Excluded files are collapsed into one group that shows the excluded count and opens to the files, each with the reason (the project's rule, or "outside the narrowing").
+  - "Exclude from review" changes the project's filter. "Review only this folder" narrows the current review (§4.6) and shows as an "Only src/api ×" chip in the Changes tool's header; the cross removes it.
+- **Comments** (Alt+4): the Review and Conversation tabs (§7.2), the comments waiting to be posted and the vote, and Post Comments… / Submit Review… (Ctrl/⌘+Shift+K). Ctrl+Alt+V opens a vote picker at the toolbar's outgoing button, on platforms where the vote is separate from the comments.
+- **Problems** (Alt+6): the diagnostics of the whole changeset in one list, new ones first, with its own icon in the left rail. The icon's badge and the footer count the changeset's new errors and warnings ("No new problems" when there are none, "N problems · comparing" while the comparison with the old side runs).
+  - A file whose old side cannot be analysed has its problems listed separately as of unknown origin, never as new, and the footer says how many files that is.
+  - Filters: scope (changed files, open files, this file), severity, new or all, and text. Grouping by origin, file or severity. Options for problems in hunks not yet seen, or on changed lines only.
+  - A click shows the problem in the current tab without taking focus; Enter or double click is Jump to Source. F2 and Shift+F2 (Next and Previous Problem) step through the current file's problems from the cursor, wrapping within the file. A tab at a commit is never used. Retry analyses again.
+- **Pipelines** (Alt+8, only for a pull request): the CI runs of the shown commit with their jobs and steps, with its own icon in the left rail, whose badge counts the commit's checks and turns red while one fails.
+  - Runs fold. The selected job's steps show next to them, with the failing step marked, "Open log (at failure)" and, for any finished job, a log tab titled "<job> · log" (with the attempt after a re-run). Checks a service sets without a run are listed as "status from a service".
+  - The toolbar re-runs the failed jobs, re-runs the whole run, and cancels an unfinished run, in the platform's own words ("Re-run failed jobs" on GitHub, "Retry failed stages" on Azure DevOps). A failed job has its own re-run on hover. An action that does not apply is disabled, with the reason as its tooltip.
+  - If the token may not change runs, every action is off until the token changes. While the platform rate-limits Vet, the tool shows what it last loaded and when it will ask again.
+- **Find** (Alt+7): result lists as tabs. Find Usages (Alt+F7; any symbol, not only changed ones), the Symbol panel's Usages button, and "Open in Find window" (⌘↵) in the Show Usages popup and in Find in Files each fill one.
+  - A new result replaces the tab that is not pinned (its title in italics). A pinned tab stays, and running the same search again refreshes its tab.
+  - Rows are grouped by file. Each shows the review state of the hunk the line is in, the symbol it is in, and the line with the match. A line from the old code is marked "base" and opens on the diff's old side.
+  - "Changeset" and "Not seen" narrow the list. A filter field matches text, symbol and path (Esc clears it, then returns to the editor). A preview shows the code around the selected row. A list cut at 200 rows offers "Show all".
+  - Rerun (⌘R) searches again. When the code changed since a list was made, its tab shows a dot and a banner says so, and a rerun reports how many rows are new and gone. Find Usages is not offered in a tab at a commit.
+  - Result lists belong to the changeset: another changeset starts with none.
+- **Symbol** (Alt+9): one symbol, changed or not: the one under the cursor in an editor, or the one last clicked in the tree, whichever was last. With the cursor outside any symbol (a function, type, module, field or constant), it is empty. For a language without a usable server, it says so.
+  - The top names the symbol, its change, its container and namespace, and its file (a click opens it).
+  - Below is one tree whose top-level groups open and close and are remembered, all open at first: signature; changed callers; changed callees; possibly affected; reached from; usages. A note at the callers explains, for any language, what a server's call hierarchy cannot see (calls through interfaces or virtual methods, callbacks, reflection, generated code).
+  - Rows look like the Changes tree: the member's name in the code font, then its type, line and (if the panel is wide) file in the UI font, never cut off. Each group shows five rows, then "N more" shows the rest.
+  - Callers nest by call, so a caller's callers are under it. Possibly affected and usages are grouped by type (by file for a free function); several lines in one member share its row. Tests (§6.3) are greyed and, in those two groups, collected in a Tests branch at the end.
+  - For a removed symbol it shows the remaining references on the old side instead, in two branches: those that need attention (likely broken, now resolves elsewhere, unknown), open; and those already handled (deleted, edited), closed.
+  - Clicking a changed caller or callee selects it in the tree.
+- **Structure** (Alt+0, and as a popup on Ctrl/Cmd+F12 over the editor, both with the same list): every symbol of the current file as a tree.
+  - Rows look like the Changes tree: change letter M, A or D, kind icon, removed symbols struck through in place, unchanged symbols greyed, fields and constants included.
+  - Header toggles: changed only (the changed symbols and the containers around them) and A–Z sorting, both remembered; folds are per tab. A target button selects the symbol the editor's cursor is in, once; the list does not follow the cursor by itself.
+  - Speed search filters by name; Esc returns focus to the editor. A click selects a row and shows it in the Symbol panel; double click, Enter or Jump to Source (F4) opens its definition (Enter in the popup also closes it).
+  - A file at a commit shows its outline at that commit without change marks. A file without language support shows the Symbol panel's empty message.
+
+### 8.8 Search
+
+- **Search Everywhere:** one popup under the header for finding things by name. Tabs: All, Changesets, Files, Symbols, Threads and Actions, each with a count while typing. An Unchanged files toggle (off by default, remembered) adds the files the changeset does not change, and their symbols, to Files, Symbols and All.
+  - It opens with double Shift on All, Ctrl/⌘+P on Files, Ctrl/⌘+Alt+O on Symbols and Ctrl/⌘+Shift+A on Actions. Switch Changeset keeps Ctrl/⌘+Shift+O.
+  - Names match as in speed search (word starts, then runs of letters). Changed files and symbols rank above unchanged ones, and ones not fully seen above seen ones. Open comment threads come before resolved ones. The last 30 results picked in a project (remembered per project) only decide between close matches.
+  - All shows the best few of each kind with "Show all N", the kinds ordered by their best result. With nothing typed, it shows the recent results and the changed files seen least. A `:line` after a file name opens the file at that line.
+  - Actions are all commands. A command that cannot run stays in the list, greyed, with the reason.
+  - Enter opens a file as the tree does: in the current view, so in a tab at a commit while a commit is selected, which a chip and the footer say. Shift+Enter shows a changed file or symbol in All changes. A symbol always opens on the changeset's new side, never at a commit. The last row passes the text to Find in Files.
+- **Find in the current view** (⌘F): a find bar in All changes, Unified, Split and File views, with match case, whole word and regular expression, the side to search (both, new, old), and changed lines only. Next and previous with counts; matches are marked in the text and the scroll bar. Stepping expands unchanged lines that hide a match, and All changes also searches the unchanged text of every file. One search per window, with a position per tab.
+- **Find in Files** (⌘⇧F): a dialog with the same options, a file mask, and where to search (All changes, a range of versions, one commit, or the whole repository without ignored files). Filters for side, changed lines only, and changed lines not yet seen. Results are grouped by file with review progress and status, with a preview of the code around the selected match, and the first 1,000 matches are listed. A result opens in All changes when that is shown, otherwise in the file's own tab (Alt+Enter: always there), with the find bar holding the search. Lines are matched one at a time. The find bar uses JavaScript regular expressions, Find in Files uses Rust's. Where it searched and the selected result belong to the changeset.
+- **Speed search:** typing in any menu, dropdown, list or tree filters it, as in IntelliJ: camel-hump matching, matches highlighted, Escape clears, and trees keep the folders leading to a match.
+
+### 8.9 Keyboard and menus
+
+- Every action has a keyboard shortcut, shown in menus and tooltips; the Keymap page in Settings changes them. Double Shift opens Search Everywhere. The editor font is JetBrains Mono.
+- **The main menu** lists every command with its shortcut: File, View, Navigate, Changeset, Review and Help, plus the app menu, Edit and Window in the macOS menu bar (the native one). On Windows and Linux the ☰ button in the title bar opens it, also on the welcome screen; pressing and releasing Alt alone opens it too, then a first letter opens a menu. Alt with Shift held never opens it (on Windows Alt+Shift switches the keyboard layout).
+- A menu item that does not apply is disabled, with the reason as its tooltip in the drawn menu, never hidden.
+- Close Tab is Ctrl/⌘+W. Previous/Next Tab are Alt+←/→ (⇧⌘[ and ⇧⌘] on macOS, where ⌥←/→ moves the cursor by word) and, on every platform, Ctrl+PageUp/PageDown. The View menu's view mode is one choice of Unified / Side-by-Side / File, on Alt+Shift+1/2/3, matched by the physical key so every keyboard layout works. Alt+F2 shows the file in the tree. Settings open with Ctrl+Alt+S (⌘, on macOS).
+- **Context menus** are the operating system's own, everywhere the app has one: the file tree, the editors and diff views, tabs. They replace the browser's default menu and show each item's shortcut. In a plain browser, the app draws the same items itself.
+
+### 8.10 Settings
+
+- Two groups of pages: Application (General, Appearance, Keymap, Language servers, Accounts) and Project, named after the open project (Trust, Review filter). The Project group is greyed with "Open a project first" while no project is open. "Project Settings…" (disabled without an open project) opens it from the app menu and from the bottom of the project switcher.
+- **Review filter page:**
+  - Review roots as a list, each with the current changeset's changed files under it. The backend counts them. A typed folder is checked against the repository's folders, and "Browse…" picks one from a folder tree.
+  - Include and exclude patterns as two lists. Each pattern shows the files and lines it matches in the current changeset (the backend computes this from the draft, never the UI), or why it is invalid.
+  - Checkboxes for hiding binary files and reviewing generated files, and the live count of excluded changes.
+- Dialogs can be resized and keep their size.
+
+### 8.11 Background work and progress
+
+- While a project opens and while work runs (scanning, diffing, servers starting and indexing, dependency restores), the footer shows a progress indicator naming the step, with details on click. The review screen shows as early as possible instead of a loading screen.
+- A failed sync or checks refresh stays in the footer as a warning until one of the same kind succeeds or another changeset becomes current.
+- Each language server's status is in the footer (§6.1).
+- **Work for the review screen waits for it.** While the queue is shown, Vet keeps up to date only what the queue shows: its lists, line counts and pull request details, and for the current changeset the queue panel's file list, the files changed since the last review, checks, comments and pull request details.
+
+### 8.12 Window and appearance
+
+- One window shows either the welcome screen (recent projects, Open…) or a project, and remembers a position and size for each. The project switcher (recent projects and "Open…") and the changeset switcher are in the title bar.
+- Light and dark themes, or following the system, built from shared design tokens. Controls behave like a desktop app: hover, pressed and toggled states, and no text selection outside content.
+- File type icons for files and folders in the file tree and on tabs, by extension and well-known names (a folder's icon open or closed).
+
+## 9. Storage and retention
+
+- **Location:** the backend side's own filesystem (in WSL the Linux home directory, never `/mnt/*`), in the usual data directory of each platform.
+- **What is stored:** snapshots and their order, sessions, seen marks, comments, the content store, which projects are trusted, and for each pull request whether it is from a fork and which head commit it is trusted at. Also what the platform last said about recently read pull requests besides their comments (description, reviewers, labels, conversation and state), so revisiting one shows them before Vet asks the platform again. A crash never leaves a record pointing at content that was not written.
+- **Upgrades:** a newer Vet keeps all data of an older one. An older Vet does not open the data of a newer one, and never deletes it.
+- **Settings and preferences:** everything Vet remembers besides review data is stored with it, except tokens (in the keychain) and the window's size and position (a file of the window).
+  - The backend's own settings (language-server cache size, how long finished reviews are kept) apply to the whole app.
+  - The window's preferences are stored either for the whole app (theme, soft wrap, key bindings, panel and dialog sizes, table columns and sorting, folded sections, the queue's and the switcher's tab, Search Everywhere's Unchanged files toggle, the Structure tool's sorting and filter, and when the Comments tool of each pull request was last opened) or for one project (its open tabs per changeset, and the results last picked in Search Everywhere).
+  - A change is saved at once and sent to every window connected to the backend, which follows it.
+- **Retention:** content is kept while an open session, an unresolved or unsynced comment, or a seen mark refers to it. Finished reviews are kept 30 days (configurable). Content nothing refers to is deleted.
+- **Language-server cache:** a file of its own, apart from the review data. It holds cached answers (I1) within a size limit (256 MB by default, adjustable in Settings), dropping the least recently used. It is disposable: deleting it, or a format Vet does not recognise, only makes Vet slower.
+- **Materialized snapshots:** one directory per snapshot and analysis policy. They are kept while an open session refers to them, then the least recently used are deleted to stay within a disk budget (20 GB by default, adjustable in Settings), and after 14 days unused. Settings shows the current use next to a "Clear semantic caches" button.
+
+## 10. Open question
+
+**Risk ordering:** whether the queue should rank changesets by risk, and what it would use to judge risk.

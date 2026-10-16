@@ -1,4 +1,4 @@
-//! Impact of a removal (§7.3): the remaining references of each removed symbol
+//! Impact of a removal (§6.3): the remaining references of each removed symbol
 //! on the base, each classified against the target.
 
 use vet_core::content::FileDiff;

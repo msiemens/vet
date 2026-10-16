@@ -1,4 +1,4 @@
-// The backend's own settings (SPEC §8) and how much disk the semantic cache takes. They belong to
+// The backend's own settings (SPEC §9) and how much disk the semantic cache takes. They belong to
 // the backend, not to a project, so they can be read and changed without an open repository.
 
 import type { BackendSettings } from "../generated/BackendSettings";

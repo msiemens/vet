@@ -1,4 +1,4 @@
-//! Path to `FileEntry` cache keyed by file stat, so reconciliation (§6.2) hashes
+//! Path to `FileEntry` cache keyed by file stat, so reconciliation (§4.2) hashes
 //! only entries whose stat changed. In memory for now.
 
 use std::collections::HashMap;

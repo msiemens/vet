@@ -83,7 +83,7 @@ export interface EmptyView {
 export interface EmptyInput {
   key: ChangesetKey;
   target: Target;
-  /** Why the backend says the view shows no file; the screen only words it (SPEC I5). */
+  /** Why the backend says the view shows no file; the screen only words it. */
   reason: EmptyReason;
   /** Which view is empty. */
   view: "changeset" | "commit" | "range";
@@ -113,7 +113,7 @@ const OTHER: Action = { id: "other", label: "Open another changeset" };
 const BACK: Action = { id: "back", label: "Back to all changes" };
 const TIMELINE: Action = { id: "timeline", label: "Open timeline", primary: true };
 
-/** What a view without a file says. The backend says why (`reason`); here it is only worded (SPEC I5). */
+/** What a view without a file says. The backend says why (`reason`); here it is only worded. */
 export function emptyView(input: EmptyInput): EmptyView {
   switch (input.reason) {
     case "filtered":

@@ -6,7 +6,7 @@ publish = false
 
 # Built on its own (`pnpm tauri dev`), outside the main workspace: Tauri brings a
 # large dependency tree and needs the system webview (WebView2, WKWebView).
-# The shell is a thin client (I5): it spawns the backend, reads its Ready line,
+# The shell is a thin client: it spawns the backend, reads its Ready line,
 # and hands the address to the webview. No product logic lives here.
 [workspace]
 

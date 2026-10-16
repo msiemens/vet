@@ -1,5 +1,5 @@
 //! The diagnostics of the changeset on view, compared with the base by the backend and pushed, so
-//! the client shows them without asking (SPEC §7.3, A13). Runs while the review screen shows the
+//! the client shows them without asking (SPEC §6.6, A13). Runs while the review screen shows the
 //! changeset (D81).
 
 use std::sync::Arc;

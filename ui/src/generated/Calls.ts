@@ -6,7 +6,7 @@ import type { Gap } from "./Gap";
 import type { SymbolInfo } from "./SymbolInfo";
 
 /**
- * The calls around a symbol of the target side (derived, §7.3).
+ * The calls around a symbol of the target side (derived, §6.3).
  */
 export type Calls = { revision: number, symbol: SymbolInfo, 
 /**

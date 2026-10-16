@@ -1,6 +1,6 @@
 //! What a server is told besides the protocol, and how it is answered: its arguments, the
 //! options of `initialize`, the settings it pulls and is sent, and where the schemas it asks for
-//! come from. All of it shapes the server's answers, so all of it is part of its identity (I2).
+//! come from. All of it shapes the server's answers, so all of it is part of its identity (I1).
 
 use std::path::{Path, PathBuf};
 

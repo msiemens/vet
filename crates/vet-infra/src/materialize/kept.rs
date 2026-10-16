@@ -1,4 +1,4 @@
-//! Materialized trees kept between launches (§7.2, §8).
+//! Materialized trees kept between launches (§6.2, §9).
 //!
 //! ```text
 //! <base>/

@@ -1,14 +1,14 @@
 # UI architecture
 
-Svelte 5 + CodeMirror 6, organised by feature under `src/`. What the window does is in `SPEC.md` §10; this file is how it is built.
+Svelte 5 + CodeMirror 6, organised by feature under `src/`. What the window does is in `SPEC.md` §8; this file is how it is built.
 
 ## What must always hold
 
-Each rule is an invariant in `SPEC.md` §2.
+A rule that carries out an invariant of `SPEC.md` §2 names it; the others are architecture rules, the first of them shared with `ARCHITECTURE.md`.
 
-- **The window is a thin client** (I5): it renders and sends, and review state, completion and names are the backend's. Components get data from props or stores, only `state/backend.ts` talks to the connection, and views listen to the stores, not the connection.
+- **The window is a thin client:** it renders and sends, and review state, completion and names are the backend's. Components get data from props or stores, only `state/backend.ts` talks to the connection, and views listen to the stores, not the connection.
 - **The window holds only what the backend sent.** A store holds and distributes it and applies its events; what it derives is presentation. An answer or event is applied only if it is newer than what is held, and an action in a view being replaced never lands in the next one.
-- **The window asks content-anchored questions** (I3): a position and a view, never a commit hash. An operation a server does not offer is shown as not offered, never as nothing (I6); reuse (I2) and trust are the backend's.
+- **The window asks content-anchored questions** (I2): a position and a view, never a commit hash. An operation a server does not offer is shown as not offered, never as nothing (I3); caching (I1) and trust are the backend's.
 - **Git is read-only**: every editor is read-only and draws the backend's diff.
 - **The dependency direction is one-way**: `features` import `lib/*` and `state`; `lib/*` imports nothing from `features`, `state` or `app`; a feature imports another only through its `index.ts`; `app` composes through snippets and props. One component per file; no `utils` or `helpers`. `eslint.config.js` enforces all of it, plus import cycles and the editor's no-Svelte rule (`pnpm lint`).
 
@@ -106,7 +106,7 @@ There are no full rebuilds: a keyed or incremental `$derived`, so one change inv
 - A session holds the threads per view: the changeset's always, a range's while the review screen shows it, each at its revision. A view draws the threads of its own view only when their revision is its own; a commit's tab draws none; the queue panel lists the changeset's. A pull request's threads carry the backend's sync state, including a two-sided edit the card shows as two texts and a Keep choice.
 - Posting has one code path for the tool window and the header button, following the platform's traits.
 - The find bar searches the tab's own diff or text, never an editor, since an unmounted section has none.
-- Hover, go-to-definition and diagnostics reach the editor bound to its revision; hover text is untrusted and rendered with HTML escaped and no links, and an unavailable answer (I6) is never shown as nothing.
+- Hover, go-to-definition and diagnostics reach the editor bound to its revision; hover text is untrusted and rendered with HTML escaped and no links, and an unavailable answer (I3) is never shown as nothing.
 
 ### A user action out to the backend
 

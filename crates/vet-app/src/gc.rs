@@ -1,4 +1,4 @@
-//! What the store keeps alive (§8). The store reads the facts and carries out
+//! What the store keeps alive (§9). The store reads the facts and carries out
 //! the plan; what is live is decided here.
 
 use std::collections::HashSet;
@@ -16,7 +16,7 @@ const DEFAULT_GRACE: Duration = Duration::from_secs(3600);
 #[derive(Clone, Copy, Debug)]
 pub struct Retention {
     /// How long a changeset with no open review is kept after its last review
-    /// closed (§8).
+    /// closed (§9).
     pub closed_changesets: Duration,
     /// Content and snapshots younger than this are never collected, so a blob
     /// written just before the metadata that references it survives a GC.

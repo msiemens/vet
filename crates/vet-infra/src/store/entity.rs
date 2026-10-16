@@ -192,12 +192,12 @@ pub mod changeset {
         /// A pull request whose source branch the platform last said is in a fork's repository.
         #[sea_orm(default_value = false)]
         pub fork: bool,
-        /// The head commit the viewer trusted a pull request at (§7.5); none while it is not trusted.
+        /// The head commit the viewer trusted a pull request at (§6.5); none while it is not trusted.
         pub trusted_head: Option<String>,
         /// The branch a pull request is merged into as the platform last said it; none for any other
         /// changeset.
         pub target_branch: Option<String>,
-        /// The commit a working tree is compared against while no review of it is open (§6.5).
+        /// The commit a working tree is compared against while no review of it is open (§4.4).
         pub pinned_base: Option<String>,
         /// The verdict of the viewer's vote that waits to be sent; none without one.
         pub vote: Option<String>,
@@ -323,7 +323,7 @@ pub mod project_filter {
     impl ActiveModelBehavior for ActiveModel {}
 }
 
-/// A repository marked trusted (§7.5), keyed by the repository root like changesets are. The
+/// A repository marked trusted (§6.5), keyed by the repository root like changesets are. The
 /// row's presence is the value.
 pub mod project_trust {
     use sea_orm::entity::prelude::*;

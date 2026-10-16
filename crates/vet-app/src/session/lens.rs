@@ -3,7 +3,7 @@
 //! a merge is compared with the automatic merge of its parents, so it shows only what the person
 //! who made it decided (`git show --remerge-diff`), and a merge that decided nothing has nothing
 //! to review. Marks are shared with the changeset through content: the same lines are seen in
-//! both views (I3).
+//! both views (I2).
 
 use std::sync::Arc;
 

@@ -125,7 +125,7 @@ pub enum Event {
     ThreadsChanged { project: ProjectId, revision: u32 },
     /// The changed symbols of one file of the changeset on view, as the backend analysed them. The
     /// backend analyses the changeset's files itself, while the review screen shows it, the files
-    /// with an open tab first, and pushes each answer as it comes (SPEC §7.3, A13). `done` are the
+    /// with an open tab first, and pushes each answer as it comes (SPEC §6.6, A13). `done` are the
     /// files analysed so far of `total`; a file whose symbols are unknown says so in
     /// `symbols.gap`, and one whose analysis failed outright carries the reason there too.
     FileSymbols {
@@ -136,7 +136,7 @@ pub enum Event {
     },
     /// The diagnostics of one file of the changeset on view, as the backend analysed them. The
     /// backend compares the changeset's files with the base itself, while the review screen shows
-    /// it, the files with an open tab first, and pushes each answer as it comes (SPEC §7.3, A13):
+    /// it, the files with an open tab first, and pushes each answer as it comes (SPEC §6.6, A13):
     /// one with `compared` false first, whose `diagnostics` have their origin pending, then one
     /// with `compared` true, whose origins are new, existing or unknown. `unavailable` says the
     /// file could not be analysed; the client does not ask per file.

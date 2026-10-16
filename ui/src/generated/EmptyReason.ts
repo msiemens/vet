@@ -2,6 +2,6 @@
 
 /**
  * Why a view of a changeset shows no file. Decided by the backend from what it knows of the view
- * and the changeset (SPEC I5); the shell only words it.
+ * and the changeset; the shell only words it.
  */
 export type EmptyReason = "filtered" | "commit" | "range" | "sameTip" | "merged" | "contained" | "undone" | "watching" | "noChanges";

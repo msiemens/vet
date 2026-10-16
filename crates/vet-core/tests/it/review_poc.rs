@@ -1,4 +1,4 @@
-//! SPEC §12 POC criterion 1, at the level vet-core can express. Amend and rebase
+//! Anchor robustness (I2), at the level vet-core can express. Amend and rebase
 //! are modeled as base or target content changes.
 
 use std::collections::{BTreeMap, BTreeSet};

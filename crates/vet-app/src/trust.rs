@@ -1,4 +1,4 @@
-//! Trust (§7.5). Computes the `AnalysisPolicy` handed to the pool, so
+//! Trust (§6.5). Computes the `AnalysisPolicy` handed to the pool, so
 //! `vet-semantic` never looks at provenance.
 
 use vet_semantic::policy::AnalysisPolicy;

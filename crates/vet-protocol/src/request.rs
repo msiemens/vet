@@ -376,7 +376,7 @@ pub enum Request {
         path: String,
         against_base: bool,
     },
-    /// What the changeset did to the symbols of one changed file (derived, §7.3): the file's
+    /// What the changeset did to the symbols of one changed file (derived, §6.3): the file's
     /// symbols on both sides, from their texts, intersected with its diff hunks. A file no
     /// language server handles has none. Fails if `revision` is no longer current or `path` is
     /// not a changed file. Answers with `Response::FileSymbols`.
@@ -453,7 +453,7 @@ pub enum Request {
         symbol: SymbolId,
     },
     /// Whether a symbol of the target side is reached from an entry
-    /// point (derived, §7.4). Fails like `Calls`. Answers with `Response::Reachability`.
+    /// point (derived, §6.4). Fails like `Calls`. Answers with `Response::Reachability`.
     Reachability {
         project: ProjectId,
         revision: u32,
@@ -558,7 +558,7 @@ pub enum Request {
         changeset: ChangesetKey,
         filter: Option<ReviewFilter>,
     },
-    /// Marks the repository `project` has open as trusted, or not (§7.5): a project setting, as
+    /// Marks the repository `project` has open as trusted, or not (§6.5): a project setting, as
     /// the review filter is. A trusted project's changesets are analysed with restores and
     /// language servers that execute project code (pull requests from a fork excepted).
     /// Servers restart under the new policy: every subscriber, including the requester, gets

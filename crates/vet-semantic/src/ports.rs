@@ -11,7 +11,7 @@ use vet_core::content::{BlobId, Hash, LineRange, RepoPath, SnapshotId};
 use crate::policy::AnalysisPolicy;
 
 /// A directory holding a complete snapshot. It stays as it is for as long as
-/// `guard` lives; afterwards the materializer may keep it or remove it (§7.2).
+/// `guard` lives; afterwards the materializer may keep it or remove it (§6.2).
 pub struct Materialized<G> {
     pub root: PathBuf,
     pub guard: G,
@@ -19,7 +19,7 @@ pub struct Materialized<G> {
 
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub enum NotMaterializable {
-    /// Blobs git no longer has and the content store never retained (§6.1).
+    /// Blobs git no longer has and the content store never retained (§4.1).
     MissingBlobs(Vec<BlobId>),
     Other(String),
 }
@@ -166,7 +166,7 @@ pub fn backend_for<'a>(backends: &'a [Backend], file: &RepoPath, present: Presen
 }
 
 /// An operation a server may not offer. A query for one it lacks is answered with
-/// [`crate::query::SemanticError::NotOffered`], never with an empty answer (I6).
+/// [`crate::query::SemanticError::NotOffered`], never with an empty answer (I3).
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub enum Feature {
     DocumentSymbols,
@@ -235,7 +235,7 @@ impl Features {
 
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub enum LaunchError {
-    /// The server cannot work with Vet at all: it does not take documents (I6).
+    /// The server cannot work with Vet at all: it does not take documents (I3).
     MissingCapability(&'static str),
     /// No server for the language was found; the reason says where Vet looked.
     NotInstalled(String),
@@ -310,7 +310,7 @@ pub fn prefer_openable(locations: &mut [Location]) {
 }
 
 /// A symbol, identified by its file and container chain (outermost first).
-/// Moves and renames change the identity; Vet does not infer them (§7.3).
+/// Moves and renames change the identity; Vet does not infer them (§6.3).
 #[derive(Clone, PartialEq, Eq, Hash, Debug)]
 pub struct Sym {
     pub file: RepoPath,
@@ -406,7 +406,7 @@ impl fmt::Display for QueryError {
 }
 
 /// Whether a server is at work on its own, apart from the queries it is asked. An
-/// answer given while it is, or after it began, may be a partial one (I2).
+/// answer given while it is, or after it began, may be a partial one (I1).
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub struct Readiness {
     /// No work in progress: indexing and loading are done.
@@ -416,7 +416,7 @@ pub struct Readiness {
     pub epoch: u64,
 }
 
-/// The required operations (§7.1). Whether the server's answers come from the
+/// The required operations (§6.1). Whether the server's answers come from the
 /// live worktree or an immutable snapshot is the pool's concern, not this trait's.
 /// The queries that see single files take an `overlay`: on a live tree, the texts of
 /// the revision on view, which the server is fed instead of the disk's; `None` on
@@ -582,8 +582,8 @@ pub struct Restored {
 }
 
 /// Installs the dependencies of a materialized snapshot without executing
-/// project code (§7.2): fetch only. A step that would execute project code is
-/// skipped unless the policy allows executing (§7.5). Implemented in `vet-infra`.
+/// project code (§6.2): fetch only. A step that would execute project code is
+/// skipped unless the policy allows executing (§6.5). Implemented in `vet-infra`.
 pub trait Restorer {
     fn restore(
         &self,
@@ -603,7 +603,7 @@ pub trait Restorer {
     ) -> impl Future<Output = Option<Hash>> + Send;
 }
 
-/// Who answered (I2): two servers with equal identities answer equal questions
+/// Who answered (I1): two servers with equal identities answer equal questions
 /// equally. Everything the answers of a server depend on, apart from the tree it
 /// runs on, is in `fingerprint`: its binary and version, its arguments and
 /// initialization options, the compiler it is told about, and the user-level
@@ -616,7 +616,7 @@ pub struct ServerIdentity {
     pub label: String,
 }
 
-/// Where an answer came from (I6).
+/// Where an answer came from (I3).
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub struct Provenance {
     pub server: ServerIdentity,

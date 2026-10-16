@@ -13,6 +13,6 @@ rebased: boolean,
  */
 markable: boolean, 
 /**
- * What does not work in this view and why, fit to show (SPEC I6).
+ * What does not work in this view and why, fit to show (SPEC I3).
  */
 limits: Array<string>, };

@@ -1,4 +1,4 @@
-// How many rows the lines of a file take when the editor wraps them (SPEC §10: soft wrap). The
+// How many rows the lines of a file take when the editor wraps them (SPEC §8.3: soft wrap). The
 // manifest knows only line counts, so a section is laid out at one row per line until its text
 // has arrived; from the text and the width of the code column the rows of every line follow, and
 // CodeMirror's own measure corrects what this estimates (`mount.ts` reports it).

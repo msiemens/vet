@@ -1,4 +1,4 @@
-//! Materializing snapshots from real temporary repositories (§6.1, §7.2).
+//! Materializing snapshots from real temporary repositories (§4.1, §6.2).
 //! `git` is used only to build fixtures.
 
 #![allow(clippy::disallowed_methods)]

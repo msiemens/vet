@@ -1,4 +1,4 @@
-//! Dirty-tree scan (§6.1, §6.3): index first, hashing only entries whose stat
+//! Dirty-tree scan (§4.1, §4.3): index first, hashing only entries whose stat
 //! is uncertain, and only built-in content conversions.
 
 use std::collections::{BTreeMap, BTreeSet, HashMap};
@@ -62,7 +62,7 @@ impl<'r> Worktree<'r> {
             .detach();
         let (mut filter, attrs) = gix::filter::Pipeline::new(repo, stack).map_err(chained)?.into_parts();
         let options = filter.options_mut();
-        // Custom drivers are never run (§6.3).
+        // Custom drivers are never run (§4.3).
         options.drivers.clear();
         options.crlf_roundtrip_check = CrlfRoundTripCheck::Skip;
         Ok(Self {

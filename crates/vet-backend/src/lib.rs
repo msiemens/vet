@@ -76,12 +76,12 @@ use open::Wired;
 use references::StoreReferences;
 
 pub struct Config {
-    /// How long the tree must be quiet before a snapshot settles (§6.2).
+    /// How long the tree must be quiet before a snapshot settles (§4.2).
     pub debounce: Duration,
     /// How long a settled tree must stay untouched before its content is copied into the store
     /// ahead of a review, so that the copy does not compete with an agent still at work.
     pub quiet: Duration,
-    /// Poll interval when the topology has no usable file events (§6.4).
+    /// Poll interval when the topology has no usable file events (§4.2).
     pub poll: Duration,
     /// How long a project without subscribers stays open, so a reloading
     /// shell finds it again.
@@ -154,9 +154,9 @@ pub struct Orchestrator {
     sources: highlight::Sources,
     /// What blocking work and probe processes draw on, shared by every project.
     budgets: Budgets,
-    /// The materialized snapshots kept between launches (§8).
+    /// The materialized snapshots kept between launches (§9).
     trees: Arc<KeptTrees>,
-    /// The answers of the language servers kept between launches (§8).
+    /// The answers of the language servers kept between launches (§9).
     answers: Arc<PersistentAnswers>,
     /// Held while the backend's own settings change, so that what a change applies is the
     /// difference to the settings it replaces.

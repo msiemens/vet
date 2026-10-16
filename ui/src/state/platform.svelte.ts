@@ -1,6 +1,6 @@
 // How the platform is doing and what the backend asked the viewer to hear: the window's, whatever
 // changeset is on view. What it said of the pull request on view is the session's
-// (`pullRequest.svelte.ts`). Syncing the threads is the backend's (SPEC I5); this holds the status
+// (`pullRequest.svelte.ts`). Syncing the threads is the backend's; this holds the status
 // and the notifications, and none of the Comments tool window's or the outgoing popover's own flags
 // (`features/comments/commentsUi.svelte.ts`).
 

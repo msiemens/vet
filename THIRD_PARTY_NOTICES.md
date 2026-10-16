@@ -180,7 +180,7 @@ OTHER DEALINGS IN THE FONT SOFTWARE.
 
 ## JSON schemas (for YAML and JSON files)
 
-The schemas in `crates/vet-infra/schemas` are served to the YAML and JSON language servers when a project is not trusted (§7.5). Each is the upstream file with its white space removed; the schema of `package.json` also has its references to other schemas of the schema store cut. See the `README.md` there for the exact sources.
+The schemas in `crates/vet-infra/schemas` are served to the YAML and JSON language servers when a project is not trusted (§6.5). Each is the upstream file with its white space removed; the schema of `package.json` also has its references to other schemas of the schema store cut. See the `README.md` there for the exact sources.
 
 - GitHub Actions workflow, `package.json` and `tsconfig.json`: SchemaStore, https://github.com/SchemaStore/schemastore, Apache License 2.0.
 - Compose: the Compose Specification, https://github.com/compose-spec/compose-spec, Apache License 2.0.

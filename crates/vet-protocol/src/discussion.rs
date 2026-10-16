@@ -79,7 +79,7 @@ pub enum Verdict {
     },
 }
 
-/// The platform's properties the UI branches on (SPEC §11), never its name.
+/// The platform's properties the UI branches on (SPEC §7.2), never its name.
 #[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
 #[ts(export)]

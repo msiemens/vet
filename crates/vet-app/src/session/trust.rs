@@ -1,4 +1,4 @@
-//! Trust (§7.5) as the session keeps it: the project's, and the pull request on view's at one
+//! Trust (§6.5) as the session keeps it: the project's, and the pull request on view's at one
 //! head commit. Neither is review state: they decide what analysis may execute.
 
 use super::{LiveSession, Result, SessionError};

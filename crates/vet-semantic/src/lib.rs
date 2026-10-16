@@ -1,9 +1,9 @@
-//! The semantic layer (SPEC §7): a server pool, queries, and derived analyses.
+//! The semantic layer (SPEC §6): a server pool, queries, and derived analyses.
 //!
 //! It owns the traits it consumes (`Materializer`, `ServerLauncher`,
 //! `LanguageServer`); `vet-app` and `vet-infra` implement them. It never sees
-//! how a directory was produced (I1) and reuses an answer only under a key that
-//! names everything it depends on (I2, `reuse`). It has no async runtime: IO
+//! how a directory was produced (`ARCHITECTURE.md`) and reuses an answer only under a key that
+//! names everything it depends on (I1, `reuse`). It has no async runtime: IO
 //! happens behind the ports.
 
 // Tests build their fixtures with locks of their own.

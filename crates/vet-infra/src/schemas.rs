@@ -1,4 +1,4 @@
-//! The JSON schemas the YAML and JSON language servers check files against (§7.5).
+//! The JSON schemas the YAML and JSON language servers check files against (§6.5).
 //!
 //! A file can name a schema by address (`$schema`, a modeline), and the YAML server also reads
 //! the schema store. Loading those is a request to an address the repository chose, so it is

@@ -27,7 +27,7 @@ export const place = (path: string, at: Position): string => `${path}:${at.line 
 export const rowTitle = (id: SymbolId | null, path: string, at?: Position): string =>
   [id ? fullName(id) : undefined, at ? place(path, at) : path].filter(Boolean).join("\n");
 
-/** What a muted row's tooltip adds: Vet's conclusion by file name (SPEC I6: a derived result names its derivation). */
+/** What a muted row's tooltip adds: Vet's conclusion by file name (SPEC I3: a derived result names its derivation). */
 export const TEST_BY_NAME = "test by file name";
 
 /** `title`, with the derivation named when the row is a test rather than a primitive. */

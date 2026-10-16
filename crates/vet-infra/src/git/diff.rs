@@ -1,4 +1,4 @@
-//! Snapshot diff (§5, §6.1): line hunks for text, one item per non-text change,
+//! Snapshot diff (§4.1, §5): line hunks for text, one item per non-text change,
 //! renames detected by gitoxide's rewrite tracker.
 
 use std::collections::{BTreeMap, BTreeSet, HashMap};

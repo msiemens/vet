@@ -1,4 +1,4 @@
-//! Writing a snapshot into a directory (§7.2). Content is written as stored:
+//! Writing a snapshot into a directory (§6.2). Content is written as stored:
 //! nothing here runs hooks, filters or smudging.
 
 #[cfg(unix)]
@@ -25,7 +25,7 @@ impl Inner {
         for (path, entry, stored) in batch {
             let dest = root.join(checked(&path)?);
             if entry.kind == EntryKind::Submodule {
-                // Descent is opt-in (§6.1): the pinned commit has no content here.
+                // Descent is opt-in (§4.1): the pinned commit has no content here.
                 std::fs::create_dir_all(&dest).map_err(chained)?;
                 continue;
             }

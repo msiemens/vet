@@ -1,5 +1,5 @@
 //! `vet_app::ports::ServerResolver`: finds each language's server and installs
-//! the pinned ones into Vet's data directory (§7.1). Programs are located and
+//! the pinned ones into Vet's data directory (§6.1). Programs are located and
 //! invoked through [`crate::exec`], so `PATHEXT` and `cmd /c` live in one place.
 //!
 //! Where a server comes from, in order: the user's custom path; for Rust the

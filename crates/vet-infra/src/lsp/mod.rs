@@ -60,7 +60,7 @@ pub struct LspLauncher<L, R> {
     pub restorer: R,
     /// Where starting and indexing report.
     pub tasks: Tasks,
-    /// Tells servers apart (I2), and remembers what that cost.
+    /// Tells servers apart (I1), and remembers what that cost.
     pub identities: Identities,
     /// Where the files of a start are looked at.
     pub semantic_io: Budget,

@@ -1,4 +1,4 @@
-//! What each changeset is compared against (§6.5). A base is fixed by the kind of changeset and
+//! What each changeset is compared against (§4.4). A base is fixed by the kind of changeset and
 //! never chosen: the working tree's is the `HEAD` it was opened at, a branch's is where it left
 //! the repository's default branch, a pull request's where its head left the fetched target.
 

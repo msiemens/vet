@@ -1,4 +1,4 @@
-//! Shell <-> backend protocol (SPEC §4.1): one protocol over one loopback
+//! Shell <-> backend protocol (`ARCHITECTURE.md`): one protocol over one loopback
 //! WebSocket in every topology, JSON text frames.
 //!
 //! Ids and counts are `u32` so they map to plain TS `number`s.

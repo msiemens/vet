@@ -1,4 +1,4 @@
-//! What a symbol is, from what a server reports about it (§7.3): its file and
+//! What a symbol is, from what a server reports about it (§6.3): its file and
 //! the names of the symbols that contain it, outermost first. Servers only
 //! report positions and names; the identity is decided here, once, for every
 //! language.

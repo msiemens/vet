@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Enforces the onion's dependency direction (I1, I5). Fails if any crate depends
+# Enforces the onion's dependency direction (`ARCHITECTURE.md`). Fails if any crate depends
 # on a workspace crate outside its allowlist, or if the pure crates pull in IO,
 # git, or an async runtime.
 set -euo pipefail

@@ -1,6 +1,6 @@
 //! `vet_semantic::ports::Materializer`: a snapshot written out as a directory
 //! under Vet's data directory, which is all the semantic layer ever sees of it
-//! (I1, §7.2). The directory is kept between launches: see `kept`.
+//! (§6.2). The directory is kept between launches: see `kept`.
 
 pub mod kept;
 
@@ -29,7 +29,7 @@ impl<G, S> Materialize<G, S> {
 }
 
 impl<G: History + Checkout + Send + Sync, S: Store + Send + Sync> Materialize<G, S> {
-    /// Writes the snapshot into `dest`. Refuses unless every blob is available (§6.1).
+    /// Writes the snapshot into `dest`. Refuses unless every blob is available (§4.1).
     async fn build(&self, id: SnapshotId, dest: PathBuf) -> Result<(), NotMaterializable> {
         let other = |why: String| NotMaterializable::Other(why);
         let (commit, snapshot, status) = self.acquisition.recorded(id).await.map_err(other)?;

@@ -19,6 +19,6 @@ span: TextSpan,
 at: Position, 
 /**
  * Vet's conclusion that this is a test, by the file's path and a `tests`/`test` container it
- * is in (derived by file name, not from a language server; SPEC I6).
+ * is in (derived by file name, not from a language server; SPEC I3).
  */
 test: boolean, };

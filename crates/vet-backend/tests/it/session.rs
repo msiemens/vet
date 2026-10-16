@@ -1,6 +1,7 @@
 //! The handler against a real temporary repository: open, manifest, mark,
-//! edit, settle, remap, revert (SPEC §12 criterion 1's split and revert cases,
-//! and criterion 4's settle path). `git` is used only to build the fixture.
+//! edit, settle, remap, revert (the split and revert cases of anchor robustness, I2,
+//! and the settle path of reconciliation, SPEC §4.2). `git` is used only to build the
+//! fixture.
 
 #![allow(clippy::disallowed_methods)]
 

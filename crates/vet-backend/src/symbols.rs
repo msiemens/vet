@@ -1,6 +1,6 @@
 //! The changed symbols of the changeset on view, analysed by the backend in the background and
 //! pushed, so the client shows them without asking and the work is not scheduled per window
-//! (SPEC §7.3, A13). It runs while the review screen shows the changeset (D81).
+//! (SPEC §6.6, A13). It runs while the review screen shows the changeset (D81).
 
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU32, Ordering};

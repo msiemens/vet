@@ -59,21 +59,21 @@ delta: LineDelta,
 completion: Completion, 
 /**
  * Changed lines and non-text items the filter hides, so "complete" never
- * implies every change was seen (§5.2).
+ * implies every change was seen (§5.3).
  */
 excludedLines: number, excludedItems: number, 
 /**
  * Set when the backend polls the tree instead of watching it, so changes
- * show up late (§4.1, §6.4); the shell shows a banner.
+ * show up late (§1, §4.2); the shell shows a banner.
  */
 degraded?: WatchDegraded, 
 /**
  * Dependency restores that failed so far; the shell says analysis is limited
- * (§7.5). `Event::RestoreFailed` updates it.
+ * (§6.5). `Event::RestoreFailed` updates it.
  */
 restoreFailures: Array<RestoreFailure>, 
 /**
- * What analysis of the changeset may execute (§7.5). `TargetChanged` updates it.
+ * What analysis of the changeset may execute (§6.5). `TargetChanged` updates it.
  */
 trust: AnalysisTrust, 
 /**

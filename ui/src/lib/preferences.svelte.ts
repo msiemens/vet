@@ -1,4 +1,4 @@
-// What the window remembers of how the viewer left it (SPEC §8): theme, key bindings, open tabs,
+// What the window remembers of how the viewer left it (SPEC §9): theme, key bindings, open tabs,
 // panel sizes, folded sections. The backend keeps the values; this holds the copy the components
 // read, reactively, and hands the viewer's changes on to the backend through `sink`.
 

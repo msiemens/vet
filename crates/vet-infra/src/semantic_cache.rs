@@ -1,5 +1,5 @@
 //! `vet_semantic::reuse::SemanticCache`: the answers of language servers kept between
-//! launches (I2, SPEC §7.6, §8), in one SQLite file (WAL) of their own, apart from
+//! launches (I1, SPEC §9), in one SQLite file (WAL) of their own, apart from
 //! the review database.
 //!
 //! The file is disposable. Deleting it, or a format this Vet does not know, costs

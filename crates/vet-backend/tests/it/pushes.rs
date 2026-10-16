@@ -885,7 +885,7 @@ fn served_rust(dir: &Path) -> (Served, PathBuf) {
     )
 }
 
-/// §7.5: a push voids "Trust this PR". The server that ran under the trusted policy must stop, and
+/// §6.5: a push voids "Trust this PR". The server that ran under the trusted policy must stop, and
 /// the pushed head must be served only by servers that may not execute project code.
 #[tokio::test]
 #[ignore = "needs python3"]

@@ -1,5 +1,5 @@
 // What the footer item and the rail badge say of a changeset's problems. Missing analysis is never
-// shown as zero (SPEC I6): a file no server has answered for counts as waiting or as not analysed,
+// shown as zero (SPEC I3): a file no server has answered for counts as waiting or as not analysed,
 // and a file whose problems cannot be told new from existing is named, not counted as either.
 
 import { plural } from "../lib/format.ts";

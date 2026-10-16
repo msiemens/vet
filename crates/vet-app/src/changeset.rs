@@ -16,7 +16,7 @@ impl CommitId {
     }
 }
 
-/// How a changeset's base follows from its kind (§6.5). The target does not follow from it; that
+/// How a changeset's base follows from its kind (§4.4). The target does not follow from it; that
 /// is the changeset's source.
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub enum BaseChoice {
@@ -32,7 +32,7 @@ pub struct ChangesetId(pub u64);
 
 pub use crate::platform::RemoteKey;
 
-/// The kind of a changeset, which fixes its base rule and the target it is built on (§6.5). One
+/// The kind of a changeset, which fixes its base rule and the target it is built on (§4.4). One
 /// place knows each kind; the rules themselves live in [`crate::base`].
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub enum ChangesetKind {

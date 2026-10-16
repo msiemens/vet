@@ -1,16 +1,16 @@
-//! A live session of a dirty tree (§5, §6.1, §6.2).
+//! A live session of a dirty tree (§4.1, §4.2, §5).
 //!
 //! **Lifecycle.** A session starts out browsing: the live diff against the
 //! base, with nothing stored. The first review action (marking seen,
 //! acknowledging, a new thread) starts the review: it records the base, `HEAD`
 //! and the current target as the working tree changeset's version 1, and from
 //! then on every settled snapshot is the next version. Finishing releases the
-//! review's refs and returns to browsing (see SPEC "Session lifecycle");
+//! review's refs and returns to browsing (see SPEC §4.5);
 //! threads that are still open stay on view, because they belong to the
 //! changeset, not to the review.
 //!
 //! **Changeset.** What it displays is `base → the latest settled snapshot`,
-//! the base being fixed by the kind of changeset (§6.5): the working tree's is
+//! the base being fixed by the kind of changeset (§4.4): the working tree's is
 //! the `HEAD` it was opened at, wherever `HEAD` goes after. The review is of
 //! everything the agent has done to the tree, so reviewing the live part
 //! (`previous version → now`) alone would hide reviewed work behind a
@@ -464,7 +464,7 @@ impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> L
         // The review keeps its base however far the branches have moved since:
         // commits made while Vet was closed are part of what is under review,
         // and re-resolving would turn every mark against the old base into
-        // `SeenAgainstOldBase`. Moving the base is the user's call (§6.5).
+        // `SeenAgainstOldBase`. Moving the base is the user's call (§4.4).
         // The refs that keep the versions' commits are already in git; taking each again would
         // write it on every return, so only what a rebuild lacks is set.
         let existing: HashMap<(u32, String), CommitId> = acquisition
@@ -514,7 +514,7 @@ impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> L
     }
 
     /// Settles the tree as it is now, so recorded spans and threads remap onto
-    /// whatever changed while Vet was not running (I3).
+    /// whatever changed while Vet was not running (I2).
     async fn catch_up(&self) -> Result<()> {
         let scan = self.acquisition.reconcile(Dirty::All).await?;
         if scan.snapshot.id != self.settled_snapshot().await {
@@ -610,7 +610,7 @@ impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> L
         }
     }
 
-    /// Starts the review (SPEC "Session lifecycle"): records the base, `HEAD`
+    /// Starts the review (SPEC §4.5): records the base, `HEAD`
     /// and the current target, which becomes version 1, and takes the
     /// changeset's refs. The target's dirty content is in the store already:
     /// [`LiveSession::beginning`] saw to it. Does nothing if a review is open.
@@ -1115,7 +1115,7 @@ impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> L
                 .await?;
         }
         st.head = head;
-        // Older versions stay materializable (§7.2).
+        // Older versions stay materializable (§6.2).
         self.acquisition.record_commit(snapshot.id, st.head.clone());
         let old = std::mem::replace(&mut st.target, snapshot);
         st.target_status = status;

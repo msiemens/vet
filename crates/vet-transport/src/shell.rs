@@ -1,5 +1,5 @@
 //! The backend process's side of the contract with the shell that launches it
-//! (§4.1): the `Ready` line on stdout, and exiting when the shell goes away.
+//! (`ARCHITECTURE.md`): the `Ready` line on stdout, and exiting when the shell goes away.
 
 use std::io;
 

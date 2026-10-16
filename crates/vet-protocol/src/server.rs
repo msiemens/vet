@@ -160,7 +160,7 @@ pub enum RestoreFailureKind {
     StoodIn,
 }
 
-/// A dependency restore step that failed or had to be stood in for (§7.2).
+/// A dependency restore step that failed or had to be stood in for (§6.2).
 #[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
 #[ts(export)]

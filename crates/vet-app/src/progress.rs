@@ -1,7 +1,7 @@
-//! Background work that a person waits for or wonders about (SPEC "Background
-//! work is visible"): scans, diffs, restores, servers starting and indexing. Each step is a task
-//! with a stable id, a title, an optional fraction and detail, and its own end. A step reports
-//! through the [`Tasks`] it is handed and knows nothing about who listens.
+//! Background work that a person waits for or wonders about (SPEC §8.11):
+//! scans, diffs, restores, servers starting and indexing. Each step is a task with a stable id,
+//! a title, an optional fraction and detail, and its own end. A step reports through the
+//! [`Tasks`] it is handed and knows nothing about who listens.
 
 use std::collections::HashMap;
 use std::fmt::Display;

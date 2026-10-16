@@ -1,4 +1,4 @@
-//! Snapshots and changesets (SPEC §3). Pure content, no provenance (I1).
+//! Snapshots and changesets (SPEC §3). Pure content, no provenance.
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -57,7 +57,7 @@ impl BlobSource for BTreeMap<BlobId, Vec<u8>> {
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Debug)]
 pub struct SnapshotId(pub Hash);
 
-/// Repository-relative, `/`-separated, keyed by exact bytes (§6.3).
+/// Repository-relative, `/`-separated, keyed by exact bytes (§4.3).
 #[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Debug)]
 pub struct RepoPath(pub Vec<u8>);
 
@@ -122,7 +122,7 @@ pub struct FileEntry {
     /// Git mode, e.g. `0o100644`.
     pub mode: u32,
     pub kind: EntryKind,
-    /// Raw worktree bytes of a path with a custom filter driver (§6.3).
+    /// Raw worktree bytes of a path with a custom filter driver (§4.3).
     pub unfiltered: bool,
 }
 
@@ -135,7 +135,7 @@ pub struct Snapshot {
 /// Facts about a snapshot that must not change its identity.
 #[derive(Clone, PartialEq, Eq, Debug, Default)]
 pub struct SnapshotStatus {
-    /// Paths that differ only in case or normalization (§6.3).
+    /// Paths that differ only in case or normalization (§4.3).
     pub path_collisions: Vec<RepoPath>,
     /// Blobs over the capture size cap: hashed, but content not retained.
     pub content_unavailable: Vec<RepoPath>,
@@ -152,7 +152,7 @@ impl SnapshotStatus {
     }
 }
 
-/// Paths that differ only in case or Unicode normalization (§6.3), sorted.
+/// Paths that differ only in case or Unicode normalization (§4.3), sorted.
 pub fn path_collisions<'a>(paths: impl IntoIterator<Item = &'a RepoPath>) -> Vec<RepoPath> {
     let mut groups: BTreeMap<Vec<u8>, Vec<&RepoPath>> = BTreeMap::new();
     for path in paths {
@@ -172,7 +172,7 @@ pub fn path_collisions<'a>(paths: impl IntoIterator<Item = &'a RepoPath>) -> Vec
 }
 
 /// Folders whose name a tool defines as its own store; their untracked contents are never part of
-/// a snapshot (SPEC §6.1).
+/// a snapshot (SPEC §4.1).
 const TOOL_STORES: &[&[u8]] = &[b".pnpm-store"];
 
 /// Whether `path` (repository-relative, `/`-separated) is a tool store or inside one.

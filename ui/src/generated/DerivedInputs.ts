@@ -2,7 +2,7 @@
 import type { DerivedBounds } from "./DerivedBounds";
 
 /**
- * What a derived result was computed from (I6: derived results show their inputs).
+ * What a derived result was computed from (I3: derived results show their inputs).
  */
 export type DerivedInputs = { analysis: string, bounds: DerivedBounds | null, 
 /**

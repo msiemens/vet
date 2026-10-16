@@ -39,7 +39,7 @@ pub trait Clock {
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub enum WatchEvent {
     Dirty(Vec<RepoPath>),
-    /// Overflow, dropped events, or a poll tick: reconcile everything (§6.4).
+    /// Overflow, dropped events, or a poll tick: reconcile everything (§4.2).
     MustRescan,
     /// The watcher fell back to polling; implies `MustRescan`.
     Degraded(Degraded),
@@ -47,7 +47,7 @@ pub enum WatchEvent {
     RefsMoved,
 }
 
-/// Why watching is polling-only; the session status surfaces it (§4.1, §6.4).
+/// Why watching is polling-only; the session status surfaces it (§1, §4.2).
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Degraded {
     /// WSL worktree under `/mnt/*`: events do not cross 9P.
@@ -56,7 +56,7 @@ pub enum Degraded {
     WatchLimit,
 }
 
-/// A latency optimization, never authority (§6.2).
+/// A latency optimization, never authority (§4.2).
 pub trait Watcher {
     fn degraded(&self) -> Option<Degraded>;
     fn next(&mut self) -> impl Future<Output = WatchEvent> + Send;
@@ -177,7 +177,7 @@ impl From<GitError> for CheckoutError {
 /// and git blob hashing are private to the adapter: callers get correct
 /// snapshots, not "uncertain" markers.
 pub trait Scanner {
-    /// Establish correct snapshot identity, metadata first (§6.2).
+    /// Establish correct snapshot identity, metadata first (§4.2).
     fn scan(&self, dirty: Dirty) -> impl Future<Output = Result<Scan, GitError>> + Send;
 }
 
@@ -188,7 +188,7 @@ pub trait Checkout {
     /// is expected to have the rest). Content is written as stored: no hooks,
     /// filters or smudging. Every blob is attempted; if any is unavailable the
     /// result is `MissingBlobs` and `root` holds a partial tree the caller must
-    /// discard (§6.1, §7.2).
+    /// discard (§4.1, §6.2).
     fn checkout<S: Store + Sync>(
         &self,
         store: &S,
@@ -209,7 +209,7 @@ pub trait Differ {
     ) -> impl Future<Output = Result<TextDiff, GitError>> + Send;
 }
 
-/// Keeps the changed content of the tree on view in the content store (§6.1),
+/// Keeps the changed content of the tree on view in the content store (§4.1),
 /// from which the texts that the queries of a live tree are fed come (D97).
 /// Retention's usual bound applies: only content git cannot reconstruct that no
 /// kept copy has, read and written in batches. Fails nothing: content that
@@ -426,7 +426,7 @@ pub struct ChangesetRef {
 /// The refs that keep a changeset's commits alive.
 pub trait ChangesetRefs {
     /// Points `refs/vet/changesets/<changeset>/<version>/<name>` at `commit` so
-    /// git keeps it (§6.1).
+    /// git keeps it (§4.1).
     fn set_changeset_ref(
         &self,
         changeset: ChangesetId,
@@ -497,7 +497,7 @@ pub struct GcPlan {
     pub content_grace: Duration,
 }
 
-/// Content and snapshots (§8), as a reader has them. One implementation backs this,
+/// Content and snapshots (§9), as a reader has them. One implementation backs this,
 /// [`ChangesetStore`], [`ReviewStore`], [`ThreadStore`] (which only read), [`ReviewWrites`] and
 /// [`GcStore`]: GC checks references across changesets, spans and comments. Content is
 /// addressed by its hash, so putting it changes no review state.
@@ -516,7 +516,7 @@ pub trait Store {
     ) -> impl Future<Output = Result<Option<(Snapshot, SnapshotStatus)>, StoreError>> + Send;
 }
 
-/// The store's side of garbage collection (§8): it knows how to read what
+/// The store's side of garbage collection (§9): it knows how to read what
 /// refers to what and how to delete, `crate::gc` decides what to keep.
 pub trait GcStore {
     /// Reads the facts, deletes what `decide` makes of them in the same
@@ -631,7 +631,7 @@ pub trait ReviewStore {
     /// The review filter of the repository at `repo`, a project setting that
     /// applies to every changeset of it; the default if none was stored.
     fn filter(&self, repo: String) -> impl Future<Output = Result<ReviewFilter, StoreError>> + Send;
-    /// Whether the repository at `repo` is marked trusted (§7.5), a project setting; it is not
+    /// Whether the repository at `repo` is marked trusted (§6.5), a project setting; it is not
     /// unless it was.
     fn project_trusted(&self, repo: String) -> impl Future<Output = Result<bool, StoreError>> + Send;
 }
@@ -892,7 +892,7 @@ pub enum ServerState {
     },
 }
 
-/// Finds and installs language servers (§7.1). Implemented by `vet-infra`.
+/// Finds and installs language servers (§6.1). Implemented by `vet-infra`.
 pub trait ServerResolver {
     /// The server of `language` for the project at `project`; `custom` is the
     /// user's path for it, which wins over everything else. Without `policy.allow_executing`
@@ -952,7 +952,7 @@ pub trait RecentStore {
     fn set_recent_projects(&self, projects: Vec<RecentProject>) -> impl Future<Output = Result<(), StoreError>> + Send;
 }
 
-/// The backend's own settings (SPEC §8): app-wide, not per project.
+/// The backend's own settings (SPEC §9): app-wide, not per project.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub struct Settings {
     /// Megabytes the semantic cache's answers may take.

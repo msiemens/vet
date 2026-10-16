@@ -1,4 +1,4 @@
-//! Keeping remote-tracking refs current (SPEC M1 "Git fetch"): every remote of the
+//! Keeping remote-tracking refs current (SPEC §4.3): every remote of the
 //! repository is fetched, as one background task, on demand and on a timer. A fetch
 //! that cannot be done (offline, refused) ends its task as failed and is otherwise
 //! harmless: the review does not wait for it or depend on it.

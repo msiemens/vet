@@ -1,4 +1,4 @@
-//! The calls around a symbol (§7.3): its callers followed through changed symbols only, its
+//! The calls around a symbol (§6.3): its callers followed through changed symbols only, its
 //! changed callees, and its unchanged direct callers, which the change may affect.
 
 use std::collections::{HashMap, HashSet};

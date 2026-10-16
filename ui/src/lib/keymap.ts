@@ -1,4 +1,4 @@
-// Keybindings that never fire on text input (SPEC §12.0 input correctness).
+// Keybindings that never fire on text input.
 //
 // On Windows, AltGr is reported as Ctrl+Alt, so `Ctrl-Alt-Q` would also match
 // AltGr+Q (`@` on a German layout). On macOS, Option+key types characters. Dead

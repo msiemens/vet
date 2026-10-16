@@ -1,4 +1,4 @@
-//! The backend's own settings and the window's preferences (SPEC §8).
+//! The backend's own settings and the window's preferences (SPEC §9).
 
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;
@@ -15,7 +15,7 @@ pub struct BackendSettings {
     pub finished_review_days: u32,
 }
 
-/// A value the window remembers (SPEC §8), under a key the window chose.
+/// A value the window remembers (SPEC §9), under a key the window chose.
 #[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
 #[ts(export)]

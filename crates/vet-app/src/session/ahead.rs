@@ -1,5 +1,5 @@
 //! The working tree's dirty content, copied into the store ahead of the review that keeps it.
-//! Starting a review copies what the target has that the base does not (§6.1); on a large
+//! Starting a review copies what the target has that the base does not (§4.1); on a large
 //! changeset that is most of the first mark's time. Copied while the session browses, the
 //! first mark finds the content there and copies only what changed since. A copy is a flight
 //! of `vet-engine`, so the first mark joins one under way instead of copying the same files.
@@ -92,7 +92,7 @@ where
         self.retained(&self.copying, (&base, &target, &status), diffed).await
     }
 
-    /// The changed content of the working tree's snapshot on view is in the store (§6.1),
+    /// The changed content of the working tree's snapshot on view is in the store (§4.1),
     /// without the token: what settling with a review open kept, or what the quiet copy ahead
     /// keeps, of which a copy under way is joined through. The diff is the kept one where
     /// there is one, for it read the texts already. A step that cannot be copied fails as the

@@ -1,4 +1,4 @@
-//! The languages Vet analyses, one entry each (§7.1): how the server runs, which
+//! The languages Vet analyses, one entry each (§6.1): how the server runs, which
 //! files it serves, how it is found and installed, and how a tree's dependencies
 //! are restored for it. Adding a language is an entry here, a restore plan in
 //! [`crate::restore`] if it has dependencies, and a one-time manual check of which
@@ -8,7 +8,7 @@ use vet_core::content::RepoPath;
 use vet_semantic::ports::{Backend, BackendId, ServerConfig, Warmup};
 
 /// Pinned versions of the servers Vet installs. Bump with a check of which
-/// operations the server offers (§7.1).
+/// operations the server offers (§6.1).
 pub const TYPESCRIPT_LANGUAGE_SERVER_VERSION: &str = "6.0.1";
 pub const PYRIGHT_VERSION: &str = "1.1.414";
 pub const ROSLYN_LANGUAGE_SERVER_VERSION: &str = "5.12.0-1.26475.2";
@@ -100,7 +100,7 @@ pub enum UserFile {
 }
 
 /// What a language's server reads outside the repository. It shapes the
-/// server's answers, so it is part of the server's identity (I2): an answer is
+/// server's answers, so it is part of the server's identity (I1): an answer is
 /// reused only while all of it is as it was. Every language lists its own, even
 /// if the list is empty, so that adding a language means looking.
 pub struct UserConfig {

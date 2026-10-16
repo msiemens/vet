@@ -1,4 +1,4 @@
-//! Completion and per-hunk review state relative to a compiled `ReviewFilter` (SPEC §5.2).
+//! Completion and per-hunk review state relative to a compiled `ReviewFilter` (SPEC §5.2, §5.3).
 
 use std::collections::BTreeMap;
 use std::iter::Sum;

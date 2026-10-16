@@ -1,5 +1,5 @@
-//! Acquisition (§6): maps git and filesystem state into immutable snapshots.
-//! Provenance lives here, keyed by `SnapshotId`, and nowhere else (I1).
+//! Acquisition (§4): maps git and filesystem state into immutable snapshots.
+//! Provenance lives here, keyed by `SnapshotId`, and nowhere else.
 
 use std::collections::{BTreeMap, HashMap};
 use std::fmt;
@@ -51,7 +51,7 @@ impl<G, S> Acquisition<G, S> {
 
     /// Remember that git can reconstruct `snapshot`'s committed blobs from
     /// `commit`; everything else must be in the content store. Needed before
-    /// `materialize` can serve the snapshot (§7.2).
+    /// `materialize` can serve the snapshot (§6.2).
     pub fn record_commit(&self, snapshot: SnapshotId, commit: CommitId) {
         lock(&self.commits).insert(snapshot, commit);
     }
@@ -124,7 +124,7 @@ impl<G: BlobReader, S: Store> Acquisition<G, S> {
 
     /// Copies the blobs of `target` that `known` snapshots do not already have
     /// (they are in git or were retained before) and the store does not hold
-    /// into the store, so the snapshot stays reconstructible (§6.1). They are
+    /// into the store, so the snapshot stays reconstructible (§4.1). They are
     /// taken from `read` if it has them, else read from git or the worktree, and
     /// put in batches of about [`RETAIN_BATCH`] bytes. Fails if a blob's content
     /// is not what `target` says it is: the file changed while it was copied.
@@ -181,7 +181,7 @@ impl<G: BlobReader, S: Store> Acquisition<G, S> {
 }
 
 impl<G: Scanner, S> Acquisition<G, S> {
-    /// Authoritative reconciliation (§6.2): before declaring a snapshot settled,
+    /// Authoritative reconciliation (§4.2): before declaring a snapshot settled,
     /// at open, and on rescan signals.
     pub async fn reconcile(&self, dirty: Dirty) -> Result<Scan, GitError> {
         self.tasks

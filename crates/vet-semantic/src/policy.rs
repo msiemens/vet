@@ -1,10 +1,10 @@
 //! What analysis a caller permits. Computed by `vet-app` (Trust) from
-//! project and PR trust and the commit analysed, so the pool never looks at provenance (I1).
+//! project and PR trust and the commit analysed, so the pool never looks at provenance.
 
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub struct AnalysisPolicy {
     /// May language servers execute project code (build scripts, proc macros,
-    /// MSBuild design-time builds)? `false` for what is not trusted (§7.5).
+    /// MSBuild design-time builds)? `false` for what is not trusted (§6.5).
     pub allow_executing: bool,
     /// May a restore execute project code (install scripts, build backends, MSBuild)?
     /// Never set without `allow_executing`.

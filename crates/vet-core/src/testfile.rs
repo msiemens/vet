@@ -1,4 +1,4 @@
-//! Whether a file is a test by the conventions of its language (derived, SPEC I6): its path and
+//! Whether a file is a test by the conventions of its language (derived, SPEC I3): its path and
 //! whether a container it is in is a `tests` module. Nothing here comes from a language server, so
 //! the answer is a conclusion Vet draws by file name, not a primitive.
 

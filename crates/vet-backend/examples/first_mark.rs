@@ -1,5 +1,5 @@
-//! How long the first marks take on a large changeset, against SPEC §13's 100 ms. A
-//! measurement, not a check: it prints its timings and asserts nothing about them.
+//! How long the first marks take on a large changeset. A measurement,
+//! not a check: it prints its timings and asserts nothing about them.
 //!
 //! `cargo run --release -p vet-backend --example first_mark`
 //!

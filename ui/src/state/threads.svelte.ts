@@ -1,6 +1,6 @@
 // A session's comment threads as the backend resolved them, one list per view: the changeset's and the
 // range on view. Where a thread's anchor is now (exact, moved, detached) is the backend's; this holds and
-// distributes it (SPEC I5).
+// distributes it.
 
 import type { EditChoice } from "../generated/EditChoice";
 import type { Thread } from "../generated/Thread";

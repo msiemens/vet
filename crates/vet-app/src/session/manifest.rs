@@ -47,7 +47,7 @@ impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> L
             )
         });
         let excluded = excluded_groups(&changes.diffed, st);
-        // A merged pull request is one the platform says so of, as the shell's wording needs (SPEC I5).
+        // A merged pull request is one the platform says so of, as the shell's wording needs.
         let merged = matches!(
             self.discussion().await.map(|d| d.discussion.state),
             Some(crate::platform::PullRequestState::Merged)

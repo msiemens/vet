@@ -1,5 +1,5 @@
 // What the backend sent about one opened changeset, for as long as it is on view. Progress and review
-// state are the backend's; this holds and distributes them (SPEC I5). The session is made when the
+// state are the backend's; this holds and distributes them. The session is made when the
 // changeset is opened and disposed when another is, or the project closes: its lifetime ends and an
 // answer that arrives after that changes nothing.
 
@@ -224,7 +224,7 @@ class Session implements ViewSource {
     return this.baseChanged ? this.baseChangedFiles().length : 0;
   }
 
-  /** Whether a review of the changeset is open (SPEC §6: Finish review ends it). */
+  /** Whether a review of the changeset is open (SPEC §4.5: Finish review ends it). */
   get reviewOpen(): boolean {
     return this.facts?.review.state === "open";
   }

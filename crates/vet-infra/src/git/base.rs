@@ -1,4 +1,4 @@
-//! Base resolution (§6.5): merge bases, commit lookup and the branches.
+//! Base resolution (§4.4): merge bases, commit lookup and the branches.
 
 use gix::bstr::ByteSlice;
 use gix::remote::Direction;

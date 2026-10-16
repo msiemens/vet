@@ -2,7 +2,7 @@
 import type { PullRequestTrust } from "./PullRequestTrust";
 
 /**
- * What may execute project code when the changeset on view is analysed (§7.5).
+ * What may execute project code when the changeset on view is analysed (§6.5).
  */
 export type AnalysisTrust = { 
 /**

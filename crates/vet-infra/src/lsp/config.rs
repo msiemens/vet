@@ -1,4 +1,4 @@
-//! The languages' server configurations as the semantic layer sees them (§7.1).
+//! The languages' server configurations as the semantic layer sees them (§6.1).
 
 use vet_semantic::ports::Backend;
 

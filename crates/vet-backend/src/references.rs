@@ -1,5 +1,5 @@
 //! What keeps a kept materialized tree from being collected besides being in
-//! use (§8), read from the store.
+//! use (§9), read from the store.
 
 use std::collections::HashSet;
 use std::future::Future;

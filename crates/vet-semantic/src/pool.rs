@@ -1,4 +1,4 @@
-//! Server pool (§7.2). Servers are keyed by `(target, backend, policy)` and kept
+//! Server pool (§6.2). Servers are keyed by `(target, backend, policy)` and kept
 //! warm while in use. The policy is part of the key so that a server started without
 //! permission to execute project code stops serving once the PR is trusted (and the
 //! reverse can never happen).
@@ -14,7 +14,7 @@
 //! No lock is held across an await.
 //!
 //! Answers outlive their server: they are kept by the pool under keys that name
-//! the server's identity (I2, `reuse`), so a server that starts later with an
+//! the server's identity (I1, `reuse`), so a server that starts later with an
 //! equal identity on an equal tree answers from them. Those that persist also
 //! outlive the process, in the store the pool is given. A question whose key can be
 //! worked out without a server (`recall`) is looked up in both before any server is
@@ -68,7 +68,7 @@ pub enum PoolError {
     NotMaterializable(NotMaterializable),
     Launch(LaunchError),
     /// The backend would execute project code and the policy forbids it. The UI
-    /// shows an "analysis limited" marker for the language (§7.5).
+    /// shows an "analysis limited" marker for the language (§6.5).
     AnalysisLimited(BackendId),
     /// The server died while running, and again soon after it was restarted for that; it stays
     /// stopped until it is restarted by hand. Carries why it died.
@@ -254,7 +254,7 @@ fn answered<T>(value: T, server: ServerIdentity, from_cache: bool, complete: boo
 }
 
 /// A running server, shared by its leases. It answers from the pool's kept
-/// answers when it can (I2), and says who answered. Fields drop in order:
+/// answers when it can (I1), and says who answered. Fields drop in order:
 /// server first, then the materialized directory.
 pub struct Entry<S, G> {
     server: S,
@@ -1177,7 +1177,7 @@ impl<M: Materializer, L: ServerLauncher> Inner<M, L> {
 
 impl<M: Materializer, L: ServerLauncher> Pool<M, L> {
     /// The answer to a question about the whole tree of `key` if it is kept, in memory or
-    /// in the store, found without a server (I2): the key is worked out as a start
+    /// in the store, found without a server (I1): the key is worked out as a start
     /// would, from the identity of the server and the restore recorded for the tree.
     /// `None` means only that a server is to be asked.
     pub async fn recall<T: Reused>(
@@ -1219,7 +1219,7 @@ impl<M: Materializer, L: ServerLauncher> Pool<M, L> {
         self.inner.lease(key, backend).await
     }
 
-    /// Drop every server of `backend`: its settings changed (§7.2). Servers
+    /// Drop every server of `backend`: its settings changed (§6.2). Servers
     /// leased right now are stopped when their last lease ends.
     pub async fn restart(&self, backend: &BackendId) {
         let (stop, _) = self.retire(backend);

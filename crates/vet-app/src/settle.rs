@@ -1,4 +1,4 @@
-//! Settling (§6.2). `Settler` is the debounce state machine over an injected
+//! Settling (§4.2). `Settler` is the debounce state machine over an injected
 //! clock reading. `Settling` drives it from watcher events and reconciles, so
 //! size and mtime stability is judged by the scanner (metadata first), not by
 //! the watcher: dropped events and polling-only topologies behave the same.

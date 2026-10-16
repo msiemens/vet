@@ -1,5 +1,5 @@
 //! What hosting platforms say about pull requests, in terms that hold for every
-//! platform, and how each platform is described to the rest of Vet (SPEC §11).
+//! platform, and how each platform is described to the rest of Vet (SPEC §7).
 
 use serde::{Deserialize, Serialize};
 use vet_core::content::LineDelta;
@@ -279,7 +279,7 @@ pub struct PullRequestListing {
 pub struct PullRequestHead {
     pub title: String,
     pub draft: bool,
-    /// The source branch is in a fork's repository (§7.5).
+    /// The source branch is in a fork's repository (§6.5).
     pub fork: bool,
     /// The branch it is merged into.
     pub target_branch: String,

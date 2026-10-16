@@ -1,4 +1,4 @@
-//! Reconciling Vet's threads of a pull request with what the platform has (SPEC M1 "Thread sync"):
+//! Reconciling Vet's threads of a pull request with what the platform has (SPEC §7.4):
 //! what is decided where the two disagree, as data. Applying it is the session's.
 
 use vet_core::review::{CommentTarget, Message, MessageId, Thread, ThreadId, ThreadStatus};

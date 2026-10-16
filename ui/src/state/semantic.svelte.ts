@@ -1,6 +1,6 @@
 // The semantic layer's answers for the views: hover, definition, and the diagnostics the backend
 // pushes for the changeset's files, with the "no language server" notes the footer shows (SPEC
-// §7.1, I6). The backend analyses the changed files itself while the review screen shows the
+// §6.1, I3). The backend analyses the changed files itself while the review screen shows the
 // changeset, the files with an open tab first, and pushes each answer (A13), compared with the
 // base; this applies them and answers what the views ask of the pushed state.
 

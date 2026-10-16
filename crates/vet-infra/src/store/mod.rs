@@ -1,6 +1,6 @@
 //! `vet_app::ports::Store`, `ChangesetStore`, `ReviewStore` and `ThreadStore` (reads) and
 //! `ReviewWrites` (on [`ReviewWriter`]): a content directory plus one SQLite file (WAL) accessed through SeaORM, both
-//! under the backend side's data directory (§8).
+//! under the backend side's data directory (§9).
 //!
 //! The file is reached through two kinds of connection. Every write goes through the one
 //! [`ReviewWriter`] connection, so writers queue in the order they asked. Every read goes

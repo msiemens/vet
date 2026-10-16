@@ -1,4 +1,4 @@
-//! Answers of the language servers and the analyses derived from them (§7).
+//! Answers of the language servers and the analyses derived from them (§6).
 
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;
@@ -24,7 +24,7 @@ pub struct TextSpan {
 }
 
 /// A symbol is identified by its file and container chain (outermost first),
-/// as in §7.3: moves and renames change the identity.
+/// as in §6.3: moves and renames change the identity.
 #[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
 #[ts(export)]
@@ -73,7 +73,7 @@ pub struct SymbolInfo {
     /// Where its name is: the position to ask `References` about.
     pub at: Position,
     /// Vet's conclusion that this is a test, by the file's path and a `tests`/`test` container it
-    /// is in (derived by file name, not from a language server; SPEC I6).
+    /// is in (derived by file name, not from a language server; SPEC I3).
     pub test: bool,
 }
 
@@ -99,7 +99,7 @@ pub struct Reference {
     /// outside the repository and where the language server cannot list the file's symbols.
     pub within: Option<SymbolName>,
     /// Vet's conclusion that this place is a test, by its file's path and the containers of the
-    /// symbol it is in (derived by file name, not from a language server; SPEC I6).
+    /// symbol it is in (derived by file name, not from a language server; SPEC I3).
     pub test: bool,
 }
 
@@ -198,7 +198,7 @@ pub struct Diagnostic {
     pub origin: DiagnosticOrigin,
 }
 
-/// Whether the change introduced a diagnostic (derived, SPEC §7.3).
+/// Whether the change introduced a diagnostic (derived, SPEC §6.3).
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
 #[ts(export)]
@@ -213,7 +213,7 @@ pub enum DiagnosticOrigin {
 }
 
 /// Why a semantic answer is missing, so the shell can say so instead of
-/// showing nothing (I6: unavailable is never shown as nothing).
+/// showing nothing (I3: unavailable is never shown as nothing).
 #[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
 #[ts(export)]
@@ -242,7 +242,7 @@ pub enum UnavailableKind {
     NotOffered,
     /// The server would execute project code, which the review does not allow.
     AnalysisLimited,
-    /// The base snapshot cannot be rebuilt (§6.1).
+    /// The base snapshot cannot be rebuilt (§4.1).
     SnapshotUnavailable,
     /// The server failed this query.
     QueryFailed,
@@ -252,7 +252,7 @@ pub enum UnavailableKind {
     Incomplete,
 }
 
-/// What a derived result was computed from (I6: derived results show their inputs).
+/// What a derived result was computed from (I3: derived results show their inputs).
 #[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
 #[ts(export)]
@@ -294,7 +294,7 @@ pub struct ChangedSymbol {
     pub change: SymbolChange,
 }
 
-/// What the changeset did to the symbols of one file (derived, §7.3).
+/// What the changeset did to the symbols of one file (derived, §6.3).
 #[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
 #[ts(export)]
@@ -322,7 +322,7 @@ pub struct OutlineSymbol {
     pub change: Option<SymbolChange>,
 }
 
-/// Every symbol of a file, changed or not (derived, §7.3).
+/// Every symbol of a file, changed or not (derived, §6.3).
 #[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
 #[ts(export)]
@@ -411,7 +411,7 @@ pub enum Gap {
     TooDeep { max_depth: u32 },
 }
 
-/// The calls around a symbol of the target side (derived, §7.3).
+/// The calls around a symbol of the target side (derived, §6.3).
 #[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
 #[ts(export)]

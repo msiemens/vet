@@ -2,7 +2,7 @@
 
 The JSON schemas the YAML and JSON language servers check files against when the project is not
 trusted and the network stays closed (`crate::schemas`). The set is fixed; a change to a file or to the
-set changes the fingerprint of the bundle, and with it the identity of every server that uses it (I2).
+set changes the fingerprint of the bundle, and with it the identity of every server that uses it (I1).
 
 Every file is the upstream file with its white space removed. Retrieved on 2026-10-13.
 

@@ -1,6 +1,6 @@
 // The Symbol tool's state for one opened changeset: the changed symbols of each changed file, which the
 // Changes tree shows under their files, and the symbol on show, with the answers about it. The backend
-// derives them (SPEC §7.3, I5) and analyses the files itself while the review screen shows the
+// derives them (SPEC §6.3, §6.6) and analyses the files itself while the review screen shows the
 // changeset, the files with an open tab first, pushing each file's answer as it comes (A13); this only
 // applies what it hears. The selected symbol is the one the reviewer chose last: a row of the tree, or
 // the symbol the cursor of an editor is in.

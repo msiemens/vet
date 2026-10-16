@@ -1,4 +1,4 @@
-//! Trust (§7.5) through the protocol: a project is trusted until it is marked untrusted again,
+//! Trust (§6.5) through the protocol: a project is trusted until it is marked untrusted again,
 //! which the manifest says and every change announces.
 
 use crate::common::{Client, handler, repo_with};

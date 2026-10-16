@@ -3,7 +3,7 @@ import type { PipelineWords } from "./PipelineWords";
 import type { Verdict } from "./Verdict";
 
 /**
- * The platform's properties the UI branches on (SPEC §11), never its name.
+ * The platform's properties the UI branches on (SPEC §7.2), never its name.
  */
 export type PlatformTraits = { 
 /**

@@ -2,6 +2,6 @@
 
 /**
  * A symbol is identified by its file and container chain (outermost first),
- * as in §7.3: moves and renames change the identity.
+ * as in §6.3: moves and renames change the identity.
  */
 export type SymbolId = { path: string, name: Array<string>, };

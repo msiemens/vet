@@ -1,4 +1,4 @@
-//! Semantic requests (§7.3) of a session. The use cases are in
+//! Semantic requests (§6.3) of a session. The use cases are in
 //! `vet_app::semantics`; this maps requests to them and their results to the
 //! protocol, turning a language without a usable server into `unavailable`.
 

@@ -1,7 +1,7 @@
 // The Structure tool's state: the outline of the file the active tab shows, and the symbol selected in
 // it, which belong to one opened changeset (`SessionStructure`); and the viewer's choices (sort and
 // changed only, which are preferences) and the popup, which are the window's (`structure`). The backend
-// derives the outline (SPEC §7.3, I5); this loads and holds it. The outline belongs to a tab: switching
+// derives the outline (SPEC §6.3); this loads and holds it. The outline belongs to a tab: switching
 // tabs starts it over, with every holder open.
 
 import { untrack } from "svelte";

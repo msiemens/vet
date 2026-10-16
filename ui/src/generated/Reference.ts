@@ -13,6 +13,6 @@ export type Reference = { location: SemanticLocation,
 within: SymbolName | null, 
 /**
  * Vet's conclusion that this place is a test, by its file's path and the containers of the
- * symbol it is in (derived by file name, not from a language server; SPEC I6).
+ * symbol it is in (derived by file name, not from a language server; SPEC I3).
  */
 test: boolean, };

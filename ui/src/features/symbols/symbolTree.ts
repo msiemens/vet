@@ -1,6 +1,6 @@
 // Pure model of the Symbol panel's trees: what each root lists, as rows that nest. The component
-// draws them and keeps which are open; here are the grouping, the order and the words (SPEC §7.3).
-// Whether a row is a test is the backend's conclusion by file name (SPEC I6), carried on the row.
+// draws them and keeps which are open; here are the grouping, the order and the words (SPEC §6.3).
+// Whether a row is a test is the backend's conclusion by file name (SPEC I3), carried on the row.
 
 import type { CallSite } from "../../generated/CallSite";
 import type { Calls } from "../../generated/Calls";
@@ -198,7 +198,7 @@ interface Place {
   at: Position;
   within: SymbolName | null;
   external: boolean;
-  /** Vet's conclusion by file name (SPEC I6): the backend's answer, not a primitive. */
+  /** Vet's conclusion by file name (SPEC I3): the backend's answer, not a primitive. */
   test: boolean;
 }
 

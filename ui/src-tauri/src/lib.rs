@@ -1,4 +1,4 @@
-//! Tauri host (SPEC §4.1): spawns the backend, reads the `Ready` line it prints
+//! Tauri host (see `ARCHITECTURE.md`): spawns the backend, reads the `Ready` line it prints
 //! (port and per-launch token), and gives the webview that address. The
 //! webview then talks to the backend directly over the authenticated WebSocket. A splash window
 //! shows the startup steps until the main window is shown.

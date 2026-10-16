@@ -41,7 +41,7 @@ and file contents are not logged at `info` or above. The backend reads
 
 ## WSL split
 
-Shell on Windows, backend in WSL (SPEC §4.1). In WSL, with the repo on the Linux
+Shell on Windows, backend in WSL (SPEC §1). In WSL, with the repo on the Linux
 filesystem (not `/mnt/*`):
 
 ```sh

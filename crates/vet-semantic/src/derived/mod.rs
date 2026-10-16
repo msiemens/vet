@@ -1,4 +1,4 @@
-//! Derived analyses (I6): built over primitives, labeled as derived, and carrying
+//! Derived analyses (I3): built over primitives, labeled as derived, and carrying
 //! the inputs they were computed from so the UI can show them.
 
 mod calls;
@@ -58,7 +58,7 @@ impl Inputs {
     }
 
     /// Records a primitive query and, if it was answered, the server that answered
-    /// and whether the answer was reused (I6): `references(target:a.rs:3:4) [rust-analyzer 1.91, cached]`.
+    /// and whether the answer was reused (I3): `references(target:a.rs:3:4) [rust-analyzer 1.91, cached]`.
     fn query(&mut self, op: &str, side: Side, file: &RepoPath, pos: Option<Pos>, answered_by: Option<&Provenance>) {
         let side = match side {
             Side::Base => "base",

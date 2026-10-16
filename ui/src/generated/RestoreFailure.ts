@@ -2,7 +2,7 @@
 import type { RestoreFailureKind } from "./RestoreFailureKind";
 
 /**
- * A dependency restore step that failed or had to be stood in for (§7.2).
+ * A dependency restore step that failed or had to be stood in for (§6.2).
  */
 export type RestoreFailure = { kind: RestoreFailureKind, 
 /**

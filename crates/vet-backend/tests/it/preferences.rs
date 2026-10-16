@@ -1,4 +1,4 @@
-//! What the window remembers (SPEC §8) over the protocol: per scope, kept across launches, and
+//! What the window remembers (SPEC §9) over the protocol: per scope, kept across launches, and
 //! announced to every connection that asked for it.
 
 use std::sync::Arc;
