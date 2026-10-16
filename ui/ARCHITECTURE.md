@@ -66,11 +66,12 @@ Each store follows the events of what it shows:
 - `versions.svelte.ts` (a session's versions, while the review screen is shown), `reviewChanges.svelte.ts` (a session's changes since a version, for its whole life, as the queue panel shows them) — `snapshotSettled`, `reviewStarted`, `reviewChanged`: reads again.
 - `threads.svelte.ts` (a session's threads) — `threadsChanged`, `snapshotSettled`, and the session starting or resyncing: reloads the changeset's threads and, while the review screen shows a range, the range's.
 - `pipelines.svelte.ts` (a session's chosen run, job and folds) — `accountsChanged`: forgets which accounts were refused; the steps drop when the review screen hides.
-- `checks.svelte.ts` — `checksChanged`: takes the checks.
+- `checks.svelte.ts` (a session's checks) — `checksChanged`: takes the checks.
+- `pullRequest.svelte.ts` (only a pull request's session has one) — the session starting or resyncing, `platformStatus`, `threadsChanged`: reads the `PullRequestInfo` again.
 - `semantic.svelte.ts` — `fileDiagnostics`: a file's pushed diagnostics.
 - `symbols.svelte.ts` — `fileSymbols`: a file's pushed symbols and the progress; `serversChanged`: asks again about the symbol on show.
 - `pendingEdits.svelte.ts` — `editsPending`: whether edits wait to settle.
-- `platform.svelte.ts` — `platformStatus`: the status and the `PullRequestInfo`; `threadsChanged`, `changesetOpened`: the `PullRequestInfo`; `notification`: the bell's list and its card.
+- `platform.svelte.ts` — `platformStatus`: the status, which a `PullRequestInfo` answer also sets; `notification`: the bell's list and its card.
 - `progress.svelte.ts` — `task`: the running tasks.
 - `serverList.svelte.ts` — `serversChanged`, `serverRuntimes`, `serverInstallOutput`: the servers and an install's output.
 - `servedBy.svelte.ts`, `structure.svelte.ts` — `serversChanged`: which server serves each file, and the open outlines.
@@ -80,7 +81,7 @@ Each store follows the events of what it shows:
 
 #### Reactivity
 
-Backend data lives in `state/` as immutable snapshots (`$state.raw`), one cell per file, never deep `$state`: proxies over thousands of files cost every read. Each opened changeset is a `ChangesetSession` held by `opened`: it lives until another changeset is opened or the project closes, and every continuation checks its `Lifetime`, so a late answer touches nothing in the next one. A session keeps apart what a manifest says (`layout`) from the changeset's `facts` and a cell per path holding its review state, and holds the whole changeset (`whole`) and its commits by revision (`CommitList`), its versions, its changes since a version, and the Pipelines panel's choice; what is read only for the review screen is read while it is shown (`whileReviewShown`). The generated manifest shapes are read only by the session, the whole view and the client (an eslint rule). Requests about the project rather than a changeset are plain functions in `projectRequests.ts`.
+Backend data lives in `state/` as immutable snapshots (`$state.raw`), one cell per file, never deep `$state`: proxies over thousands of files cost every read. Each opened changeset is a `ChangesetSession` held by `opened`: it lives until another changeset is opened or the project closes, and every continuation checks its `Lifetime`, so a late answer touches nothing in the next one. A session keeps apart what a manifest says (`layout`) from the changeset's `facts` and a cell per path holding its review state, and holds the whole changeset (`whole`) and its commits by revision (`CommitList`), its versions, its changes since a version, the Pipelines panel's choice, its checks and, for a pull request, what the platform says of it; what is read only for the review screen is read while it is shown (`whileReviewShown`). The generated manifest shapes are read only by the session, the whole view and the client (an eslint rule). Requests about the project rather than a changeset are plain functions in `projectRequests.ts`.
 
 There are no full rebuilds: a keyed or incremental `$derived`, so one change invalidates only the cell, tree row and tab that show it, and the file tree is rebuilt once per revision. The editor and virtualized views are not reactive: they get explicit calls, subscribe to no store, and hold no review state (an eslint rule). Review state reaches them by notify-then-pull through the view's review cells, and each section redraws when the version it remembers differs, so a missed notification is corrected at the next redraw. Nothing reactive runs per frame; small UI state is plain `$state`.
 
