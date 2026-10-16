@@ -2600,3 +2600,117 @@ async fn the_default_branch_is_not_offered_as_a_changeset() {
         ]
     );
 }
+
+/// Shows the review screen of `project`: only then is the changeset on view's analysis started. A
+/// debug build only.
+#[cfg(debug_assertions)]
+async fn show_review(client: &Client, project: ProjectId) {
+    client
+        .call(Request::SetReviewShown { project, shown: true })
+        .await
+        .unwrap();
+}
+
+/// How often the changeset on view's symbols and problems analyses were started. A debug build
+/// only.
+#[cfg(debug_assertions)]
+fn analysis_starts(client: &Client, project: ProjectId) -> (usize, usize) {
+    (
+        client.handler.background_counts(project, "symbols").0,
+        client.handler.background_counts(project, "problems").0,
+    )
+}
+
+/// Waits until the changeset on view's symbols and problems analyses have run and are no longer
+/// running, and answers how often they were started: the baseline a new revision's analyses must go
+/// beyond. A debug build only.
+#[cfg(debug_assertions)]
+async fn analysis_at_rest(client: &Client, project: ProjectId) -> (usize, usize) {
+    for _ in 0..6000 {
+        let (symbols, running_symbols) = client.handler.background_counts(project, "symbols");
+        let (problems, running_problems) = client.handler.background_counts(project, "problems");
+        if symbols > 0 && running_symbols == 0 && problems > 0 && running_problems == 0 {
+            return (symbols, problems);
+        }
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+    panic!("the changeset on view's analyses never came to rest");
+}
+
+/// Waits until the changeset on view's symbols and problems analyses were started more often than
+/// `before`: what a revision move does where nothing else starts them. A debug build only.
+#[cfg(debug_assertions)]
+async fn analysis_restarted(client: &Client, project: ProjectId, before: (usize, usize)) {
+    for _ in 0..6000 {
+        let now = analysis_starts(client, project);
+        if now.0 > before.0 && now.1 > before.1 {
+            return;
+        }
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+    panic!("the new revision's symbols and problems were not started");
+}
+
+#[cfg(debug_assertions)]
+#[tokio::test]
+async fn finishing_a_review_restarts_the_analysis_for_the_new_revision() {
+    let fx = fixture_with_feature().await;
+    let mut client = Client::new(&fx.handler);
+    let project = open(&client, fx.repo.path()).await;
+    client.open_branch(project, "feature").await;
+    show_review(&client, project).await;
+    let revision = client.manifest(project).await.revision;
+    client.toggle_hunk(project, revision, 0).await;
+    let before = analysis_at_rest(&client, project).await;
+
+    let Response::ReviewFinished { .. } = client.call(Request::FinishReview { project }).await.unwrap() else {
+        panic!("not finished");
+    };
+    analysis_restarted(&client, project, before).await;
+}
+
+#[cfg(debug_assertions)]
+#[tokio::test]
+async fn narrowing_the_review_restarts_the_analysis_for_the_new_revision() {
+    let fx = fixture_with_feature().await;
+    let mut client = Client::new(&fx.handler);
+    let project = open(&client, fx.repo.path()).await;
+    client.open_branch(project, "feature").await;
+    show_review(&client, project).await;
+    let before = analysis_at_rest(&client, project).await;
+
+    let filter = ReviewFilter {
+        roots: vec!["a.txt".into()],
+        ..Default::default()
+    };
+    client
+        .call(Request::NarrowReview {
+            project,
+            changeset: ChangesetKey::Branch { name: "feature".into() },
+            filter: Some(filter),
+        })
+        .await
+        .unwrap();
+    analysis_restarted(&client, project, before).await;
+}
+
+#[cfg(debug_assertions)]
+#[tokio::test]
+async fn excluding_a_path_restarts_the_analysis_for_the_new_revision() {
+    let fx = fixture_with_feature().await;
+    let mut client = Client::new(&fx.handler);
+    let project = open(&client, fx.repo.path()).await;
+    client.open_branch(project, "feature").await;
+    show_review(&client, project).await;
+    let before = analysis_at_rest(&client, project).await;
+
+    client
+        .call(Request::ExcludePath {
+            project,
+            path: "a.txt".into(),
+            directory: false,
+        })
+        .await
+        .unwrap();
+    analysis_restarted(&client, project, before).await;
+}

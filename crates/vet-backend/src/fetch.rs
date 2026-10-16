@@ -10,10 +10,10 @@ use vet_protocol::{Event, ProjectId, Response};
 use crate::accounts::Held;
 use crate::changesets::bring_in;
 use crate::error::Result;
-use crate::events::settled;
 use crate::open::Booted;
+use crate::review::revision_changed;
 use crate::sync::sync_pull_request;
-use crate::{Open, Orchestrator, start_servers_in_background};
+use crate::{Open, Orchestrator};
 
 impl Orchestrator {
     /// Fetches now. A fetch that fails fails its task and not this request.
@@ -54,8 +54,7 @@ async fn follow_pull_request(open: &Arc<Open>, booted: &Booted) {
         return;
     };
     if let Ok(Some(revision)) = booted.session.observe().await {
-        settled(&open.subscribers, open.id, revision);
-        start_servers_in_background(open.clone());
+        revision_changed(open, revision);
     } else if renamed {
         open.subscribers.broadcast(Event::TargetChanged { project: open.id });
     }
