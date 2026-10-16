@@ -202,18 +202,18 @@ async fn an_unreadable_directory_does_not_hide_a_readable_sibling() {
 }
 
 #[tokio::test]
-async fn a_readable_sibling_survives_an_unreadable_directory() {
+async fn a_readable_sibling_that_sorts_first_survives_an_unreadable_directory() {
     let dir = repo();
     let p = dir.path();
-    std::fs::create_dir_all(p.join("readable")).unwrap();
-    std::fs::write(p.join("readable/kept.txt"), "kept\n").unwrap();
-    std::fs::create_dir_all(p.join("locked")).unwrap();
-    std::fs::write(p.join("locked/secret.txt"), "secret\n").unwrap();
+    std::fs::create_dir_all(p.join("a-readable")).unwrap();
+    std::fs::write(p.join("a-readable/kept.txt"), "kept\n").unwrap();
+    std::fs::create_dir_all(p.join("z-locked")).unwrap();
+    std::fs::write(p.join("z-locked/secret.txt"), "secret\n").unwrap();
 
-    let _denied = Denied::new(&p.join("locked"));
+    let _denied = Denied::new(&p.join("z-locked"));
     let scan = reconcile(p).await.unwrap();
 
-    assert_eq!(names(&scan), ["readable/kept.txt"]);
+    assert_eq!(names(&scan), ["a-readable/kept.txt"]);
 }
 
 #[tokio::test]
