@@ -104,6 +104,9 @@ pub struct Config {
     /// is no directory, so that a build of the backend that is not the shipped one (the tests')
     /// never reuses the sign-in of the machine it runs on; the shipped backend sets `None`.
     pub cli_dirs: Option<Vec<PathBuf>>,
+    /// How long closing a project waits for the background work that finishes its step (the sync)
+    /// before it stops it.
+    pub shutdown_bound: Duration,
 }
 
 impl Default for Config {
@@ -119,6 +122,7 @@ impl Default for Config {
             checks_pace: Duration::from_secs(30),
             checks_settle: Duration::from_secs(3),
             cli_dirs: Some(Vec::new()),
+            shutdown_bound: vet_app::supervise::SHUTDOWN_BOUND,
         }
     }
 }
@@ -191,6 +195,7 @@ fn recent_projects(list: std::result::Result<Vec<RecentProject>, StoreError>) ->
 
 impl Orchestrator {
     pub fn new(store: SqliteStore, config: Config) -> Self {
+        let shutdown_bound = config.shutdown_bound;
         let budgets = Budgets::default();
         let store = store.budgeted(budgets.review_io.clone());
         let backends: Arc<[Backend]> = lsp_config::defaults().into();
@@ -237,7 +242,7 @@ impl Orchestrator {
             projects: Projects::default(),
             #[cfg(debug_assertions)]
             analysis_failures: Arc::default(),
-            background: Arc::default(),
+            background: Arc::new(background::Background::new(shutdown_bound)),
         }
     }
 

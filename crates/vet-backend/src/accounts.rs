@@ -9,7 +9,7 @@ use vet_protocol::{Event, Response, Secret};
 
 use crate::Orchestrator;
 use crate::error::Result;
-use crate::sync::sync_in_background;
+use crate::supervisor::Reason;
 
 impl Orchestrator {
     /// The accounts.
@@ -58,7 +58,7 @@ impl Orchestrator {
                 && remote.account() == host
             {
                 open.policy.accounts_changed();
-                sync_in_background(open.clone());
+                open.sync.request(vec![Reason::Accounts]);
             }
         }
     }

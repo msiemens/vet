@@ -24,4 +24,5 @@ mod search;
 mod semantic;
 mod session;
 mod symbols;
+mod sync;
 mod trust;

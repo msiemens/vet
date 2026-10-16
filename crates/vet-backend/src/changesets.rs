@@ -11,7 +11,7 @@ use vet_protocol::{ChangesetKey, Event, ProjectId, Response};
 
 use crate::error::{Error, Result};
 use crate::hosting::{Held, Hosting};
-use crate::sync::sync_in_background;
+use crate::supervisor::Reason;
 use crate::{Live, Open, Orchestrator};
 
 /// How many rows of the queue have their lines counted at once: as many as the review lane's
@@ -164,7 +164,7 @@ impl Orchestrator {
             open.subscribers.broadcast(Event::TargetChanged { project });
         }
         if matches!(source, Source::PullRequest { .. }) {
-            sync_in_background(open.open.clone());
+            open.open.sync.request(vec![Reason::Opened]);
         }
         Ok(Response::Done)
     }

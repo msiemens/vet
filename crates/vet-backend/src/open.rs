@@ -45,7 +45,7 @@ use crate::feed::Feed;
 use crate::hosting::{Announcer, Hosting, Platforms};
 use crate::mutex::lock;
 use crate::screens::ReviewScreens;
-use crate::supervisor::Policy;
+use crate::supervisor::{Policy, Syncs};
 use crate::{LanguageServers, Live, Open, Orchestrator, PlatformAccounts, Semantic};
 
 /// The least time between two progress announcements of one task, so a step that
@@ -134,6 +134,9 @@ pub(crate) struct Wired {
     /// What the supervisor keeps running for the state of the project: the servers, their
     /// retiring, the analysis and the checks of the changeset on view.
     pub(crate) policy: Policy,
+    /// The syncs of the pull request on view with its platform, which every cause that asks for
+    /// one shares.
+    pub(crate) sync: Syncs,
     /// For tests: how many boots this project attempted and how many settle loops it started, so
     /// a failed boot can be told from a boot that never happened, and a retry from a second loop.
     /// A debug build only.
@@ -541,6 +544,7 @@ impl Orchestrator {
         let fetch = Arc::new(Fetch::new(GixRepo::new(&repo, Budget::new(FETCH_IO)), tasks.clone()));
         let supervisor = self.background.supervisor(id);
         let feed = self.pull_request_feed(fetch.clone(), entry.clone(), supervisor.clone());
+        let sync = crate::sync::trigger(&supervisor, entry.clone());
         Ok(Wired {
             fetch,
             feed,
@@ -576,6 +580,7 @@ impl Orchestrator {
             analysis_failures: self.analysis_failures.clone(),
             supervisor,
             policy: Policy::default(),
+            sync,
             #[cfg(debug_assertions)]
             boots: Arc::default(),
             #[cfg(debug_assertions)]

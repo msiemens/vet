@@ -1,11 +1,13 @@
 //! Keeping the threads of the pull request on view in step with its platform, and telling the
 //! subscribers how that goes.
 
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock, Weak};
 
+use futures::FutureExt;
 use vet_app::changeset::Source;
 use vet_app::platform::{RemoteKey, Standing};
 use vet_app::session::{Keep, SyncReport, VoteSent};
+use vet_app::supervise::{Supervisor, Trigger};
 use vet_core::review::{MessageId, Verdict};
 use vet_infra::clock::unix_now;
 use vet_mapping as mapping;
@@ -14,6 +16,7 @@ use vet_protocol::{EditChoice, Event, ProjectId, Response};
 use crate::announce::{thread_changed, threads_changed};
 use crate::error::{Error, Result};
 use crate::open::Booted;
+use crate::supervisor::{Reason, SyncOutcome, Syncs};
 use crate::{Open, Orchestrator};
 
 impl Orchestrator {
@@ -74,7 +77,7 @@ impl Orchestrator {
         if !matches!(open.session.source().await, Source::PullRequest { .. }) {
             return Err(Error::not_a_pull_request());
         }
-        sync_pull_request(&open.open, &open).await;
+        open.open.sync.request(vec![Reason::Requested]).wait().await;
         Ok(Response::Done)
     }
 
@@ -98,8 +101,9 @@ impl Orchestrator {
     }
 
     /// Tells what went wrong while posting, if anything, and syncs to bring back what is on the
-    /// platform now. Posted drafts are no drafts anymore, and refused ones failed, which every
-    /// subscriber is told, the requester included, also when the sync finds nothing else to change.
+    /// platform now, with a sync that begins after the post. Posted drafts are no drafts anymore,
+    /// and refused ones failed, which every subscriber is told, the requester included, also when
+    /// the sync finds nothing else to change.
     async fn after_posting(
         &self,
         open: &crate::open::Ready,
@@ -110,7 +114,10 @@ impl Orchestrator {
             open.subscribers
                 .broadcast(Event::Notification { project, notification });
         }
-        let announced = sync_pull_request(&open.open, open).await;
+        let announced = matches!(
+            open.open.sync.request(vec![Reason::Posted]).wait().await,
+            Some(SyncOutcome::Synced { told: true })
+        );
         let changed =
             report.posted > 0 || report.failed > 0 || report.problem.is_some() || report.vote != VoteSent::NotSent;
         if changed && !announced {
@@ -163,29 +170,59 @@ impl Orchestrator {
     }
 }
 
-/// Syncs the pull request on view in the background, for after it was opened.
-pub(crate) fn sync_in_background(open: Arc<Open>) {
-    tokio::spawn(async move {
-        if let Ok(booted) = open.booted().await {
-            sync_pull_request(&open, booted).await;
+/// The kind of the project's syncs in its supervisor.
+const KIND: &str = "sync";
+
+/// The syncs of a project, reaching it through `entry` so a waiting sync keeps nothing open.
+pub(crate) fn trigger(supervisor: &Supervisor, entry: Arc<OnceLock<Weak<Open>>>) -> Syncs {
+    Trigger::new(supervisor.clone(), KIND, merge, move |reasons| {
+        let entry = entry.clone();
+        async move {
+            let Some(open) = entry.get().and_then(Weak::upgrade) else {
+                return SyncOutcome::Failed("the project was closed".into());
+            };
+            tracing::debug!(?reasons, "syncing the pull request");
+            match open.booted().await {
+                Ok(booted) => sync_pull_request(&open, booted).await,
+                Err(error) => SyncOutcome::Failed(error.to_string()),
+            }
         }
-    });
+        .boxed()
+    })
+}
+
+fn merge(into: &mut Vec<Reason>, more: Vec<Reason>) {
+    for reason in more {
+        if !into.contains(&reason) {
+            into.push(reason);
+        }
+    }
 }
 
 /// Syncs the threads of the pull request on view, if one is, and tells every subscriber what
-/// came of it. A platform that cannot be asked is reported as its status (`Hosting` notes it) and
-/// not as a failure. Answers whether the subscribers were told that threads changed.
-pub(crate) async fn sync_pull_request(open: &Arc<Open>, booted: &Booted) -> bool {
+/// came of it. A platform that cannot be asked is reported as its status (`Hosting` notes it) too.
+/// Cooperates with the project closing: it ends before its next step instead.
+async fn sync_pull_request(open: &Arc<Open>, booted: &Booted) -> SyncOutcome {
     let Source::PullRequest { remote, number } = booted.session.source().await else {
-        return false;
+        return SyncOutcome::NotPullRequest;
     };
-    let Ok(hosting) = open.hosting_for(&remote).await else {
-        return false;
+    let hosting = match open.hosting_for(&remote).await {
+        Ok(hosting) => hosting,
+        Err(error) => return SyncOutcome::Failed(error.to_string()),
     };
-    match booted.session.sync_threads(&hosting).await {
-        Ok(report) => announce(open, booted, &remote, number, &report).await,
-        // The platform could not be asked, or the changeset on view changed meanwhile.
-        Err(_) => false,
+    if open.supervisor.closed() {
+        return SyncOutcome::Failed("the project was closed".into());
+    }
+    let report = match booted.session.sync_threads(&hosting).await {
+        Ok(report) if report.source_changed => return SyncOutcome::SourceChanged,
+        Ok(report) => report,
+        Err(error) => return SyncOutcome::Failed(error.to_string()),
+    };
+    if open.supervisor.closed() {
+        return SyncOutcome::Failed("the project was closed".into());
+    }
+    SyncOutcome::Synced {
+        told: announce(open, booted, &remote, number, &report).await,
     }
 }
 

@@ -12,7 +12,7 @@ use crate::error::Result;
 use crate::events::revision_changed;
 use crate::hosting::Held;
 use crate::open::Booted;
-use crate::sync::sync_pull_request;
+use crate::supervisor::Reason;
 use crate::{Open, Orchestrator};
 
 impl Orchestrator {
@@ -60,7 +60,7 @@ async fn fetch_and_report(open: &Arc<Open>, asked: Asked) {
             .broadcast(Event::ChangesetsChanged { project: open.id });
         follow_pull_request(open, booted).await;
     }
-    sync_pull_request(open, booted).await;
+    open.sync.request(vec![Reason::Fetched]).wait().await;
 }
 
 /// If a pull request is on view, fetches it again and, when its head or target moved, has the

@@ -8,6 +8,8 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use futures::FutureExt;
+use futures::future::BoxFuture;
+use tokio::sync::watch;
 use tokio::task::{AbortHandle, JoinSet};
 
 use crate::mutex::lock;
@@ -34,6 +36,8 @@ struct Runs {
     /// The latest run of each slot; a newer run of the slot aborts it.
     slots: HashMap<&'static str, AbortHandle>,
     tasks: JoinSet<()>,
+    /// Runs that end themselves when they see `closed`, which `shutdown` waits for before it aborts.
+    cooperative: JoinSet<()>,
     /// Set by `shutdown`: nothing starts after it.
     closed: bool,
 }
@@ -88,6 +92,23 @@ impl Supervisor {
         self.spawn(label, None, work);
     }
 
+    /// Runs `work` in no slot, and never aborts it for a newer run. It is to end by itself once
+    /// `closed` says so; `shutdown` waits for that, up to its bound, before it aborts the run.
+    pub fn cooperate(&self, label: &'static str, work: impl Future<Output = ()> + Send + 'static) {
+        let work = isolated(label, work);
+        let mut runs = lock(&self.0.runs);
+        if runs.closed {
+            return;
+        }
+        while runs.cooperative.try_join_next().is_some() {}
+        runs.cooperative.spawn(work);
+    }
+
+    /// Whether `shutdown` began: runs that cooperate stop at their next step.
+    pub fn closed(&self) -> bool {
+        lock(&self.0.runs).closed
+    }
+
     /// Aborts the run in `slot`, if one is alive.
     pub fn stop(&self, slot: &'static str) {
         if let Some(run) = lock(&self.0.runs).slots.remove(slot) {
@@ -106,19 +127,34 @@ impl Supervisor {
     }
 
     /// Ends every run and waits until none is left, so whatever they used can be torn down after.
-    /// A run that does not end within the bound is left behind and logged. Nothing starts after.
+    /// Runs that cooperate get the bound to end by themselves, the others are aborted at once. A
+    /// run that does not end within the bound after its abort is left behind and logged. Nothing
+    /// starts after.
     pub async fn shutdown(&self) {
-        let mut tasks = {
+        let (mut tasks, mut cooperative) = {
             let mut runs = lock(&self.0.runs);
             runs.closed = true;
             runs.slots.clear();
-            std::mem::take(&mut runs.tasks)
+            (std::mem::take(&mut runs.tasks), std::mem::take(&mut runs.cooperative))
         };
         tasks.abort_all();
-        let joined = tokio::time::timeout(self.0.bound, async { while tasks.join_next().await.is_some() {} }).await;
+        let ended = tokio::time::timeout(self.0.bound, async {
+            while cooperative.join_next().await.is_some() {}
+        })
+        .await;
+        if ended.is_err() {
+            tracing::warn!(left = cooperative.len(), "cooperating runs did not end in time");
+            cooperative.abort_all();
+        }
+        let joined = tokio::time::timeout(self.0.bound, async {
+            while tasks.join_next().await.is_some() {}
+            while cooperative.join_next().await.is_some() {}
+        })
+        .await;
         if joined.is_err() {
-            tracing::warn!(left = tasks.len(), "background runs did not end in time");
+            tracing::warn!(left = tasks.len() + cooperative.len(), "background runs did not end in time");
             tasks.detach_all();
+            cooperative.detach_all();
         }
     }
 
@@ -136,6 +172,141 @@ impl Supervisor {
         {
             older.abort();
         }
+    }
+}
+
+/// The kind under which the loops of a trigger's runs are counted, so the supervisor is not idle
+/// between one run and the one that waits.
+const LOOP: &str = "triggered";
+
+/// Work that requests ask for. One run goes on at a time and at most one waits behind it; a request
+/// that comes while a run waits is merged into it. A request is answered with a ticket that is done
+/// when a run that started after the request has ended, so no request is answered by a run that
+/// began before it.
+///
+/// The runs cooperate with `Supervisor::shutdown`: none is aborted for a newer one, and none starts
+/// once the supervisor is closed.
+pub struct Trigger<R, O>(Arc<Triggered<R, O>>);
+
+impl<R, O> Clone for Trigger<R, O> {
+    fn clone(&self) -> Self {
+        Self(self.0.clone())
+    }
+}
+
+struct Triggered<R, O> {
+    supervisor: Supervisor,
+    kind: &'static str,
+    /// Adds the reasons of a later request to those of the run that waits.
+    merge: fn(&mut R, R),
+    run: Box<dyn Fn(R) -> BoxFuture<'static, O> + Send + Sync>,
+    state: Mutex<TriggerState<R, O>>,
+}
+
+struct TriggerState<R, O> {
+    /// Whether a loop of runs is alive, which takes the waiting run when it is done with the one before.
+    running: bool,
+    /// The run that waits, with the reasons merged so far and where its outcome goes.
+    pending: Option<(R, watch::Sender<Option<O>>)>,
+}
+
+impl<R: Send + 'static, O: Clone + Send + Sync + 'static> Trigger<R, O> {
+    /// A trigger whose runs are `run`, each counted under `kind`.
+    pub fn new(
+        supervisor: Supervisor,
+        kind: &'static str,
+        merge: fn(&mut R, R),
+        run: impl Fn(R) -> BoxFuture<'static, O> + Send + Sync + 'static,
+    ) -> Self {
+        Self(Arc::new(Triggered {
+            supervisor,
+            kind,
+            merge,
+            run: Box::new(run),
+            state: Mutex::new(TriggerState {
+                running: false,
+                pending: None,
+            }),
+        }))
+    }
+
+    /// Asks for a run with `reason`: merged into the run that waits, or becoming it.
+    pub fn request(&self, reason: R) -> Ticket<O> {
+        let (ticket, start) = {
+            let mut state = lock(&self.0.state);
+            let ticket = match &mut state.pending {
+                Some((merged, done)) => {
+                    (self.0.merge)(merged, reason);
+                    Ticket(done.subscribe())
+                }
+                None => {
+                    let (done, ticket) = watch::channel(None);
+                    state.pending = Some((reason, done));
+                    Ticket(ticket)
+                }
+            };
+            (ticket, !std::mem::replace(&mut state.running, true))
+        };
+        if start {
+            self.spawn();
+        }
+        ticket
+    }
+
+    fn spawn(&self) {
+        let shared = self.0.clone();
+        let (supervisor, kind) = (shared.supervisor.clone(), shared.kind);
+        let counted = supervisor.counted(LOOP);
+        let ending = Ending {
+            shared: shared.clone(),
+            over: false,
+        };
+        supervisor.cooperate(kind, async move {
+            let _counted = counted;
+            let mut ending = ending;
+            while !shared.supervisor.closed() {
+                let next = {
+                    let mut state = lock(&shared.state);
+                    let next = state.pending.take();
+                    state.running = next.is_some();
+                    next
+                };
+                let Some((reason, done)) = next else {
+                    ending.over = true;
+                    return;
+                };
+                let outcome = shared.supervisor.track(shared.kind, (shared.run)(reason)).await;
+                done.send_replace(Some(outcome));
+            }
+        });
+    }
+}
+
+/// Clears what a loop of runs leaves behind when it is dropped before it ran out of work, whether
+/// aborted, panicked or never started: the requests waiting for it are never answered.
+struct Ending<R, O> {
+    shared: Arc<Triggered<R, O>>,
+    over: bool,
+}
+
+impl<R, O> Drop for Ending<R, O> {
+    fn drop(&mut self) {
+        if !self.over {
+            let mut state = lock(&self.shared.state);
+            state.running = false;
+            state.pending = None;
+        }
+    }
+}
+
+/// What a request waits on.
+pub struct Ticket<O>(watch::Receiver<Option<O>>);
+
+impl<O: Clone> Ticket<O> {
+    /// The outcome of the run that answers the request; none if that run never finished.
+    pub async fn wait(mut self) -> Option<O> {
+        let done = self.0.wait_for(Option::is_some).await.ok()?;
+        done.clone()
     }
 }
 
@@ -334,6 +505,88 @@ mod tests {
         supervisor.shutdown().await;
 
         assert!(began.elapsed() < Duration::from_millis(500), "{:?}", began.elapsed());
+    }
+
+    /// A trigger whose run notes its reasons, waits for `gate` and answers with how many runs began.
+    fn gated(
+        supervisor: &Supervisor,
+        gate: &Arc<Notify>,
+    ) -> (Trigger<Vec<u32>, usize>, Arc<Mutex<Vec<Vec<u32>>>>) {
+        let began = Arc::new(Mutex::new(Vec::new()));
+        let trigger = Trigger::new(
+            supervisor.clone(),
+            "sync",
+            |merged: &mut Vec<u32>, more| merged.extend(more),
+            {
+                let (began, gate) = (began.clone(), gate.clone());
+                move |reasons| {
+                    let (began, gate) = (began.clone(), gate.clone());
+                    async move {
+                        let number = {
+                            let mut began = lock(&began);
+                            began.push(reasons);
+                            began.len()
+                        };
+                        gate.notified().await;
+                        number
+                    }
+                    .boxed()
+                }
+            },
+        );
+        (trigger, began)
+    }
+
+    #[tokio::test]
+    async fn requests_during_a_run_share_one_later_run_that_started_after_them() {
+        let (supervisor, gate) = (Supervisor::default(), Arc::new(Notify::new()));
+        let (trigger, began) = gated(&supervisor, &gate);
+
+        let first = trigger.request(vec![1]);
+        eventually(|| lock(&began).len() == 1).await;
+        let later = [trigger.request(vec![2]), trigger.request(vec![3]), trigger.request(vec![4])];
+
+        gate.notify_one();
+        assert_eq!(first.wait().await, Some(1));
+        eventually(|| lock(&began).len() == 2).await;
+        gate.notify_one();
+        for ticket in later {
+            assert_eq!(ticket.wait().await, Some(2));
+        }
+        assert_eq!(*lock(&began), [vec![1], vec![2, 3, 4]]);
+        eventually(|| supervisor.live() == 0).await;
+        assert_eq!(supervisor.counts("sync"), (2, 0), "two runs for four requests");
+    }
+
+    #[tokio::test]
+    async fn a_request_after_the_runs_ended_starts_a_new_one() {
+        let (supervisor, gate) = (Supervisor::default(), Arc::new(Notify::new()));
+        let (trigger, began) = gated(&supervisor, &gate);
+        gate.notify_one();
+        assert_eq!(trigger.request(vec![1]).wait().await, Some(1));
+        eventually(|| supervisor.live() == 0).await;
+
+        gate.notify_one();
+        assert_eq!(trigger.request(vec![2]).wait().await, Some(2));
+        assert_eq!(*lock(&began), [vec![1], vec![2]]);
+    }
+
+    #[tokio::test]
+    async fn shutdown_gives_a_run_the_bound_then_aborts_it_and_answers_no_request() {
+        let supervisor = Supervisor::within(Duration::from_millis(50));
+        let (trigger, began) = gated(&supervisor, &Arc::new(Notify::new()));
+        let running = trigger.request(vec![1]);
+        eventually(|| lock(&began).len() == 1).await;
+        let waiting = trigger.request(vec![2]);
+
+        let shut = Instant::now();
+        supervisor.shutdown().await;
+
+        assert!(shut.elapsed() >= Duration::from_millis(50), "the run got its bound");
+        assert!(shut.elapsed() < Duration::from_millis(500), "{:?}", shut.elapsed());
+        assert_eq!((running.wait().await, waiting.wait().await), (None, None));
+        assert_eq!(trigger.request(vec![3]).wait().await, None);
+        assert_eq!(lock(&began).len(), 1, "nothing started after");
     }
 
     #[tokio::test]

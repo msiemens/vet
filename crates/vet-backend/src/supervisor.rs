@@ -10,6 +10,41 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicU32, Ordering};
 
 use tokio::sync::{MutexGuard, OwnedMutexGuard, watch};
+use vet_app::supervise::Trigger;
+
+/// What asked for a sync.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(crate) enum Reason {
+    /// The pull request was opened.
+    Opened,
+    /// The credentials of its host changed.
+    Accounts,
+    /// The viewer asked.
+    Requested,
+    /// A review or drafts were posted to it.
+    Posted,
+    /// A fetch ran.
+    Fetched,
+}
+
+/// How a sync went.
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub(crate) enum SyncOutcome {
+    /// The platform was asked and the threads are in step with it. `told` says whether the
+    /// subscribers were told that threads changed.
+    Synced { told: bool },
+    /// The changeset on view is no pull request.
+    NotPullRequest,
+    /// Another changeset was on view by the time the platform answered, so nothing was synced.
+    SourceChanged,
+    /// The platform could not be asked or failed, or the project could not be scanned or closed.
+    /// The message is fit to show.
+    Failed(String),
+}
+
+/// The syncs of one project: at most one runs and one waits, whoever asked. They are never aborted
+/// for a newer one and end by themselves when the project closes.
+pub(crate) type Syncs = Trigger<Vec<Reason>, SyncOutcome>;
 
 /// The inputs that are counters: each change of one is a change of the state the work depends on.
 #[derive(Clone, Copy, Default, PartialEq, Eq)]

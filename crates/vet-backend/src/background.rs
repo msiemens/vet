@@ -3,25 +3,42 @@
 
 use std::collections::HashMap;
 use std::sync::Mutex;
+use std::time::Duration;
 
 use vet_app::supervise::Supervisor;
 use vet_protocol::ProjectId;
 
 use crate::mutex::lock;
 
-#[derive(Default)]
-pub(crate) struct Background(Mutex<HashMap<ProjectId, Supervisor>>);
+pub(crate) struct Background {
+    /// How long a supervisor's shutdown waits for the runs that cooperate.
+    bound: Duration,
+    supervisors: Mutex<HashMap<ProjectId, Supervisor>>,
+}
 
 impl Background {
+    pub(crate) fn new(bound: Duration) -> Self {
+        Self {
+            bound,
+            supervisors: Mutex::default(),
+        }
+    }
+
     /// The supervisor of the project's runs, made on first ask.
     pub(crate) fn supervisor(&self, project: ProjectId) -> Supervisor {
-        lock(&self.0).entry(project).or_default().clone()
+        lock(&self.supervisors)
+            .entry(project)
+            .or_insert_with(|| Supervisor::within(self.bound))
+            .clone()
     }
 
     /// How often the project's runs of `kind` were started and how many are running now. For tests
     /// only.
     #[cfg(debug_assertions)]
     pub(crate) fn counts(&self, project: ProjectId, kind: &'static str) -> (usize, usize) {
-        lock(&self.0).get(&project).map(|s| s.counts(kind)).unwrap_or_default()
+        lock(&self.supervisors)
+            .get(&project)
+            .map(|s| s.counts(kind))
+            .unwrap_or_default()
     }
 }

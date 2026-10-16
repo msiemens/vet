@@ -54,6 +54,17 @@ pub struct SyncReport {
     pub listing_changed: bool,
     /// The platform refused or could not take something Vet had to send; the rest was synced.
     pub problem: Option<PlatformError>,
+    /// The changeset on view was another by the time the platform answered, so nothing was synced.
+    pub source_changed: bool,
+}
+
+impl SyncReport {
+    fn source_changed() -> Self {
+        Self {
+            source_changed: true,
+            ..Self::default()
+        }
+    }
 }
 
 /// What the platform said of the pull request on view when it was last synced.
@@ -256,7 +267,7 @@ impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> L
         let (plan, pushes, settled) = {
             let mut st = self.hold().await;
             if st.source != source {
-                return Ok(SyncReport::default());
+                return Ok(SyncReport::source_changed());
             }
             let settled = self.settle_posting(&mut st, &discussion).await?;
             let settled = self.settle_vote(&mut st, &discussion).await? || settled;
@@ -268,7 +279,7 @@ impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> L
 
         let mut st = self.hold().await;
         if st.source != source {
-            return Ok(SyncReport::default());
+            return Ok(SyncReport::source_changed());
         }
         let mut report = self.apply(&mut st, &plan, &pushed, &discussion).await?;
         report.changed |= settled;

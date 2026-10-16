@@ -361,6 +361,16 @@ fn github(mock: Arc<Mutex<Mock>>) -> Fake {
                 Canned::json(&discussion_json(&mock.lock().unwrap(), number, &description))
             };
         }
+        // Submitting an empty review: the pull request's id, then a pending review, then its submission.
+        if query.contains("pullRequest(number: $number) { id }") {
+            return Canned::json(r#"{"data":{"repository":{"pullRequest":{"id":"PR_7"}}}}"#);
+        }
+        if query.contains("addPullRequestReview(") {
+            return Canned::json(r#"{"data":{"addPullRequestReview":{"pullRequestReview":{"id":"R_1"}}}}"#);
+        }
+        if query.contains("submitPullRequestReview(") {
+            return Canned::json(r#"{"data":{"submitPullRequestReview":{"pullRequestReview":{"id":"R_1"}}}}"#);
+        }
         Canned::status(500, r#"{"message":"unexpected query"}"#)
     })
 }
