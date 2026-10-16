@@ -288,6 +288,8 @@ impl Project for FeedProject {
                     changed,
                 });
             }
+            // The per-request listing answers its own caller, so it never publishes a whole list.
+            FeedEvent::ListChanged => {}
         }
     }
 }

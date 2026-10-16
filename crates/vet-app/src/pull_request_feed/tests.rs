@@ -2,8 +2,11 @@
 //! what they were asked, a session that records what the cycle did to it, and a background that
 //! notes when the two phases that continue after the list are started.
 
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
+
+use tokio::sync::Notify;
 
 use super::*;
 use crate::fetch::Credentials;
@@ -11,7 +14,8 @@ use crate::platform::{
     CheckLog, CommitChecks, Discussion, FakeHosting, Health, PlatformError, PlatformTraits, PullRequest,
     PullRequestDetail, PullRequestListing, PullRequestQuery, QueueTab, Viewer, Watched, pr, rows, viewer,
 };
-use crate::ports::RefUpdate;
+use crate::ports::{FetchAuth, GitError, RefTip, RefUpdate, RemoteInfo};
+use crate::progress::Tasks;
 use crate::pull_request::tests::{Anonymous, Remotes, fetching, fetching_into, github, info, names};
 use crate::pull_request::{ListedPullRequest, PullRequestRefs, RepositoryStatus};
 use crate::session::tests::MemStore;
@@ -23,19 +27,34 @@ fn recorded(log: &Log) -> Vec<String> {
     log.lock().unwrap().clone()
 }
 
-/// The platform side of the ports, over a platform of the test's and the recording git remotes.
-#[derive(Clone)]
-struct Side<P> {
+/// The platform side of the ports, over a platform of the test's and git remotes of the test's.
+struct Side<P, G = Remotes> {
     platform: P,
     health: Arc<Health>,
     known: Arc<PullRequestCache>,
-    fetch: Arc<Fetch<Remotes>>,
+    fetch: Arc<Fetch<G>>,
     /// The hosts the viewer has an account for; the tests' remotes are all known by name.
     accounts: Vec<String>,
 }
 
-impl<P: Platform + Clone + Send + Sync + 'static> Hostings for Side<P> {
-    type Fetcher = Remotes;
+impl<P: Clone, G> Clone for Side<P, G> {
+    fn clone(&self) -> Self {
+        Self {
+            platform: self.platform.clone(),
+            health: self.health.clone(),
+            known: self.known.clone(),
+            fetch: self.fetch.clone(),
+            accounts: self.accounts.clone(),
+        }
+    }
+}
+
+impl<P, G> Hostings for Side<P, G>
+where
+    P: Platform + Clone + Send + Sync + 'static,
+    G: Fetcher + Send + Sync + 'static,
+{
+    type Fetcher = G;
 
     fn hosting(&self, kind: PlatformKind) -> impl Platform + Send {
         Watched::new(self.platform.clone(), kind, self.health.clone(), self.known.clone())
@@ -53,7 +72,7 @@ impl<P: Platform + Clone + Send + Sync + 'static> Hostings for Side<P> {
         self.known.clone()
     }
 
-    fn fetch(&self) -> &Fetch<Remotes> {
+    fn fetch(&self) -> &Fetch<G> {
         &self.fetch
     }
 
@@ -62,13 +81,39 @@ impl<P: Platform + Clone + Send + Sync + 'static> Hostings for Side<P> {
     }
 }
 
-/// A platform the cycle lists and discusses, recording each of those in the log.
+/// The pull requests a test's platform lists for each repository.
+type Listed = Arc<Mutex<Vec<(RemoteKey, Vec<PullRequest>)>>>;
+
+/// A platform the cycle lists and discusses, recording each of those in the log. What it lists and
+/// which repositories it fails can change between cycles, and a listing waits for the next gate a
+/// test left, so a cycle can be held in the middle of listing.
 #[derive(Clone)]
 struct Fake {
-    listed: Vec<(RemoteKey, Vec<PullRequest>)>,
-    failing: Vec<RemoteKey>,
+    listed: Listed,
+    failing: Arc<Mutex<Vec<RemoteKey>>>,
     traits: PlatformTraits,
     log: Log,
+    gates: Arc<Mutex<Vec<Arc<Notify>>>>,
+}
+
+impl Fake {
+    /// Lists `numbers` newest-numbered first for `remote` from now on.
+    fn lists(&self, listed: Vec<(RemoteKey, Vec<u64>)>) {
+        *self.listed.lock().unwrap() = listed
+            .into_iter()
+            .map(|(remote, numbers)| (remote, numbers.into_iter().map(pr).collect()))
+            .collect();
+    }
+
+    /// Fails every call about `remote` from now on.
+    fn fails(&self, remote: &RemoteKey) {
+        self.failing.lock().unwrap().push(remote.clone());
+    }
+
+    /// Holds the next listing until the gate is opened, once.
+    fn gate(&self, gate: Arc<Notify>) {
+        self.gates.lock().unwrap().push(gate);
+    }
 }
 
 impl Platform for Fake {
@@ -86,12 +131,21 @@ impl Platform for Fake {
         _: &PullRequestQuery,
     ) -> Result<PullRequestListing, PlatformError> {
         self.log.lock().unwrap().push("list".to_owned());
-        if self.failing.contains(remote) {
+        let gate = {
+            let mut gates = self.gates.lock().unwrap();
+            (!gates.is_empty()).then(|| gates.remove(0))
+        };
+        if let Some(gate) = gate {
+            gate.notified().await;
+        }
+        if self.failing.lock().unwrap().contains(remote) {
             return Err(PlatformError::Rejected("refused".to_owned()));
         }
         Ok(PullRequestListing {
             pull_requests: self
                 .listed
+                .lock()
+                .unwrap()
                 .iter()
                 .find(|(r, _)| r == remote)
                 .map(|(_, prs)| prs.clone())
@@ -101,7 +155,7 @@ impl Platform for Fake {
     }
 
     async fn pull_request(&self, remote: &RemoteKey, number: u64) -> Result<PullRequestDetail, PlatformError> {
-        if self.failing.contains(remote) {
+        if self.failing.lock().unwrap().contains(remote) {
             return Err(PlatformError::SignedOut(remote.host.clone()));
         }
         let mut pull_request = pr(number);
@@ -114,7 +168,7 @@ impl Platform for Fake {
     }
 
     async fn discussion(&self, _: &RemoteKey, number: u64) -> Result<Discussion, PlatformError> {
-        self.log.lock().unwrap().push("discussion".to_owned());
+        self.log.lock().unwrap().push(format!("discussion {number}"));
         let mut discussion = FakeHosting::default().0.lock().unwrap().discussion.clone();
         discussion.title = format!("PR {number}");
         Ok(discussion)
@@ -126,6 +180,88 @@ impl Platform for Fake {
 
     async fn check_log(&self, _: &RemoteKey, _: &str) -> Result<CheckLog, PlatformError> {
         unreachable!("the cycle lists, fetches heads and prefetches")
+    }
+}
+
+/// The project's git remotes, which a test can make unreadable or refuse the refs: a cycle that
+/// cannot read the remotes fails before it lists, and one the remote refuses the refs of lists but
+/// fetches no head, as being offline does.
+#[derive(Clone)]
+struct Readable {
+    remotes: Arc<Mutex<Vec<RemoteInfo>>>,
+    refs: Arc<Mutex<Vec<RefTip>>>,
+    unreadable: Arc<AtomicBool>,
+    refused: Arc<AtomicBool>,
+}
+
+impl Readable {
+    fn of(remotes: Vec<RemoteInfo>) -> Self {
+        Self {
+            remotes: Arc::new(Mutex::new(remotes)),
+            refs: Arc::default(),
+            unreadable: Arc::default(),
+            refused: Arc::default(),
+        }
+    }
+
+    fn break_remotes(&self) {
+        self.unreadable.store(true, Ordering::SeqCst);
+    }
+
+    fn mend_remotes(&self) {
+        self.unreadable.store(false, Ordering::SeqCst);
+    }
+
+    fn refuse_refs(&self) {
+        self.refused.store(true, Ordering::SeqCst);
+    }
+
+    fn allow_refs(&self) {
+        self.refused.store(false, Ordering::SeqCst);
+    }
+}
+
+impl Fetcher for Readable {
+    async fn remotes(&self) -> Result<Vec<RemoteInfo>, GitError> {
+        if self.unreadable.load(Ordering::SeqCst) {
+            return Err(GitError::Remote("the remotes cannot be read".to_owned()));
+        }
+        Ok(self.remotes.lock().unwrap().clone())
+    }
+
+    async fn fetch(&self, _: &str, _: Option<FetchAuth>) -> Result<usize, GitError> {
+        unreachable!("the cycle fetches refs, not whole remotes")
+    }
+
+    async fn fetch_refs(&self, _: &str, updates: Vec<RefUpdate>, _: Option<FetchAuth>) -> Result<(), GitError> {
+        if self.refused.load(Ordering::SeqCst) {
+            return Err(GitError::Remote("the refs were refused".to_owned()));
+        }
+        let mut refs = self.refs.lock().unwrap();
+        for update in &updates {
+            refs.retain(|r| r.name != update.destination);
+            refs.push(RefTip {
+                name: update.destination.clone(),
+                commit: "tip".to_owned(),
+            });
+        }
+        Ok(())
+    }
+
+    async fn refs_below(&self, prefix: &str) -> Result<Vec<RefTip>, GitError> {
+        Ok(self
+            .refs
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|r| r.name.starts_with(prefix))
+            .cloned()
+            .collect())
+    }
+
+    async fn delete_refs(&self, names: Vec<String>) -> Result<(), GitError> {
+        self.refs.lock().unwrap().retain(|r| !names.contains(&r.name));
+        Ok(())
     }
 }
 
@@ -154,6 +290,7 @@ impl Project for ProjectFake {
         let name = match event {
             FeedEvent::ChangesetsChanged => "changesets_changed",
             FeedEvent::PullRequestsChanged(_) => "pull_requests_changed",
+            FeedEvent::ListChanged => "list_changed",
         };
         self.log.lock().unwrap().push(name.to_owned());
     }
@@ -223,10 +360,11 @@ async fn the_cycle_lists_prunes_fetches_heads_and_prefetches_in_order() {
     );
     let side = Side {
         platform: Fake {
-            listed: vec![(app, vec![pr(7)])],
-            failing: vec![],
+            listed: Arc::new(Mutex::new(vec![(app, vec![pr(7)])])),
+            failing: Arc::default(),
             traits: PlatformTraits::github(),
             log: log.clone(),
+            gates: Arc::default(),
         },
         health: Arc::new(Health::new(|_| {})),
         known: Arc::default(),
@@ -265,10 +403,11 @@ async fn the_refs_of_a_pull_request_fetched_during_the_listing_are_not_pruned() 
     let (fetch, _, held) = fetching_into(vec![info("origin", "https://github.com/acme/app")], &before);
     let side = Side {
         platform: Fake {
-            listed: vec![],
-            failing: vec![],
+            listed: Arc::default(),
+            failing: Arc::default(),
             traits: PlatformTraits::github(),
             log: Log::default(),
+            gates: Arc::default(),
         },
         health: Arc::new(Health::new(|_| {})),
         known: Arc::default(),
@@ -386,4 +525,330 @@ async fn the_prefetch_bound_covers_a_list_that_leaves_details_apart_and_not_one_
     )
     .await;
     assert_eq!(carrying.calls().len(), 20);
+}
+
+/// How many entries of `log` are exactly `what`.
+fn counting(log: &Log, what: &str) -> usize {
+    recorded(log).iter().filter(|entry| entry.as_str() == what).count()
+}
+
+/// How many pull requests' details the log says were read.
+fn discussions(log: &Log) -> usize {
+    recorded(log)
+        .iter()
+        .filter(|entry| entry.starts_with("discussion"))
+        .count()
+}
+
+/// A prefetch that paces and announces nothing, for the tests that do not hold it running.
+fn zero() -> Prefetch {
+    Prefetch {
+        pace: Duration::ZERO,
+        announce: Duration::ZERO,
+    }
+}
+
+/// A platform that lists `numbers` for each remote and records its calls in `log`.
+fn listing(log: &Log, listed: Vec<(RemoteKey, Vec<u64>)>) -> Fake {
+    let fake = Fake {
+        listed: Arc::default(),
+        failing: Arc::default(),
+        traits: PlatformTraits::github(),
+        log: log.clone(),
+        gates: Arc::default(),
+    };
+    fake.lists(listed);
+    fake
+}
+
+/// A feed over `platform` and the git `remotes`, with a mem store and the clock `1_000`.
+fn feed_of(
+    platform: Fake,
+    project: ProjectFake,
+    remotes: Vec<RemoteInfo>,
+    timing: Prefetch,
+) -> (PullRequestFeed<Side<Fake, Readable>, MemStore, ProjectFake>, Readable) {
+    let readable = Readable::of(remotes);
+    let side = Side {
+        platform,
+        health: Arc::new(Health::new(|_| {})),
+        known: Arc::default(),
+        fetch: Arc::new(Fetch::new(readable.clone(), Tasks::default())),
+        accounts: vec![],
+    };
+    (
+        PullRequestFeed::new(side, MemStore::default(), project, || 1_000, timing),
+        readable,
+    )
+}
+
+/// A project that records what the feed announces and does to it.
+fn project(log: &Log) -> ProjectFake {
+    ProjectFake {
+        log: log.clone(),
+        on_view: None,
+    }
+}
+
+fn numbers(list: &PullRequestList) -> Vec<u64> {
+    list.rows.iter().map(|r| r.row.number).collect()
+}
+
+#[tokio::test]
+async fn ten_timer_requests_during_a_run_give_one_cycle() {
+    let log = Log::default();
+    let app = github("acme/app");
+    let platform = listing(&log, vec![(app.clone(), vec![7])]);
+    let gate = Arc::new(Notify::new());
+    platform.gate(gate.clone());
+    let (feed, _) = feed_of(
+        platform,
+        project(&log),
+        vec![info("origin", "https://github.com/acme/app")],
+        zero(),
+    );
+    let _run = tokio::spawn(feed.clone().run());
+
+    feed.timer();
+    // The one cycle starts and waits inside its listing while the other requests arrive.
+    tokio::task::yield_now().await;
+    for _ in 0..10 {
+        feed.timer();
+    }
+    gate.notify_one();
+
+    assert_eq!(numbers(&feed.list().await.unwrap()), [7]);
+    assert_eq!(counting(&log, "list"), 1, "the requests joined the one cycle");
+}
+
+#[tokio::test]
+async fn a_manual_request_during_a_run_gives_one_trailing_cycle_and_its_caller_waits() {
+    let log = Log::default();
+    let app = github("acme/app");
+    let platform = listing(&log, vec![(app.clone(), vec![7])]);
+    let first = Arc::new(Notify::new());
+    let second = Arc::new(Notify::new());
+    platform.gate(first.clone());
+    platform.gate(second.clone());
+    let (feed, _) = feed_of(
+        platform,
+        project(&log),
+        vec![info("origin", "https://github.com/acme/app")],
+        zero(),
+    );
+    let _run = tokio::spawn(feed.clone().run());
+
+    feed.timer();
+    tokio::task::yield_now().await; // the first cycle waits inside its listing
+
+    let manual = feed.clone();
+    let (done, mut told) = tokio::sync::oneshot::channel();
+    let waiting = tokio::spawn(async move {
+        manual.manual().await;
+        done.send(()).ok();
+    });
+    tokio::task::yield_now().await; // the manual request is made during the first cycle
+
+    first.notify_one();
+    tokio::task::yield_now().await; // the trailing cycle waits inside its listing
+
+    assert!(
+        told.try_recv().is_err(),
+        "the caller waits for a cycle started after its request"
+    );
+
+    second.notify_one();
+    waiting.await.unwrap();
+    assert_eq!(counting(&log, "list"), 2, "exactly one trailing cycle");
+}
+
+#[tokio::test]
+async fn reading_an_empty_feed_waits_for_the_first_listing() {
+    let log = Log::default();
+    let app = github("acme/app");
+    let platform = listing(&log, vec![(app.clone(), vec![7])]);
+    let (feed, _) = feed_of(
+        platform,
+        project(&log),
+        vec![info("origin", "https://github.com/acme/app")],
+        zero(),
+    );
+    let _run = tokio::spawn(feed.clone().run());
+
+    assert_eq!(numbers(&feed.list().await.unwrap()), [7]);
+
+    // With no hosted repository the first read still waits for the empty list the feed publishes.
+    let log = Log::default();
+    let platform = listing(&log, vec![]);
+    let (feed, _) = feed_of(
+        platform,
+        project(&log),
+        vec![info("lab", "https://gitlab.com/acme/app")],
+        zero(),
+    );
+    let _run = tokio::spawn(feed.clone().run());
+
+    let listed = feed.list().await.unwrap();
+    assert!(listed.rows.is_empty() && listed.sources.is_empty());
+}
+
+#[tokio::test]
+async fn a_failed_cycle_keeps_the_last_list() {
+    let log = Log::default();
+    let app = github("acme/app");
+    let platform = listing(&log, vec![(app.clone(), vec![7])]);
+    let (feed, refs) = feed_of(
+        platform.clone(),
+        project(&log),
+        vec![info("origin", "https://github.com/acme/app")],
+        zero(),
+    );
+    let _run = tokio::spawn(feed.clone().run());
+
+    feed.manual().await;
+    assert_eq!(numbers(&feed.list().await.unwrap()), [7]);
+
+    // The remotes cannot be read: the next cycle fails and the last list stands.
+    refs.break_remotes();
+    platform.lists(vec![(app.clone(), vec![8])]);
+    feed.manual().await;
+
+    assert_eq!(
+        numbers(&feed.list().await.unwrap()),
+        [7],
+        "the failed listing is not shown"
+    );
+    assert_eq!(counting(&log, "list"), 1, "the platforms were not asked again");
+}
+
+#[tokio::test]
+async fn a_read_of_a_feed_with_only_a_failure_lists_again() {
+    let log = Log::default();
+    let app = github("acme/app");
+    let platform = listing(&log, vec![(app.clone(), vec![7])]);
+    let (feed, refs) = feed_of(
+        platform,
+        project(&log),
+        vec![info("origin", "https://github.com/acme/app")],
+        zero(),
+    );
+    let _run = tokio::spawn(feed.clone().run());
+
+    refs.break_remotes();
+    assert!(feed.list().await.is_err(), "the first listing fails");
+
+    // The cause goes away: the next read asks again and answers with that cycle.
+    refs.mend_remotes();
+    assert_eq!(numbers(&feed.list().await.unwrap()), [7], "the next read lists again");
+}
+
+#[tokio::test]
+async fn a_repository_whose_listing_fails_keeps_its_rows_and_shows_the_error() {
+    let log = Log::default();
+    let app = github("acme/app");
+    let lib = github("acme/lib");
+    let remotes = vec![
+        info("origin", "https://github.com/acme/app"),
+        info("lib", "https://github.com/acme/lib"),
+    ];
+    let platform = listing(&log, vec![(app.clone(), vec![1, 2]), (lib.clone(), vec![3])]);
+    let (feed, _) = feed_of(platform.clone(), project(&log), remotes, zero());
+    let _run = tokio::spawn(feed.clone().run());
+
+    feed.manual().await;
+    assert_eq!(numbers(&feed.list().await.unwrap()), [3, 2, 1]);
+
+    // One repository cannot be listed: it keeps its rows beside its error, the other still lists.
+    platform.fails(&app);
+    feed.manual().await;
+    let listed = feed.list().await.unwrap();
+
+    assert_eq!(
+        listed
+            .rows
+            .iter()
+            .map(|r| (&r.remote, r.row.number))
+            .collect::<Vec<_>>(),
+        [(&lib, 3), (&app, 2), (&app, 1)],
+        "the failed repository's rows are kept, newest first"
+    );
+    let app_status = listed.sources.iter().find(|s| s.remote == app).unwrap();
+    assert!(
+        matches!(app_status.error, Some(PlatformError::Rejected(_))),
+        "{app_status:?}"
+    );
+    let lib_status = listed.sources.iter().find(|s| s.remote == lib).unwrap();
+    assert_eq!(lib_status.error, None);
+}
+
+#[tokio::test]
+async fn an_unchanged_list_announces_nothing_and_keeps_a_running_prefetch_a_changed_one_restarts_it() {
+    let log = Log::default();
+    let app = github("acme/app");
+    let platform = listing(&log, vec![(app.clone(), vec![7, 8])]);
+    let (feed, _) = feed_of(
+        platform.clone(),
+        project(&log),
+        vec![info("origin", "https://github.com/acme/app")],
+        Prefetch {
+            pace: Duration::from_secs(3_600),
+            announce: Duration::ZERO,
+        },
+    );
+    let _run = tokio::spawn(feed.clone().run());
+
+    feed.manual().await; // lists 7 and 8 and leaves the details fetched ahead running
+    assert_eq!(counting(&log, "list"), 1);
+    assert_eq!(discussions(&log), 1, "the prefetch runs on the first row");
+
+    // The list is the same: nothing is announced and the running prefetch is left alone.
+    let announced = counting(&log, "list_changed");
+    feed.manual().await;
+    assert_eq!(counting(&log, "list"), 2);
+    assert_eq!(
+        counting(&log, "list_changed"),
+        announced,
+        "an unchanged list is not announced"
+    );
+    assert_eq!(discussions(&log), 1, "the running prefetch was not started over");
+
+    // The list changed: the details fetched ahead are started again.
+    platform.lists(vec![(app.clone(), vec![7, 8, 9])]);
+    feed.manual().await;
+    assert_eq!(
+        counting(&log, "list_changed"),
+        announced + 1,
+        "the changed list is announced"
+    );
+    assert_eq!(
+        discussions(&log),
+        2,
+        "the changed list starts the details fetched ahead again"
+    );
+}
+
+#[tokio::test]
+async fn an_unchanged_cycle_fetches_a_head_a_failed_fetch_left_missing() {
+    let log = Log::default();
+    let app = github("acme/app");
+    let platform = listing(&log, vec![(app.clone(), vec![7])]);
+    let (feed, refs) = feed_of(
+        platform,
+        project(&log),
+        vec![info("origin", "https://github.com/acme/app")],
+        zero(),
+    );
+    let _run = tokio::spawn(feed.clone().run());
+
+    refs.refuse_refs();
+    feed.manual().await; // lists 7, and the heads' fetch is refused
+    assert_eq!(counting(&log, "heads_fetched"), 0, "the heads' fetch failed");
+
+    refs.allow_refs();
+    feed.manual().await; // the list is the same, and the missing head is fetched now
+    assert_eq!(
+        counting(&log, "heads_fetched"),
+        1,
+        "the unchanged cycle fetched the missing head"
+    );
 }
