@@ -125,7 +125,7 @@ use crate::ports::{
 use crate::progress::Tasks;
 use crate::review::{ReviewId, visible_threads};
 use crate::revisions::Revisions;
-use crate::settle::{Settled, Settling};
+use crate::settle::{Settled, Settling, Wanted};
 
 #[derive(Clone, Debug)]
 pub enum SessionError {
@@ -234,6 +234,9 @@ pub struct LiveSession<G, S: LiveStore> {
     /// Whether `follow` is handling a settled result right now, read by whoever waits for the
     /// session to go quiet.
     settling_busy: Arc<AtomicBool>,
+    /// What the settle loop asks before reconciling the working tree: while the tree is not on
+    /// view and has no open review, edits only mark it changed and are not scanned.
+    settle_wanted: Arc<Wanted>,
 }
 
 /// The commit that merged a tip into a branch, how many commits the merge brought in and how many
@@ -385,6 +388,8 @@ impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> L
         state: State,
     ) -> Self {
         let writes = acquisition.store.writes();
+        // A session opens with the working tree on view, so the settle loop wants it at once.
+        let wanted = state.source == Source::WorkingTree;
         Self {
             author: author_of(&acquisition.git).await,
             derived: Arc::new(Derived::new(&acquisition.tasks)),
@@ -405,6 +410,7 @@ impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> L
             exchange: Mutex::new(()),
             lines: Engine::new(Limits::entries(KEPT_LINE_DELTAS)),
             settling_busy: Arc::default(),
+            settle_wanted: Arc::new(Wanted::new(wanted)),
         }
     }
 
@@ -925,6 +931,13 @@ impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> L
     /// announces.
     pub fn settling_busy(&self) -> bool {
         self.settling_busy.load(Ordering::SeqCst)
+    }
+
+    /// The settle loop's gate on the working tree: while the tree is not on view and has no open
+    /// review, edits only mark it changed, and coming on view settles it once. The loop must take
+    /// it ([`Settling::wanted`](crate::settle::Settling::wanted)) for the gate to apply.
+    pub fn settle_wanted(&self) -> Arc<Wanted> {
+        self.settle_wanted.clone()
     }
 
     fn set_degraded(&self, degraded: Option<Degraded>) {

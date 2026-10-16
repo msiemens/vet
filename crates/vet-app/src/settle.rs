@@ -23,6 +23,40 @@ pub struct SettleFlush {
     wake: Notify,
 }
 
+/// Whether the settled tree is wanted: while it is not, file changes only mark it changed and
+/// are not scanned, and the settle loop waits for it to want again. The session flips it as the
+/// working tree goes off and on view or its review opens and ends; a flip wakes the loop.
+#[derive(Debug)]
+pub struct Wanted {
+    wanted: AtomicBool,
+    wake: Notify,
+}
+
+impl Wanted {
+    pub fn new(wanted: bool) -> Self {
+        Self {
+            wanted: AtomicBool::new(wanted),
+            wake: Notify::new(),
+        }
+    }
+
+    /// Whether the settled tree is wanted now.
+    pub fn get(&self) -> bool {
+        self.wanted.load(Ordering::SeqCst)
+    }
+
+    /// Says whether the settled tree is wanted now; a change wakes the settle loop.
+    pub fn set(&self, wanted: bool) {
+        if self.wanted.swap(wanted, Ordering::SeqCst) != wanted {
+            self.wake.notify_one();
+        }
+    }
+
+    fn notified(&self) -> impl std::future::Future<Output = ()> + '_ {
+        self.wake.notified()
+    }
+}
+
 impl SettleFlush {
     /// Asks the settle loop to reconcile now.
     pub fn request(&self) {
@@ -107,6 +141,8 @@ enum Wake {
     Event(WatchEvent),
     Deadline,
     Quiet,
+    /// The settled tree came to be wanted, or stopped being wanted; look at it again.
+    Wanted,
 }
 
 /// Watcher events and the debounce deadline in, settled snapshots out. Every
@@ -129,6 +165,11 @@ pub struct Settling<W, C> {
     edits_reported: bool,
     /// A client's request to reconcile now, taken on the next look for work.
     flush: Option<Arc<SettleFlush>>,
+    /// Whether the settled tree is wanted; none is always. While it is not, edits mark it
+    /// changed and are not reconciled until it is wanted again.
+    wanted: Option<Arc<Wanted>>,
+    /// The tree was touched while it was not wanted, so reconciling it whole is owed.
+    owed: bool,
 }
 
 impl<W: Watcher, C: Clock> Settling<W, C> {
@@ -144,6 +185,8 @@ impl<W: Watcher, C: Clock> Settling<W, C> {
             reporting_edits: false,
             edits_reported: false,
             flush: None,
+            wanted: None,
+            owed: false,
         }
     }
 
@@ -152,6 +195,18 @@ impl<W: Watcher, C: Clock> Settling<W, C> {
     pub fn flushable(mut self, flush: Arc<SettleFlush>) -> Self {
         self.flush = Some(flush);
         self
+    }
+
+    /// Takes the gate on the settled tree: while it is not wanted, file changes only mark it
+    /// changed and are not reconciled until it is wanted again.
+    pub fn wanted(mut self, wanted: Arc<Wanted>) -> Self {
+        self.wanted = Some(wanted);
+        self
+    }
+
+    /// Whether the settled tree is wanted now.
+    fn wanted_now(&self) -> bool {
+        self.wanted.as_ref().is_none_or(|wanted| wanted.get())
     }
 
     /// Also resolves with [`Settled::Edits`] whenever edits start or stop waiting to settle.
@@ -191,19 +246,33 @@ impl<W: Watcher, C: Clock> Settling<W, C> {
     /// as soon as a branch ref is written: refs are looked at as they move, not debounced.
     pub async fn next_settled<G: Scanner, S>(&mut self, acquisition: &Acquisition<G, S>) -> Result<Settled, GitError> {
         loop {
-            let waiting = self.settler.deadline().is_some();
+            let wanted = self.wanted_now();
+            let waiting = self.settler.deadline().is_some() && wanted;
             if self.reporting_edits && waiting != self.edits_reported {
                 self.edits_reported = waiting;
                 return Ok(Settled::Edits(waiting));
             }
+            if wanted && std::mem::take(&mut self.owed) {
+                // The tree was touched while it was not wanted: reconcile it whole, as on resume.
+                self.settler.record(Dirty::All, self.clock.now());
+            }
             match self.wake().await {
+                Wake::Wanted => {}
                 Wake::Event(WatchEvent::RefsMoved) => return Ok(Settled::RefsMoved),
                 Wake::Event(WatchEvent::Dirty(paths)) => {
                     self.touched();
-                    self.settler.record(Dirty::Paths(paths), self.clock.now());
+                    if self.wanted_now() {
+                        self.settler.record(Dirty::Paths(paths), self.clock.now());
+                    } else {
+                        self.owed = true;
+                    }
                 }
                 Wake::Event(WatchEvent::MustRescan | WatchEvent::Degraded(_)) => {
                     self.touched();
+                    if !self.wanted_now() {
+                        self.owed = true;
+                        continue;
+                    }
                     let snapshot = acquisition.reconcile(Dirty::All).await?.snapshot;
                     if Some(snapshot.id) != self.candidate.or(self.settled) {
                         self.candidate = Some(snapshot.id);
@@ -248,16 +317,27 @@ impl<W: Watcher, C: Clock> Settling<W, C> {
     }
 
     async fn wake(&mut self) -> Wake {
-        let quiet_deadline = self.quiet_deadline();
+        let wanted = self.wanted_now();
+        let quiet_deadline = if wanted { self.quiet_deadline() } else { None };
         let mut event = pin!(self.watcher.next());
-        let mut timer = self
-            .settler
-            .deadline()
-            .map(|deadline| Box::pin(self.clock.sleep_until(deadline)));
+        let mut timer = if wanted {
+            self.settler
+                .deadline()
+                .map(|deadline| Box::pin(self.clock.sleep_until(deadline)))
+        } else {
+            None
+        };
         let mut quiet = quiet_deadline.map(|deadline| Box::pin(self.clock.sleep_until(deadline)));
         let flush = self.flush.clone();
         let mut flushed = flush.as_ref().map(|flush| Box::pin(flush.notified()));
+        let gate = self.wanted.clone();
+        let mut flipped = gate.as_ref().map(|gate| Box::pin(gate.notified()));
         std::future::poll_fn(|cx| {
+            if let Some(flipped) = flipped.as_mut()
+                && flipped.as_mut().poll(cx).is_ready()
+            {
+                return Poll::Ready(Wake::Wanted);
+            }
             if let Some(flushed) = flushed.as_mut()
                 && flushed.as_mut().poll(cx).is_ready()
                 && let Some(flush) = &flush

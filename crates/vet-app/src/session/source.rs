@@ -162,7 +162,15 @@ impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> L
         tree.revision = st.revision.max(tree.revision) + 1;
         let outgoing = st.replace(incoming);
         st.parked().insert(outgoing.source.clone(), outgoing);
+        // The settle loop works on the working tree only while it is on view or its review is
+        // open; another changeset on view parks an unreviewed one, which is then left alone.
+        let wanted = st.source == Source::WorkingTree
+            || st
+                .parked()
+                .get(&Source::WorkingTree)
+                .is_some_and(|tree| tree.review.is_some());
         st.publish();
+        self.settle_wanted.set(wanted);
         self.revisions.advance(st.revision);
         Ok(Some(st.revision))
     }
