@@ -10,11 +10,11 @@ import type { Place } from "../state/foundPlace";
 import type { Thread } from "../generated/Thread";
 import { browse } from "../state/browse";
 import { backendSettings } from "../state/backendSettings.svelte";
-import { changeset } from "../state/changeset.svelte";
 import { keyId } from "../state/changesetKey";
 import { commands } from "../state/commands";
 import { canShowFolder, showFolder } from "../state/host";
 import { notices } from "../state/notices.svelte";
+import { opened } from "../state/opened.svelte";
 import { queue } from "../state/queue.svelte";
 import { serverList } from "../state/serverList.svelte";
 import { session } from "../state/session.svelte";
@@ -72,7 +72,7 @@ export async function showChangesSinceReview() {
   shell.show("review");
   const since = defaultRange(await versions.load());
   if (!since) notices.show("Nothing has changed since your last review");
-  await changeset.setRange(since);
+  await opened.session?.setRange(since);
 }
 
 /** Shows a web address in the browser, if there is one. */
@@ -83,7 +83,7 @@ export function showInBrowser(url: string | undefined) {
 /** Goes to the first flagged hunk; when the range or commit on view has none, to the first of the whole changeset. */
 export async function goToFirstFlagged() {
   if (reviewActions.firstFlagged()) return;
-  await changeset.showWhole();
+  await opened.session?.showWhole();
   await tick();
   reviewActions.firstFlagged();
 }
@@ -144,9 +144,9 @@ export function openPlace(set: FindSet, place: Place, ownTab: boolean) {
 /** Does what was chosen in Search Everywhere, which has closed and given the focus back. */
 export const choiceHost: ChoiceHost = {
   showReview: () => shell.show("review"),
-  commitShown: () => changeset.shownCommit !== undefined,
+  commitShown: () => opened.session?.shownCommit !== undefined,
   showWhole: async () => {
-    await changeset.showWhole();
+    await opened.session?.showWhole();
     await tick();
   },
   openOnScreen: (path, line) => appState.whenReview((c) => void c.openSource(ON_SCREEN, path, line)),

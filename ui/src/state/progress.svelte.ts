@@ -5,7 +5,7 @@
 import type { Task } from "../generated/Task";
 import { Debounced } from "../lib/debounced";
 import type { Backend } from "./backend";
-import { changeset } from "./changeset.svelte";
+import { opened } from "./opened.svelte";
 import { session } from "./session.svelte";
 import { TaskBoard } from "./taskBoard";
 
@@ -50,7 +50,7 @@ class ProgressStore {
 
   /** While the project opens the footer is all there is to see, so its tasks show at once. */
   private delay(): number {
-    return changeset.layout ? SHOWN_AFTER_MS : 0;
+    return opened.session?.layout ? SHOWN_AFTER_MS : 0;
   }
 
   private publish() {

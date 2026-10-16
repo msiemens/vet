@@ -1,6 +1,6 @@
 import type { Backend } from "./backend";
-import { changeset } from "./changeset.svelte";
 import { type Followed, keepCurrent } from "./keepCurrent";
+import { opened } from "./opened.svelte";
 import { session } from "./session.svelte";
 
 /** Keeps a store of the open project's data right; see `keepCurrent`. */
@@ -12,7 +12,7 @@ export function followProject(backend: Backend, held: Followed): () => void {
           if (event.project === backend.project) listener(event);
         }),
       onResync: (listener) => session.onResync(() => listener()),
-      onOpening: (listener) => changeset.onOpening(listener),
+      onOpening: (listener) => opened.onOpening(listener),
     },
     held,
   );

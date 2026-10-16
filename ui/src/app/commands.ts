@@ -12,11 +12,11 @@ import { searchCommands } from "../features/search";
 import { recentCommands } from "../features/welcome";
 import { appCommands } from "../state/appCommands";
 import { keyId } from "../state/changesetKey";
-import { changeset } from "../state/changeset.svelte";
 import { commands } from "../state/commands";
 import { findSets } from "../state/findSets.svelte";
 import { canQuit, quit } from "../state/host";
 import { keymap } from "../state/keymap.svelte";
+import { opened } from "../state/opened.svelte";
 import { platform } from "../state/platform.svelte";
 import { problems } from "../state/problems.svelte";
 import { queue } from "../state/queue.svelte";
@@ -45,10 +45,10 @@ export function registerCommands(): () => void {
       closeProject: () => void session.closeRepo(),
       finishReview: () => (appState.dialog = "finish"),
       changesSinceReview: () => void showChangesSinceReview(),
-      wholeChangeset: () => void changeset.showWhole(),
+      wholeChangeset: () => void opened.session?.showWhole(),
       refresh: () => void queue.refresh(),
-      reconfirmAll: () => void changeset.reconfirmAll(),
-      openChangeset: (key) => void changeset.openChangeset(key),
+      reconfirmAll: () => void opened.session?.reconfirmAll(),
+      openChangeset: (key) => void opened.open(key),
       showScreen: (s) => shell.show(s),
       showChangesets: () => {
         shell.show("review");
@@ -87,7 +87,7 @@ export function registerCommands(): () => void {
     }),
     ...queueCommands({
       open: (key) => {
-        if (!queue.onView || keyId(queue.onView) !== keyId(key)) void changeset.openChangeset(key);
+        if (!queue.onView || keyId(queue.onView) !== keyId(key)) void opened.open(key);
         shell.show("review");
       },
       copyText: (text) => void copyText(text),
@@ -121,18 +121,18 @@ export function registerCommands(): () => void {
   });
   const stopContext = commands.provide(() => ({
     repoOpen: !!session.repo,
-    reviewOpen: changeset.reviewOpen,
+    reviewOpen: opened.session?.reviewOpen ?? false,
     queueShown: shell.screen === "queue",
     paletteOpen: palette.open,
     canQuit,
-    changesetOpen: !!session.repo && !!changeset.layout,
-    rangeShown: !!changeset.range,
-    reconfirmable: changeset.baseChangedCount > 0,
+    changesetOpen: !!session.repo && !!opened.session?.layout,
+    rangeShown: !!opened.session?.range,
+    reconfirmable: (opened.session?.baseChangedCount ?? 0) > 0,
     pullRequest: platform.info !== undefined,
     outgoing: platform.outgoingCount,
     voteSeparate: !!platform.traits?.verdictSeparate,
     voteBlock: voteBlocked(platform.info),
-    manyCommits: changeset.commitCount > 1,
+    manyCommits: (opened.session?.commitCount ?? 0) > 1,
     problems:
       appState.controller?.problemFile !== undefined &&
       problems.problemsOf([appState.controller.problemFile]).length > 0,

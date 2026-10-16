@@ -5,7 +5,7 @@
   import FileIcon from "../../lib/ui/FileIcon.svelte";
   import ScrollArea from "../../lib/ui/ScrollArea.svelte";
   import TreeRow from "../../lib/ui/TreeRow.svelte";
-  import { changeset } from "../../state/changeset.svelte";
+  import { folders } from "../../state/projectRequests";
   import { type FolderRow, folderRows } from "./folderRows";
 
   let { onpick, oncancel }: { onpick: (path: string) => void; oncancel: () => void } = $props();
@@ -17,7 +17,7 @@
 
   async function list(path: string) {
     if (listed.has(path)) return;
-    const names = await changeset.folders(path);
+    const names = await folders(path);
     if (names) listed.set(path, names);
   }
 

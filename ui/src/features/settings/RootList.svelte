@@ -3,7 +3,7 @@
 <script lang="ts">
   import FileIcon from "../../lib/ui/FileIcon.svelte";
   import Popover from "../../lib/ui/Popover.svelte";
-  import { changeset } from "../../state/changeset.svelte";
+  import { folders } from "../../state/projectRequests";
   import { Latest } from "../../state/resource";
   import FilterList from "./FilterList.svelte";
   import FolderPicker from "./FolderPicker.svelte";
@@ -36,7 +36,7 @@
 
   async function problemOf(path: string): Promise<string | undefined> {
     if (roots.includes(path)) return "Already a review root.";
-    return (await changeset.folders(path)) ? undefined : `There is no folder "${path}" in this repository.`;
+    return (await folders(path)) ? undefined : `There is no folder "${path}" in this repository.`;
   }
 
   /** Checks the typed path as it is typed; an answer to an older text is dropped. */
