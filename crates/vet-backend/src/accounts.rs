@@ -46,7 +46,7 @@ impl Orchestrator {
 
     /// The credential of `host` changed: the connections of the process are told, every open
     /// project's pull request feed lists again, and the open pull requests of the host are synced
-    /// again with it.
+    /// and have their checks read again with it.
     async fn accounts_changed(&self, host: &str) {
         self.process_subscribers.broadcast(Event::AccountsChanged);
         for open in self.projects.all().await {
@@ -57,6 +57,7 @@ impl Orchestrator {
             if let Source::PullRequest { remote, .. } = booted.session.source().await
                 && remote.account() == host
             {
+                open.policy.accounts_changed();
                 sync_in_background(open.clone());
             }
         }

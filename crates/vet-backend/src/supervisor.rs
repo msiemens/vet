@@ -24,6 +24,8 @@ pub(crate) struct Inputs {
     problems: u32,
     /// Bumped by an action on a run, after which the checks are read again.
     checks: u32,
+    /// Bumped when the credentials of the host of the pull request on view changed.
+    accounts: u32,
 }
 
 /// What a run of a keyed kind was started for.
@@ -34,6 +36,8 @@ struct Key {
     servers: u32,
     /// Which asking for a rerun the run answers; zero for a kind that cannot be asked for one.
     rerun: u32,
+    /// Which change of the accounts the run answers; only the checks depend on it.
+    accounts: u32,
 }
 
 /// The key each keyed kind last ran for, none while it was not wanted.
@@ -123,6 +127,12 @@ impl Policy {
             .send_modify(|inputs| inputs.checks = inputs.checks.wrapping_add(1));
     }
 
+    /// The credentials the checks are read with changed.
+    pub(crate) fn accounts_changed(&self) {
+        self.inputs
+            .send_modify(|inputs| inputs.accounts = inputs.accounts.wrapping_add(1));
+    }
+
     /// The turns for starting servers, of which one is taken at a time.
     pub(crate) fn starts(&self) -> &Starts {
         &self.starts
@@ -183,6 +193,7 @@ impl Reconciliation<'_> {
             policy: self.inputs.policy,
             servers: 0,
             rerun: 0,
+            accounts: 0,
         };
         let retire = state.revision.map(key);
         let servers = state.revision.filter(|_| state.shown).map(|revision| Key {
@@ -196,6 +207,7 @@ impl Reconciliation<'_> {
         let checks = state.revision.filter(|_| state.pull_request).map(|revision| Key {
             policy: 0,
             rerun: self.inputs.checks,
+            accounts: self.inputs.accounts,
             ..key(revision)
         });
         let checks_after_action = matches!(
@@ -288,6 +300,10 @@ mod tests {
         policy.rerun_checks();
         assert_eq!(decide(on_view(1, true, true)).await, (keep, keep, start));
 
+        // An accounts change moves the checks alone, and they are read as plainly as for a revision.
+        policy.accounts_changed();
+        assert_eq!(decide(on_view(1, true, true)).await, (keep, keep, start));
+
         // A working tree wants no checks.
         assert_eq!(decide(on_view(1, true, false)).await.2, Change::Stop);
     }
@@ -303,6 +319,8 @@ mod tests {
         assert_eq!(decide(1).await, (Change::Start(1), false));
         policy.rerun_checks();
         assert_eq!(decide(1).await, (Change::Start(1), true));
+        assert_eq!(decide(2).await, (Change::Start(2), false));
+        policy.accounts_changed();
         assert_eq!(decide(2).await, (Change::Start(2), false));
     }
 

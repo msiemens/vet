@@ -374,6 +374,31 @@ async fn a_revision_move_on_a_pull_request_reads_the_checks_again() {
     assert_eq!(again[0].state, Some(CiState::Success));
 }
 
+#[tokio::test]
+async fn signing_in_again_reads_the_checks_of_the_pull_request_on_view_again() {
+    let (mock, fake, repo, _scratch) = fixture();
+    mock.lock().unwrap().check_runs = CHECKS_SUCCESS.to_owned();
+    let (_handler, mut client) = backend(repo.path(), &fake.base()).await;
+    let project = open_review(&client, repo.path()).await;
+    let _ = next_checks(&mut client.inbox, project, Duration::from_secs(5))
+        .await
+        .expect("a round");
+
+    client
+        .call(Request::SetCredentials {
+            host: "github.com".into(),
+            token: vet_protocol::Secret("gho_secret_2".into()),
+            validate: false,
+        })
+        .await
+        .unwrap();
+
+    let (again, ..) = next_checks(&mut client.inbox, project, Duration::from_secs(5))
+        .await
+        .expect("the checks are read again with the new credentials");
+    assert_eq!(again[0].state, Some(CiState::Success));
+}
+
 #[cfg(debug_assertions)]
 #[tokio::test]
 async fn a_working_tree_starts_no_checks_run() {
