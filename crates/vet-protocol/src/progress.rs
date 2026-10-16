@@ -23,6 +23,11 @@ pub enum TaskKind {
     Fetch,
     /// Keeping the working tree's changed files in Vet's store, ahead of a review.
     Store,
+    /// Syncing the threads of the pull request on view with its platform. Announced when a sync
+    /// ends: failed if the platform could not be asked, finished otherwise.
+    Sync,
+    /// Reading the checks of the pull request on view. Announced as `Sync` is.
+    Checks,
 }
 
 #[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize, TS)]

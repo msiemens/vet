@@ -6,6 +6,7 @@ use std::sync::{Arc, OnceLock, Weak};
 use futures::FutureExt;
 use vet_app::changeset::Source;
 use vet_app::platform::{RemoteKey, Standing};
+use vet_app::progress::TaskKind;
 use vet_app::session::{Keep, SyncReport, VoteSent};
 use vet_app::supervise::{Supervisor, Trigger};
 use vet_core::review::{MessageId, Verdict};
@@ -182,14 +183,32 @@ pub(crate) fn trigger(supervisor: &Supervisor, entry: Arc<OnceLock<Weak<Open>>>)
                 return SyncOutcome::Failed("the project was closed".into());
             };
             tracing::debug!(?reasons, "syncing the pull request");
-            match open.booted().await {
+            let outcome = match open.booted().await {
                 Ok(booted) => sync_pull_request(&open, booted).await,
                 Err(error) => SyncOutcome::Failed(error.to_string()),
-            }
+            };
+            show(&open, &outcome);
+            outcome
         }
         .boxed()
     })
 }
+
+/// Tells the footer how the sync went: a failure stays shown until a sync succeeds. A sync that
+/// had nothing to do, or ended with the project, says nothing.
+fn show(open: &Open, outcome: &SyncOutcome) {
+    if open.supervisor.closed() {
+        return;
+    }
+    match outcome {
+        SyncOutcome::Synced { .. } => open.tasks.start(TaskKind::Sync, TITLE).finish(),
+        SyncOutcome::Failed(message) => open.tasks.start(TaskKind::Sync, TITLE).fail(message.clone()),
+        SyncOutcome::NotPullRequest | SyncOutcome::SourceChanged => {}
+    }
+}
+
+/// What the footer calls a failed sync.
+const TITLE: &str = "Pull request sync";
 
 fn merge(into: &mut Vec<Reason>, more: Vec<Reason>) {
     for reason in more {

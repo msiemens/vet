@@ -138,10 +138,8 @@ impl Supervisor {
             (std::mem::take(&mut runs.tasks), std::mem::take(&mut runs.cooperative))
         };
         tasks.abort_all();
-        let ended = tokio::time::timeout(self.0.bound, async {
-            while cooperative.join_next().await.is_some() {}
-        })
-        .await;
+        let ended =
+            tokio::time::timeout(self.0.bound, async { while cooperative.join_next().await.is_some() {} }).await;
         if ended.is_err() {
             tracing::warn!(left = cooperative.len(), "cooperating runs did not end in time");
             cooperative.abort_all();
@@ -152,7 +150,10 @@ impl Supervisor {
         })
         .await;
         if joined.is_err() {
-            tracing::warn!(left = tasks.len() + cooperative.len(), "background runs did not end in time");
+            tracing::warn!(
+                left = tasks.len() + cooperative.len(),
+                "background runs did not end in time"
+            );
             tasks.detach_all();
             cooperative.detach_all();
         }
@@ -508,10 +509,9 @@ mod tests {
     }
 
     /// A trigger whose run notes its reasons, waits for `gate` and answers with how many runs began.
-    fn gated(
-        supervisor: &Supervisor,
-        gate: &Arc<Notify>,
-    ) -> (Trigger<Vec<u32>, usize>, Arc<Mutex<Vec<Vec<u32>>>>) {
+    type Began = Arc<Mutex<Vec<Vec<u32>>>>;
+
+    fn gated(supervisor: &Supervisor, gate: &Arc<Notify>) -> (Trigger<Vec<u32>, usize>, Began) {
         let began = Arc::new(Mutex::new(Vec::new()));
         let trigger = Trigger::new(
             supervisor.clone(),
@@ -544,7 +544,11 @@ mod tests {
 
         let first = trigger.request(vec![1]);
         eventually(|| lock(&began).len() == 1).await;
-        let later = [trigger.request(vec![2]), trigger.request(vec![3]), trigger.request(vec![4])];
+        let later = [
+            trigger.request(vec![2]),
+            trigger.request(vec![3]),
+            trigger.request(vec![4]),
+        ];
 
         gate.notify_one();
         assert_eq!(first.wait().await, Some(1));

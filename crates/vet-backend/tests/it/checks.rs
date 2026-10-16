@@ -11,7 +11,8 @@ use std::time::Duration;
 use tokio::sync::mpsc::Receiver;
 use vet_backend::Config;
 use vet_protocol::{
-    ChangesetKey, CiState, CommitChecks, Event, PipelineAction, ProjectId, Request, Response, ServerMessage,
+    ChangesetKey, CiState, CommitChecks, Event, PipelineAction, ProjectId, Request, Response, ServerMessage, TaskKind,
+    TaskState,
 };
 
 #[cfg(debug_assertions)]
@@ -411,6 +412,48 @@ async fn signing_in_again_reads_the_checks_of_the_pull_request_on_view_again() {
         asked.last().is_some_and(|a| a.ends_with("gho_secret_2")),
         "answered read"
     );
+}
+
+#[tokio::test]
+async fn a_failing_checks_refresh_shows_a_failed_task_and_a_later_success_clears_it() {
+    let (mock, fake, repo, _scratch) = fixture();
+    mock.lock().unwrap().checks_failing = true;
+    let (_handler, mut client) = backend(repo.path(), &fake.base()).await;
+    let project = open_review(&client, repo.path()).await;
+    let tasks = |inbox: &mut Receiver<ServerMessage>| {
+        let mut states = Vec::new();
+        while let Ok(message) = inbox.try_recv() {
+            if let ServerMessage::Event {
+                event: Event::Task(task),
+            } = message
+                && task.kind == TaskKind::Checks
+            {
+                states.push(task.state);
+            }
+        }
+        states
+    };
+    client.call(Request::WaitForQuiet { project }).await.unwrap();
+    let failed = tasks(&mut client.inbox);
+    assert!(
+        matches!(failed.last(), Some(TaskState::Failed { .. })),
+        "a failed read is shown: {failed:?}"
+    );
+
+    {
+        let mut mock = mock.lock().unwrap();
+        mock.checks_failing = false;
+        mock.check_runs = CHECKS_SUCCESS.to_owned();
+    }
+    client
+        .call(Request::ChangePipeline {
+            project,
+            action: PipelineAction::RerunAll { run: "5".to_owned() },
+        })
+        .await
+        .unwrap();
+    client.call(Request::WaitForQuiet { project }).await.unwrap();
+    assert_eq!(tasks(&mut client.inbox).last(), Some(&TaskState::Finished));
 }
 
 #[cfg(debug_assertions)]

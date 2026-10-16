@@ -15,6 +15,8 @@ pub fn task(project: p::ProjectId, t: &Task) -> p::Task {
             TaskKind::ServerIndex => p::TaskKind::ServerIndex,
             TaskKind::Fetch => p::TaskKind::Fetch,
             TaskKind::Store => p::TaskKind::Store,
+            TaskKind::Sync => p::TaskKind::Sync,
+            TaskKind::Checks => p::TaskKind::Checks,
         },
         title: t.title.clone(),
         done: t.done,

@@ -6,6 +6,7 @@ use std::time::Duration;
 
 use vet_app::changeset::Source;
 use vet_app::platform::{CiState, Platform, PlatformError, Standing, commits_checks};
+use vet_app::progress::TaskKind;
 use vet_infra::clock::unix_now;
 use vet_mapping as mapping;
 use vet_protocol::Event;
@@ -56,6 +57,19 @@ async fn watched_commits(session: &Live) -> Vec<String> {
     commits
 }
 
+/// What the footer calls a failed checks refresh.
+const TITLE: &str = "Checks refresh";
+
+/// Tells the footer how a read of the checks went: a failure stays shown until a read succeeds. A
+/// rate limit is waited out, so it says nothing.
+fn show(open: &Open, error: Option<&PlatformError>) {
+    match error {
+        None => open.tasks.start(TaskKind::Checks, TITLE).finish(),
+        Some(PlatformError::RateLimited { .. }) => {}
+        Some(error) => open.tasks.start(TaskKind::Checks, TITLE).fail(error.to_string()),
+    }
+}
+
 /// The checks of the changeset on view, asked of the platform and pushed, again while some run. A
 /// rate limit the account's health knows is waited out and then resumed; another failure of the
 /// account stops the run; so does nothing being left to wait for, once an after-action `settle`
@@ -77,6 +91,7 @@ async fn run(open: Arc<Open>, pace: Duration, mut settle: Option<Duration>) {
             return;
         };
         let (found, error) = commits_checks(&hosting, &remote, &commits).await;
+        show(&open, error.as_ref());
         let (checks, error, limited_until) = mapping::checks_parts(&found, error.as_ref());
         open.subscribers.broadcast(Event::ChecksChanged {
             project: open.id,

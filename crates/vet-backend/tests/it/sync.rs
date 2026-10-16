@@ -10,7 +10,7 @@ use std::time::{Duration, Instant};
 
 use vet_backend::{Config, Orchestrator};
 use vet_infra::platform::fake::Fake;
-use vet_protocol::{ChangesetKey, Event, ProjectId, Request, Secret, ServerMessage, Verdict};
+use vet_protocol::{ChangesetKey, Event, ProjectId, Request, Secret, ServerMessage, TaskKind, TaskState, Verdict};
 
 use crate::common::{Client, background_live, background_started};
 use crate::prefetch::{Mock, backend_with, config, fixture, remote};
@@ -248,6 +248,40 @@ async fn a_sync_for_a_source_no_longer_on_view_announces_nothing() {
         })
         .collect();
     assert!(told.is_empty(), "{told:#?}");
+}
+
+/// The sync tasks the client heard of, as `(state)`.
+fn sync_tasks(events: &[Event]) -> Vec<TaskState> {
+    events
+        .iter()
+        .filter_map(|e| match e {
+            Event::Task(t) if t.kind == TaskKind::Sync => Some(t.state.clone()),
+            _ => None,
+        })
+        .collect()
+}
+
+#[tokio::test]
+async fn a_failing_sync_shows_a_failed_task_and_a_later_success_clears_it() {
+    let mut rig = Rig::start(config()).await;
+    rig.mock.lock().unwrap().delay = Duration::ZERO;
+    {
+        let mut mock = rig.mock.lock().unwrap();
+        mock.refusal = 500;
+        mock.limit_after = Some(0);
+    }
+    rig.heard();
+
+    rig.sync_threads().await;
+    let failed = sync_tasks(&rig.heard());
+    assert!(
+        matches!(failed.last(), Some(TaskState::Failed { .. })),
+        "a failed sync is shown: {failed:?}"
+    );
+
+    rig.mock.lock().unwrap().limit_after = None;
+    rig.sync_threads().await;
+    assert_eq!(sync_tasks(&rig.heard()).last(), Some(&TaskState::Finished));
 }
 
 #[tokio::test]

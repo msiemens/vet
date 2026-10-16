@@ -77,6 +77,8 @@ pub(crate) struct Mock {
     pub(crate) checks_pending_from: Option<usize>,
     /// How many check-run reads are refused with a rate limit (429, `Retry-After: 1`) first.
     pub(crate) checks_refusals: usize,
+    /// Whether check-run reads fail with a server error, which is no rate limit.
+    pub(crate) checks_failing: bool,
     /// How many check-run reads were answered, refusals included.
     pub(crate) checks_calls: usize,
     /// When set, check-run reads that do not carry this token are refused as unauthorized (401).
@@ -268,6 +270,9 @@ fn github(mock: Arc<Mutex<Mock>>) -> Fake {
                 return Canned::status(401, r#"{"message":"Bad credentials"}"#);
             }
             mock.checks_calls += 1;
+            if mock.checks_failing {
+                return Canned::status(500, r#"{"message":"broken"}"#);
+            }
             if mock.checks_refusals > 0 {
                 mock.checks_refusals -= 1;
                 return Canned::status(429, r#"{"message":"slow down"}"#).with("Retry-After", "1");
