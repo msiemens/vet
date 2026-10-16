@@ -755,7 +755,7 @@ fn start_servers_in_background(open: Arc<Open>) {
             booted.retire_disallowed_servers().await;
         }
     };
-    tokio::spawn(crate::background::tracked(&open, "retire", retire));
+    open.supervisor.start("retire", open.supervisor.track("retire", retire));
     if !open.screens.shown() {
         return;
     }
@@ -767,8 +767,7 @@ fn start_servers_in_background(open: Arc<Open>) {
             booted.start_servers().await;
         }
     };
-    let task = crate::background::tracked(&open, "servers", task);
-    tokio::spawn(task);
+    open.supervisor.start("servers", open.supervisor.track("servers", task));
 }
 
 /// Scans a project that has not scanned yet, so opening does not wait for the scan.

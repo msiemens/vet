@@ -21,8 +21,8 @@ const COMPARED_AT_ONCE: usize = 2;
 /// Starts (or restarts) the task that analyses the changeset's files for problems. A newer run
 /// replaces the older; the review screen going away or the project closing stops it.
 pub(crate) fn refresh_problems_in_background(open: Arc<Open>) {
-    let task = tokio::spawn(crate::background::tracked(&open, "problems", run(open.clone())));
-    open.keep_problems(task.abort_handle());
+    open.supervisor
+        .replace("problems", open.supervisor.track("problems", run(open.clone())));
 }
 
 /// Analyses the changed files with text, the open ones first: first each file's target side, so the

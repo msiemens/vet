@@ -91,11 +91,11 @@ pub(crate) fn fetch_periodically(open: &Arc<Open>, interval: Duration) {
         let session = session.clone();
         async move {
             if let Some(open) = session.upgrade() {
-                crate::background::tracked(&open, "fetch", fetch_and_report(&open, Asked::Timer)).await;
+                let tick = open.supervisor.track("fetch", fetch_and_report(&open, Asked::Timer));
+                tick.await;
                 open.feed().timer();
             }
         }
     });
-    let task = tokio::spawn(fetching);
-    open.keep_fetching(task.abort_handle());
+    open.supervisor.replace("fetching", fetching);
 }

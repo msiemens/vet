@@ -12,7 +12,6 @@ use std::sync::{Arc, Mutex, OnceLock, Weak};
 use std::time::{Duration, SystemTime};
 
 use tokio::sync::OnceCell;
-use tokio::task::AbortHandle;
 use vet_app::changeset::{RemoteKey, Source};
 use vet_app::fetch::Fetch;
 use vet_app::ignore::IgnoringWatcher;
@@ -22,6 +21,7 @@ use vet_app::registry::{Resident, Subscribers};
 use vet_app::semantics::{Links, Semantics};
 use vet_app::session::RevisionView;
 use vet_app::settle::{SettleFlush, Settling};
+use vet_app::supervise::Supervisor;
 use vet_core::content::RepoPath;
 use vet_infra::budget::{Budget, Budgets, FETCH_IO};
 use vet_infra::clock::{TokioClock, TokioDetach, unix_now};
@@ -38,7 +38,6 @@ use vet_protocol::{Event, ProjectId, Response};
 use vet_semantic::pool::Supervision;
 use vet_semantic::ports::Backend;
 
-use crate::background::Background;
 use crate::caches::PersistentAnswers;
 use crate::error::{Error, Result};
 use crate::events::{Connection, edits_pending, settled};
@@ -91,25 +90,6 @@ pub(crate) async fn kind_of(remote: &RemoteKey, accounts: &PlatformAccounts) -> 
     }
 }
 
-/// The latest background task of one kind that a project runs: a newer one replaces the older and
-/// stops it.
-#[derive(Default)]
-struct TaskSlot(Mutex<Option<AbortHandle>>);
-
-impl TaskSlot {
-    fn keep(&self, task: AbortHandle) {
-        if let Some(older) = lock(&self.0).replace(task) {
-            older.abort();
-        }
-    }
-
-    fn stop(&self) {
-        if let Some(task) = lock(&self.0).take() {
-            task.abort();
-        }
-    }
-}
-
 /// What one open project runs on.
 pub(crate) struct Wired {
     /// The background work of the project, announced to its subscribers.
@@ -126,31 +106,17 @@ pub(crate) struct Wired {
     pub screens: ReviewScreens,
     plan: Plan,
     booted: OnceCell<Arc<Booted>>,
-    settling: TaskSlot,
     /// Whether edits of the working tree wait to settle, as the subscribers were last told.
     edits_waiting: Arc<AtomicBool>,
     /// Whether a ref write waits for its window before the branch on view is looked at again.
     refs_waiting: Arc<AtomicBool>,
-    fetching: TaskSlot,
-    /// The copy of the working tree's content ahead of a review; a newer tree's replaces it.
-    copying: TaskSlot,
     /// The pull request feed: the last listing, and the cycle that keeps it. Its run ends with the
     /// session.
     feed: Feed,
-    feeding: TaskSlot,
-    /// The checks of the changeset on view, refreshed while the review screen shows it; a newer
-    /// run replaces the older, and the project closing stops it.
-    checking: TaskSlot,
     /// How long the checks task waits between two rounds while some checks still run.
     checks_pace: Duration,
     /// How long after an action on a run the checks are read once more.
     checks_settle: Duration,
-    /// The changed symbols of the changeset on view, analysed in the background while the review
-    /// screen shows it; a newer run replaces the older, and the project closing stops it.
-    symbols: TaskSlot,
-    /// The diagnostics of the changeset on view, analysed in the background while the review screen
-    /// shows it; a newer run replaces the older, and the project closing stops it.
-    problems: TaskSlot,
     /// The changed files the viewer has open, which the background analysis reads first.
     open_files: Arc<Mutex<Vec<String>>>,
     closed: AtomicBool,
@@ -161,8 +127,9 @@ pub(crate) struct Wired {
     /// A debug build only.
     #[cfg(debug_assertions)]
     pub(crate) analysis_failures: Arc<crate::analysis::Failures>,
-    /// How often each background task of this project was started and how many run now.
-    pub(crate) background: Arc<Background>,
+    /// The project's background runs: the settle loop, the fetch timer, the feed, the analysis, the
+    /// checks, the copy ahead and the server starts. They end with the project.
+    pub(crate) supervisor: Supervisor,
     /// For tests: how many boots this project attempted and how many settle loops it started, so
     /// a failed boot can be told from a boot that never happened, and a retry from a second loop.
     /// A debug build only.
@@ -200,7 +167,7 @@ impl Wired {
     pub(crate) fn quiet(&self) -> bool {
         let settling = self.booted_now().is_none_or(|booted| !booted.session.settling_busy());
         !self.tasks.any_running()
-            && self.background.live(self.plan.id) == 0
+            && self.supervisor.live() == 0
             && !self.edits_waiting()
             && !self.refs_waiting()
             && settling
@@ -228,25 +195,9 @@ impl Wired {
         Ok(self.hosting(self.kind_of(remote).await?))
     }
 
-    /// Hands over the task that fetches periodically, which ends with the session.
-    pub(crate) fn keep_fetching(&self, task: AbortHandle) {
-        self.fetching.keep(task);
-    }
-
     /// The project's pull request feed, keeping the last listing.
     pub(crate) fn feed(&self) -> &Feed {
         &self.feed
-    }
-
-    /// Hands over the task that runs the pull request feed, which ends with the session.
-    pub(crate) fn keep_feeding(&self, task: AbortHandle) {
-        self.feeding.keep(task);
-    }
-
-    /// Hands over the task that refreshes the changeset's checks; a newer run replaces it, and it
-    /// ends with the session.
-    pub(crate) fn keep_checking(&self, task: AbortHandle) {
-        self.checking.keep(task);
     }
 
     /// How long the checks task waits between two rounds while some checks still run.
@@ -257,28 +208,6 @@ impl Wired {
     /// How long after an action on a run the checks are read once more.
     pub(crate) fn checks_settle(&self) -> Duration {
         self.checks_settle
-    }
-
-    /// Hands over the task that analyses the changeset's changed symbols; a newer run replaces it,
-    /// and it ends with the session.
-    pub(crate) fn keep_symbols(&self, task: AbortHandle) {
-        self.symbols.keep(task);
-    }
-
-    /// Stops analysing the changeset's changed symbols: the review screen is no longer shown.
-    pub(crate) fn stop_symbols(&self) {
-        self.symbols.stop();
-    }
-
-    /// Hands over the task that analyses the changeset's problems; a newer run replaces it, and it
-    /// ends with the session.
-    pub(crate) fn keep_problems(&self, task: AbortHandle) {
-        self.problems.keep(task);
-    }
-
-    /// Stops analysing the changeset's problems: the review screen is no longer shown.
-    pub(crate) fn stop_problems(&self) {
-        self.problems.stop();
     }
 
     /// The changed files the viewer has open, which the background analysis reads first.
@@ -298,20 +227,19 @@ impl Wired {
         if !self.screens.shown() {
             return;
         }
-        let live = self.background.start(self.plan.id, "copy");
         let session = session.clone();
-        let task = tokio::spawn(async move {
-            let _live = live;
+        let copy = async move {
             if let Err(e) = session.copy_ahead().await {
                 tracing::warn!(error = %e, "could not copy the working tree's content ahead of a review");
             }
-        });
-        self.copying.keep(task.abort_handle());
+        };
+        // A newer tree's copy replaces the older.
+        self.supervisor.replace("copy", self.supervisor.track("copy", copy));
     }
 
     /// Stops the copy of an older tree, unless a mark is waiting for it.
     fn stop_copying(&self) {
-        self.copying.stop();
+        self.supervisor.stop("copy");
     }
 
     async fn boot(&self) -> Result<Arc<Booted>> {
@@ -365,13 +293,13 @@ impl Wired {
         // Off view and without a review, the working tree is not scanned: an edit only marks it
         // changed, and coming on view settles it once.
         .wanted(session.settle_wanted());
-        let task = {
+        {
             let (session, subscribers, entry) = (session.clone(), subscribers.clone(), entry.clone());
             let edit_subscribers = subscribers.clone();
             let waiting = self.edits_waiting.clone();
             let quiet_entry = entry.clone();
             let quiet_session = session.clone();
-            tokio::spawn(async move {
+            self.supervisor.replace("settling", async move {
                 session
                     .follow(
                         settling,
@@ -393,9 +321,8 @@ impl Wired {
                         },
                     )
                     .await;
-            })
-        };
-        self.settling.keep(task.abort_handle());
+            });
+        }
         #[cfg(debug_assertions)]
         self.settles.fetch_add(1, Ordering::SeqCst);
 
@@ -473,13 +400,7 @@ impl Wired {
 impl Resident for Wired {
     async fn shut(&self) {
         self.closed.store(true, Ordering::SeqCst);
-        self.fetching.stop();
-        self.feeding.stop();
-        self.settling.stop();
-        self.copying.stop();
-        self.checking.stop();
-        self.symbols.stop();
-        self.problems.stop();
+        self.supervisor.shutdown().await;
         if let Some(booted) = self.booted.get() {
             booted.semantics.shutdown().await;
         }
@@ -601,7 +522,8 @@ impl Orchestrator {
         // its own: it must not take the review's threads, nor the semantic lane's. The pull
         // request feed shares it, over the platforms and the refs.
         let fetch = Arc::new(Fetch::new(GixRepo::new(&repo, Budget::new(FETCH_IO)), tasks.clone()));
-        let feed = self.pull_request_feed(id, fetch.clone(), entry.clone());
+        let supervisor = self.background.supervisor(id);
+        let feed = self.pull_request_feed(fetch.clone(), entry.clone(), supervisor.clone());
         Ok(Wired {
             fetch,
             feed,
@@ -625,24 +547,17 @@ impl Orchestrator {
                 entry,
             },
             booted: OnceCell::new(),
-            settling: TaskSlot::default(),
             edits_waiting: Arc::default(),
             refs_waiting: Arc::default(),
-            fetching: TaskSlot::default(),
-            copying: TaskSlot::default(),
-            feeding: TaskSlot::default(),
-            checking: TaskSlot::default(),
             checks_pace: self.config.checks_pace,
             checks_settle: self.config.checks_settle,
-            symbols: TaskSlot::default(),
-            problems: TaskSlot::default(),
             open_files: Arc::default(),
             closed: AtomicBool::new(false),
             trees: self.trees.clone(),
             answers: self.answers.clone(),
             #[cfg(debug_assertions)]
             analysis_failures: self.analysis_failures.clone(),
-            background: self.background.clone(),
+            supervisor,
             #[cfg(debug_assertions)]
             boots: Arc::default(),
             #[cfg(debug_assertions)]
@@ -784,7 +699,7 @@ mod tests {
         // The queue is on screen: the quiet copy copies nothing.
         open.copy_ahead(&session);
         assert_eq!(
-            open.background.counts(project, "copy").0,
+            open.supervisor.counts("copy").0,
             0,
             "nothing is copied while the queue is on screen"
         );
@@ -798,7 +713,7 @@ mod tests {
         })
         .await
         .expect("the review screen copies the tree");
-        assert_eq!(open.background.counts(project, "copy").0, 1, "the screen copied once");
+        assert_eq!(open.supervisor.counts("copy").0, 1, "the screen copied once");
     }
 
     #[tokio::test]

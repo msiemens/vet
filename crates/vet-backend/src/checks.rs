@@ -35,12 +35,10 @@ pub(crate) fn refresh_checks_after_action(open: Arc<Open>) {
 
 fn refresh(open: Arc<Open>, settle: Option<Duration>) {
     let pace = open.checks_pace();
-    let task = tokio::spawn(crate::background::tracked(
-        &open,
+    open.supervisor.replace(
         "checks",
-        run(open.clone(), pace, settle),
-    ));
-    open.keep_checking(task.abort_handle());
+        open.supervisor.track("checks", run(open.clone(), pace, settle)),
+    );
 }
 
 /// The commits the review view shows the checks of: the changeset's commits and the newest

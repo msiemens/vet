@@ -10,13 +10,13 @@ use vet_app::platform::{Platform, PlatformKind, PullRequestCache, Standing};
 use vet_app::pull_request::PullRequestList;
 use vet_app::pull_request_feed::{self, FeedEvent, Hostings, Prefetch, Project};
 use vet_app::session::SessionError;
+use vet_app::supervise::{Counted, Supervisor};
 use vet_infra::clock::unix_now;
 use vet_infra::git::GixRepo;
 use vet_infra::store::SqliteStore;
 use vet_mapping as mapping;
-use vet_protocol::{Event, ProjectId};
+use vet_protocol::Event;
 
-use crate::background::{Background, LiveTask};
 use crate::events::revision_changed;
 use crate::hosting::{Held, Platforms};
 use crate::{Open, Orchestrator, PlatformAccounts};
@@ -67,8 +67,7 @@ impl Hostings for FeedPlatforms {
 #[derive(Clone)]
 pub(crate) struct FeedProject {
     entry: Arc<OnceLock<Weak<Open>>>,
-    counting: Arc<Background>,
-    id: ProjectId,
+    counting: Supervisor,
 }
 
 impl FeedProject {
@@ -79,10 +78,10 @@ impl FeedProject {
 }
 
 impl Project for FeedProject {
-    type Activity = LiveTask;
+    type Activity = Counted;
 
-    fn activity(&self, kind: &'static str) -> LiveTask {
-        self.counting.start(self.id, kind)
+    fn activity(&self, kind: &'static str) -> Counted {
+        self.counting.counted(kind)
     }
 
     async fn on_view(&self) -> Option<(RemoteKey, u64)> {
@@ -160,8 +159,7 @@ impl Project for FeedProject {
 /// Runs the project's pull request feed for as long as it is open: one task, stopped when the
 /// project closes.
 pub(crate) fn run_feed(open: &Arc<Open>) {
-    let task = tokio::spawn(open.feed().clone().run());
-    open.keep_feeding(task.abort_handle());
+    open.supervisor.replace("feeding", open.feed().clone().run());
 }
 
 impl Orchestrator {
@@ -169,9 +167,9 @@ impl Orchestrator {
     /// project's refs, and a weak handle on its session.
     pub(crate) fn pull_request_feed(
         &self,
-        id: ProjectId,
         fetch: Arc<Fetch<GixRepo>>,
         entry: Arc<OnceLock<Weak<Open>>>,
+        counting: Supervisor,
     ) -> Feed {
         Feed::new(
             FeedPlatforms {
@@ -180,11 +178,7 @@ impl Orchestrator {
                 fetch,
             },
             self.store.clone(),
-            FeedProject {
-                entry,
-                counting: self.background.clone(),
-                id,
-            },
+            FeedProject { entry, counting },
             unix_now,
             Prefetch {
                 pace: self.config.prefetch_pace,

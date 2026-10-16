@@ -63,8 +63,8 @@ impl Orchestrator {
         } else {
             // The changed symbols and problems are analysed for the review screen only. The checks
             // stay: the queue shows the selected pull request's checks too.
-            open.stop_symbols();
-            open.stop_problems();
+            open.supervisor.stop("symbols");
+            open.supervisor.stop("problems");
         }
         Ok(Response::Done)
     }
