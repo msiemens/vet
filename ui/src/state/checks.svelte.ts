@@ -4,10 +4,10 @@
 
 import { SvelteMap } from "svelte/reactivity";
 import type { CommitChecks } from "../generated/CommitChecks";
+import type { SessionEvent } from "./backend";
 import { notices } from "./notices.svelte";
-import { session } from "./session.svelte";
 
-class CheckStore {
+class Checks {
   /** By full commit id; a commit the platform has no checks of has an entry without runs. */
   items = new SvelteMap<string, CommitChecks>();
   /** Unix seconds: the platform limits requests until then, so what is shown is older than it says. */
@@ -17,25 +17,14 @@ class CheckStore {
   /** The reason last shown, so the same one does not come again with every round. */
   private lastError?: string;
 
-  constructor() {
-    session.onConnect((backend) =>
-      backend.onEvent((event) => {
-        if (event.project !== backend.project) return;
-        if (event.type !== "checksChanged") return;
-        this.apply(event.checks, event.error ?? undefined, event.limitedUntil ?? undefined);
-      }),
-    );
-    session.onClose(() => {
-      this.items.clear();
-      this.limitedUntil = undefined;
-      this.loadedAt = undefined;
-      this.lastError = undefined;
-    });
-  }
-
   /** The checks of the commit with the full id `id`, if they are known. */
   of(id: string | undefined): CommitChecks | undefined {
     return id === undefined ? undefined : this.items.get(id);
+  }
+
+  hear(event: SessionEvent) {
+    if (event.type === "checksChanged")
+      this.apply(event.checks, event.error ?? undefined, event.limitedUntil ?? undefined);
   }
 
   /** The backend read the checks of the changeset on view again: what it answered for replaces. */
@@ -52,4 +41,6 @@ class CheckStore {
   }
 }
 
-export const checks = new CheckStore();
+export type SessionChecks = Checks;
+
+export const newChecks = (): SessionChecks => new Checks();

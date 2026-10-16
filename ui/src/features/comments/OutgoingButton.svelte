@@ -36,7 +36,7 @@
 
   // The list is open in the store, so the Post Comments command can open it.
   onDestroy(() => commentsUi.closeOutgoing());
-  const info = $derived(platform.info);
+  const info = $derived(opened.session?.pullRequest?.info);
   const list = $derived(outgoingComments(opened.session?.threads.items ?? []));
   const vote = $derived(info?.pendingVote ?? null);
   const summary = $derived(info?.outgoing ?? NOTHING_OUTGOING);

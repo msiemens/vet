@@ -22,8 +22,10 @@ import { isKind } from "../lib/requestError";
 import type { SessionEvent } from "./backend";
 import { CommitList } from "./commitList";
 import { commitToShow, neighbour } from "./commitLens";
+import { type SessionChecks, newChecks } from "./checks.svelte";
 import { Lifetime } from "./lifetime";
 import { notices } from "./notices.svelte";
+import { type SessionPullRequest, newPullRequest } from "./pullRequest.svelte";
 import { Latest, Resource } from "./resource";
 import {
   type ChangesetFacts,
@@ -83,6 +85,10 @@ class Session implements ViewSource {
   readonly reviewChanges: SessionReviewChanges = newReviewChanges(() => session.connected());
   /** The Pipelines tool's choice, folds and steps; the choice and folds last as long as the session. */
   readonly pipelines: SessionPipelines = newPipelines(() => session.backend);
+  /** What the platform says of the pull request; none for a branch or the working tree, which never ask. */
+  readonly pullRequest: SessionPullRequest | undefined;
+  /** The checks of the pull request's commits, as the backend pushes them. */
+  readonly checks: SessionChecks = newChecks();
   /** How far the view's files are reviewed. */
   viewCompletion = $state.raw<Completion>();
   /** Dependency restores that failed: the analysis of those projects is limited. Pushed as they happen. */
@@ -287,6 +293,9 @@ class Session implements ViewSource {
       this.clear();
       this.viewListeners.clear();
     });
+    this.pullRequest =
+      start.key.type === "pullRequest" ? newPullRequest({ backend: () => session.connected() }) : undefined;
+    this.lifetime.add(() => this.pullRequest?.clear());
     this.lifetime.add(() => this.reviewChanges.end());
     this.lifetime.add(session.connected().onAccountsChanged(() => this.pipelines.accountsChanged()));
     whileReviewShown(this.lifetime, () => this.showReview());
@@ -296,6 +305,7 @@ class Session implements ViewSource {
   start(revision?: number) {
     void this.reread(revision);
     void this.threads.reload();
+    void this.pullRequest?.reload();
   }
 
   /** The connection came back: everything is read again. `manifest` is the changeset's, if the opener read it already. */
@@ -303,6 +313,7 @@ class Session implements ViewSource {
     this.seed = manifest;
     void this.reread(undefined);
     void this.threads.reload();
+    void this.pullRequest?.reload();
     this.versions.resync();
     this.reviewChanges.resync();
   }
@@ -337,6 +348,8 @@ class Session implements ViewSource {
     if (!this.lifetime.alive) return;
     this.versions.hear(event);
     this.reviewChanges.hear(event);
+    this.pullRequest?.hear(event);
+    this.checks.hear(event);
     if (event.type === "snapshotSettled") {
       void this.reread(event.revision);
       void this.threads.reload();

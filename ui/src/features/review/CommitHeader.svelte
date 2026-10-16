@@ -4,7 +4,7 @@
   import { shortTime } from "../../lib/shortTime";
   import Avatar from "../../lib/ui/Avatar.svelte";
   import Icon from "../../lib/ui/Icon.svelte";
-  import { checks } from "../../state/checks.svelte";
+  import { opened } from "../../state/opened.svelte";
   import { minute } from "../../state/minute.svelte";
   import { passed } from "../checks";
 
@@ -13,7 +13,7 @@
 
   const info = $derived(commit.commit);
   const parents = $derived(commit.kind.type === "merge" ? commit.parents.map((p) => p.slice(0, 7)) : []);
-  const checked = $derived(checks.of(info.id));
+  const checked = $derived(opened.session?.checks.of(info.id));
   const look = $derived(ciIcon(checked?.state));
   const count = $derived(checked ? passed(checked) : { passed: 0, total: 0 });
 </script>

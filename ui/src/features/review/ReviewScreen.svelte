@@ -14,7 +14,6 @@
   import { contextMenus } from "../../state/contextMenu.svelte";
   import { minute } from "../../state/minute.svelte";
   import { opened } from "../../state/opened.svelte";
-  import { platform } from "../../state/platform.svelte";
   import { excludePath, listDirectory } from "../../state/projectRequests";
   import { session } from "../../state/session.svelte";
   import { structure } from "../../state/structure.svelte";
@@ -133,7 +132,7 @@
       interdiff: layout.interdiff,
       commits: changeset.commits,
       commitIndex: changeset.shownCommit,
-      pullRequest: platform.info,
+      pullRequest: changeset.pullRequest?.info,
       threads: {
         total: changeset.threads.items.length,
         open: changeset.threads.items.filter((t) => t.status === "open").length,

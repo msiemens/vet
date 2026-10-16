@@ -12,7 +12,6 @@
   import { contextMenus } from "../../state/contextMenu.svelte";
   import { opened } from "../../state/opened.svelte";
   import PanelTabs from "../../lib/ui/PanelTabs.svelte";
-  import { platform } from "../../state/platform.svelte";
   import { attachMenu } from "./commentCommands";
   import { commentsUi, type CommentsTab } from "./commentsUi.svelte";
   import { changesetThreads, draftComments, reviewThreads } from "./conversation";
@@ -32,7 +31,7 @@
     card: (thread: Thread, open: boolean, toggle: () => void) => HTMLElement;
   } = $props();
 
-  const info = $derived(platform.info);
+  const info = $derived(opened.session?.pullRequest?.info);
   const items = $derived(opened.session?.threads.items ?? []);
   const listed = $derived(reviewThreads(items));
   const groups = $derived(groupThreads(listed));

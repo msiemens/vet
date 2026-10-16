@@ -12,7 +12,7 @@
   import Table from "../../lib/ui/Table.svelte";
   import type { Column } from "../../lib/ui/columns";
   import { type Sort, sortRows } from "../../lib/ui/sorting";
-  import { checks } from "../../state/checks.svelte";
+  import { opened } from "../../state/opened.svelte";
   import { type Range, chooseRow, defaultRange } from "../../state/timelineRange";
   import { type RangeFile, type TimelineRow, baseRow, timelineRows, timelineSummary } from "./timelineRows";
 
@@ -122,7 +122,7 @@
                   {#if row.reviewed}<span class="eye" title="Last reviewed here"><Icon name="eye" size={13} /></span
                     >{/if}
                 </span>
-                <span class="ci"><CiStatus state={checks.of(row.commit)?.state} size={12} /></span>
+                <span class="ci"><CiStatus state={opened.session?.checks.of(row.commit)?.state} size={12} /></span>
                 <span class="right">
                   {#if row.lines}<LineDelta {...row.lines} />{:else}<span class="none">–</span>{/if}
                 </span>

@@ -15,6 +15,7 @@ export const sessionNames = [
   "listings",
   "queue",
   "pipelines",
+  "pullRequest",
   "preferences",
   "rapid",
   "projectDialogs",

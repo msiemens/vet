@@ -1,23 +1,20 @@
-// How the platform of the pull request on view is doing, what it said of the pull request, and
-// what the backend asked the viewer to hear. Syncing the threads is the backend's (SPEC I5); this
-// holds the answers and the notifications, and none of the Comments tool window's or the outgoing
-// popover's own flags (`features/comments/commentsUi.svelte.ts`).
+// How the platform is doing and what the backend asked the viewer to hear: the window's, whatever
+// changeset is on view. What it said of the pull request on view is the session's
+// (`pullRequest.svelte.ts`). Syncing the threads is the backend's (SPEC I5); this holds the status
+// and the notifications, and none of the Comments tool window's or the outgoing popover's own flags
+// (`features/comments/commentsUi.svelte.ts`).
 
-import type { ChangesetKey } from "../generated/ChangesetKey";
+import { untrack } from "svelte";
 import type { Notification } from "../generated/Notification";
 import type { PlatformStatus } from "../generated/PlatformStatus";
-import type { PlatformTraits } from "../generated/PlatformTraits";
-import type { PullRequestInfo } from "../generated/PullRequestInfo";
 import type { ReviewSubmitted } from "../generated/ReviewSubmitted";
 import type { Verdict } from "../generated/Verdict";
 import { HoldTimer } from "../lib/ui/holdTimer";
 import { AccountResync } from "./accountResync";
 import type { Backend } from "./backend";
-import { followProject, whileOpen } from "./followProject";
+import { whileOpen } from "./followProject";
 import { notices } from "./notices.svelte";
 import { opened } from "./opened.svelte";
-import { queue } from "./queue.svelte";
-import { Resource } from "./resource";
 
 /** How long a card of a notification that needs no answer stays in the corner. */
 const CARD_MS = 12_000;
@@ -32,42 +29,31 @@ export interface Notified {
 }
 
 class PlatformStore {
-  /** Absent for a changeset that is no pull request, and before the first sync. */
-  info = $state.raw<PullRequestInfo>();
+  /** The last the platform said of itself, in an answer about a pull request or pushed; before either, absent. */
   status = $state.raw<PlatformStatus>();
   /** Newest first: what the bell lists. */
   notified = $state.raw<Notified[]>([]);
-  /** What the platform of the last pull request on view lets the viewer do; kept while another changeset is on view. */
-  traits = $state.raw<PlatformTraits>();
-  /** The changeset the last `changesetOpened` put on view. */
-  private opened?: ChangesetKey;
   private backend?: Backend;
-  private reads = new Resource<PullRequestInfo>({
-    apply: (info) => ([this.info, this.status, this.traits] = [info, info.platform, info.traits]),
-    failed: () => (this.info = undefined),
-  });
   private lastId = 0;
   private cardTimers = new Map<number, HoldTimer>();
 
   constructor() {
     whileOpen((backend) => this.start(backend));
+    // What the platform says of the pull request on view is also what it says of itself.
+    $effect.root(() => {
+      $effect(() => {
+        const said = opened.session?.pullRequest?.info?.platform;
+        if (said) untrack(() => (this.status = said));
+      });
+    });
   }
 
   private start(backend: Backend): () => void {
     this.backend = backend;
-    const stop = followProject(backend, {
-      reloadOn: ["platformStatus", "threadsChanged"],
-      reload: () => void this.reload(),
-      cancel: () => this.reads.cancel(),
-      clear: () => (this.info = undefined),
-      event: (event) => {
-        if (event.type === "platformStatus") this.status = event.status;
-        else if (event.type === "notification") this.notify(event.notification);
-      },
-      opening: (opening) => {
-        if (opening.type !== "opened") return;
-        this.opened = opening.changeset;
-      },
+    const stop = backend.onEvent((event) => {
+      if (event.project !== backend.project) return;
+      if (event.type === "platformStatus") this.status = event.status;
+      else if (event.type === "notification") this.notify(event.notification);
     });
     // A credential given or removed, here or in another window, changes what the platform answers.
     const resync = new AccountResync({ sync: () => this.sync(), reload: () => this.reload() });
@@ -75,26 +61,13 @@ class PlatformStore {
     return () => {
       stop();
       offAccounts();
-      this.reads.cancel();
       this.backend = undefined;
-      this.opened = undefined;
-      this.info = undefined;
       this.status = undefined;
-      this.traits = undefined;
     };
   }
 
-  /** Asks again what the platform said; a changeset that is no pull request has nothing, and is not asked. */
-  async reload() {
-    const backend = this.backend;
-    if (!backend) return;
-    const onView = this.opened ?? queue.onView;
-    if (onView !== undefined && onView.type !== "pullRequest") {
-      this.reads.cancel();
-      this.info = undefined;
-      return;
-    }
-    await this.reads.load(() => backend.pullRequestInfo());
+  private async reload() {
+    await opened.session?.pullRequest?.reload();
   }
 
   /** Syncs now; a failure is told to the viewer. */
@@ -207,16 +180,6 @@ class PlatformStore {
   get signedOut(): boolean {
     const connection = this.status?.connection.type;
     return connection === "signedOut" || connection === "tokenExpired";
-  }
-
-  /** What the viewer has not read of the pull request as a whole. */
-  get unreadCount(): number {
-    return this.info?.unread.all ?? 0;
-  }
-
-  /** The viewer's comments and staged vote that wait to be posted. */
-  get outgoingCount(): number {
-    return this.info?.outgoing.count ?? 0;
   }
 
   private notify(notification: Notification) {

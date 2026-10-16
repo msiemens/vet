@@ -2,6 +2,8 @@
 // settled, and then the stores are compared with the backend.
 
 import type { ChangesetKey } from "../../src/generated/ChangesetKey.ts";
+import type { CommitChecks } from "../../src/generated/CommitChecks.ts";
+import type { PullRequestInfo } from "../../src/generated/PullRequestInfo.ts";
 import type { View } from "../../src/generated/View.ts";
 import type { Request } from "../../src/generated/Request.ts";
 import { appState } from "../../src/app/appState.svelte.ts";
@@ -9,7 +11,10 @@ import { findInFiles } from "../../src/features/search/FindInFiles.svelte.ts";
 import { keyId } from "../../src/state/changesetKey.ts";
 import type { ChangesetSession } from "../../src/state/changesetSession.svelte.ts";
 import { STALE_NOTICE } from "../../src/lib/notice.ts";
+import type { SessionEvent } from "../../src/state/backend.ts";
+import { newSession } from "../../src/state/changesetSession.svelte.ts";
 import { opened } from "../../src/state/opened.svelte.ts";
+import { platform } from "../../src/state/platform.svelte.ts";
 import { shell } from "../../src/features/chrome/shell.svelte.ts";
 import { preferences } from "../../src/lib/preferences.svelte.ts";
 import { problems } from "../../src/state/problems.svelte.ts";
@@ -603,6 +608,78 @@ export const sessions: Record<SessionName, (h: Harness) => Promise<void>> = {
       if (again === held) throw new Error("the session was kept");
       if (again.pipelines.selected !== undefined || again.pipelines.folded.size)
         throw new Error("the choice and the folds of the first session are still there");
+    });
+  },
+
+  /**
+   * Only a session of a pull request asks the platform about it and holds its checks, and nothing an
+   * ended one was waiting for reaches the window. The fixture has no platform, so the pull request
+   * sessions are made beside the one on view and the platform's answers are stood in for.
+   */
+  async pullRequest(h) {
+    const infoRequests = () => h.sent.filter((r) => r.type === "pullRequestInfo").length;
+    const pullRequest: ChangesetKey = { type: "pullRequest", remote: "github.com/acme/app", number: 7 };
+    const failure = (job: string): CommitChecks => ({
+      commit: "abc",
+      state: "failure",
+      runs: [{ id: job, name: job, state: "failure", phase: "finished", duration: 1, log: true }],
+      pipelines: [],
+    });
+    const checksEvent = (checks: CommitChecks[]): SessionEvent => ({
+      type: "checksChanged",
+      project: 0,
+      checks,
+      error: null,
+      limitedUntil: null,
+    });
+    await h.step("working tree and branch sessions ask nothing of the platform", async () => {
+      if (opened.session?.pullRequest) throw new Error("the working tree session holds pull request info");
+      await opened.open({ type: "branch", name: "feature" });
+      await h.until(() => opened.session?.facts?.target.changeset.type === "branch", "the branch");
+      if (opened.session?.pullRequest) throw new Error("the branch session holds pull request info");
+      if (infoRequests()) throw new Error("a session of no pull request asked the platform about one");
+    });
+    await h.step(
+      "a pull request session asks, and takes the checks it hears",
+      async () => {
+        const owner = newSession({ key: pullRequest });
+        try {
+          owner.start();
+          await h.until(() => infoRequests() === 1, "the pull request info to be asked for");
+          owner.hear(checksEvent([failure("job-a")]));
+          if (owner.checks.of("abc")?.runs[0]?.id !== "job-a") throw new Error("the session took no checks");
+          owner.hear(checksEvent([failure("job-b")]));
+          if (owner.checks.of("abc")?.runs[0]?.id !== "job-b") throw new Error("new checks did not replace the old");
+          if (opened.session?.checks.of("abc")) throw new Error("another session holds the checks");
+        } finally {
+          owner.dispose();
+        }
+      },
+      { rejected: 1 },
+    );
+    await h.step("what an ended pull request session was waiting for changes nothing", async () => {
+      const backend = session.connected();
+      const info = backend.pullRequestInfo.bind(backend);
+      let release!: (info: PullRequestInfo) => void;
+      const held = new Promise<PullRequestInfo>((resolve) => (release = resolve));
+      backend.pullRequestInfo = () => held;
+      const owner = newSession({ key: pullRequest });
+      try {
+        owner.start();
+        owner.hear(checksEvent([failure("job-a")]));
+        owner.dispose();
+        release({ platform: { kind: "gitHub", host: "github.com" } } as unknown as PullRequestInfo);
+        await held;
+        await sleep(50);
+        if (owner.pullRequest?.info) throw new Error("an answer after the session ended was taken");
+        if (platform.status) throw new Error("an answer after the session ended set the platform status");
+        owner.hear(checksEvent([failure("job-b")]));
+        if (owner.checks.of("abc")?.runs[0]?.id !== "job-a")
+          throw new Error("checks were taken after the session ended");
+      } finally {
+        backend.pullRequestInfo = info;
+        owner.dispose();
+      }
     });
   },
 

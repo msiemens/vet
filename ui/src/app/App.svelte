@@ -40,7 +40,6 @@
   import Toast from "../lib/ui/Toast.svelte";
   import { changeGate } from "../lib/ui/changeGate";
   import { CommitList } from "../state/commitList";
-  import { checks } from "../state/checks.svelte";
   import { canRestartBackend, hasNativeDialogs, hasNativeMenu } from "../state/host";
   import { commands } from "../state/commands";
   import { contextMenus } from "../state/contextMenu.svelte";
@@ -77,16 +76,18 @@
     untrack(() => appState.controller?.setSoftWrap(wrap));
   });
 
+  const checks = $derived(opened.session?.checks);
+  const pullRequest = $derived(opened.session?.pullRequest);
   const headLook = $derived(
     headChecksLook(
-      checks.of(opened.session?.headCommit),
+      checks?.of(opened.session?.headCommit),
       platform.status,
       platform.signedOut,
-      checks.limitedUntil,
-      checks.loadedAt,
+      checks?.limitedUntil,
+      checks?.loadedAt,
     ),
   );
-  const pipelineRail = $derived(pipelineBadge(checks.of(opened.session?.headCommit), platform.signedOut));
+  const pipelineRail = $derived(pipelineBadge(checks?.of(opened.session?.headCommit), platform.signedOut));
 
   /** The Comments tool window is on screen. */
   const commentsShown = $derived(shell.screen === "review" && shell.left.open && shell.left.tool === "comments");
@@ -95,12 +96,12 @@
   // arrive while it is open, so the backend moves the seen time past them.
   const commentsChanged = changeGate();
   $effect(() => {
-    if (commentsChanged(commentsShown, platform.info, opened.session?.threads.items) && commentsShown) {
+    if (commentsChanged(commentsShown, pullRequest?.info, opened.session?.threads.items) && commentsShown) {
       untrack(() => void platform.markCommentsSeen());
     }
   });
   /** The rail's count for Comments: what the backend says the viewer has not read of the pull request as a whole. */
-  const unreadComments = $derived(commentsShown ? 0 : platform.unreadCount);
+  const unreadComments = $derived(commentsShown ? 0 : (pullRequest?.unreadCount ?? 0));
 
   const semanticSummary = $derived(semantic.summary(appState.controller?.semanticPath));
   const range = $derived(opened.session?.range);
@@ -143,7 +144,8 @@
   // The main menu follows the state it shows.
   $effect(() => {
     const shown = (side: { open: boolean; tool: string }, id: string) => side.open && side.tool === id;
-    const traits = platform.traits;
+    const info = pullRequest?.info;
+    const traits = info?.traits;
     mainMenu.update({
       native: hasNativeMenu,
       recent: recent.list.map(({ path }) => ({ path, name: repoName(path) })),
@@ -162,7 +164,7 @@
       votes: traits?.verdictSeparate
         ? {
             verdicts: traits.verdicts,
-            chosen: platform.info?.pendingVote?.verdict ?? platform.info?.viewerVerdict ?? undefined,
+            chosen: info?.pendingVote?.verdict ?? info?.viewerVerdict ?? undefined,
           }
         : undefined,
     });
@@ -333,7 +335,7 @@
             {:else if shell.bottom === "pipelines"}
               <PipelinesPanel
                 pipelines={opened.session?.pipelines ?? idlePipelines}
-                checks={pipelineCommit === undefined ? undefined : checks.of(pipelineCommit)}
+                checks={pipelineCommit === undefined ? undefined : checks?.of(pipelineCommit)}
                 commit={pipelineCommit}
                 onlog={(job, run) => void appState.controller?.openLog(job, logKey(job, run))}
                 onbrowser={showInBrowser}

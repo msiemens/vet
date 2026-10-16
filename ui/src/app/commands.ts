@@ -54,7 +54,7 @@ export function registerCommands(): () => void {
         appState.switcherOpen = true;
       },
       openPullRequest: () => void openPullRequest(),
-      openInBrowser: (at) => showInBrowser(at ?? platform.info?.url),
+      openInBrowser: (at) => showInBrowser(at ?? opened.session?.pullRequest?.info?.url),
       showDialog: (d) => appState.showDialog(d),
       showKeymap: () => appState.showDialog("settings", "keymap"),
       showAccounts: () => appState.showDialog("settings", "accounts"),
@@ -127,10 +127,10 @@ export function registerCommands(): () => void {
     changesetOpen: !!session.repo && !!opened.session?.layout,
     rangeShown: !!opened.session?.range,
     reconfirmable: (opened.session?.baseChangedCount ?? 0) > 0,
-    pullRequest: platform.info !== undefined,
-    outgoing: platform.outgoingCount,
-    voteSeparate: !!platform.traits?.verdictSeparate,
-    voteBlock: voteBlocked(platform.info),
+    pullRequest: opened.session?.pullRequest?.info !== undefined,
+    outgoing: opened.session?.pullRequest?.outgoingCount ?? 0,
+    voteSeparate: !!opened.session?.pullRequest?.info?.traits.verdictSeparate,
+    voteBlock: voteBlocked(opened.session?.pullRequest?.info),
     manyCommits: (opened.session?.commitCount ?? 0) > 1,
     problems:
       appState.controller?.problemFile !== undefined &&

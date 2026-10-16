@@ -21,7 +21,6 @@
   import { ThreadCards, groupThreads, threadPlace } from "../comments";
   import type { Frame } from "../../state/reviewModel";
   import { browse } from "../../state/browse";
-  import { checks } from "../../state/checks.svelte";
   import { commands } from "../../state/commands";
   import { minute } from "../../state/minute.svelte";
   import { opened } from "../../state/opened.svelte";
@@ -70,11 +69,8 @@
   }
 
   const pull = $derived(row?.pullRequest);
-  const info = $derived(platform.info);
-  const headId = $derived(
-    opened.session?.facts?.target.changeset.type === "pullRequest" ? opened.session.facts.target.head : undefined,
-  );
-  const head = $derived(checks.of(headId));
+  const info = $derived(opened.session?.pullRequest?.info);
+  const head = $derived(opened.session?.checks.of(opened.session.headCommit));
   const kind = $derived(platform.status?.kind ?? info?.platform.kind);
   // The changeset's comments, whatever range the review shows.
   const items = $derived(opened.session?.threads.wholeItems ?? []);

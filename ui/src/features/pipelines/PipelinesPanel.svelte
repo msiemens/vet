@@ -19,7 +19,7 @@
   import TreeRow from "../../lib/ui/TreeRow.svelte";
   import type { Column } from "../../lib/ui/columns";
   import { ListNav } from "../../lib/ui/listNav";
-  import { checks as checkStore } from "../../state/checks.svelte";
+  import { opened } from "../../state/opened.svelte";
   import type { SessionPipelines } from "../../state/pipelines.svelte";
   import { platform } from "../../state/platform.svelte";
   import {
@@ -77,7 +77,7 @@
   ];
 
   const status = $derived(platform.status);
-  const words = $derived(platform.traits?.pipelines);
+  const words = $derived(opened.session?.pullRequest?.info?.traits.pipelines);
   const account = $derived(status?.host);
   const name = $derived(status && platformName(status.kind));
   const rows = $derived(checks && runRows(checks));
@@ -91,7 +91,8 @@
   const acting = $derived(chosenRun ?? checks?.pipelines[0]);
   const actingJobs = $derived(checks?.runs.filter((r) => r.pipeline === acting?.id) ?? []);
   const signedOut = $derived(status?.connection.type === "signedOut" || status?.connection.type === "tokenExpired");
-  const limitedUntil = $derived(checkStore.limitedUntil);
+  const limitedUntil = $derived(opened.session?.checks.limitedUntil);
+  const loadedAt = $derived(opened.session?.checks.loadedAt);
   const held = $derived(
     limitedUntil !== undefined
       ? `${name ?? "The platform"} is limiting requests until ${clock(limitedUntil)}.`
@@ -138,7 +139,7 @@
   $effect(() => {
     const id = job;
     const over = chosen !== undefined && finished(chosen.phase);
-    const stamp = checkStore.loadedAt;
+    const stamp = loadedAt;
     untrack(() => void pipelines.showSteps(id, over, stamp));
   });
 
@@ -187,8 +188,8 @@
         {@render action("cancel", words.cancel, "stop")}
       {/if}
       <span class="grow"></span>
-      {#if checkStore.loadedAt !== undefined}
-        <span class="when">Updated {clock(checkStore.loadedAt)}</span>
+      {#if loadedAt !== undefined}
+        <span class="when">Updated {clock(loadedAt)}</span>
       {/if}
       {#if checks?.url}
         {@const url = checks.url}
@@ -204,10 +205,9 @@
     />
   {:else if limitedUntil !== undefined}
     <Banner
-      message="{name ?? 'The platform'} is limiting requests until {clock(limitedUntil)}.{checkStore.loadedAt ===
-      undefined
+      message="{name ?? 'The platform'} is limiting requests until {clock(limitedUntil)}.{loadedAt === undefined
         ? ''
-        : ` Showing what was loaded at ${clock(checkStore.loadedAt)}.`} Runs refresh when the limit ends; actions wait until then."
+        : ` Showing what was loaded at ${clock(loadedAt)}.`} Runs refresh when the limit ends; actions wait until then."
     />
   {/if}
   <div class="body">

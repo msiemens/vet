@@ -6,7 +6,7 @@
   import { ListNav } from "../../lib/ui/listNav";
   import ScrollArea from "../../lib/ui/ScrollArea.svelte";
   import SeenMeter from "../../lib/ui/SeenMeter.svelte";
-  import { checks } from "../../state/checks.svelte";
+  import { opened } from "../../state/opened.svelte";
   import { minute } from "../../state/minute.svelte";
   import { commitRow } from "./commitRows";
 
@@ -85,7 +85,7 @@
               <LineDelta added={row.added} removed={row.removed} />
             {/if}
             <span class="grow"></span>
-            <CiStatus state={checks.of(commits[index].commit.id)?.state} size={12} />
+            <CiStatus state={opened.session?.checks.of(commits[index].commit.id)?.state} size={12} />
           </span>
         </span>
       </button>
