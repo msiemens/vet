@@ -107,10 +107,8 @@
 
   onMount(() => {
     void queue.loadAll();
-    const stopWatching = queue.watch();
     const unregister = commands.register(...queueTabCommands({ stepTab: (delta) => showTab(stepTab(tab, delta)) }));
     return () => {
-      stopWatching();
       unregister();
     };
   });

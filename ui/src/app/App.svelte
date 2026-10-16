@@ -143,12 +143,6 @@
     ),
     problems: problems.summary,
   });
-  // The queue follows the changeset on view whichever screen shows; what the language servers answer
-  // (problems, symbols, outlines, marks in the editors) is asked for only while the review is on screen.
-  $effect(() => {
-    if (!session.backend || !session.repo) return;
-    return queue.watch();
-  });
   // The changed files the window has open, so the backend's background analysis reads them first.
   $effect(() => {
     const backend = session.backend;

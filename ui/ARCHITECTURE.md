@@ -54,7 +54,7 @@ The host passes the repository to open (command line, `VET_REPO`, or `#repo=` in
 ### Backend events into stores into views
 
 1. Every event a request causes reaches every subscriber, the window that asked included: only the store that asked reads the answer, and every other store of that window learns of the change from the event alone.
-2. A store follows the events of what it shows, so it never relies on another store's request; a reload that the requester's own answer makes redundant is harmless. The queue follows the changeset on view for as long as a project is open (`queue.watch()`, taken by `App`, the Queue screen, the open changeset switcher and the Palette). Events sent while the connection was down are lost, and the stores catch up on resync.
+2. A store follows the events of what it shows, so it never relies on another store's request; a reload that the requester's own answer makes redundant is harmless. The queue follows the changeset on view for as long as a project is open. Events sent while the connection was down are lost, and the stores catch up on resync.
 3. The backend's own events (`credentialsNeeded`, `accountsChanged`, `recentProjectsChanged`, `settingsChanged`, `preferenceChanged`) reach every subscribed window; `onEvent` hands over the open project's. `vet-backend/src/contract.rs` says which request sends which event, and its test checks it.
 
 Each store follows the events of what it shows:

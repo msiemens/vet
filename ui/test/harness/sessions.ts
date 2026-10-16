@@ -19,7 +19,6 @@ import { versions } from "../../src/state/versions.svelte.ts";
 import { newScope } from "../../src/state/viewScope.svelte.ts";
 import type { Harness } from "./harness.ts";
 import { type SessionName } from "./sessionNames.ts";
-import { watchFromEffect } from "./watching.svelte.ts";
 
 const CHANGESET: View = { type: "changeset" };
 
@@ -274,14 +273,7 @@ export const sessions: Record<SessionName, (h: Harness) => Promise<void>> = {
 
   /** The pull requests are asked of the platform once for a view of the list, and once more for a burst of events. */
   async listings(h) {
-    let stop: (() => void) | undefined;
-    await h.step(
-      "the list is watched from an effect",
-      () => {
-        stop = watchFromEffect();
-      },
-      { listings: 1 },
-    );
+    await h.step("the list is asked for", () => queue.loadAll(), { listings: 1 });
     await h.step(
       "a burst of events",
       () => {
@@ -289,7 +281,6 @@ export const sessions: Record<SessionName, (h: Harness) => Promise<void>> = {
       },
       { listings: 2 },
     );
-    await h.step("the list is not watched any more", () => stop?.());
   },
 
   /** Choosing rows of the queue puts changesets on view without asking the language servers for anything; the review screen does. */

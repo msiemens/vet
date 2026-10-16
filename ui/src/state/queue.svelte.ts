@@ -50,19 +50,22 @@ class QueueStore {
   private listing?: { again: boolean; done: Promise<void> };
   /**
    * The changeset on view as a whole while the review view shows a range or a commit, whose layout is
-   * not the changeset's; read while the list is shown.
+   * not the changeset's; read while a project is open.
    */
   private whole = $state.raw<Parts>();
-  /** How many views of the list are shown. */
-  private watchers = $state(0);
   private following = new Debounced();
   /** Which revision and view the review shows. */
   private screen = $derived(`${changeset.layout?.shown.revision}/${changeset.viewKey}`);
 
+  /** The list follows the changeset on view for as long as a project is open. */
+  private get projectOpen() {
+    return session.repo !== undefined;
+  }
+
   constructor() {
     $effect.root(() => {
       $effect(() => {
-        if (this.watchers > 0 && this.screen) untrack(() => void this.loadWhole());
+        if (this.projectOpen && this.screen) untrack(() => void this.loadWhole());
       });
     });
     session.onConnect((backend) => {
@@ -107,19 +110,9 @@ class QueueStore {
     });
   }
 
-  /**
-   * The list is shown (the queue, or the switcher opened): it follows the events that change what it says
-   * about the changeset on view. Returns the function that ends that.
-   */
-  watch(): () => void {
-    // Called from an effect, which must not depend on the count it changes.
-    untrack(() => this.watchers++);
-    return () => untrack(() => this.watchers--);
-  }
-
-  /** Lists the local changesets again once a burst of marks pauses, if the list is shown. */
+  /** Lists the local changesets again once a burst of marks pauses, while a project is open. */
   private follow() {
-    if (this.watchers === 0) return;
+    if (!this.projectOpen) return;
     this.following.schedule(FOLLOW_AFTER_MS, () => {
       void this.load(false);
       void this.loadWhole();

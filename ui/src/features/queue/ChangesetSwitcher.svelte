@@ -54,7 +54,6 @@
   $effect(() => {
     if (!open) return;
     untrack(() => void queue.loadAll());
-    return queue.watch();
   });
 
   /** An action under the rows that runs a command. */

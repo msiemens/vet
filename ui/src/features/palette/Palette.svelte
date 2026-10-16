@@ -221,7 +221,6 @@
   // The changesets are listed afresh each time the popup opens, as the switcher's popover does.
   $effect(() => {
     void queue.loadAll();
-    return queue.watch();
   });
 
   const nav = new ListNav<Entry>({

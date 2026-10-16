@@ -132,8 +132,6 @@ export async function runSession(name: SessionName, script: (h: Harness) => Prom
 
     await changeset.refresh();
     await queue.loadAll();
-    // The window shows the queue, which follows the events for the changeset on view.
-    const stopQueue = queue.watch();
 
     // Every session but the queue's shows the review screen: its stores follow it, as the window does.
     if (!startOnQueue.has(name)) reviewShown.set(true);
@@ -207,11 +205,7 @@ export async function runSession(name: SessionName, script: (h: Harness) => Prom
         await back;
       },
     };
-    try {
-      await script(h);
-    } finally {
-      stopQueue();
-    }
+    await script(h);
     return results;
   } finally {
     backend.stop();
