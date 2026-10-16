@@ -11,6 +11,7 @@ import type { Thread } from "../generated/Thread";
 import { browse } from "../state/browse";
 import { backendSettings } from "../state/backendSettings.svelte";
 import { keyId } from "../state/changesetKey";
+import { composeChangesetComment } from "../state/commentDrafts";
 import { commands } from "../state/commands";
 import { canShowFolder, showFolder } from "../state/host";
 import { notices } from "../state/notices.svelte";
@@ -92,7 +93,7 @@ export function commentOnChangeset() {
   shell.show("review");
   shell.showLeft("comments");
   commentsUi.showConversation();
-  commentsUi.composeChangesetComment();
+  if (opened.session) composeChangesetComment(opened.session.changesetComment);
 }
 
 /** Shows a thread where it is: at its code, or in the Comments tool window's Conversation tab. */

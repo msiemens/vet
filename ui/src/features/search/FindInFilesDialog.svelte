@@ -59,6 +59,7 @@
     range,
     revision,
     commitList,
+    held,
     onopen,
     onkeep,
   }: {
@@ -73,6 +74,11 @@
     revision: number;
     /** The commits of the changeset by revision, which the scope choices name. */
     commitList: CommitList;
+    /**
+     * What the changeset remembers of the dialog: the id of the place searched (`scopeChoices`; none until
+     * the dialog was first opened, which starts at the view on show) and the chosen result (`resultId`).
+     */
+    held: { scope?: string; selected?: string };
     /** Shows a result; `ownTab` is asked for by the viewer. The dialog is closed already. */
     onopen: (result: OpenedResult) => void;
     /** Keeps the results in the Find tool. The dialog is closed already. */
@@ -99,10 +105,10 @@
   const choices = $derived(
     scopeChoices({ view, files, range, commits: commits.map(({ shortId, subject }) => ({ shortId, subject })) }),
   );
-  const choice = $derived<ScopeChoice>(resolveScope(choices, find.scope ?? viewScopeId(view)));
+  const choice = $derived<ScopeChoice>(resolveScope(choices, held.scope ?? viewScopeId(view)));
   const repository = $derived(choice.scope.type === "repository");
   const rows = $derived(resultRows(results?.files ?? [], collapsed));
-  const at = $derived(selectedRow(rows, find.selected));
+  const at = $derived(selectedRow(rows, held.selected));
   const current = $derived(at >= 0 ? rows[at] : undefined);
 
   onMount(() => {
@@ -222,7 +228,7 @@
   });
 
   function chooseScope(id: string) {
-    find.scope = id;
+    held.scope = id;
     scopeOpen = false;
     input?.focus();
   }
@@ -230,7 +236,7 @@
   function select(index: number) {
     const row = rows.at(index);
     if (row?.kind !== "line") return;
-    find.selected = resultId(row.file.path, row.lineIndex);
+    held.selected = resultId(row.file.path, row.lineIndex);
     // The first result of a file shows its header too.
     list?.reveal(index);
     if (rows[index - 1]?.kind === "file") list?.reveal(index - 1);

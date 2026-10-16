@@ -4,7 +4,6 @@
 // reactive wrapper is `commentsUi.svelte.ts`.
 
 import type { Verdict } from "../../generated/Verdict";
-import type { Opening } from "../../state/openedProtocol";
 
 /** The tab the Comments tool window shows. */
 export type CommentsTab = "review" | "conversation";
@@ -16,12 +15,6 @@ export interface ReviewForm {
   body: string;
 }
 
-/** The comment on the changeset as a whole being written in the Comments tool window. */
-export interface ChangesetComment {
-  composing: boolean;
-  body: string;
-}
-
 /** Everything the Comments UI keeps of its own. */
 export interface CommentsUiState {
   /** The toolbar's list of the outgoing comments and the vote, with the button that posts them, is open. */
@@ -30,8 +23,6 @@ export interface CommentsUiState {
   votePicking: boolean;
   /** The Submit review form, kept so that switching tool windows does not empty it. */
   review: ReviewForm;
-  /** The comment on the changeset as a whole being written in the Comments tool window. */
-  changesetComment: ChangesetComment;
   /** The tab the Comments tool window shows. */
   commentsTab: CommentsTab;
   /** The viewer's comments are being posted. */
@@ -44,7 +35,6 @@ export function initialCommentsUi(): CommentsUiState {
     outgoingOpen: false,
     votePicking: false,
     review: { open: false, verdict: undefined, body: "" },
-    changesetComment: { composing: false, body: "" },
     commentsTab: "review",
     sending: false,
   };
@@ -67,22 +57,6 @@ export function showTab(state: CommentsUiState, tab: CommentsTab): void {
   state.commentsTab = tab;
 }
 
-/** Opens the form for a comment on the changeset as a whole. */
-export function composeChangesetComment(state: CommentsUiState): void {
-  state.changesetComment.composing = true;
-}
-
-/** Closes the changeset comment form, keeping what was written. */
-export function cancelChangesetComment(state: CommentsUiState): void {
-  state.changesetComment.composing = false;
-}
-
-/** The changeset comment was posted, or the pull request changed: the form closes and starts empty. */
-export function clearChangesetComment(state: CommentsUiState): void {
-  state.changesetComment.composing = false;
-  state.changesetComment.body = "";
-}
-
 /** The review was submitted: its form closes and starts empty, the verdict staying. */
 export function clearReviewForm(state: CommentsUiState): void {
   state.review.open = false;
@@ -99,21 +73,13 @@ export function closeReviewForm(state: CommentsUiState): void {
   state.review.open = false;
 }
 
-/** Where the Comments UI hears of a changed pull request or a closed project. */
+/** Where the Comments UI hears of a closed project. */
 export interface CommentsUpstream {
-  /** Calls `listener` as a changeset is put on view. */
-  onOpening: (listener: (opening: Opening) => void) => void;
   /** Calls `listener` when the project is closed. */
   onClose: (listener: () => void) => void;
 }
 
-/**
- * Keeps the Comments UI's own state right: another pull request starts with no comment being written,
- * and a closed project has no popover up.
- */
+/** Keeps the Comments UI's own state right: a closed project has no popover up. */
 export function followCommentsUi(upstream: CommentsUpstream, state: CommentsUiState): void {
-  upstream.onOpening((opening) => {
-    if (opening.type === "opened") clearChangesetComment(state);
-  });
   upstream.onClose(() => closeOutgoing(state));
 }

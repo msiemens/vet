@@ -13,7 +13,7 @@ import { recentCommands } from "../features/welcome";
 import { appCommands } from "../state/appCommands";
 import { keyId } from "../state/changesetKey";
 import { commands } from "../state/commands";
-import { findSets } from "../state/findSets.svelte";
+import { findTool } from "../state/findTool.svelte";
 import { canQuit, quit } from "../state/host";
 import { keymap } from "../state/keymap.svelte";
 import { opened } from "../state/opened.svelte";
@@ -107,17 +107,14 @@ export function registerCommands(): () => void {
     ...paletteCommands({ show: (tab) => palette.show(tab) }),
   );
   keymap.load();
-  findSets.show = (focus) => {
+  findTool.show = (focus) => {
     shell.show("review");
     shell.showBottom("find");
     if (focus) void focusFind();
   };
 
   session.onOpen(() => shell.show("queue"));
-  session.onClose(() => {
-    palette.close();
-    findSets.reset();
-  });
+  session.onClose(() => palette.close());
   const stopContext = commands.provide(() => ({
     repoOpen: !!session.repo,
     reviewOpen: opened.session?.reviewOpen ?? false,

@@ -108,7 +108,6 @@ export class ReviewController {
       this.persistence,
       {
         softWrap: () => this.softWrap,
-        key: () => this.key,
         hooks: (id) => this.nav.hooks(id),
         openSource: (id, path, line) => void this.nav.openSource(id, path, line),
         fileMenu: this.fileMenu,

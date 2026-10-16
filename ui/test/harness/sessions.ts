@@ -13,6 +13,7 @@ import type { ChangesetSession } from "../../src/state/changesetSession.svelte.t
 import { STALE_NOTICE } from "../../src/lib/notice.ts";
 import type { SessionEvent } from "../../src/state/backend.ts";
 import { newSession } from "../../src/state/changesetSession.svelte.ts";
+import type { UsagesSpec } from "../../src/state/findSets.svelte.ts";
 import { opened } from "../../src/state/opened.svelte.ts";
 import { platform } from "../../src/state/platform.svelte.ts";
 import { shell } from "../../src/features/chrome/shell.svelte.ts";
@@ -680,6 +681,77 @@ export const sessions: Record<SessionName, (h: Harness) => Promise<void>> = {
         backend.pullRequestInfo = info;
         owner.dispose();
       }
+    });
+  },
+
+  /**
+   * What the Find tool found, Find in Files' place and chosen result, and the text in the comment boxes
+   * belong to the changeset on view: the next one starts without them, and an answer of the one left
+   * touches nothing.
+   */
+  async owned(h) {
+    const usages: UsagesSpec = { type: "usages", symbol: "foo", side: "target", path: "a.txt", line: 0, col: 0 };
+    const held = onView();
+    await h.step("the first changeset holds results and unsent comments", () => {
+      held.findSets.keepSearch({
+        spec: {
+          type: "search",
+          request: {
+            scope: { type: "view", view: CHANGESET },
+            pattern: { text: "line", matchCase: false, wholeWord: false, regex: false },
+            mask: "",
+            side: "both",
+            onlyChanges: false,
+            notSeen: false,
+            limit: 0,
+          },
+          options: { text: "line", matchCase: false, wholeWord: false, regex: false, side: "both", onlyChanges: false },
+          scope: { label: "All changes" },
+        },
+        results: { type: "searchResults", revision: 1, files: [], hits: 0, truncated: false, searched: 0 },
+      });
+      held.findInFiles.scope = "commit:1";
+      held.findInFiles.selected = "a.txt:3";
+      held.drafts.set("reply:1", "a half-written reply");
+      held.changesetComment.composing = true;
+      held.changesetComment.body = "a word on the whole";
+      if (held.unsentComments() !== 2) throw new Error(`${held.unsentComments()} boxes hold text, not 2`);
+      if (!held.findSets.sets.length) throw new Error("the find set was not placed");
+    });
+    await h.step("a run still going when the changeset is switched away from", async () => {
+      const backend = session.connected();
+      const run = backend.usages.bind(backend);
+      let release!: () => void;
+      const gate = new Promise<void>((resolve) => (release = resolve));
+      let asked = false;
+      backend.usages = async () => {
+        asked = true;
+        await gate;
+        return { unavailable: { message: "late" } } as unknown as Awaited<ReturnType<typeof run>>;
+      };
+      try {
+        held.findSets.findUsages(usages);
+        const set = held.findSets.current;
+        await h.until(() => asked, "the usages to be asked for");
+        await opened.open({ type: "branch", name: "feature" });
+        await h.until(() => opened.session?.facts?.target.changeset.type === "branch", "the branch");
+        release();
+        await sleep(100);
+        if (!set || set.message !== undefined || set.phase !== "running")
+          throw new Error("the answer of the ended session was taken");
+      } finally {
+        backend.usages = run;
+      }
+    });
+    await h.step("the next changeset starts with none of it", () => {
+      const next = onView();
+      if (next === held) throw new Error("the session was kept");
+      if (next.findSets.sets.length || next.findSets.current) throw new Error("the find sets came along");
+      if (next.findInFiles.scope !== undefined || next.findInFiles.selected !== undefined)
+        throw new Error("Find in Files' place or chosen result came along");
+      if (next.drafts.count() || next.changesetComment.body || next.changesetComment.composing)
+        throw new Error("a comment box came along");
+      if (next.unsentComments() !== 0) throw new Error("the next changeset has unsent comments");
     });
   },
 

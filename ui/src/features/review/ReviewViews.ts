@@ -47,8 +47,6 @@ export const READ_ONLY_NOTE = "This range does not end at the latest version: ma
 export interface ViewHost {
   /** Which files the views wrap the long lines of. */
   softWrap: () => SoftWrap;
-  /** The changeset on view, which names a new comment's draft. */
-  key: () => string | undefined;
   /** The semantic hooks of the tab's view. */
   hooks: (id: TabId) => ViewHooks;
   /** Opens a place a view asked for (Jump to Source), in the tab's own view. */
@@ -76,7 +74,7 @@ export class ReviewViews {
   private backend: Backend;
   private threads: SessionThreads;
   /** The changeset on screen as the views read it: its source, plus the files it is narrowed to and where failures are reported. */
-  private changeset: ViewSource & Pick<ChangesetSource, "baseChanged" | "reportFailure">;
+  private changeset: ViewSource & Pick<ChangesetSource, "baseChanged" | "reportFailure" | "drafts">;
   private tabs: Tabs;
   private scopes: ViewScopes;
   private find: FindControl;
@@ -85,7 +83,7 @@ export class ReviewViews {
 
   constructor(
     backend: Backend,
-    changeset: ViewSource & Pick<ChangesetSource, "baseChanged" | "reportFailure">,
+    changeset: ViewSource & Pick<ChangesetSource, "baseChanged" | "reportFailure" | "drafts">,
     threads: SessionThreads,
     tabs: Tabs,
     scopes: ViewScopes,
@@ -555,7 +553,7 @@ export class ReviewViews {
       },
       openLink: browse,
       submitKey: commands.keyLabel(SUBMIT_KEY),
-      draftScope: () => `${this.backend.project}/${this.host.key()}`,
+      drafts: this.changeset.drafts,
     };
   }
 

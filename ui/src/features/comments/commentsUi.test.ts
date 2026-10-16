@@ -3,15 +3,11 @@
 
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import type { Opening } from "../../state/openedProtocol.ts";
 import {
   type CommentsUpstream,
-  cancelChangesetComment,
-  clearChangesetComment,
   clearReviewForm,
   closeOutgoing,
   closeReviewForm,
-  composeChangesetComment,
   followCommentsUi,
   initialCommentsUi,
   openOutgoing,
@@ -20,20 +16,15 @@ import {
 } from "./commentsUiModel.ts";
 
 function setup() {
-  const listeners = {
-    opening: new Set<(opening: Opening) => void>(),
-    close: new Set<() => void>(),
-  };
+  const listeners = new Set<() => void>();
   const upstream: CommentsUpstream = {
-    onOpening: (listener) => (listeners.opening.add(listener), () => listeners.opening.delete(listener)),
-    onClose: (listener) => (listeners.close.add(listener), () => listeners.close.delete(listener)),
+    onClose: (listener) => (listeners.add(listener), () => listeners.delete(listener)),
   };
   const state = initialCommentsUi();
   followCommentsUi(upstream, state);
   return {
     state,
-    opening: (opening: Opening) => listeners.opening.forEach((listener) => listener(opening)),
-    close: () => listeners.close.forEach((listener) => listener()),
+    close: () => listeners.forEach((listener) => listener()),
   };
 }
 
@@ -59,29 +50,6 @@ void test("the Comments tool window shows the tab it is asked for", () => {
   assert.equal(state.commentsTab, "review");
   showTab(state, "conversation");
   assert.equal(state.commentsTab, "conversation");
-});
-
-void test("the changeset comment form cancels keeping the words, and clears when posted", () => {
-  const { state } = setup();
-  assert.equal(state.changesetComment.composing, false);
-  composeChangesetComment(state);
-  state.changesetComment.body = "a word";
-  assert.equal(state.changesetComment.composing, true);
-  cancelChangesetComment(state);
-  assert.deepEqual(state.changesetComment, { composing: false, body: "a word" });
-  clearChangesetComment(state);
-  assert.deepEqual(state.changesetComment, { composing: false, body: "" });
-});
-
-void test("another pull request starts with no changeset comment being written", () => {
-  const { state, opening } = setup();
-  composeChangesetComment(state);
-  state.changesetComment.body = "a word";
-  // An ask alone keeps the form: only the announced changeset is another pull request.
-  opening({ type: "requested" });
-  assert.equal(state.changesetComment.composing, true);
-  opening({ type: "opened", changeset: { type: "workingTree" } });
-  assert.deepEqual(state.changesetComment, { composing: false, body: "" });
 });
 
 void test("a closed project has no outgoing popover up", () => {

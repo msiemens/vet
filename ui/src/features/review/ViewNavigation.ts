@@ -16,7 +16,6 @@ import { RequestError } from "../../lib/requestError";
 import type { ViewMode } from "../../lib/viewMode";
 import type { Backend } from "../../state/backend";
 import type { TabId } from "../../state/commands";
-import { findSets } from "../../state/findSets.svelte";
 import { locationPicker } from "../../state/locationPicker.svelte";
 import { LocationSearch } from "../../state/locationSearch";
 import { notices } from "../../state/notices.svelte";
@@ -44,7 +43,7 @@ export class ViewNavigation {
   private backend: Backend;
   /** The changeset on screen as the navigation reads it: its source, plus the commit it shows, where failures are reported and how the view is switched. */
   private changeset: ViewSource &
-    Pick<ChangesetSource, "shownCommit" | "commitList" | "reportFailure" | "setRange" | "showWhole">;
+    Pick<ChangesetSource, "shownCommit" | "commitList" | "reportFailure" | "setRange" | "showWhole" | "findSets">;
   private tabs: Tabs;
   private scopes: ViewScopes;
   private views: ReviewViews;
@@ -55,7 +54,7 @@ export class ViewNavigation {
   constructor(
     backend: Backend,
     changeset: ViewSource &
-      Pick<ChangesetSource, "shownCommit" | "commitList" | "reportFailure" | "setRange" | "showWhole">,
+      Pick<ChangesetSource, "shownCommit" | "commitList" | "reportFailure" | "setRange" | "showWhole" | "findSets">,
     tabs: Tabs,
     scopes: ViewScopes,
     views: ReviewViews,
@@ -110,7 +109,11 @@ export class ViewNavigation {
           open: (row) => void this.openRow(id, row, side),
           keep:
             kind === "usages"
-              ? (answer) => findSets.keepUsages({ type: "usages", symbol: subject.name, side, path, ...at }, answer)
+              ? (answer) =>
+                  this.changeset.findSets.keepUsages(
+                    { type: "usages", symbol: subject.name, side, path, ...at },
+                    answer,
+                  )
               : undefined,
           ask: (signal) =>
             kind === "usages"
@@ -120,7 +123,7 @@ export class ViewNavigation {
       },
       findUsages: (_revision, side, path, at, subject) => {
         if (this.scopes.analysable(id, side))
-          findSets.findUsages({ type: "usages", symbol: subject.name, side, path, ...at });
+          this.changeset.findSets.findUsages({ type: "usages", symbol: subject.name, side, path, ...at });
       },
       diagnostics: (revision, path) =>
         this.scopes.analysable(id, "target") ? semantic.diagnostics(revision, path) : Promise.resolve([]),

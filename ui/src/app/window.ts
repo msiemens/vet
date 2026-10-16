@@ -1,13 +1,12 @@
 // The window's wiring that is not a component: the key listener, the double-click setting, the
-// connection that reveals the window, the native menu, double Shift, and the result sets that follow
-// the changeset on view. `App` installs it once while it is mounted.
+// connection that reveals the window, the native menu, double Shift, and the Pipelines tool's
+// hide for a changeset of another kind. `App` installs it once while it is mounted.
 
 import { watchDoubleShift } from "../features/palette";
 import { leaveScope, shell } from "../features/chrome";
 import { belongsTo } from "../features/pipelines";
 import { setDoubleClickMs } from "../lib/ui/doubleClick";
 import { commands } from "../state/commands";
-import { findSets } from "../state/findSets.svelte";
 import { appVersion, hostLabel, inTauri, showWindow, systemDoubleClickMs } from "../state/host";
 import { mainMenu } from "../state/mainMenu.svelte";
 import { opened } from "../state/opened.svelte";
@@ -49,10 +48,9 @@ export function installWindow(): () => void {
   void hostLabel().then((label) => (appState.host = label));
   session.onConnect(reveal);
   void session.connect().then(reveal);
-  // Result sets belong to the changeset on view, and the Pipelines tool belongs to a pull request:
-  // a changeset that opens as another kind closes it, one still loading (none announced) keeps it.
-  const stopSets = opened.onOpening((opening) => {
-    if (opening.type === "requested") findSets.reset();
+  // The Pipelines tool belongs to a pull request: a changeset that opens as another kind closes it, one
+  // still loading (none announced) keeps it.
+  const stopPipelines = opened.onOpening((opening) => {
     if (opening.type === "opened" && !belongsTo(opening.changeset.type) && shell.bottom === "pipelines")
       shell.hideBottom();
   });
@@ -62,7 +60,7 @@ export function installWindow(): () => void {
     () => commands.run("palette.all"),
   );
   return () => {
-    stopSets();
+    stopPipelines();
     stopMenu();
     stopDoubleShift();
     window.removeEventListener("keydown", onkeydown, true);

@@ -1,6 +1,6 @@
-// What Find in Files holds between openings: the query, the options, the filters, the file mask, the
-// place searched and the chosen result stay as they were for as long as the window lives. The dialog
-// itself belongs to the open project: closing one puts it away.
+// What Find in Files holds between openings: the query, the options, the filters and the file mask stay as
+// they were for as long as the window lives. The place searched and the chosen result belong to the
+// changeset on view (its session). The dialog itself belongs to the open project: closing one puts it away.
 
 import type { SearchSide } from "../../generated/SearchSide.ts";
 import { session } from "../../state/session.svelte";
@@ -23,10 +23,6 @@ class FindInFiles {
   onlyChanges = $state(false);
   notSeen = $state(false);
   mask = $state("");
-  /** The id of the place searched (`scopeChoices`); none until the dialog was first opened, which starts at the view on show. */
-  scope = $state<string>();
-  /** The chosen result (`resultId`). */
-  selected = $state<string>();
   /** Each request puts the cursor in the query field, also while the dialog is open. */
   focusRequests = $state(0);
 

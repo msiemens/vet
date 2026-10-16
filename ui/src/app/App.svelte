@@ -43,7 +43,6 @@
   import { canRestartBackend, hasNativeDialogs, hasNativeMenu } from "../state/host";
   import { commands } from "../state/commands";
   import { contextMenus } from "../state/contextMenu.svelte";
-  import { findSets } from "../state/findSets.svelte";
   import { mainMenu } from "../state/mainMenu.svelte";
   import { notices } from "../state/notices.svelte";
   import { opened } from "../state/opened.svelte";
@@ -114,6 +113,7 @@
   const pipelineCommit = $derived(opened.session?.pipelineCommit);
   /** Stands in for the commits of a changeset while none is on view. */
   const idleCommits = new CommitList(() => session.connected().commits());
+  const idleHeld = $state<{ scope?: string; selected?: string }>({});
   /** Stands in for the Pipelines state of a changeset while none is on view. */
   const idlePipelines = newPipelines(() => undefined);
   const versions = $derived(opened.session?.versions.items ?? []);
@@ -432,11 +432,12 @@
     range={opened.session?.range ?? defaultRange(versions)}
     revision={opened.session?.layout?.shown.revision ?? 0}
     commitList={opened.session?.commitList ?? idleCommits}
+    held={opened.session?.findInFiles ?? idleHeld}
     onopen={(result) => {
       shell.show("review");
       appState.whenReview((c) => void c.openFound(result));
     }}
-    onkeep={(kept) => findSets.keepSearch(kept)}
+    onkeep={(kept) => opened.session?.findSets.keepSearch(kept)}
   />
 {/if}
 

@@ -8,6 +8,7 @@
   import MoreRow from "../../lib/ui/MoreRow.svelte";
   import ScrollArea from "../../lib/ui/ScrollArea.svelte";
   import TreeRow from "../../lib/ui/TreeRow.svelte";
+  import { cancelChangesetComment, clearChangesetComment } from "../../state/commentDrafts";
   import { commands } from "../../state/commands";
   import { contextMenus } from "../../state/contextMenu.svelte";
   import { opened } from "../../state/opened.svelte";
@@ -50,21 +51,21 @@
   let showAllResolved = $state(false);
   const fold = (id: GroupId) => (folded = folded.includes(id) ? folded.filter((f) => f !== id) : [...folded, id]);
 
-  // The draft is the store's, so the Comment on Changeset command can open it and switching tool windows keeps it.
-  const draft = commentsUi.changesetComment;
+  // The draft is the changeset's, so the Comment on Changeset command can open it and switching tool windows keeps it.
+  const draft = $derived(opened.session?.changesetComment);
   let sending = $state(false);
   /** A comment on the changeset is written below its conversation, where it will be; without a pull request, below the threads. */
-  const composeHere = $derived(draft.composing && showing === (info ? "conversation" : "review"));
+  const composeHere = $derived(!!draft?.composing && showing === (info ? "conversation" : "review"));
 
   async function post() {
     // The panel is no view of files: it comments on the changeset as the manifest on screen is of.
     const owner = opened.session;
     const onScreen = owner?.currentShown();
-    if (!owner || !onScreen || !canSubmit(draft.body, sending)) return;
+    if (!owner || !onScreen || !canSubmit(owner.changesetComment.body, sending)) return;
     sending = true;
-    const sent = await owner.threads.create(onScreen, { type: "changeset" }, draft.body.trim());
+    const sent = await owner.threads.create(onScreen, { type: "changeset" }, owner.changesetComment.body.trim());
     sending = false;
-    if (sent) commentsUi.sentChangesetComment();
+    if (sent) clearChangesetComment(owner.changesetComment);
   }
 </script>
 
@@ -203,7 +204,7 @@
         {#if groups.open.length}{@render group("Open", groups.open, "open")}{/if}
         {#if groups.resolved.length}{@render group("Resolved", groups.resolved, "resolved")}{/if}
       {/if}
-      {#if composeHere}
+      {#if composeHere && draft}
         <div
           class="compose"
           {@attach (box: HTMLElement) => {
@@ -221,10 +222,10 @@
               if (isSubmitKey(e)) {
                 e.preventDefault();
                 void post();
-              } else if (e.key === "Escape") commentsUi.cancelChangesetComment();
+              } else if (e.key === "Escape") cancelChangesetComment(draft);
             }}></textarea>
           <div class="buttons">
-            <button class="ctl" type="button" onclick={() => commentsUi.cancelChangesetComment()}>Cancel</button>
+            <button class="ctl" type="button" onclick={() => cancelChangesetComment(draft)}>Cancel</button>
             <button
               class="ctl primary"
               type="button"

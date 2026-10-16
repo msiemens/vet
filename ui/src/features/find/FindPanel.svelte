@@ -22,7 +22,9 @@
   import TreeRow from "../../lib/ui/TreeRow.svelte";
   import VirtualRows from "../../lib/ui/VirtualRows.svelte";
   import type { Backend } from "../../state/backend";
-  import { type FindSet, findSets } from "../../state/findSets.svelte";
+  import { type FindSet } from "../../state/findSets.svelte";
+  import { findTool } from "../../state/findTool.svelte";
+  import { opened } from "../../state/opened.svelte";
   import { type Item, narrowing, itemsOf, visible } from "../../state/findRows";
   import { previewBasis, relocated } from "../../state/findRuns";
   import type { Place } from "../../state/foundPlace";
@@ -47,7 +49,9 @@
     oneditor: () => void;
   } = $props();
 
-  const set = $derived(findSets.current);
+  // Result sets belong to the changeset on view; between two there is none.
+  const sets = $derived(opened.session?.findSets);
+  const set = $derived(sets?.current);
   const shown = $derived(set ? visible(set.places, set.filters) : []);
   const items = $derived(set ? itemsOf(shown, set.folded) : []);
   const cursor = $derived(items.findIndex((i) => i.key === set?.selected));
@@ -55,7 +59,7 @@
     const item = items.at(cursor);
     return item?.kind === "place" ? item.place : undefined;
   });
-  const stale = $derived(!!set && findSets.stale(set));
+  const stale = $derived(!!set && !!sets?.stale(set));
   const moved = $derived<ReadonlySet<string>>(set && stale ? set.changed : new Set());
   const files = $derived(new Set(shown.map((p) => p.file.path)).size);
   const notSeen = $derived(shown.filter((p) => p.review === "unseen" || p.review === "old").length);
@@ -112,7 +116,7 @@
     };
     if ((e.metaKey || e.ctrlKey) && !e.altKey && !e.shiftKey && e.key.toLowerCase() === "r" && set) {
       take();
-      findSets.rerun(set);
+      sets?.rerun(set);
       return;
     }
     if (e.target instanceof HTMLInputElement) {
@@ -158,8 +162,8 @@
   // The places of a set that went stale are asked for where they are now.
   $effect(() => {
     const current = set;
-    const revision = findSets.revision;
-    if (current && stale && revision !== undefined) untrack(() => void findSets.locate(current));
+    const revision = sets?.revision;
+    if (current && stale && revision !== undefined) untrack(() => void sets?.locate(current));
   });
 
   // A set's chosen place is revealed when the tab is shown again.
@@ -190,7 +194,7 @@
       {#if set}
         <span class:hot={stale}>
           {#if set.phase === "running"}
-            <IconButton icon="stop" label="Stop" size="s" iconSize={12} onclick={() => findSets.stop(set)} />
+            <IconButton icon="stop" label="Stop" size="s" iconSize={12} onclick={() => sets?.stop(set)} />
           {:else}
             <IconButton
               icon="refresh"
@@ -198,7 +202,7 @@
               title="Rerun  {navigator.platform.includes('Mac') ? '⌘' : 'Ctrl+'}R"
               size="s"
               iconSize={14}
-              onclick={() => findSets.rerun(set)}
+              onclick={() => sets?.rerun(set)}
             />
           {/if}
         </span>
@@ -235,36 +239,38 @@
           label="Preview of the code"
           size="s"
           iconSize={14}
-          active={findSets.preview}
-          onclick={() => (findSets.preview = !findSets.preview)}
+          active={findTool.preview}
+          onclick={() => (findTool.preview = !findTool.preview)}
         />
       {/if}
     {/snippet}
   </BottomToolHeader>
   <div class="strip" role="tablist" aria-label="Result sets">
-    {#each findSets.sets as s (s.id)}
-      <FindTab
-        set={s}
-        selected={s.id === findSets.active}
-        count={countOf(s)}
-        stale={findSets.stale(s)}
-        onselect={() => (findSets.active = s.id)}
-        onpin={() => findSets.togglePin(s)}
-        onclose={() => findSets.close(s.id)}
-      />
-    {/each}
+    {#if sets}
+      {#each sets.sets as s (s.id)}
+        <FindTab
+          set={s}
+          selected={s.id === sets.active}
+          count={countOf(s)}
+          stale={sets.stale(s)}
+          onselect={() => (sets.active = s.id)}
+          onpin={() => sets.togglePin(s)}
+          onclose={() => sets.close(s.id)}
+        />
+      {/each}
+    {/if}
   </div>
 
   {#if set}
     {#if stale}
-      <Banner message={staleText([...moved])} actions={[{ label: "Rerun", onclick: () => findSets.rerun(set) }]} />
+      <Banner message={staleText([...moved])} actions={[{ label: "Rerun", onclick: () => sets?.rerun(set) }]} />
     {:else if set.rerun && set.phase === "done"}
       <Banner message={rerunText(set.rerun)} />
     {/if}
     {#if cut !== undefined}
       <Banner
         message="{cutText(set.places.length, cut)} Filter the list or show all."
-        actions={[{ label: "Show all", onclick: () => findSets.showAll(set) }]}
+        actions={[{ label: "Show all", onclick: () => sets?.showAll(set) }]}
       />
     {:else if set.truncated && set.phase === "done"}
       <Banner message="The search stopped at its limit of matches. Narrow the query to read the rest." />
@@ -279,7 +285,7 @@
             title={set.spec.type === "usages" ? `Finding usages of ${set.title}` : `Searching for ${set.title}`}
           >
             {#snippet actions()}
-              <button class="ctl" type="button" onclick={() => findSets.stop(set)}>Stop</button>
+              <button class="ctl" type="button" onclick={() => sets?.stop(set)}>Stop</button>
             {/snippet}
           </EmptyState>
         {:else if set.phase === "failed" || set.phase === "stopped"}
@@ -290,7 +296,7 @@
             text={set.message}
           >
             {#snippet actions()}
-              <button class="ctl" type="button" onclick={() => findSets.rerun(set)}>Rerun</button>
+              <button class="ctl" type="button" onclick={() => sets?.rerun(set)}>Rerun</button>
             {/snippet}
           </EmptyState>
         {:else if !set.places.length}
@@ -386,7 +392,7 @@
           </VirtualRows>
         {/if}
       </div>
-      {#if findSets.preview && chosen && !(set.phase === "failed" || set.phase === "stopped")}
+      {#if findTool.preview && chosen && !(set.phase === "failed" || set.phase === "stopped")}
         {@const basis = previewBasis(chosen, moved.has(chosen.file.path))}
         <div class="preview">
           {#if moved.has(chosen.file.path)}
@@ -420,7 +426,7 @@
             view={set.spec.type === "search" && set.spec.request.scope.type === "view"
               ? set.spec.request.scope.view
               : { type: "changeset" }}
-            revision={findSets.revision ?? 0}
+            revision={sets?.revision ?? 0}
             repository={set.spec.type === "search" && set.spec.request.scope.type === "repository"}
           />
         </div>

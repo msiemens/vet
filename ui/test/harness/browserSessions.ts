@@ -461,8 +461,7 @@ export const sessions: Record<string, (d: Driver) => Promise<void>> = {
       );
     const keepSearch = () =>
       d.page(`(async () => {
-        const { findSets } = await import("/src/state/findSets.svelte.ts");
-        findSets.keepSearch({
+        __t.opened.session.findSets.keepSearch({
           spec: {
             type: "search",
             request: { scope: { type: "changeset" }, pattern: { text: "line", matchCase: false, wholeWord: false, regex: false }, mask: "", side: "both", onlyChanges: false, notSeen: false, limit: 0 },
@@ -565,10 +564,7 @@ export const sessions: Record<string, (d: Driver) => Promise<void>> = {
       d.page(
         `(async () => { const { appState } = await import("/src/app/appState.svelte.ts"); const c = appState.controller; return c && { open: [...c.tabs.open], active: c.tabs.active, view: c.activeMode }; })()`,
       );
-    const draft = () =>
-      d.page(
-        `(async () => { const { commentsUi } = await import("/src/features/comments/index.ts"); return commentsUi.changesetComment.body; })()`,
-      );
+    const draft = () => d.page(`__t.opened.session.changesetComment.body`);
 
     await showReview();
     // The Changes tab is left scrolled to the middle of the changeset, in All changes.
@@ -581,7 +577,7 @@ export const sessions: Record<string, (d: Driver) => Promise<void>> = {
     await d.sleep(500);
     const fileProbe = await d.probe();
     await d.page(
-      `(async () => { const { commentsUi } = await import("/src/features/comments/index.ts"); commentsUi.composeChangesetComment(); commentsUi.changesetComment.body = "an unsent draft"; return true; })()`,
+      `(() => { const draft = __t.opened.session.changesetComment; draft.composing = true; draft.body = "an unsent draft"; return true; })()`,
     );
     const beforeTabs = await tabs();
 
@@ -748,8 +744,9 @@ export const sessions: Record<string, (d: Driver) => Promise<void>> = {
     if (!(await d.page(onQueue))) throw new Error("the review screen did not go away");
     await d.page(`(async () => {
       const { openPlace } = await import("/src/app/actions.ts");
-      const { findSets } = await import("/src/state/findSets.svelte.ts");
-      findSets.show = () => undefined;
+      const { findTool } = await import("/src/state/findTool.svelte.ts");
+      findTool.show = () => undefined;
+      const findSets = __t.opened.session.findSets;
       findSets.keepSearch({
         spec: {
           type: "search",

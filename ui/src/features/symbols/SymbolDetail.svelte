@@ -8,7 +8,7 @@
   import { nameOf } from "../../lib/symbolLabel";
   import EmptyState from "../../lib/ui/EmptyState.svelte";
   import Icon from "../../lib/ui/Icon.svelte";
-  import { findSets } from "../../state/findSets.svelte";
+  import { opened } from "../../state/opened.svelte";
   import type { Shown } from "../../state/symbolLoad";
   import { symbols } from "../../state/symbols.svelte";
   import SymbolGlyph from "./SymbolGlyph.svelte";
@@ -38,7 +38,7 @@
   const FIND = {
     label: "Open all usages in the Find window",
     onclick: () =>
-      findSets.findUsages({
+      opened.session?.findSets.findUsages({
         type: "usages",
         symbol: nameOf(id),
         side: "target",

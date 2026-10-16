@@ -20,7 +20,9 @@ import { STALE_NOTICE } from "../lib/notice";
 import { pathsBelow } from "../lib/paths";
 import { isKind } from "../lib/requestError";
 import type { SessionEvent } from "./backend";
+import { CommentDrafts, emptyChangesetComment, unsentComments } from "./commentDrafts";
 import { CommitList } from "./commitList";
+import { type SessionFindSets, newFindSets } from "./findSets.svelte";
 import { commitToShow, neighbour } from "./commitLens";
 import { type SessionChecks, newChecks } from "./checks.svelte";
 import { Lifetime } from "./lifetime";
@@ -89,6 +91,14 @@ class Session implements ViewSource {
   readonly pullRequest: SessionPullRequest | undefined;
   /** The checks of the pull request's commits, as the backend pushes them. */
   readonly checks: SessionChecks = newChecks();
+  /** The Find tool's result sets. */
+  readonly findSets: SessionFindSets = newFindSets(this);
+  /** Find in Files' place searched (`scopeChoices`'s id) and chosen result, for the dialog to come back to; the other fields stay with the window. */
+  readonly findInFiles = $state<{ scope?: string; selected?: string }>({});
+  /** What the cards' comment forms hold that was not sent. */
+  readonly drafts = new CommentDrafts();
+  /** The comment on the changeset as a whole being written in the Comments tool window. */
+  readonly changesetComment = $state(emptyChangesetComment());
   /** How far the view's files are reviewed. */
   viewCompletion = $state.raw<Completion>();
   /** Dependency restores that failed: the analysis of those projects is limited. Pushed as they happen. */
@@ -297,6 +307,7 @@ class Session implements ViewSource {
       start.key.type === "pullRequest" ? newPullRequest({ backend: () => session.connected() }) : undefined;
     this.lifetime.add(() => this.pullRequest?.clear());
     this.lifetime.add(() => this.reviewChanges.end());
+    this.lifetime.add(() => this.findSets.end());
     this.lifetime.add(session.connected().onAccountsChanged(() => this.pipelines.accountsChanged()));
     whileReviewShown(this.lifetime, () => this.showReview());
   }
@@ -316,6 +327,11 @@ class Session implements ViewSource {
     void this.pullRequest?.reload();
     this.versions.resync();
     this.reviewChanges.resync();
+  }
+
+  /** How many comment boxes hold text that was not added as a comment, which ending the session loses. */
+  unsentComments(): number {
+    return unsentComments(this.drafts, this.changesetComment);
   }
 
   /** Ends the session: what it started counts for nothing from now on. */

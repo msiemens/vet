@@ -9,7 +9,8 @@ import type { Side } from "../generated/Side";
 import { isAbort } from "../lib/abort";
 import { errorText } from "../lib/errorText";
 import type { SearchQuery, SearchResults } from "./backend";
-import { opened } from "./opened.svelte";
+import type { ChangesetSession } from "./changesetSession.svelte";
+import { findTool } from "./findTool.svelte";
 import { type ChangedFile, type Place, placesFromRows, placesFromSearch } from "./foundPlace";
 import { type Filters, NO_FILTERS } from "./findRows";
 import { diffRuns, isStale, linesToLocate, ranVersion, slotFor } from "./findRuns";
@@ -113,13 +114,13 @@ export class FindSet {
   }
 }
 
-class FindSets {
+/** The result sets of one changeset's session. */
+class SessionFindSets {
   sets = $state.raw<readonly FindSet[]>([]);
   active = $state<string>();
-  preview = $state(true);
-  /** Shows the Find tool, and puts the focus in its list if `focus`; set by the window that owns the bottom panel. */
-  show: (focus: boolean) => void = () => undefined;
   private seq = 0;
+
+  constructor(private owner: ChangesetSession) {}
 
   get current(): FindSet | undefined {
     return this.sets.find((s) => s.id === this.active);
@@ -127,15 +128,12 @@ class FindSets {
 
   /** The revision on show, which a set is stale against. */
   get revision(): number | undefined {
-    return opened.session?.layout?.shown.revision;
+    return this.owner.layout?.shown.revision;
   }
 
   /** The version a run of `spec` is of, which the set records and the stale banner names files since. */
   private versionOf(spec: SetSpec): number | undefined {
-    return ranVersion(
-      spec.type === "search" ? spec.request.scope : undefined,
-      opened.session?.versions.items.at(-1)?.n,
-    );
+    return ranVersion(spec.type === "search" ? spec.request.scope : undefined, this.owner.versions.items.at(-1)?.n);
   }
 
   stale(set: FindSet): boolean {
@@ -182,7 +180,7 @@ class FindSets {
   /** Finds the usages at a position, into the tool. */
   findUsages(spec: UsagesSpec) {
     void this.start(this.place(spec));
-    this.show(true);
+    findTool.show(true);
   }
 
   /** Takes the list a Show Usages popup holds into the tool, as it was found. */
@@ -192,14 +190,14 @@ class FindSets {
       set.places = placesFromRows(answer.rows, answer.side, this.changedFile);
       set.total = answer.total;
     });
-    this.show(false);
+    findTool.show(false);
   }
 
   /** Takes the results of the Find in Files dialog into the tool. */
   keepSearch({ spec, results }: KeptSearch) {
     const set = this.place(spec);
     this.settle(set, () => this.takeSearch(set, results));
-    this.show(false);
+    findTool.show(false);
   }
 
   /** The tab a result of `spec` goes to, made the active one. */
@@ -218,9 +216,8 @@ class FindSets {
 
   /** What the changeset on show says of a changed file, if its view is the changeset's. */
   private changedFile = (path: string): ChangedFile | undefined => {
-    const session = opened.session;
-    if (session?.view.type !== "changeset") return undefined;
-    const file = session.reviewed(path);
+    if (this.owner.view.type !== "changeset") return undefined;
+    const file = this.owner.reviewed(path);
     return file && { status: file.status, completion: file.completion, hunks: file.hunks, states: file.review.hunks };
   };
 
@@ -328,12 +325,11 @@ class FindSets {
     set.pinned = !set.pinned;
   }
 
-  /** Forgets every set: they belong to the changeset that was on view. */
-  reset() {
+  /** Stops every run: the sets belong to a changeset that is no longer on view. */
+  end() {
     for (const s of this.sets) s.abort?.abort();
-    this.sets = [];
-    this.active = undefined;
   }
 }
 
-export const findSets = new FindSets();
+export const newFindSets = (owner: ChangesetSession): SessionFindSets => new SessionFindSets(owner);
+export type { SessionFindSets };

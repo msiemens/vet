@@ -13,6 +13,7 @@ import type { ThreadMessage } from "../../../generated/ThreadMessage";
 import type { ThreadStatus } from "../../../generated/ThreadStatus";
 import type { ThreadTarget } from "../../../generated/ThreadTarget";
 import { canSubmit, isSubmitKey, replyShape } from "../../../lib/composer.ts";
+import type { CommentDrafts } from "../../../state/commentDrafts.ts";
 import { isFlat } from "../../../lib/flatThread.ts";
 import { lineRange } from "../../../lib/lineRange.ts";
 import { movedLabel, movedTitle } from "../../../lib/movedTitle.ts";
@@ -46,13 +47,13 @@ export interface ThreadActions {
   openLink(url: string): void;
   /** The key that posts a form, as the viewer reads keys on this platform. */
   submitKey: string;
-  /** Names the project and changeset the cards are drawn for; an unsent new comment belongs to it. */
-  draftScope(): string;
+  /** What was typed into the cards' forms and not sent: the changeset the cards are drawn for keeps it. */
+  drafts: CommentDrafts;
 }
 
 /** The key under which the unsent text of the form for a new comment on `target` is kept. */
-export function newCommentKey(scope: string, target: ThreadTarget): string {
-  return `new:${scope}:${JSON.stringify(target)}`;
+export function newCommentKey(target: ThreadTarget): string {
+  return `new:${JSON.stringify(target)}`;
 }
 
 /** What a new comment is attached to, for the form's title. */
@@ -71,21 +72,15 @@ function button(label: string, className: string, onclick: () => void) {
 }
 
 /**
- * What the viewer has typed in cards and not sent, by form (`reply:3`, `edit:7`, `new:<project>/<changeset>:…`). A card is
- * drawn again when the threads change, which must not cost the text; a form that is open has an entry,
- * possibly empty.
- */
-const unsent = new Map<string, string>();
-
-/**
  * A text field and its submit button, which stays disabled while the text is blank or a request runs.
- * With a `key` its text outlives the card. A `lazy` one shows as a reply field does (`replyShape`).
+ * With a `key` its text outlives the card, in `drafts`. A `lazy` one shows as a reply field does (`replyShape`).
  */
 function composer(
   rows: number,
   placeholder: string,
   label: string,
   submit: (body: string) => Promise<boolean>,
+  drafts: CommentDrafts,
   key?: string,
   lazy = false,
 ) {
@@ -94,7 +89,7 @@ function composer(
   field.placeholder = placeholder;
   field.spellcheck = true;
   const send = button(label, "ctl primary vet-thread-send", () => void run());
-  if (key !== undefined) field.value = unsent.get(key) ?? "";
+  if (key !== undefined) field.value = drafts.get(key) ?? "";
   let busy = false;
   let focused = false;
   const refresh = () => {
@@ -113,13 +108,13 @@ function composer(
     busy = false;
     if (sent) {
       field.value = "";
-      if (key !== undefined) unsent.delete(key);
+      if (key !== undefined) drafts.delete(key);
     }
     refresh();
   }
   field.addEventListener("input", () => {
     refresh();
-    if (key !== undefined) unsent.set(key, field.value);
+    if (key !== undefined) drafts.set(key, field.value);
   });
   field.addEventListener("focus", () => {
     focused = true;
@@ -141,10 +136,17 @@ function composer(
 function draftCard(target: ThreadTarget, actions: ThreadActions): HTMLElement {
   const card = el("div", "vet-thread-card");
   const form = el("div", "vet-thread-form");
-  const key = newCommentKey(actions.draftScope(), target);
-  const { field, send } = composer(3, "Comment…", "Comment", (body) => actions.create(target, body), key);
+  const key = newCommentKey(target);
+  const { field, send } = composer(
+    3,
+    "Comment…",
+    "Comment",
+    (body) => actions.create(target, body),
+    actions.drafts,
+    key,
+  );
   const dismiss = () => {
-    unsent.delete(key);
+    actions.drafts.delete(key);
     actions.cancelDraft();
   };
   const cancel = button("Cancel", "ctl", dismiss);
@@ -195,7 +197,7 @@ function conflictCard(message: ThreadMessage, conflict: EditConflict, actions: T
 function editForm(message: ThreadMessage, actions: ThreadActions, close: () => void): HTMLElement {
   const key = `edit:${message.id}`;
   const leave = () => {
-    unsent.delete(key);
+    actions.drafts.delete(key);
     close();
   };
   const form = el("div", "vet-msg-edit");
@@ -208,6 +210,7 @@ function editForm(message: ThreadMessage, actions: ThreadActions, close: () => v
       if (saved) leave();
       return saved;
     },
+    actions.drafts,
     key,
   );
   field.addEventListener("keydown", (e) => {
@@ -231,7 +234,7 @@ function messageRow(thread: Thread, message: ThreadMessage, actions: ThreadActio
   const body = shown;
   const editKey = `edit:${message.id}`;
   const makeForm = () => {
-    if (!unsent.has(editKey)) unsent.set(editKey, message.body);
+    if (!actions.drafts.has(editKey)) actions.drafts.begin(editKey, message.body);
     const form: HTMLElement = editForm(message, actions, () => {
       form.replaceWith(body);
       shown = body;
@@ -244,7 +247,7 @@ function messageRow(thread: Thread, message: ThreadMessage, actions: ThreadActio
     shown = form;
   };
   // A form left open by a card that was drawn again is open again, with its text.
-  if (message.mine && !message.conflict && unsent.has(editKey)) shown = makeForm();
+  if (message.mine && !message.conflict && actions.drafts.has(editKey)) shown = makeForm();
   if (message.mine) {
     const first = thread.messages[0] === message;
     const edit = iconButton("Edit the comment", "edit", showForm, "vet-thread-btn", 12, 2);
@@ -344,6 +347,7 @@ function threadCard(thread: Thread, open: boolean, actions: ThreadActions): HTML
       "Reply…",
       "Reply",
       (body) => actions.reply(thread.id, body),
+      actions.drafts,
       `reply:${thread.id}`,
       true,
     );

@@ -2,17 +2,13 @@
 // components bind and the intents that change them (`commentsUiModel.ts` holds the plain transitions).
 // The pull request's data is `state/platform.svelte.ts`'s.
 
-import { opened } from "../../state/opened.svelte";
 import { session } from "../../state/session.svelte";
 import {
   type CommentsTab,
   type CommentsUiState,
-  cancelChangesetComment as cancelComment,
-  clearChangesetComment as clearComment,
   clearReviewForm,
   closeOutgoing as closeOutgoingState,
   closeReviewForm as closeReviewFormState,
-  composeChangesetComment as composeComment,
   followCommentsUi,
   initialCommentsUi,
   openOutgoing as openOutgoingState,
@@ -44,11 +40,6 @@ class CommentsUi {
     return this.state.review;
   }
 
-  /** The comment on the changeset as a whole being written in the Comments tool window. */
-  get changesetComment(): CommentsUiState["changesetComment"] {
-    return this.state.changesetComment;
-  }
-
   /** The tab the Comments tool window shows. */
   get commentsTab(): CommentsTab {
     return this.state.commentsTab;
@@ -63,13 +54,7 @@ class CommentsUi {
   }
 
   constructor() {
-    followCommentsUi(
-      {
-        onOpening: (listener) => opened.onOpening(listener),
-        onClose: (listener) => session.onClose(listener),
-      },
-      this.state,
-    );
+    followCommentsUi({ onClose: (listener) => session.onClose(listener) }, this.state);
   }
 
   /** Shows the outgoing comments and the vote; `picking` lists the votes to pick from instead. */
@@ -90,21 +75,6 @@ class CommentsUi {
   /** Shows the Comments tool window's Conversation tab. */
   showConversation() {
     showTabState(this.state, "conversation");
-  }
-
-  /** Opens the form for a comment on the changeset as a whole. */
-  composeChangesetComment() {
-    composeComment(this.state);
-  }
-
-  /** Closes the changeset comment form, keeping what was written. */
-  cancelChangesetComment() {
-    cancelComment(this.state);
-  }
-
-  /** The changeset comment was posted: its form closes and starts empty. */
-  sentChangesetComment() {
-    clearComment(this.state);
   }
 
   /** The review was submitted: its form closes and starts empty, the verdict staying. */

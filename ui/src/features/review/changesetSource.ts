@@ -15,6 +15,8 @@ export type ChangesetSource = Pick<
   | "shownCommit"
   | "whole"
   | "commitList"
+  | "drafts"
+  | "findSets"
   | "stepCommit"
   | "setRange"
   | "showWhole"
