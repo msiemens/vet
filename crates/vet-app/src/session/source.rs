@@ -160,7 +160,12 @@ impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> L
         tree.filter = st.project_filter().clone();
         tree.project = None;
         tree.revision = st.revision.max(tree.revision) + 1;
-        let outgoing = st.replace(incoming);
+        let mut outgoing = st.replace(incoming);
+        // What is parked is not shown: its diff and the snapshots beside it are dropped, and
+        // whatever comes back for them is rebuilt on the first request for its revision.
+        let parked = Arc::make_mut(&mut outgoing);
+        parked.changes = None;
+        parked.known.clear();
         st.parked().insert(outgoing.source.clone(), outgoing);
         // The settle loop works on the working tree only while it is on view or its review is
         // open; another changeset on view parks an unreviewed one, which is then left alone.
