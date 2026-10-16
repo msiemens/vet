@@ -61,22 +61,27 @@ Each store follows the events of what it shows:
 
 - `state/backend.ts` — `snapshotSettled`, `changesetOpened`: aborts the semantic requests of older revisions.
 - `opened.svelte.ts` — `changesetOpened`: ends the session on view and makes the announced changeset's (`openedProtocol.ts`); every other event goes to the session on view.
-- `changesetSession.svelte.ts` — `snapshotSettled`, `targetChanged`: fetches the manifest; `lensChanged`: shows the lens's view; `reviewChanged`: one file, or the totals in a commit; `reviewStarted`, `restoreFailed`: the facts' review and failures.
+- `changesetSession.svelte.ts` — decides the reads for every event in one place: `sessionReads.ts` maps an event and the session's state to the reads it needs, and `readFlush.ts` runs them on the next task, once per burst. A pass awaits the manifest, then the whole changeset unless the manifest fed it, then starts threads, the pull request info, versions, changes since and commits without waiting, and has the file tabs' scopes read. What the event itself carries is applied at once: `lensChanged` the lens's view, `reviewChanged` one file or the totals in a commit, `reviewStarted` and `restoreFailed` the facts' review and failures. The reads per event:
+  - `snapshotSettled`: the manifest, the whole changeset, threads, versions, changes since, the scopes.
+  - `targetChanged`: the manifest, the whole changeset, the scopes.
+  - `lensChanged`: the manifest, unless a range stays on view.
+  - `threadsChanged`: threads and the pull request info.
+  - `platformStatus`: the pull request info.
+  - `reviewStarted`: versions, changes since.
+  - `reviewChanged`: versions, changes since, and the commits when they show its progress.
 - `queue.svelte.ts` — `changesetOpened`, `reviewStarted`, `changesetsChanged`: lists the local changesets again; `threadsChanged`: lists them without recounting; `pullRequestListChanged`: reads the pull requests again; `pullRequestsChanged`: patches the rows it names; `changesetLinesChanged`: the counts pushed so far; `snapshotSettled`, `reviewChanged`: follows the row on view.
-- `versions.svelte.ts` (a session's versions, while the review screen is shown), `reviewChanges.svelte.ts` (a session's changes since a version, for its whole life, as the queue panel shows them) — `snapshotSettled`, `reviewStarted`, `reviewChanged`: reads again.
-- `threads.svelte.ts` (a session's threads) — `threadsChanged`, `snapshotSettled`, and the session starting or resyncing: reloads the changeset's threads and, while the review screen shows a range, the range's.
+- `versions.svelte.ts` (a session's versions, while the review screen is shown), `reviewChanges.svelte.ts` (a session's changes since a version, for its whole life, as the queue panel shows them), `pullRequest.svelte.ts` (only a pull request's session has one) and `threads.svelte.ts` (the changeset's threads and, while the review screen shows a range, the range's) — read when the session's flush says so, and when the session starts or resyncs.
 - `pipelines.svelte.ts` (a session's chosen run, job and folds) — `accountsChanged`: forgets which accounts were refused; the steps drop when the review screen hides.
 - `checks.svelte.ts` (a session's checks) — `checksChanged`: takes the checks.
-- `pullRequest.svelte.ts` (only a pull request's session has one) — the session starting or resyncing, `platformStatus`, `threadsChanged`: reads the `PullRequestInfo` again.
 - `semantic.svelte.ts` — `fileDiagnostics`: a file's pushed diagnostics.
 - `symbols.svelte.ts` (a session's changed symbols and the symbol on show, while the review screen is shown) — `fileSymbols`: a file's pushed symbols and the progress; `serversChanged`: asks again about the symbol on show.
 - `structure.svelte.ts` (a session's outline and selection, while the review screen is shown; sort, changed-only and the popup are the window's) — `serversChanged`, the session resyncing: reads the outline again.
 - `pendingEdits.svelte.ts` — `editsPending`: whether edits wait to settle.
 - `platform.svelte.ts` — `platformStatus`: the status, which a `PullRequestInfo` answer also sets; `notification`: the bell's list and its card.
-- `progress.svelte.ts` — `task`: the running tasks.
+- `progress.svelte.ts` — `task`: the running tasks, and the last failed sync and checks refresh until one of their kind succeeds.
 - `serverList.svelte.ts` — `serversChanged`, `serverRuntimes`, `serverInstallOutput`: the servers and an install's output.
 - `servedBy.svelte.ts` — `serversChanged`: which server serves each file.
-- `ReviewController.ts` — `serversChanged`: drops the semantic answers and re-asks; `reviewChanged`: hands the update to the scope that made it; `snapshotSettled`, `targetChanged`: reloads the tabs' scopes.
+- `ReviewController.ts` — `serversChanged`: drops the semantic answers and re-asks; `reviewChanged`: hands the update to the scope that made it. The tabs' scopes read again when the session's flush calls them, after the manifest.
 - `accounts.svelte.ts` — `credentialsNeeded`, `accountsChanged`: hands over the keychain's token, and reads the accounts again.
 - `recent.svelte.ts` — `recentProjectsChanged`: reloads the recent list.
 
