@@ -195,6 +195,12 @@ button {
   background: var(--primary-press);
 }
 
+/* `.ctl.destructive`: a push button that throws something away. */
+.ctl.destructive {
+  border-color: var(--del-text);
+  color: var(--del-text);
+}
+
 /* `.surface`: what floats above the window (menus, popovers, dialogs, toasts). */
 .surface {
   background: var(--bg-sheet);

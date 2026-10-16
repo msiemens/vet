@@ -17,6 +17,7 @@ export const sessionNames = [
   "pipelines",
   "pullRequest",
   "owned",
+  "leaving",
   "preferences",
   "rapid",
   "projectDialogs",

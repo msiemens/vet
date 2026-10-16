@@ -967,4 +967,99 @@ export const sessions: Record<string, (d: Driver) => Promise<void>> = {
     if ((await d.page(`!!__t.opened.session.range`)) !== true)
       throw new Error("nothing was shown since the last review");
   },
+
+  /**
+   * Switching to another changeset with text in the comment box asks first: Keep editing (a click or
+   * Escape) keeps the text and the changeset, Discard switches, and the next changeset has an empty box.
+   */
+  async discarding(d) {
+    const dialog = () =>
+      d.page(`(() => {
+        const sheet = document.querySelector("dialog[open]");
+        return sheet && {
+          title: sheet.getAttribute("aria-label"),
+          text: sheet.querySelector("p")?.textContent,
+          buttons: [...sheet.querySelectorAll("footer button")].map((b) => b.textContent.trim()),
+          focused: document.activeElement?.textContent?.trim(),
+        };
+      })()`) as Promise<{ title: string; text: string; buttons: string[]; focused: string } | null>;
+    const typed = () => d.page(`document.querySelector("textarea[placeholder^='Comment on the changeset']")?.value`);
+    const onView = () => d.page(`__t.opened.session?.key.type`);
+    const switchAway = async () => {
+      await d.page(`(window.__switch = __t.opened.open({ type: "branch", name: "feature" }), true)`);
+      await d.until(`document.querySelector("dialog[open]") !== null`, "the dialog");
+    };
+    const expectGone = async (what: string) => {
+      await d.until(`document.querySelector("dialog[open]") === null`, `the dialog to close on ${what}`);
+      await d.page(`window.__switch`);
+    };
+
+    await d.page(`__t.commands.run("review.commentOnChangeset")`);
+    await d.until(`document.querySelector("textarea[placeholder^='Comment on the changeset']") !== null`, "the box");
+    await d.click("textarea[placeholder^='Comment on the changeset']");
+    for (const key of "note") await d.press(key);
+    if ((await typed()) !== "note") throw new Error(`the box holds ${JSON.stringify(await typed())}, not "note"`);
+
+    await switchAway();
+    const asked = await dialog();
+    if (asked?.title !== "Discard your comment?") throw new Error(`the dialog is titled ${asked?.title}`);
+    if (asked.text !== "You haven't added the comment you're writing. It will be lost.")
+      throw new Error(`the dialog says ${JSON.stringify(asked.text)}`);
+    if (asked.buttons.join("|") !== "Keep editing|Discard")
+      throw new Error(`the buttons are ${asked.buttons.join(", ")}`);
+    if (asked.focused !== "Keep editing") throw new Error(`${asked.focused} has the focus, not Keep editing`);
+    if ((await onView()) !== "workingTree") throw new Error("the changeset was switched before the answer");
+    await d.screenshot("discard-dialog");
+
+    await d.press("Escape");
+    await expectGone("Escape");
+    if ((await onView()) !== "workingTree") throw new Error("Escape did not keep the changeset");
+    if ((await typed()) !== "note") throw new Error("Escape did not keep the text");
+
+    await switchAway();
+    await d.click("dialog[open] footer button:first-child");
+    await expectGone("Keep editing");
+    if ((await onView()) !== "workingTree") throw new Error("Keep editing did not keep the changeset");
+    if ((await typed()) !== "note") throw new Error("Keep editing did not keep the text");
+
+    await switchAway();
+    await d.click("dialog[open] footer button.destructive");
+    await expectGone("Discard");
+    await d.until(`__t.opened.session?.key.type === "branch" && !!__t.opened.session.layout`, "the branch");
+    if ((await d.page(`__t.opened.session.changesetComment.body`)) !== "")
+      throw new Error("the next changeset has the text of the one left");
+  },
+
+  /** What the Find tool listed belongs to the changeset: after a switch it is empty, and the first changeset's list is not brought back. */
+  async findAfterSwitch(d) {
+    await d.page(`(async () => {
+      __t.opened.session.findSets.keepSearch({
+        spec: {
+          type: "search",
+          request: { scope: { type: "changeset" }, pattern: { text: "line", matchCase: false, wholeWord: false, regex: false }, mask: "", side: "both", onlyChanges: false, notSeen: false, limit: 0 },
+          options: { text: "line", matchCase: false, wholeWord: false, regex: false, side: "both", onlyChanges: false },
+          scope: { label: "All changes" },
+        },
+        results: { type: "searchResults", revision: __t.opened.session.layout.shown.revision, files: [], hits: 0, truncated: false, searched: 0 },
+      });
+      const { shell } = await import("/src/features/chrome/shell.svelte.ts");
+      shell.showBottom("find");
+      return true;
+    })()`);
+    await d.until(`document.querySelector("section[aria-label=Find] [role=tablist] [role=tab]") !== null`, "the tab");
+    await d.page(`__t.opened.open({ type: "branch", name: "feature" })`);
+    await d.until(`__t.opened.session?.key.type === "branch" && !!__t.opened.session.layout`, "the branch");
+    await d.until(
+      `document.querySelector("section[aria-label=Find]")?.innerText.includes("Nothing kept yet") === true`,
+      "the Find tool to be empty",
+    );
+    if ((await d.page(`document.querySelectorAll("section[aria-label=Find] [role=tab]").length`)) !== 0)
+      throw new Error("a result set of the other changeset is listed");
+    if ((await d.page(`__t.opened.session.findSets.sets.length`)) !== 0)
+      throw new Error("the session holds result sets");
+    await d.page(`__t.opened.open({ type: "workingTree" })`);
+    await d.until(`__t.opened.session?.key.type === "workingTree" && !!__t.opened.session.layout`, "the working tree");
+    if ((await d.page(`document.querySelectorAll("section[aria-label=Find] [role=tab]").length`)) !== 0)
+      throw new Error("going back brought the result sets back");
+  },
 };

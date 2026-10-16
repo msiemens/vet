@@ -7,6 +7,7 @@ import type { PullRequestInfo } from "../../src/generated/PullRequestInfo.ts";
 import type { View } from "../../src/generated/View.ts";
 import type { Request } from "../../src/generated/Request.ts";
 import { appState } from "../../src/app/appState.svelte.ts";
+import { discardPrompt } from "../../src/state/discardPrompt.svelte.ts";
 import { findInFiles } from "../../src/features/search/FindInFiles.svelte.ts";
 import { keyId } from "../../src/state/changesetKey.ts";
 import type { ChangesetSession } from "../../src/state/changesetSession.svelte.ts";
@@ -733,7 +734,10 @@ export const sessions: Record<SessionName, (h: Harness) => Promise<void>> = {
         held.findSets.findUsages(usages);
         const set = held.findSets.current;
         await h.until(() => asked, "the usages to be asked for");
-        await opened.open({ type: "branch", name: "feature" });
+        const switching = opened.open({ type: "branch", name: "feature" });
+        await h.until(() => discardPrompt.count === 2, "the question about the two comments");
+        discardPrompt.answer(true);
+        await switching;
         await h.until(() => opened.session?.facts?.target.changeset.type === "branch", "the branch");
         release();
         await sleep(100);
@@ -753,6 +757,46 @@ export const sessions: Record<SessionName, (h: Harness) => Promise<void>> = {
         throw new Error("a comment box came along");
       if (next.unsentComments() !== 0) throw new Error("the next changeset has unsent comments");
     });
+  },
+
+  /** Closing the project, opening another and switching to another changeset wait for the answer about comment text not added. */
+  async leaving(h) {
+    const answer = async (discard: boolean) => {
+      await h.until(() => discardPrompt.count !== undefined, "the question");
+      const asked = discardPrompt.count;
+      discardPrompt.answer(discard);
+      return asked;
+    };
+    const holding = (text: string) => {
+      const draft = onView().changesetComment;
+      draft.composing = true;
+      draft.body = text;
+    };
+    await h.step("text is typed in a comment box", () => holding("a word"));
+    await h.step("Keep editing: closing the project does nothing", async () => {
+      const closing = session.closeRepo();
+      if ((await answer(false)) !== 1) throw new Error("the question was not about one comment");
+      await closing;
+      if (session.repo === undefined) throw new Error("the project was closed");
+      if (onView().changesetComment.body !== "a word") throw new Error("the text is gone");
+    });
+    await h.step("Keep editing: opening another project does nothing", async () => {
+      const opening = session.openRepo(h.fixture.anotherRepo());
+      await answer(false);
+      await opening;
+      if (opened.session?.changesetComment.body !== "a word") throw new Error("the project was left");
+    });
+    await h.step("Keep editing: switching to another changeset does nothing", async () => {
+      const switching = opened.open({ type: "branch", name: "feature" });
+      await answer(false);
+      await switching;
+      if (opened.session?.key.type !== "workingTree") throw new Error("the changeset was switched");
+    });
+    // No step follows: a step waits for an open project.
+    const closing = session.closeRepo();
+    await answer(true);
+    await closing;
+    if (session.repo !== undefined) throw new Error("Discard did not close the project");
   },
 
   /** What the window remembers reaches the backend, another window's changes are followed, and a connection that dropped reads them anew. */

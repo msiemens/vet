@@ -3,7 +3,9 @@
 
 import { errorText } from "../lib/errorText";
 import { Backend, type LinkState } from "./backend";
-import { hasNativeDialogs, pickRepository, restartBackend, setWindowMode } from "./host";
+import { whenDiscarded } from "./discard";
+import { discardPrompt } from "./discardPrompt.svelte";
+import { hasNativeDialogs, pickRepository, quit, restartBackend, setWindowMode } from "./host";
 import { notices } from "./notices.svelte";
 import { preferenceSync } from "./preferenceSync";
 import { recent } from "./recent.svelte";
@@ -18,6 +20,8 @@ class SessionStore {
   repo = $state<string>();
   /** Why the last attempt to open a repository failed. */
   openError = $state<{ path: string; message: string }>();
+  /** How many comment boxes hold text that closing the project loses; the holder of the changeset on view sets it. */
+  unsentComments: () => number = () => 0;
   private connectListeners = new Set<(backend: Backend) => void>();
   private openListeners = new Set<(backend: Backend) => void>();
   private closeListeners = new Set<() => void>();
@@ -125,8 +129,10 @@ class SessionStore {
    */
   async openRepo(path: string) {
     this.connected();
-    this.openError = undefined;
-    await this.opener.open(path);
+    await whenDiscarded(this.unsentComments(), discardPrompt.ask, async () => {
+      this.openError = undefined;
+      await this.opener.open(path);
+    });
   }
 
   /**
@@ -147,8 +153,17 @@ class SessionStore {
     }
   }
 
-  /** Back to the welcome screen, in the welcome screen's window. */
+  /** Back to the welcome screen, in the welcome screen's window. Comment text not added is asked about first. */
   async closeRepo() {
+    await whenDiscarded(this.unsentComments(), discardPrompt.ask, () => this.leave());
+  }
+
+  /** Ends the app, after asking about comment text not added. */
+  async quit() {
+    await whenDiscarded(this.unsentComments(), discardPrompt.ask, quit);
+  }
+
+  private async leave() {
     await this.release();
     await setWindowMode("welcome");
   }
@@ -159,7 +174,7 @@ class SessionStore {
    */
   async abandon(error: unknown) {
     const path = this.repo ?? "";
-    await this.closeRepo();
+    await this.leave();
     this.openError = { path, message: errorText(error) };
   }
 

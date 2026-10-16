@@ -14,7 +14,7 @@ import { appCommands } from "../state/appCommands";
 import { keyId } from "../state/changesetKey";
 import { commands } from "../state/commands";
 import { findTool } from "../state/findTool.svelte";
-import { canQuit, quit } from "../state/host";
+import { canQuit } from "../state/host";
 import { keymap } from "../state/keymap.svelte";
 import { opened } from "../state/opened.svelte";
 import { platform } from "../state/platform.svelte";
@@ -59,7 +59,7 @@ export function registerCommands(): () => void {
       showKeymap: () => appState.showDialog("settings", "keymap"),
       showAccounts: () => appState.showDialog("settings", "accounts"),
       showProjectSettings: () => appState.showDialog("settings", "trust"),
-      quit: () => void quit(),
+      quit: () => void session.quit(),
       toggleSoftWrap: () => (softWrapPreference.value = softWrapPreference.value === "never" ? "prose" : "never"),
       toggleTool: (id) => {
         const bottom = shell.toggle(id);

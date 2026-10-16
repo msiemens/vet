@@ -3,6 +3,7 @@
   import {
     AboutDialog,
     Banners,
+    DiscardDialog,
     FinishDialog,
     Header,
     MainMenuButton,
@@ -45,6 +46,7 @@
   import { contextMenus } from "../state/contextMenu.svelte";
   import { mainMenu } from "../state/mainMenu.svelte";
   import { notices } from "../state/notices.svelte";
+  import { discardPrompt } from "../state/discardPrompt.svelte";
   import { opened } from "../state/opened.svelte";
   import { platform } from "../state/platform.svelte";
   import { problems } from "../state/problems.svelte";
@@ -414,6 +416,14 @@
       appState.closeDialog();
       void opened.open({ type: "pullRequest", remote, number });
     }}
+  />
+{/if}
+
+{#if discardPrompt.count !== undefined}
+  <DiscardDialog
+    count={discardPrompt.count}
+    onkeep={() => discardPrompt.answer(false)}
+    ondiscard={() => discardPrompt.answer(true)}
   />
 {/if}
 

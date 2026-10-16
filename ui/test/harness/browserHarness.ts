@@ -53,6 +53,8 @@ export interface Driver {
   probe(): Promise<Probe>;
   /** The errors the page logged or threw since the session started, oldest first. */
   errors(): Promise<string[]>;
+  /** Saves a screenshot of the page as `<name>.png` in the folder `VET_SCREENSHOTS` names; does nothing without it. */
+  screenshot(name: string): Promise<void>;
 }
 
 /** The first line whose number is in view below the pinned header, and where its top is below the pane's top. */
@@ -315,6 +317,10 @@ export async function runBrowserSession(
     },
     errors() {
       return Promise.resolve([...exceptions, ...logged]);
+    },
+    async screenshot(shot) {
+      const folder = process.env.VET_SCREENSHOTS;
+      if (folder) await page.screenshot({ path: `${folder}/${shot}.png` });
     },
     async openText(path) {
       await page.locator(`nav button[title^=${JSON.stringify(path)}]`).dblclick();

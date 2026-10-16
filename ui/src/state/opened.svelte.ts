@@ -6,6 +6,8 @@ import { untrack } from "svelte";
 import type { ChangesetKey } from "../generated/ChangesetKey";
 import { keyId } from "./changesetKey";
 import { type ChangesetSession, type SessionStart, newSession } from "./changesetSession.svelte";
+import { discardPrompt } from "./discardPrompt.svelte";
+import { whenDiscarded } from "./discard";
 import { notices } from "./notices.svelte";
 import { type Opening, OpenedProtocol } from "./openedProtocol";
 import { reviewShown } from "./reviewShown.svelte";
@@ -37,6 +39,7 @@ class Opened {
   });
 
   constructor() {
+    connection.unsentComments = () => this.session?.unsentComments() ?? 0;
     connection.onConnect((backend) =>
       backend.onEvent((event) => {
         if (event.project !== backend.project) return;
@@ -71,9 +74,14 @@ class Opened {
   /**
    * Puts a changeset on view. What is on view belongs to another changeset from now on and is dropped; the
    * backend pushes `changesetOpened`, which builds the next session. If it answers without (the changeset
-   * is on view already, or it refused), the manifest is read and the session built from it.
+   * is on view already, or it refused), the manifest is read and the session built from it. Comment text
+   * typed and not added is lost with the session, so the viewer is asked first; keeping it cancels the switch.
    */
   async open(key: ChangesetKey) {
+    await whenDiscarded(this.session?.unsentComments() ?? 0, discardPrompt.ask, () => this.request(key));
+  }
+
+  private async request(key: ChangesetKey) {
     const backend = connection.connected();
     const token = this.protocol.request(key);
     try {
