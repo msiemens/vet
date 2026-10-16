@@ -25,25 +25,26 @@ void test("the changeset comment form cancels keeping the words, and clears when
 void test("only boxes with text count, and an edit form only once its text differs from the message's", () => {
   const drafts = new CommentDrafts();
   const none = emptyChangesetComment();
-  assert.equal(unsentComments(drafts, none), 0);
+  const held = () => unsentComments(drafts.count(), none);
+  assert.equal(held(), 0);
   drafts.set("reply:3", "   ");
   drafts.begin("edit:7", "the message");
-  assert.equal(unsentComments(drafts, none), 0, "a blank reply and an untouched edit hold nothing");
+  assert.equal(held(), 0, "a blank reply and an untouched edit hold nothing");
   drafts.set("reply:4", "a reply");
   drafts.set("edit:7", "the message, edited");
-  assert.equal(unsentComments(drafts, none), 2);
+  assert.equal(held(), 2);
   drafts.delete("edit:7");
   drafts.delete("reply:4");
-  assert.equal(unsentComments(drafts, none), 0);
+  assert.equal(held(), 0);
 });
 
 void test("the changeset comment counts while it holds words, also with its form closed", () => {
   const drafts = new CommentDrafts();
   const comment = emptyChangesetComment();
   composeChangesetComment(comment);
-  assert.equal(unsentComments(drafts, comment), 0);
+  assert.equal(unsentComments(drafts.count(), comment), 0);
   comment.body = "a word";
   cancelChangesetComment(comment);
   drafts.set("new:x", "on code");
-  assert.equal(unsentComments(drafts, comment), 2);
+  assert.equal(unsentComments(drafts.count(), comment), 2);
 });

@@ -96,7 +96,9 @@ class Session implements ViewSource {
   /** Find in Files' place searched (`scopeChoices`'s id) and chosen result, for the dialog to come back to; the other fields stay with the window. */
   readonly findInFiles = $state<{ scope?: string; selected?: string }>({});
   /** What the cards' comment forms hold that was not sent. */
-  readonly drafts = new CommentDrafts();
+  readonly drafts = new CommentDrafts(() => (this.cardsHolding = this.drafts.count()));
+  /** How many of the cards' forms hold text: `drafts` is not reactive itself. */
+  private cardsHolding = $state(0);
   /** The comment on the changeset as a whole being written in the Comments tool window. */
   readonly changesetComment = $state(emptyChangesetComment());
   /** How far the view's files are reviewed. */
@@ -331,7 +333,7 @@ class Session implements ViewSource {
 
   /** How many comment boxes hold text that was not added as a comment, which ending the session loses. */
   unsentComments(): number {
-    return unsentComments(this.drafts, this.changesetComment);
+    return unsentComments(this.cardsHolding, this.changesetComment);
   }
 
   /** Ends the session: what it started counts for nothing from now on. */

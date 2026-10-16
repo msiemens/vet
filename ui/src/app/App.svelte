@@ -41,7 +41,7 @@
   import Toast from "../lib/ui/Toast.svelte";
   import { changeGate } from "../lib/ui/changeGate";
   import { CommitList } from "../state/commitList";
-  import { canRestartBackend, hasNativeDialogs, hasNativeMenu } from "../state/host";
+  import { canRestartBackend, guardClose, hasNativeDialogs, hasNativeMenu, onCloseRequested } from "../state/host";
   import { commands } from "../state/commands";
   import { contextMenus } from "../state/contextMenu.svelte";
   import { mainMenu } from "../state/mainMenu.svelte";
@@ -172,10 +172,18 @@
     });
   });
 
+  // The host leaves a close of the window to the page while a comment box holds text that was not added.
+  const holdsComment = $derived((opened.session?.unsentComments() ?? 0) > 0);
+  $effect(() => {
+    void guardClose(holdsComment).catch((e: unknown) => console.error(e));
+  });
+
   onMount(() => {
     const stopWindow = installWindow();
+    const stopClose = onCloseRequested(() => void session.quit());
     return () => {
       stopWindow();
+      void stopClose.then((stop) => stop());
       stopCommands();
     };
   });

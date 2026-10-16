@@ -36,6 +36,13 @@ export class CommentDrafts {
   /** The message an edit form started from: its text is no draft until it differs. */
   private originals = new Map<string, string>();
 
+  private changed: () => void;
+
+  /** `changed` is called whenever what a form holds changes. */
+  constructor(changed: () => void = () => undefined) {
+    this.changed = changed;
+  }
+
   get(key: string): string | undefined {
     return this.texts.get(key);
   }
@@ -46,17 +53,20 @@ export class CommentDrafts {
 
   set(key: string, text: string): void {
     this.texts.set(key, text);
+    this.changed();
   }
 
   /** Opens the form `key` with the text of the message it edits. */
   begin(key: string, original: string): void {
     this.texts.set(key, original);
     this.originals.set(key, original);
+    this.changed();
   }
 
   delete(key: string): void {
     this.texts.delete(key);
     this.originals.delete(key);
+    this.changed();
   }
 
   /** How many forms hold text that was not added as a comment. */
@@ -67,6 +77,6 @@ export class CommentDrafts {
   }
 }
 
-/** How many boxes hold text that would be lost: the forms of the cards and the changeset comment's. */
-export const unsentComments = (drafts: CommentDrafts, changeset: ChangesetComment): number =>
-  drafts.count() + (changeset.body.trim() === "" ? 0 : 1);
+/** How many boxes hold text that would be lost: `cards` forms of the cards and the changeset comment's. */
+export const unsentComments = (cards: number, changeset: ChangesetComment): number =>
+  cards + (changeset.body.trim() === "" ? 0 : 1);

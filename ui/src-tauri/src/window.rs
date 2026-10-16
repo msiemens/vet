@@ -5,6 +5,7 @@ use std::time::Duration;
 use tauri::{AppHandle, Manager};
 use tauri_plugin_decoration::WebviewWindowExt;
 
+use crate::close::CloseGuard;
 use crate::{geometry, startup};
 
 /// How long one activation of the app-drawn title bar may take before the plugin restores the
@@ -89,6 +90,9 @@ pub fn on_page_load(webview: &tauri::Webview, payload: &tauri::webview::PageLoad
     }
     if webview.label() != geometry::MAIN {
         return;
+    }
+    if let Some(guard) = webview.try_state::<CloseGuard>() {
+        guard.disarm();
     }
     let Some(window) = webview.app_handle().get_webview_window(webview.label()) else {
         return;

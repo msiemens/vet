@@ -115,6 +115,21 @@ export async function quit(): Promise<void> {
   await invoke("quit");
 }
 
+/**
+ * Has the host hand a request to close the window or exit the app to the page (`onCloseRequested`)
+ * instead of acting on it, while `armed`. The host disarms itself when the page loads afresh.
+ */
+export async function guardClose(armed: boolean): Promise<void> {
+  if (inTauri) await invoke("guard_close", { armed });
+}
+
+/** Calls `listener` for each request to close the window or exit the app that the host held; resolves with the unsubscribe function. */
+export async function onCloseRequested(listener: () => void): Promise<() => void> {
+  if (!inTauri) return () => undefined;
+  const { listen } = await import("@tauri-apps/api/event");
+  return listen("vet-close-requested", () => listener());
+}
+
 /** The native folder dialog; `null` if cancelled. Rejects with a message for a folder the backend cannot open. */
 export async function pickRepository(): Promise<string | null> {
   return inTauri ? invoke<string | null>("pick_repository") : null;

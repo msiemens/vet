@@ -5,6 +5,7 @@
 
 mod backend;
 mod browser;
+mod close;
 mod credentials;
 mod dialog;
 mod geometry;
@@ -44,12 +45,16 @@ pub fn run() {
                 tracing::warn!(error = %e, "cannot forward menu event");
             }
         })
-        .on_window_event(geometry::on_window_event)
+        .on_window_event(|window, event| {
+            geometry::on_window_event(window, event);
+            close::on_window_event(window, event);
+        })
         .on_page_load(window::on_page_load)
         .setup(|app| {
             app.manage(menu::ContextMenuChoice::default());
             app.manage(menu::KeyOnlyItems::default());
             app.manage(Startup::new());
+            app.manage(close::CloseGuard::default());
             geometry::init(app.handle())?;
             startup::show_splash(app.handle());
             startup::launch(app.handle());
@@ -72,14 +77,16 @@ pub fn run() {
             dialog::pick_repository,
             input::double_click_ms,
             window::quit,
+            close::guard_close,
             menu::set_menu,
             menu::show_context_menu
         ])
         .build(tauri::generate_context!())
         .expect("error while building the Vet shell");
 
-    app.run(move |handle, event| {
-        if let RunEvent::Exit = event {
+    app.run(move |handle, event| match event {
+        RunEvent::ExitRequested { code, api, .. } => close::on_exit_requested(handle, code, &api),
+        RunEvent::Exit => {
             geometry::persist(handle);
             if let Some(backend) = handle.try_state::<Backend>() {
                 backend.stop();
@@ -87,5 +94,6 @@ pub fn run() {
             // The process ends after this: the log file takes what is buffered first.
             drop(log.take());
         }
+        _ => {}
     });
 }
