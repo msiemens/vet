@@ -4,6 +4,7 @@
 
 import type { ReviewController } from "../features/review";
 import type { Page } from "../features/settings";
+import { session } from "../state/session.svelte";
 import { IntentQueue } from "./intentQueue";
 
 type Dialog = "settings" | "about" | "finish" | "pullRequest";
@@ -23,6 +24,15 @@ class AppState {
   version = $state<string>();
   /** The host's name; none in a plain browser. */
   host = $state<string>();
+
+  constructor() {
+    // The finish and pull-request dialogs and the changeset switcher are of the open project; the
+    // Settings and About dialogs are the window's, and stay.
+    session.onClose(() => {
+      if (this.dialog === "finish" || this.dialog === "pullRequest") this.dialog = undefined;
+      this.switcherOpen = false;
+    });
+  }
 
   /**
    * Runs `act` with the review screen's controller: now while it is mounted, else once opening the

@@ -1,7 +1,9 @@
 // What Find in Files holds between openings: the query, the options, the filters, the file mask, the
-// place searched and the chosen result stay as they were for as long as the window lives.
+// place searched and the chosen result stay as they were for as long as the window lives. The dialog
+// itself belongs to the open project: closing one puts it away.
 
 import type { SearchSide } from "../../generated/SearchSide.ts";
+import { session } from "../../state/session.svelte";
 
 /** What a request to open Find in Files can bring along. */
 export interface FindInFilesRequest {
@@ -27,6 +29,10 @@ class FindInFiles {
   selected = $state<string>();
   /** Each request puts the cursor in the query field, also while the dialog is open. */
   focusRequests = $state(0);
+
+  constructor() {
+    session.onClose(() => this.close());
+  }
 
   show({ query, matchCase, wholeWord, regex }: FindInFilesRequest = {}) {
     if (query !== undefined) this.text = query;

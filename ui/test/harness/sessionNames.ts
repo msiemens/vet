@@ -14,6 +14,7 @@ export const sessionNames = [
   "queue",
   "preferences",
   "rapid",
+  "projectDialogs",
 ] as const;
 
 export type SessionName = (typeof sessionNames)[number];

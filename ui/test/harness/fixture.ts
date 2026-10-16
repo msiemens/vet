@@ -62,6 +62,19 @@ export class Fixture {
     this.git(this.repo, "reset", "-q", "--soft", ref);
   }
 
+  /** A second repository, one commit with an edit of its own, for a session that opens another project. */
+  anotherRepo(): string {
+    const repo = join(this.root, "repo2");
+    this.git(this.root, "init", "-q", repo);
+    this.git(repo, "config", "user.name", "t");
+    this.git(repo, "config", "user.email", "t@t");
+    writeFileSync(join(repo, "a.txt"), "line 0\n");
+    this.git(repo, "add", ".");
+    this.git(repo, "commit", "-qm", "base");
+    writeFileSync(join(repo, "a.txt"), "line 0\nchanged\n");
+    return repo;
+  }
+
   /** Commits the working tree's edits, which makes the branch a changeset of four commits. */
   commitWorkingTree() {
     this.git(this.repo, "commit", "-qam", "c4: the working tree");

@@ -3,6 +3,8 @@
 
 import type { View } from "../../src/generated/View.ts";
 import type { Request } from "../../src/generated/Request.ts";
+import { appState } from "../../src/app/appState.svelte.ts";
+import { findInFiles } from "../../src/features/search/FindInFiles.svelte.ts";
 import { changeset } from "../../src/state/changeset.svelte.ts";
 import { preferences } from "../../src/lib/preferences.svelte.ts";
 import { problems } from "../../src/state/problems.svelte.ts";
@@ -373,5 +375,22 @@ export const sessions: Record<SessionName, (h: Harness) => Promise<void>> = {
       },
       { marks: 8 },
     );
+  },
+
+  /** The dialogs of a project are put away when the project closes and another opens. */
+  async projectDialogs(h) {
+    await h.step("the project's dialogs are open", () => {
+      findInFiles.show({ query: "line" });
+      appState.dialog = "finish";
+      appState.switcherOpen = true;
+    });
+    await session.closeRepo();
+    await h.until(() => session.repo === undefined, "the project to close");
+    await session.openRepo(h.fixture.anotherRepo());
+    await h.until(() => session.repo !== undefined, "the next project to open");
+    if (findInFiles.open) throw new Error("Find in Files is still open in the next project");
+    if (appState.dialog !== undefined)
+      throw new Error(`the ${appState.dialog} dialog is still open in the next project`);
+    if (appState.switcherOpen) throw new Error("the changeset switcher is still open in the next project");
   },
 };
