@@ -46,7 +46,7 @@ fn follow(fx: &Fixture, settled: SnapshotId) -> (tokio::task::JoinHandle<()>, Se
     let settling = Settling::new(Channel { events }, Immediate, 0, Some(settled)).wanted(fx.session.settle_wanted());
     let session = fx.session.clone();
     let follower = tokio::spawn(async move {
-        session.follow(settling, |_| {}, || {}, |_| {}).await;
+        session.follow(settling, |_, _| {}, || {}, |_| {}).await;
     });
     (follower, send)
 }

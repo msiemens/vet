@@ -179,7 +179,7 @@ pub enum Request {
     /// platform or the fetch does, and a missing credential is also announced as
     /// `CredentialsNeeded`. Opening the pull request on view again announces `TargetChanged` if
     /// the platform names it differently now. A push to a pull request on view that a later
-    /// fetch brings is a new version, announced as `SnapshotSettled`. Answers with
+    /// fetch brings is a new version, announced as `SnapshotMoved`. Answers with
     /// `Response::Done`.
     OpenChangeset {
         project: ProjectId,
@@ -188,8 +188,7 @@ pub enum Request {
     /// Ends the open review: its marks, acknowledgements and threads are kept
     /// in the store but leave the project, which goes back to browsing. The
     /// revision increases and every subscriber, including the requester, gets
-    /// `SnapshotSettled`; fetch the manifest again. `ChangesetsChanged` follows, as the
-    /// changeset's row no longer has a review open. Fails if no review is open.
+    /// `ReviewFinished`; fetch the manifest again. Fails if no review is open.
     /// Answers with `Response::ReviewFinished`.
     FinishReview {
         project: ProjectId,
@@ -524,7 +523,7 @@ pub enum Request {
     /// list again, and answers with `Response::Done` when both ended. A remote that fails
     /// (offline, refused) fails the task with its name, not this request, and the others are
     /// still fetched. If any remote was fetched, every subscriber then gets `ChangesetsChanged`,
-    /// a pull request on view whose head moved is its next version (`SnapshotSettled`), and
+    /// a pull request on view whose head moved is its next version (`SnapshotMoved`), and
     /// its threads are synced; a different pull request list is announced as
     /// `PullRequestListChanged`.
     Fetch {
@@ -533,7 +532,7 @@ pub enum Request {
     /// Replaces the review filter of the repository `project` has open and
     /// persists it: a project setting, not part of the review (`project` is
     /// only the handle to its repository). The revision increases and every
-    /// subscriber, including the requester, gets `SnapshotSettled`; fetch the
+    /// subscriber, including the requester, gets `FilterChanged`; fetch the
     /// manifest again. Fails with a message fit to show if a glob is invalid, and
     /// then changes nothing. Answers with `Response::Done`.
     SetProjectFilter {

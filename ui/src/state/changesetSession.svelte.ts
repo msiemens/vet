@@ -29,7 +29,7 @@ import { Lifetime } from "./lifetime";
 import { notices } from "./notices.svelte";
 import { type SessionPullRequest, newPullRequest } from "./pullRequest.svelte";
 import { ReadFlush } from "./readFlush";
-import { type ReadState, readsFor } from "./sessionReads";
+import { type ReadState, readsFor, threadCarry } from "./sessionReads";
 import { Latest, Resource } from "./resource";
 import {
   type ChangesetFacts,
@@ -395,6 +395,8 @@ class Session implements ViewSource {
     this.structure.hear(event);
     this.checks.hear(event);
     this.flush.want(readsFor(event, this.readState()));
+    const carried = threadCarry(event);
+    if (carried !== undefined) this.threads.restamp(carried);
     if (event.type === "lensChanged") this.applyLens(event.lens);
     // A mark made in a range or a commit is announced as that of the changeset's file, which they do not show.
     else if (event.type === "reviewChanged" && event.revision === this.layout?.shown.revision) {
@@ -756,7 +758,7 @@ class Session implements ViewSource {
   }
 
   /**
-   * Ends the open review and says how it ended. The backend pushes `snapshotSettled`, which
+   * Ends the open review and says how it ended. The backend pushes `reviewFinished`, which
    * fetches the manifest again, back to browsing.
    */
   async finishReview() {
@@ -778,7 +780,7 @@ class Session implements ViewSource {
 
   /**
    * Narrows this review to `filter` in place of the project's, or ends the narrowing for none. As with `setFilter`,
-   * the backend then pushes `snapshotSettled`.
+   * the backend then pushes `filterChanged`.
    */
   async narrow(filter: ReviewFilter | undefined) {
     const changeset = this.facts?.target.changeset;

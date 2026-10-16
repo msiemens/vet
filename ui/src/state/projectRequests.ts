@@ -46,7 +46,7 @@ export async function fetchRemotes() {
 }
 
 /**
- * Replaces the repository's review filter. The backend pushes `snapshotSettled`, which fetches the new
+ * Replaces the repository's review filter. The backend pushes `filterChanged`, which fetches the new
  * manifest. Resolves with the backend's message if it refused the filter (a bad glob).
  */
 export async function setFilter(filter: ReviewFilter): Promise<string | undefined> {
@@ -95,7 +95,7 @@ export async function trustPullRequest() {
   }
 }
 
-/** Excludes `path` (a file, or a folder with `dir`) from the review. As with `setFilter`, the backend then pushes `snapshotSettled`. */
+/** Excludes `path` (a file, or a folder with `dir`) from the review. As with `setFilter`, the backend then pushes `filterChanged`. */
 export async function excludePath(path: string, dir: boolean) {
   try {
     await session.connected().excludePath(path, dir);

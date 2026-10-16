@@ -16,7 +16,7 @@ impl Handler for Flood {
         };
         let count: u32 = payload.parse().unwrap_or(0);
         for revision in 0..count {
-            events.send(Event::SnapshotSettled { project: 1, revision });
+            events.send(Event::FilterChanged { project: 1, revision });
         }
         Ok(Response::Pong { payload })
     }
@@ -79,7 +79,7 @@ fn ping(id: u32, count: u32) -> ClientMessage {
 
 fn event(revision: u32) -> ServerMessage {
     ServerMessage::Event {
-        event: Event::SnapshotSettled { project: 1, revision },
+        event: Event::FilterChanged { project: 1, revision },
     }
 }
 

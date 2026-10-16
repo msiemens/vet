@@ -930,6 +930,11 @@ impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> L
         self.published.read().revision
     }
 
+    /// The latest version of the open review; none while browsing.
+    pub fn review_version(&self) -> Option<u32> {
+        self.published.read().review.as_ref().map(|r| r.version)
+    }
+
     /// The newest revision on view, as the session announces it. Semantic work for
     /// an older one is dropped.
     pub fn revisions(&self) -> Arc<Revisions> {
@@ -1114,13 +1119,14 @@ impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> L
 
     /// Settles snapshots of the worktree as `settling` reports them, and looks at the branch
     /// on view when a ref was written, calling `on_settled` with each new revision of the
-    /// changeset on view, until dropped. A settled tree that is not on view is not announced:
-    /// it is not what is shown. `on_quiet` is called when `settling` finds the settled tree
-    /// quiet, `on_edits` when edits start or stop waiting to settle.
+    /// changeset on view and the open review's latest version after it, until dropped. A settled
+    /// tree that is not on view is not announced: it is not what is shown. `on_quiet` is called
+    /// when `settling` finds the settled tree quiet, `on_edits` when edits start or stop waiting
+    /// to settle.
     pub async fn follow<W: Watcher + Send, C: Clock + Send + Sync>(
         &self,
         mut settling: Settling<W, C>,
-        mut on_settled: impl FnMut(u32) + Send,
+        mut on_settled: impl FnMut(u32, Option<u32>) + Send,
         mut on_quiet: impl FnMut() + Send,
         mut on_edits: impl FnMut(bool) + Send,
     ) {
@@ -1143,7 +1149,7 @@ impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> L
                 }
                 Ok(Settled::RefsMoved) => {
                     match self.observe().await {
-                        Ok(Some(revision)) => on_settled(revision),
+                        Ok(Some(revision)) => on_settled(revision, self.review_version()),
                         Ok(None) => {}
                         Err(e) => tracing::warn!(error = %e, "could not look at the branch on view"),
                     }
@@ -1161,7 +1167,7 @@ impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> L
                     }
                     self.set_degraded(settling.degraded());
                     if self.published.read().source == Source::WorkingTree {
-                        on_settled(revision);
+                        on_settled(revision, self.review_version());
                     }
                 }
                 Err(e) => tracing::warn!(error = %e, "could not record a settled snapshot"),

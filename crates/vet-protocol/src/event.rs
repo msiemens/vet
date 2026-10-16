@@ -40,9 +40,28 @@ pub enum Event {
         key: String,
         value: Option<String>,
     },
-    /// A snapshot settled and the changeset moved to a new `revision`. The
-    /// manifest, with review state remapped onto it, is stale: fetch it again.
-    SnapshotSettled { project: ProjectId, revision: u32 },
+    /// The snapshot moved and the changeset is at a new `revision`: the working tree settled,
+    /// the branch on view moved, or a fetch brought the pull request on view a push. The
+    /// manifest, with review state remapped onto it, and the threads, whose anchors may have
+    /// moved, are stale: fetch them again. `version` is the open review's latest version after
+    /// the move, which a review records as its next version; none while browsing. Only with a
+    /// `version` are the versions and the files changed since one stale.
+    SnapshotMoved {
+        project: ProjectId,
+        revision: u32,
+        version: Option<u32>,
+    },
+    /// The review filter changed (`SetProjectFilter`, `ExcludePath`, `NarrowReview`): no
+    /// snapshot moved, so the threads and the versions are as they were, but the files in view
+    /// and the counts are not. The manifest, which now has `revision`, and the files changed
+    /// since a version are stale: fetch them again. Threads fetched at the revision before are
+    /// valid at this one.
+    FilterChanged { project: ProjectId, revision: u32 },
+    /// The review ended (`FinishReview`) and the changeset is at a new `revision`, browsing: the
+    /// manifest, the threads (the resolved ones leave the view), the versions and the files
+    /// changed since a version are stale, and so are the changesets' rows, as the changeset no
+    /// longer has a review open.
+    ReviewFinished { project: ProjectId, revision: u32 },
     /// Edits of the working tree wait to settle into a snapshot (`pending`), or no longer do: the
     /// ones that wait are not part of any version yet. Sent whatever changeset is on view; no
     /// manifest is stale.
@@ -75,8 +94,8 @@ pub enum Event {
     /// `TrustPullRequest`). Fetch the manifest again.
     TargetChanged { project: ProjectId },
     /// What `ListChangesets` lists, or the lines of the queue's rows, may have changed: a fetch
-    /// moved branches, the pull request feed brought in pull request heads, or a review finished.
-    /// The feed announces a different list as `PullRequestListChanged`. List the changesets again.
+    /// moved branches or the pull request feed brought in pull request heads. The feed announces a
+    /// different list as `PullRequestListChanged`. List the changesets again.
     ChangesetsChanged { project: ProjectId },
     /// The pull request feed published a different list. Read `ListPullRequests` again; it answers
     /// from the feed and asks no platform while the list is kept.
@@ -98,12 +117,11 @@ pub enum Event {
         lines: Vec<Option<LineDelta>>,
     },
     /// The first review action started a review. Sent to every subscriber,
-    /// the requester included; a finished review is `SnapshotSettled`.
+    /// the requester included; a finished review is `ReviewFinished`.
     ReviewStarted { project: ProjectId, review: ReviewInfo },
     /// A thread was created, replied to, resolved, re-anchored, edited or deleted,
     /// or a sync with the platform changed threads; fetch the threads again. Not
-    /// sent for a settled snapshot, which is `SnapshotSettled`: that also
-    /// invalidates the threads.
+    /// sent for a moved snapshot, which is `SnapshotMoved`: that also invalidates the threads.
     ThreadsChanged { project: ProjectId, revision: u32 },
     /// The changed symbols of one file of the changeset on view, as the backend analysed them. The
     /// backend analyses the changeset's files itself, while the review screen shows it, the files

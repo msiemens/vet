@@ -744,7 +744,7 @@ async fn a_normal_push_taken_in_by_the_fetch_interval_settles_and_tells_the_wind
     while tokio::time::Instant::now() < deadline {
         while let Ok(message) = client.inbox.try_recv() {
             if let vet_protocol::ServerMessage::Event {
-                event: vet_protocol::Event::SnapshotSettled { revision, .. },
+                event: vet_protocol::Event::SnapshotMoved { revision, .. },
             } = message
             {
                 settled = Some(revision);

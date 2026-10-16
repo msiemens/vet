@@ -81,10 +81,39 @@ function laterOf(a: EventRevision, b: EventRevision): EventRevision {
   return a === undefined || b === undefined ? undefined : Math.max(a, b);
 }
 
+/**
+ * The revision the session's threads are carried to without a read, at once: the one of an event that moved the
+ * changeset but no thread's anchor.
+ */
+export function threadCarry(event: SessionEvent): number | undefined {
+  return event.type === "filterChanged" ? event.revision : undefined;
+}
+
 /** The reads `event` needs of a session in `state`. */
 export function readsFor(event: SessionEvent, state: ReadState): Reads {
   switch (event.type) {
-    case "snapshotSettled":
+    // A review that is open records a version for a move; browsing has none, and with it no versions nor changes since.
+    case "snapshotMoved":
+      return {
+        ...NO_READS,
+        manifest: true,
+        whole: { revision: event.revision },
+        threads: true,
+        versions: state.reviewShown && event.version !== null,
+        changesSince: event.version !== null,
+        scopes: true,
+      };
+    // No snapshot moved: the threads and the versions are as they were (see `threadCarry`). A manifest read by
+    // commit reads the commits' progress when it arrives, so the commits are not asked for here.
+    case "filterChanged":
+      return {
+        ...NO_READS,
+        manifest: true,
+        whole: { revision: event.revision },
+        changesSince: true,
+        scopes: true,
+      };
+    case "reviewFinished":
       return {
         ...NO_READS,
         manifest: true,

@@ -40,7 +40,7 @@ use vet_semantic::ports::Backend;
 
 use crate::caches::PersistentAnswers;
 use crate::error::{Error, Result};
-use crate::events::{Connection, edits_pending, settled};
+use crate::events::{Connection, edits_pending, snapshot_moved};
 use crate::feed::Feed;
 use crate::hosting::{Announcer, Hosting, Platforms};
 use crate::mutex::lock;
@@ -276,8 +276,8 @@ impl Wired {
                 session
                     .follow(
                         settling,
-                        |revision| {
-                            settled(&subscribers, id, revision);
+                        |revision, version| {
+                            snapshot_moved(&subscribers, id, revision, version);
                             policy.tree_settled();
                         },
                         || quiet_policy.tree_quiet(),

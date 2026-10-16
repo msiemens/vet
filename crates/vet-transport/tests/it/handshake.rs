@@ -10,7 +10,7 @@ impl Handler for Echo {
         match request {
             Request::Ping { payload } => Ok(Response::Pong { payload }),
             Request::OpenProject { .. } => {
-                events.send(Event::SnapshotSettled {
+                events.send(Event::FilterChanged {
                     project: 3,
                     revision: 1,
                 });
@@ -145,7 +145,7 @@ async fn handlers_push_events_to_the_connection() {
     assert_eq!(
         got[1],
         ServerMessage::Event {
-            event: Event::SnapshotSettled {
+            event: Event::FilterChanged {
                 project: 3,
                 revision: 1
             }

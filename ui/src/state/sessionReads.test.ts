@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import type { SessionEvent } from "./backend.ts";
-import { NO_READS, type ReadState, type Reads, merge, readsFor } from "./sessionReads.ts";
+import { NO_READS, type ReadState, type Reads, merge, readsFor, threadCarry } from "./sessionReads.ts";
 
 const state = (over: Partial<ReadState> = {}): ReadState => ({
   reviewShown: true,
@@ -23,18 +23,54 @@ const event = (e: object) => e as SessionEvent;
 const mark = (revision: number, reviewedAt: number | null = null) =>
   event({ type: "reviewChanged", project: 1, revision, update: {}, reviewedAt });
 
-void test("a settle reads the manifest, the whole changeset, threads, versions, changes since and the scopes", () => {
-  const reads = readsFor(event({ type: "snapshotSettled", project: 1, revision: 6 }), state());
+const moved = (revision: number, version: number | null) =>
+  event({ type: "snapshotMoved", project: 1, revision, version });
+const filtered = (revision: number) => event({ type: "filterChanged", project: 1, revision });
+const finished = (revision: number) => event({ type: "reviewFinished", project: 1, revision });
+
+void test("a move with a review open reads the manifest, the whole changeset, threads, versions, changes since and the scopes", () => {
+  const reads = readsFor(moved(6, 2), state());
 
   assert.deepEqual(names(reads), ["manifest", "whole", "threads", "versions", "changesSince", "scopes"]);
   assert.deepEqual(reads.whole, { revision: 6 });
 });
 
-void test("a settle reads no versions while the review screen is not shown", () => {
-  const reads = readsFor(event({ type: "snapshotSettled", project: 1, revision: 6 }), state({ reviewShown: false }));
+void test("a move while browsing reads no versions and no changes since", () => {
+  assert.deepEqual(names(readsFor(moved(6, null), state())), ["manifest", "whole", "threads", "scopes"]);
+});
+
+void test("a move reads no versions while the review screen is not shown", () => {
+  const reads = readsFor(moved(6, 2), state({ reviewShown: false }));
 
   assert.equal(reads.versions, false);
   assert.equal(reads.changesSince, true);
+});
+
+void test("a filter change reads the manifest, the whole changeset, changes since and the scopes, and no threads or versions", () => {
+  const reads = readsFor(filtered(6), state());
+
+  assert.deepEqual(names(reads), ["manifest", "whole", "changesSince", "scopes"]);
+  assert.deepEqual(reads.whole, { revision: 6 });
+});
+
+void test("a filter change and a finished review ask for no commits: the manifest by commit reads them", () => {
+  assert.equal(readsFor(filtered(6), state({ byCommit: true })).commits, false);
+  assert.equal(readsFor(finished(6), state({ byCommit: true })).commits, false);
+});
+
+void test("a finished review reads everything else the changeset shows", () => {
+  const reads = readsFor(finished(6), state());
+
+  assert.deepEqual(names(reads), ["manifest", "whole", "threads", "versions", "changesSince", "scopes"]);
+  assert.deepEqual(reads.whole, { revision: 6 });
+  assert.equal(readsFor(finished(6), state({ reviewShown: false })).versions, false);
+});
+
+void test("only a filter change carries the threads, to its revision", () => {
+  assert.equal(threadCarry(filtered(6)), 6);
+  assert.equal(threadCarry(moved(6, 2)), undefined);
+  assert.equal(threadCarry(finished(6)), undefined);
+  assert.equal(threadCarry(event({ type: "threadsChanged", project: 1, revision: 6 })), undefined);
 });
 
 void test("a target change reads the manifest and the whole changeset whatever the revision, and the scopes", () => {
@@ -118,8 +154,8 @@ void test("the events that other stores take, and data pushes, ask the session f
 });
 
 void test("wants merge: a read asked for by either stays, and a target change's whole read outlasts a settle's", () => {
-  const settle = readsFor(event({ type: "snapshotSettled", project: 1, revision: 6 }), state());
-  const earlier = readsFor(event({ type: "snapshotSettled", project: 1, revision: 4 }), state());
+  const settle = readsFor(moved(6, 2), state());
+  const earlier = readsFor(moved(4, 2), state());
   const threads = readsFor(event({ type: "threadsChanged", project: 1, revision: 5 }), state({ hasPullRequest: true }));
   const target = readsFor(event({ type: "targetChanged", project: 1 }), state());
 

@@ -29,15 +29,36 @@ impl Subscriber for Connection {
     }
 }
 
-/// Tells every subscriber that the project's snapshot is a new `revision`.
-pub(crate) fn settled(subscribers: &Subscribers<Connection>, project: ProjectId, revision: u32) {
-    subscribers.broadcast(Event::SnapshotSettled { project, revision });
+/// Tells every subscriber that the snapshot moved and the changeset is at `revision`; `version` is
+/// the open review's latest version, none while browsing. The background work that follows the
+/// revision is the supervisor's.
+pub(crate) fn snapshot_moved(
+    subscribers: &Subscribers<Connection>,
+    project: ProjectId,
+    revision: u32,
+    version: Option<u32>,
+) {
+    subscribers.broadcast(Event::SnapshotMoved {
+        project,
+        revision,
+        version,
+    });
 }
 
-/// A request moved the revision for everyone: they refetch. The background work that follows the
-/// revision is the supervisor's.
-pub(crate) fn revision_changed(open: &Arc<Open>, revision: u32) {
-    settled(&open.subscribers, open.id, revision);
+/// A change of the filter moved the revision for everyone, though no snapshot moved.
+pub(crate) fn filter_changed(open: &Arc<Open>, revision: u32) {
+    open.subscribers.broadcast(Event::FilterChanged {
+        project: open.id,
+        revision,
+    });
+}
+
+/// The review ended and the changeset is at `revision`, browsing.
+pub(crate) fn review_finished(open: &Arc<Open>, revision: u32) {
+    open.subscribers.broadcast(Event::ReviewFinished {
+        project: open.id,
+        revision,
+    });
 }
 
 /// Tells every subscriber whether edits of the working tree wait to settle into a snapshot.

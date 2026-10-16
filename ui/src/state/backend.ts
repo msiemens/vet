@@ -159,8 +159,16 @@ export class Backend {
     readonly initialRepo: string | null,
   ) {
     conn.onEvent((event) => {
-      if ((event.type === "snapshotSettled" || event.type === "changesetOpened") && event.project === this.project) {
-        this.stale.moveTo(event.revision);
+      // The backend drops semantic work for an older revision, which a change of the filter moves too.
+      switch (event.type) {
+        case "snapshotMoved":
+        case "filterChanged":
+        case "reviewFinished":
+        case "changesetOpened":
+          if (event.project === this.project) this.stale.moveTo(event.revision);
+          break;
+        default:
+          break;
       }
     });
   }
@@ -541,14 +549,14 @@ export class Backend {
     await this.call({ type: "openChangeset", project: this.pid, changeset });
   }
 
-  /** Replaces the open repository's review filter; every subscriber, this one included, then gets `snapshotSettled`. Rejects with the backend's message for an invalid glob. */
+  /** Replaces the open repository's review filter; every subscriber, this one included, then gets `filterChanged`. Rejects with the backend's message for an invalid glob. */
   async setProjectFilter(filter: ReviewFilter): Promise<void> {
     await this.call({ type: "setProjectFilter", project: this.pid, filter });
   }
 
   /**
    * Narrows the review of `changeset` to `filter` in place of the project's, or ends the narrowing for none; every
-   * subscriber, this one included, then gets `snapshotSettled`, unless `changeset` is not on view any more and
+   * subscriber, this one included, then gets `filterChanged`, unless `changeset` is not on view any more and
    * nothing changed. Rejects with the backend's message for an invalid glob.
    */
   async narrowReview(changeset: ChangesetKey, filter: ReviewFilter | undefined): Promise<void> {
@@ -565,12 +573,12 @@ export class Backend {
     await this.call({ type: "trustPullRequest", project: this.pid });
   }
 
-  /** Excludes a file, or with `directory` everything below a folder, from the review; every subscriber, this one included, then gets `snapshotSettled`. */
+  /** Excludes a file, or with `directory` everything below a folder, from the review; every subscriber, this one included, then gets `filterChanged`. */
   async excludePath(path: string, directory: boolean): Promise<void> {
     await this.call({ type: "excludePath", project: this.pid, path, directory });
   }
 
-  /** Ends the open review; every subscriber, this one included, then gets `snapshotSettled` and `changesetsChanged`. Resolves with whether it was complete. */
+  /** Ends the open review; every subscriber, this one included, then gets `reviewFinished`. Resolves with whether it was complete. */
   async finishReview(): Promise<boolean> {
     return (await this.call({ type: "finishReview", project: this.pid })).complete;
   }

@@ -97,6 +97,28 @@ void test("a mark has the queue follow only if it moved where the review last wa
   assert.deepEqual(did, ["follow"]);
 });
 
+void test("a moved snapshot has the queue follow, a changed filter does nothing and a finished review lists the rows", () => {
+  const did: string[] = [];
+  const actions: QueueActions = {
+    load: () => did.push("load"),
+    loadPullRequests: () => did.push("listPullRequests"),
+    takeLines: () => did.push("takeLines"),
+    takeDetails: () => did.push("takeDetails"),
+    follow: () => did.push("follow"),
+  };
+
+  queueEvent({ type: "snapshotMoved", project: 1, revision: 2, version: 3 }, actions);
+  queueEvent({ type: "snapshotMoved", project: 1, revision: 3, version: null }, actions);
+  assert.deepEqual(did, ["follow", "follow"]);
+
+  did.length = 0;
+  queueEvent({ type: "filterChanged", project: 1, revision: 4 }, actions);
+  assert.deepEqual(did, []);
+
+  queueEvent({ type: "reviewFinished", project: 1, revision: 5 }, actions);
+  assert.deepEqual(did, ["load"]);
+});
+
 void test("the details that were read show in the row they changed and in no other", () => {
   const rows = [row(7), row(8)];
 

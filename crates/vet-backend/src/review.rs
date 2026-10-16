@@ -13,7 +13,7 @@ use vet_protocol::{Event, ProjectId, Response};
 
 use crate::announce::{announce_start, review_changed};
 use crate::error::{Error, Result};
-use crate::events::revision_changed;
+use crate::events::{filter_changed, review_finished};
 use crate::{Live, Orchestrator};
 
 impl Orchestrator {
@@ -21,8 +21,7 @@ impl Orchestrator {
         let open = self.ready(project).await?;
         let complete = open.session.finish_review().await?;
         let revision = open.session.revision().await;
-        revision_changed(&open.open, revision);
-        open.subscribers.broadcast(Event::ChangesetsChanged { project });
+        review_finished(&open.open, revision);
         Ok(Response::ReviewFinished { complete })
     }
 
@@ -245,7 +244,7 @@ impl Orchestrator {
     ) -> Result<Response> {
         let open = self.ready(project).await?;
         let revision = open.session.set_filter(mapping::core_filter(filter)).await?;
-        revision_changed(&open.open, revision);
+        filter_changed(&open.open, revision);
         Ok(Response::Done)
     }
 
@@ -271,7 +270,7 @@ impl Orchestrator {
         let open = self.ready(project).await?;
         let revision = open.session.narrow(&source, filter.map(mapping::core_filter)).await?;
         if let Some(revision) = revision {
-            revision_changed(&open.open, revision);
+            filter_changed(&open.open, revision);
         }
         Ok(Response::Done)
     }
@@ -279,7 +278,7 @@ impl Orchestrator {
     pub(crate) async fn exclude_path(&self, project: ProjectId, path: &str, directory: bool) -> Result<Response> {
         let open = self.ready(project).await?;
         let revision = open.session.exclude_path(path, directory).await?;
-        revision_changed(&open.open, revision);
+        filter_changed(&open.open, revision);
         Ok(Response::Done)
     }
 

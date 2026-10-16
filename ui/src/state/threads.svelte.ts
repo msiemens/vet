@@ -11,7 +11,7 @@ import { notices } from "./notices.svelte";
 import { Resource } from "./resource";
 import { atRevision } from "./revision";
 import type { Shown } from "./shown";
-import { type ThreadCell, cellFor, cellListed, replaces } from "./threadCells";
+import { type ThreadCell, cellFor, cellListed, replaces, restamped } from "./threadCells";
 import { type Range, rangeKey, rangeView } from "./timelineRange";
 import { CHANGESET } from "./view";
 
@@ -93,6 +93,15 @@ class Threads {
     if (this.host.ended()) return;
     const range = this.reviewShown ? this.ranged : undefined;
     await Promise.all([this.loadWhole(), range && this.loadRange(range)]);
+  }
+
+  /** The changeset is at `revision` and no thread's anchor moved with it: the threads held stay, as of `revision`. */
+  restamp(revision: number) {
+    for (const which of CELLS) {
+      const cell = this.cellOf(which);
+      const moved = restamped(cell, revision);
+      if (moved !== cell && moved) this.put(which, moved);
+    }
   }
 
   /** Drops everything held, for a session that ended. */

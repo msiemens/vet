@@ -17,7 +17,9 @@ pub enum Kind {
     RecentProjectsChanged,
     SettingsChanged,
     PreferenceChanged,
-    SnapshotSettled,
+    SnapshotMoved,
+    FilterChanged,
+    ReviewFinished,
     EditsPending,
     ChangesetOpened,
     ChangesetLinesChanged,
@@ -49,7 +51,9 @@ impl Kind {
             Event::RecentProjectsChanged => Self::RecentProjectsChanged,
             Event::SettingsChanged => Self::SettingsChanged,
             Event::PreferenceChanged { .. } => Self::PreferenceChanged,
-            Event::SnapshotSettled { .. } => Self::SnapshotSettled,
+            Event::SnapshotMoved { .. } => Self::SnapshotMoved,
+            Event::FilterChanged { .. } => Self::FilterChanged,
+            Event::ReviewFinished { .. } => Self::ReviewFinished,
             Event::EditsPending { .. } => Self::EditsPending,
             Event::ChangesetOpened { .. } => Self::ChangesetOpened,
             Event::ChangesetLinesChanged { .. } => Self::ChangesetLinesChanged,
@@ -87,21 +91,32 @@ pub enum Effect {
     Unannounced(#[expect(dead_code, reason = "read by whoever reads the classification")] &'static str),
     /// Changes what clients show. When it did what it is for, every subscriber, the requester
     /// included, hears each of `events`: those of a project its connections, those of the process
-    /// every connection that asked for `Accounts` or `RecentProjects`. `untested` says why the test
-    /// cannot drive it, if it cannot.
+    /// every connection that asked for `Accounts` or `RecentProjects`; none hears one of `never`,
+    /// events that a client would answer with reads the change does not call for. `untested` says
+    /// why the test cannot drive it, if it cannot.
     Mutation {
         events: &'static [Kind],
+        never: &'static [Kind],
         untested: Option<&'static str>,
     },
 }
 
 const fn tested(events: &'static [Kind]) -> Effect {
-    Effect::Mutation { events, untested: None }
+    tested_never(events, &[])
+}
+
+const fn tested_never(events: &'static [Kind], never: &'static [Kind]) -> Effect {
+    Effect::Mutation {
+        events,
+        never,
+        untested: None,
+    }
 }
 
 const fn untested(events: &'static [Kind], why: &'static str) -> Effect {
     Effect::Mutation {
         events,
+        never: &[],
         untested: Some(why),
     }
 }
@@ -190,7 +205,8 @@ pub fn effect(request: &Request) -> Effect {
         // When another changeset comes on view; reopening the pull request on view announces
         // `TargetChanged` if the platform names it differently now.
         Request::OpenChangeset { .. } => tested(&[ChangesetOpened]),
-        Request::FinishReview { .. } => tested(&[SnapshotSettled, ChangesetsChanged]),
+        // The queue's rows are read again for `ReviewFinished` itself.
+        Request::FinishReview { .. } => tested_never(&[ReviewFinished], &[ChangesetsChanged, SnapshotMoved]),
         Request::SetLens { .. } => tested(&[LensChanged]),
         // The first mark of a review also announces `ReviewStarted`.
         Request::ToggleHunk { .. }
@@ -200,12 +216,12 @@ pub fn effect(request: &Request) -> Effect {
         | Request::SetFilesSeen { .. }
         | Request::ReconfirmFile { .. } => tested(&[ReviewChanged]),
         Request::SetProjectFilter { .. } | Request::ExcludePath { .. } | Request::NarrowReview { .. } => {
-            tested(&[SnapshotSettled])
+            tested_never(&[FilterChanged], &[SnapshotMoved, ReviewFinished])
         }
         Request::SetProjectTrusted { .. } => tested(&[TargetChanged, ServersChanged]),
         Request::TrustPullRequest { .. } => untested(&[TargetChanged, ServersChanged], NEEDS_A_PLATFORM),
         // When a remote was fetched. A pull request on view whose head moved settles
-        // (`SnapshotSettled`), one the platform names differently says `TargetChanged`, and its
+        // (`SnapshotMoved`), one the platform names differently says `TargetChanged`, and its
         // sync announces as `SyncThreads` does.
         Request::Fetch { .. } => tested(&[ChangesetsChanged]),
         // The first comment of a review also announces `ReviewStarted`.
@@ -748,6 +764,16 @@ mod tests {
         }
     }
 
+    /// The `version` of each `SnapshotMoved` among `events`.
+    fn snapshot_versions(events: &[Event]) -> Vec<Option<u32>> {
+        (events.iter())
+            .filter_map(|event| match event {
+                Event::SnapshotMoved { version, .. } => Some(*version),
+                _ => None,
+            })
+            .collect()
+    }
+
     /// An orchestrator with a project that two connections opened: one asks, the other looks on.
     struct World {
         orchestrator: Orchestrator,
@@ -770,7 +796,12 @@ mod tests {
         /// declares.
         async fn drive(&mut self, request: Request) -> Response {
             let name = tag(&request);
-            let Effect::Mutation { events, untested: None } = effect(&request) else {
+            let Effect::Mutation {
+                events,
+                never,
+                untested: None,
+            } = effect(&request)
+            else {
                 panic!("{name} is not a mutation the test drives");
             };
             self.requester.heard();
@@ -783,6 +814,9 @@ mod tests {
                         heard.contains(kind),
                         "{name}: the {who} did not hear {kind:?}, only {heard:?}"
                     );
+                }
+                for kind in never {
+                    assert!(!heard.contains(kind), "{name}: the {who} heard {kind:?}, in {heard:?}");
                 }
             }
             self.driven.insert(name);
@@ -843,12 +877,32 @@ mod tests {
             .await
         }
 
-        /// Waits until the tree has been quiet for a moment, so the revision stays put.
-        async fn quiet(&mut self) {
-            while tokio::time::timeout(Duration::from_millis(700), self.requester.inbox.recv())
-                .await
-                .is_ok()
-            {}
+        /// Waits until the tree has been quiet for a moment, so the revision stays put. Returns the
+        /// events the requester heard meanwhile.
+        async fn quiet(&mut self) -> Vec<Event> {
+            let mut heard = Vec::new();
+            while let Ok(Some(message)) =
+                tokio::time::timeout(Duration::from_millis(700), self.requester.inbox.recv()).await
+            {
+                if let ServerMessage::Event { event } = message {
+                    heard.push(event);
+                }
+            }
+            heard
+        }
+
+        /// Checks that both listeners heard `FilterChanged` at the revision the next manifest has.
+        async fn assert_filter_changed_at_the_manifest_revision(&self) {
+            let revision = self.manifest().await.revision;
+            for (who, listener) in [("requester", &self.requester), ("observer", &self.observer)] {
+                let heard: Vec<u32> = (listener.last.iter())
+                    .filter_map(|event| match event {
+                        Event::FilterChanged { revision, .. } => Some(*revision),
+                        _ => None,
+                    })
+                    .collect();
+                assert_eq!(heard, [revision], "the {who}'s FilterChanged");
+            }
         }
     }
 
@@ -1049,9 +1103,10 @@ mod tests {
             &format!("x1\nx2\nx3\n{block}x4\nx5\nx6\nx7\nx8\n{block}y1\ny2\ny3\n"),
         );
         let deadline = tokio::time::Instant::now() + Duration::from_secs(20);
+        let mut moved = Vec::new();
         let revision = loop {
             assert!(tokio::time::Instant::now() < deadline, "the anchors did not move");
-            world.quiet().await;
+            moved.extend(world.quiet().await);
             let (revision, threads) = world.threads().await;
             let anchor = |id| threads.iter().find(|t| t.id == id).and_then(|t| t.anchor.clone());
             if matches!(anchor(inferred.id), Some(AnchorState::Inferred { .. }))
@@ -1060,6 +1115,17 @@ mod tests {
                 break revision;
             }
         };
+        // A settle with a review open records a version, which the event names.
+        let Response::Versions { versions } = world.ask(Request::Versions { project }).await else {
+            panic!("not the versions");
+        };
+        let latest = versions.last().map(|v| v.n);
+        assert!(latest > Some(1), "the settle recorded no version");
+        assert_eq!(
+            snapshot_versions(&moved).last(),
+            Some(&latest),
+            "a settle with a review open"
+        );
         world
             .drive(Request::ConfirmAnchor {
                 project,
@@ -1091,6 +1157,7 @@ mod tests {
             ..ReviewFilter::default()
         };
         world.drive(Request::SetProjectFilter { project, filter }).await;
+        world.assert_filter_changed_at_the_manifest_revision().await;
         let narrowing = ReviewFilter {
             roots: vec!["src".into()],
             ..ReviewFilter::default()
@@ -1102,6 +1169,7 @@ mod tests {
                 filter: Some(narrowing),
             })
             .await;
+        world.assert_filter_changed_at_the_manifest_revision().await;
         world.drive(Request::SetProjectTrusted { project, trusted: true }).await;
         world
             .drive(Request::ExcludePath {
@@ -1110,8 +1178,29 @@ mod tests {
                 directory: true,
             })
             .await;
+        world.assert_filter_changed_at_the_manifest_revision().await;
 
         world.drive(Request::FinishReview { project }).await;
+        let finished = world.manifest().await.revision;
+        for (who, listener) in [("requester", &world.requester), ("observer", &world.observer)] {
+            assert!(
+                listener
+                    .last
+                    .iter()
+                    .any(|e| matches!(e, Event::ReviewFinished { revision, .. } if *revision == finished)),
+                "the {who}'s ReviewFinished is not at the manifest's revision"
+            );
+        }
+
+        // Browsing records no version.
+        write(p, "a.txt", &text(30, &[3, 12]));
+        let browsing = world.quiet().await;
+        let versions = snapshot_versions(&browsing);
+        assert!(!versions.is_empty(), "the edit did not settle");
+        assert!(
+            versions.iter().all(Option::is_none),
+            "a settle while browsing: {versions:?}"
+        );
 
         let scratch = tempfile::tempdir().unwrap();
         let remote = scratch.path().join("remote.git");

@@ -239,16 +239,19 @@ export const sessions: Record<SessionName, (h: Harness) => Promise<void>> = {
   },
 
   /**
-   * The requests the window sends after each kind of change, pinned exactly: what a mark, a settle, a
-   * narrowing, an excluded path and the end of a review cost, in the changeset view and by commit. The
-   * first mark of a review starts it and is not pinned.
+   * The requests the window sends after each kind of change, pinned exactly: what a mark, a settle with
+   * a review open and while browsing, a narrowing, an excluded path and the end of a review cost, in the
+   * changeset view and by commit. The first mark of a review starts it and is not pinned.
    */
   async requests(h) {
     await h.step("the review is started", () => hunk(h, "b.txt", 0), once("toggleHunk"));
-    // What a change of the files in view makes the window read, in the changeset view.
+    // What a new version makes the window read, in the changeset view.
     const moved = { "manifest(changeset)": 1, threads: 1, versions: 1, listChangesets: 1 };
     // And by commit: the commit's manifest, the commits' progress and the changeset's manifest too.
     const movedByCommit = { ...moved, "manifest(commit)": 1, commits: 1 };
+    // What a change of the filter makes it read: the files in view, not the threads nor the versions.
+    const filtered = { "manifest(changeset)": 1 };
+    const filteredByCommit = { ...filtered, "manifest(commit)": 1, commits: 1 };
     const finishedNotice = "Review finished with unseen changes left";
     await h.step("a repeated mark in the changeset view", () => hunk(h, "b.txt", 1), {
       sent: { toggleHunk: 1 },
@@ -265,15 +268,15 @@ export const sessions: Record<SessionName, (h: Harness) => Promise<void>> = {
       exact: true,
     });
     await h.step("a narrowing in the changeset view", () => onView().reviewOnly("src"), {
-      sent: { narrowReview: 1, ...moved },
+      sent: { narrowReview: 1, ...filtered },
       exact: true,
     });
     await h.step("the narrowing ended", () => onView().narrow(undefined), {
-      sent: { narrowReview: 1, ...moved },
+      sent: { narrowReview: 1, ...filtered },
       exact: true,
     });
     await h.step("a path excluded in the changeset view", () => excludePath("src/c.txt", false), {
-      sent: { excludePath: 1, ...moved },
+      sent: { excludePath: 1, ...filtered },
       exact: true,
     });
     await h.step("the review is finished in the changeset view", () => onView().finishReview(), {
@@ -282,12 +285,21 @@ export const sessions: Record<SessionName, (h: Harness) => Promise<void>> = {
         "manifest(changeset)": 1,
         threads: 1,
         versions: 1,
-        listChangesets: 2,
+        listChangesets: 1,
         changesetLines: 1,
       },
       exact: true,
       notice: finishedNotice,
     });
+    await h.step(
+      "a settle while browsing",
+      async () => {
+        const before = opened.session?.layout?.shown.revision ?? -1;
+        h.fixture.write("b.txt", "wt3", [7, 25, 33]);
+        await h.until(() => (opened.session?.layout?.shown.revision ?? -1) > before, "the new revision");
+      },
+      { sent: { "manifest(changeset)": 1, threads: 1, listChangesets: 1 }, exact: true },
+    );
     await h.step("the branch is opened by commit", () => reviewByCommit(h));
     await h.step("the review by commit is started", () => hunk(h, first(), 0), once("toggleHunk"));
     await h.step("a repeated mark by commit", () => hunk(h, first(), 1), {
@@ -304,7 +316,7 @@ export const sessions: Record<SessionName, (h: Harness) => Promise<void>> = {
       { sent: { ...movedByCommit, changesetLines: 1 }, exact: true },
     );
     await h.step("a path excluded by commit", () => excludePath("b.txt", false), {
-      sent: { excludePath: 1, ...movedByCommit },
+      sent: { excludePath: 1, ...filteredByCommit },
       exact: true,
     });
     await h.step("the review is finished by commit", () => onView().finishReview(), {
@@ -315,7 +327,7 @@ export const sessions: Record<SessionName, (h: Harness) => Promise<void>> = {
         commits: 1,
         threads: 1,
         versions: 1,
-        listChangesets: 2,
+        listChangesets: 1,
         changesetLines: 1,
       },
       exact: true,

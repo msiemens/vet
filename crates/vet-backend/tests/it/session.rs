@@ -189,12 +189,15 @@ impl Client {
         self.started.clone()
     }
 
-    /// The revision of the next `SnapshotSettled`, past the `ReviewChanged` and `ThreadsChanged`
-    /// that the client's own marks and comments announced to it.
+    /// The revision of the next event that moves it (`SnapshotMoved`, `FilterChanged`,
+    /// `ReviewFinished`), past the `ReviewChanged` and `ThreadsChanged` that the client's own marks
+    /// and comments announced to it.
     async fn settled(&mut self) -> u32 {
         loop {
             match self.event().await {
-                Event::SnapshotSettled { revision, .. } => return revision,
+                Event::SnapshotMoved { revision, .. }
+                | Event::FilterChanged { revision, .. }
+                | Event::ReviewFinished { revision, .. } => return revision,
                 Event::ReviewChanged { .. } | Event::ThreadsChanged { .. } => {}
                 other => panic!("{other:?}"),
             }
@@ -1450,8 +1453,8 @@ async fn a_review_starts_with_the_first_mark_and_finishing_returns_to_browsing()
     // The other connection still has the review changes queued before it.
     let revision = loop {
         match two.event().await {
-            Event::SnapshotSettled { revision, .. } if revision == 2 => break revision,
-            Event::ReviewChanged { .. } | Event::SnapshotSettled { .. } => {}
+            Event::ReviewFinished { revision, .. } if revision == 2 => break revision,
+            Event::ReviewChanged { .. } | Event::SnapshotMoved { .. } => {}
             other => panic!("{other:?}"),
         }
     };
@@ -1829,7 +1832,7 @@ async fn a_fetch_that_moves_the_remote_branch_on_view_is_its_next_version() {
     loop {
         match client.event().await {
             Event::ChangesetsChanged { .. } => {}
-            Event::SnapshotSettled { .. } => break,
+            Event::SnapshotMoved { .. } => break,
             other => panic!("{other:?}"),
         }
     }

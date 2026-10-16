@@ -33,6 +33,11 @@ export function cellListed(cells: ThreadCells, range: Where | undefined): Thread
   return cellFor(cells, range) ?? cells.whole;
 }
 
+/** The cell as of `revision`, its threads kept: for a revision that moved nothing the threads are anchored in. */
+export function restamped(held: ThreadCell | undefined, revision: number): ThreadCell | undefined {
+  return held && held.revision < revision ? { ...held, revision } : held;
+}
+
 /** Whether a read may replace `held`: an answer for an older revision does not replace a newer one. */
 export function replaces(held: ThreadCell | undefined, read: ThreadCell): boolean {
   return !held || read.revision >= held.revision;

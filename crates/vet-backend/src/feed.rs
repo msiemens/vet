@@ -17,7 +17,7 @@ use vet_infra::store::SqliteStore;
 use vet_mapping as mapping;
 use vet_protocol::Event;
 
-use crate::events::revision_changed;
+use crate::events::snapshot_moved;
 use crate::hosting::{Held, Platforms};
 use crate::{Open, Orchestrator, PlatformAccounts};
 
@@ -125,7 +125,7 @@ impl Project for FeedProject {
             return;
         };
         if let Ok(Some(revision)) = booted.session.observe().await {
-            revision_changed(&open, revision);
+            snapshot_moved(&open.subscribers, open.id, revision, booted.session.review_version());
         }
     }
 

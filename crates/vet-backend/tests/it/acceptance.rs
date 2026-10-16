@@ -215,7 +215,10 @@ impl Client {
                 .expect("no event")
                 .expect("connection closed");
             if let ServerMessage::Event {
-                event: Event::SnapshotSettled { revision, .. },
+                event:
+                    Event::SnapshotMoved { revision, .. }
+                    | Event::FilterChanged { revision, .. }
+                    | Event::ReviewFinished { revision, .. },
             } = message
             {
                 return revision;
@@ -1082,7 +1085,7 @@ impl Live {
             session
                 .follow(
                     settling,
-                    |revision| {
+                    |revision, _| {
                         let _ = revisions.send(revision);
                     },
                     || {},

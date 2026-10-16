@@ -32,7 +32,9 @@ export function queueEvent(event: SessionEvent, actions: QueueActions): void {
       // are enough, so no `loadPullRequests`.
       actions.load();
       return;
+    // A finished review leaves its changeset's row without a review open.
     case "changesetsChanged":
+    case "reviewFinished":
       actions.load();
       return;
     case "threadsChanged":
@@ -47,8 +49,12 @@ export function queueEvent(event: SessionEvent, actions: QueueActions): void {
     case "changesetLinesChanged":
       actions.takeLines(event.changesets, event.lines);
       return;
-    case "snapshotSettled":
+    case "snapshotMoved":
       actions.follow();
+      return;
+    // The rows count the lines between two commits, which the filter does not touch, and the row on view shows its
+    // progress live.
+    case "filterChanged":
       return;
     // The row on view shows its progress live; of the stored row a mark moves only where the review last was.
     case "reviewChanged":

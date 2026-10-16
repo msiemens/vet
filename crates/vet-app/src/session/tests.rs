@@ -3068,6 +3068,65 @@ async fn excluding_a_path_hides_exactly_that_file_or_everything_below_that_folde
     assert_eq!(stored.exclude, ["/src/a[[]1[]].rs", "/src/gen/**"]);
 }
 
+/// The UI keeps its threads across a filter change and only re-stamps them with the new revision.
+#[tokio::test]
+async fn a_filter_change_leaves_the_threads_and_the_versions_as_they_were() {
+    let base = [("a.txt", "1\n"), ("docs/b.md", "1\n")];
+    let dirty = [("a.txt", "2\n"), ("docs/b.md", "2\n")];
+    let fx = Fixture::reviewing(&base, &dirty).await;
+    let thread = NewThread::Range {
+        side: Side::Target,
+        path: path("a.txt"),
+        range: LineRange { start: 0, end: 1 },
+    };
+    fx.session
+        .create_thread(0, View::Changeset, thread, "why".into(), 1)
+        .await
+        .unwrap();
+    fx.session
+        .create_thread(0, View::Changeset, NewThread::Changeset, "overall".into(), 1)
+        .await
+        .unwrap();
+    let before = fx.session.threads(View::Changeset).await.unwrap();
+    let versions = fx.session.versions().await.unwrap();
+    assert_eq!(before.threads.len(), 2);
+    assert!(!versions.is_empty());
+
+    let excluding_docs = ReviewFilter {
+        exclude: vec!["docs/**".into()],
+        ..Default::default()
+    };
+    let narrowing = ReviewFilter {
+        roots: vec![path("docs")],
+        ..Default::default()
+    };
+    let mut revision = before.revision;
+    for step in 0..3 {
+        let moved = match step {
+            0 => fx.session.set_filter(excluding_docs.clone()).await.unwrap(),
+            1 => fx.session.exclude_path("a.txt", false).await.unwrap(),
+            _ => fx
+                .session
+                .narrow(&Source::WorkingTree, Some(narrowing.clone()))
+                .await
+                .unwrap()
+                .unwrap(),
+        };
+        assert!(moved > revision, "step {step} moved the revision");
+        revision = moved;
+        let after = fx.session.threads(View::Changeset).await.unwrap();
+        assert_eq!(
+            after,
+            ThreadsView {
+                revision,
+                ..before.clone()
+            },
+            "step {step}"
+        );
+        assert_eq!(fx.session.versions().await.unwrap(), versions, "step {step}");
+    }
+}
+
 #[tokio::test]
 async fn filter_roots_are_taken_as_directories_without_slashes() {
     let files = [("a.txt", "1\n"), ("docs/b.md", "1\n")];

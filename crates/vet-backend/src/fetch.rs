@@ -10,7 +10,7 @@ use vet_protocol::{Event, ProjectId, Response};
 
 use crate::changesets::bring_in;
 use crate::error::Result;
-use crate::events::revision_changed;
+use crate::events::snapshot_moved;
 use crate::hosting::Held;
 use crate::open::Booted;
 use crate::supervisor::{Asked, Fetches, Reason, Sealing};
@@ -96,7 +96,7 @@ async fn follow_pull_request(open: &Arc<Open>, booted: &Booted) {
     };
     let renamed = brought.renamed;
     if let Ok(Some(revision)) = booted.session.observe().await {
-        revision_changed(open, revision);
+        snapshot_moved(&open.subscribers, open.id, revision, booted.session.review_version());
     } else if renamed {
         open.subscribers.broadcast(Event::TargetChanged { project: open.id });
     }
