@@ -11,8 +11,9 @@ import type { PullRequestRow } from "../generated/PullRequestRow";
 import type { PullRequestSource } from "../generated/PullRequestSource";
 import type { PullRequestUpdate } from "../generated/PullRequestUpdate";
 import { Debounced } from "../lib/debounced";
-import { changeset } from "./changeset.svelte";
 import { keyId } from "./changesetKey";
+import { opened } from "./opened.svelte";
+import { changesetLines, fetchRemotes, listChangesets, listPullRequests } from "./projectRequests";
 import { type QueueActions, queueEvent, withDetails } from "./queueEvents";
 import { queueEntries, queueRows } from "./queueEntries";
 import { Latest } from "./resource";
@@ -57,7 +58,7 @@ class QueueStore {
     queueEntries(
       queueRows(this.local, this.pullRequests),
       this.onView && keyId(this.onView),
-      changeset.wholeFrame,
+      opened.session?.wholeFrame,
       this.lines,
     ),
   );
@@ -127,7 +128,7 @@ class QueueStore {
   async load(recount = true) {
     const isLatest = this.reads.local.begin();
     this.listingLocal = true;
-    const listed = await changeset.listChangesets();
+    const listed = await listChangesets();
     if (!isLatest()) return;
     this.listingLocal = false;
     if (!listed) return;
@@ -159,7 +160,7 @@ class QueueStore {
       listing.again = false;
       const isLatest = this.reads.pullRequests.begin();
       this.listingPullRequests = true;
-      const listed = await changeset.listPullRequests();
+      const listed = await listPullRequests();
       if (!isLatest()) return;
       this.listingPullRequests = false;
       if (listed) {
@@ -189,7 +190,7 @@ class QueueStore {
     this.refreshing = true;
     const before = this.reads.local.mark();
     try {
-      await changeset.fetch();
+      await fetchRemotes();
       // A fetch that brought something announced `changesetsChanged`, which listed the local ones already.
       await Promise.all([this.reads.local.movedSince(before) ? undefined : this.load(), this.loadPullRequests()]);
     } finally {
@@ -210,7 +211,7 @@ class QueueStore {
       ...this.pullRequests.map((row) => row.key),
     ].filter((key) => recount || !this.lines.has(keyId(key)));
     if (!wanted.length) return;
-    const lines = await changeset.changesetLines(wanted);
+    const lines = await changesetLines(wanted);
     if (!isLatest() || !lines) return;
     this.takeLines(wanted, lines);
   }

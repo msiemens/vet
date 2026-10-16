@@ -26,10 +26,10 @@
   import Spinner from "../../lib/ui/Spinner.svelte";
   import SplitText from "../../lib/ui/SplitText.svelte";
   import TagChip from "../../lib/ui/TagChip.svelte";
-  import { changeset } from "../../state/changeset.svelte";
   import { keyId } from "../../state/changesetKey";
   import { commands } from "../../state/commands";
   import { isMac } from "../../state/host";
+  import { opened } from "../../state/opened.svelte";
   import { queue } from "../../state/queue.svelte";
   import { serverList } from "../../state/serverList.svelte";
   import { threads } from "../../state/threads.svelte";
@@ -80,8 +80,8 @@
 
   const files = $derived(
     fileCandidates(
-      (changeset.layout?.files ?? []).map((f) => {
-        const completion = changeset.reviewed(f.path)?.completion;
+      (opened.session?.layout?.files ?? []).map((f) => {
+        const completion = opened.session?.reviewed(f.path)?.completion;
         return {
           path: f.path,
           status: letterOfStatus(f.status),
@@ -97,7 +97,7 @@
     symbolCandidates(
       [...symbols.files].flatMap(([path, load]) =>
         load.state === "done"
-          ? [{ symbols: load.symbols, seen: changeset.reviewed(path)?.completion.seenPercent ?? 0 }]
+          ? [{ symbols: load.symbols, seen: opened.session?.reviewed(path)?.completion.seenPercent ?? 0 }]
           : [],
       ),
     ),
@@ -126,9 +126,9 @@
   );
   const actions = $derived(actionCandidates(commandEntries(commands, palette.context)));
   /** The files the changeset does not change, once the list of all of them is here. */
-  const others = $derived(palette.files ? unchangedCandidates(palette.files.paths, new Set(changeset.paths)) : []);
+  const others = $derived(palette.files ? unchangedCandidates(palette.files.paths, new Set(opened.session?.paths)) : []);
   const typed = $derived(palette.query.trim());
-  const revision = $derived(changeset.layout?.shown.revision);
+  const revision = $derived(opened.session?.layout?.shown.revision);
   /** The servers are asked for symbols by name when unchanged files are searched and symbols are listed. */
   const asksServers = $derived(
     palette.unchanged && typed !== "" && revision !== undefined && SYMBOL_TABS.includes(palette.tab),
@@ -139,7 +139,7 @@
   );
   const found = $derived(answer?.languages ?? []);
   /** The changed files whose changed symbols are not known: the servers' symbols in them could be changed ones. */
-  const unsettled = $derived(new Set(changeset.paths.filter((p) => symbols.files.get(p)?.state !== "done")));
+  const unsettled = $derived(new Set((opened.session?.paths ?? []).filter((p) => symbols.files.get(p)?.state !== "done")));
   const candidates: Candidates = $derived({
     file: palette.unchanged ? [...files, ...others] : files,
     symbol: [...symbolList, ...serverSymbolCandidates(found, symbolList, unsettled)],
@@ -172,7 +172,9 @@
   );
   /** The commit a view pinned to one opens files at. */
   const pinned = $derived(
-    changeset.shownCommit === undefined ? undefined : changeset.commits[changeset.shownCommit]?.commit.shortId,
+    opened.session?.shownCommit === undefined
+      ? undefined
+      : opened.session.commits[opened.session.shownCommit]?.commit.shortId,
   );
   /** How many unchanged files match what was typed, when nothing else does and they are not searched. */
   const hidden = $derived(
@@ -181,7 +183,7 @@
   // The list of all files is asked for when they are searched, or when it can say what a search found nothing of.
   $effect(() => {
     const wanted = palette.unchanged || (typed !== "" && !entries.length);
-    if (!wanted || palette.files?.revision === changeset.layout?.shown.revision) return;
+    if (!wanted || palette.files?.revision === opened.session?.layout?.shown.revision) return;
     untrack(() => {
       if (!palette.listing) void palette.listFiles();
     });

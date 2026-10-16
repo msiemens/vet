@@ -21,10 +21,10 @@
   import { ThreadCards, groupThreads, threadPlace } from "../comments";
   import type { Frame } from "../../state/reviewModel";
   import { browse } from "../../state/browse";
-  import { changeset } from "../../state/changeset.svelte";
   import { checks } from "../../state/checks.svelte";
   import { commands } from "../../state/commands";
   import { minute } from "../../state/minute.svelte";
+  import { opened } from "../../state/opened.svelte";
   import { platform } from "../../state/platform.svelte";
   import { reviewChanges } from "../../state/reviewChanges.svelte";
   import { threads } from "../../state/threads.svelte";
@@ -74,7 +74,7 @@
   const pull = $derived(row?.pullRequest);
   const info = $derived(platform.info);
   const headId = $derived(
-    changeset.facts?.target.changeset.type === "pullRequest" ? changeset.facts.target.head : undefined,
+    opened.session?.facts?.target.changeset.type === "pullRequest" ? opened.session.facts.target.head : undefined,
   );
   const head = $derived(checks.of(headId));
   const kind = $derived(platform.status?.kind ?? info?.platform.kind);

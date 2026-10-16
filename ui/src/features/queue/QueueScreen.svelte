@@ -15,11 +15,11 @@
   import Table from "../../lib/ui/Table.svelte";
   import type { Column } from "../../lib/ui/columns";
   import { type Sort, sortRows } from "../../lib/ui/sorting";
-  import { changeset } from "../../state/changeset.svelte";
   import { keyId } from "../../state/changesetKey";
   import { commands } from "../../state/commands";
   import { contextMenus } from "../../state/contextMenu.svelte";
   import { minute } from "../../state/minute.svelte";
+  import { opened } from "../../state/opened.svelte";
   import { queue } from "../../state/queue.svelte";
   import ChangesCell from "./ChangesCell.svelte";
   import ChangesetName from "./ChangesetName.svelte";
@@ -89,7 +89,7 @@
   const unlisted = $derived(tab === "all" || tab === "prs" ? queue.sources.filter((s) => s.error !== undefined) : []);
   const current = $derived(rows.find((r) => r.onView));
   /** The changeset's own numbers, whatever range or commit the review shows. */
-  const own = $derived(changeset.wholeFrame);
+  const own = $derived(opened.session?.wholeFrame);
 
   function showTab(id: QueueTab) {
     tabKept.value = id;
@@ -97,7 +97,7 @@
 
   /** The panel's link to the lines seen against an older base: the review shows them. */
   async function openBaseChanged() {
-    await changeset.showBaseChanged();
+    await opened.session?.showBaseChanged();
     onopen();
   }
 
