@@ -21,7 +21,7 @@ use gix::sec::identity::Account;
 use vet_app::platform::{CredentialSource, PlatformKind};
 use vet_app::ports::{FetchAuth, GitError, RefTip, RefUpdate, RemoteInfo};
 
-use super::err;
+use super::{err_chain, redact};
 use crate::http::install_tls_provider;
 
 /// A user name the platforms accept in front of a token.
@@ -47,7 +47,7 @@ fn https_host(url: &gix::Url) -> Option<String> {
 pub(super) fn remotes(repo: &gix::Repository) -> Result<Vec<RemoteInfo>, GitError> {
     let mut found = Vec::new();
     for name in repo.remote_names() {
-        let remote = repo.find_remote(name.as_bstr()).map_err(err)?;
+        let remote = repo.find_remote(name.as_bstr()).map_err(|error| err_chain(&error))?;
         let Some(url) = remote.url(Direction::Fetch) else {
             continue;
         };
@@ -73,16 +73,20 @@ fn stays_in_remotes(spec: &gix::refspec::RefSpec) -> bool {
 /// The repository with the settings a fetch without a terminal needs.
 fn headless(mut repo: gix::Repository) -> Result<gix::Repository, GitError> {
     let mut config = repo.config_snapshot_mut();
-    config.set_value(&Credentials::TERMINAL_PROMPT, "false").map_err(err)?;
+    config
+        .set_value(&Credentials::TERMINAL_PROMPT, "false")
+        .map_err(|error| err_chain(&error))?;
     // Without a terminal `ssh` cannot ask for a passphrase or a host key; it should fail, not wait.
     let ssh_chosen = config.string(Core::SSH_COMMAND).is_some() || std::env::var_os("GIT_SSH").is_some();
     if !ssh_chosen {
         config
             .set_value(&Core::SSH_COMMAND, "ssh -o BatchMode=yes")
-            .map_err(err)?;
-        config.set_value(&Ssh::VARIANT, "ssh").map_err(err)?;
+            .map_err(|error| err_chain(&error))?;
+        config
+            .set_value(&Ssh::VARIANT, "ssh")
+            .map_err(|error| err_chain(&error))?;
     }
-    config.commit().map_err(err)?;
+    config.commit().map_err(|error| err_chain(&error))?;
     Ok(repo)
 }
 
@@ -91,7 +95,7 @@ fn headless(mut repo: gix::Repository) -> Result<gix::Repository, GitError> {
 fn fetch_err(remote: &str, url: Option<&gix::Url>, error: &(dyn std::error::Error + 'static)) -> GitError {
     match url.and_then(|url| ssh_denied(url, error)) {
         Some(message) => GitError::Remote(format!("{remote}: {message}")),
-        None => GitError::Remote(err(error).to_string()),
+        None => GitError::Remote(redact(error)),
     }
 }
 
@@ -159,10 +163,10 @@ const DELETABLE: &str = "refs/vet/pr/";
 
 /// The refs below `prefix`, each with its commit; a symbolic ref has none and is left out.
 pub(super) fn refs_below(repo: &gix::Repository, prefix: &str) -> Result<Vec<RefTip>, GitError> {
-    let platform = repo.references().map_err(err)?;
+    let platform = repo.references().map_err(|error| err_chain(&error))?;
     let mut tips = Vec::new();
-    for reference in platform.prefixed(prefix).map_err(err)? {
-        let reference = reference.map_err(err)?;
+    for reference in platform.prefixed(prefix).map_err(|error| err_chain(&error))? {
+        let reference = reference.map_err(|error| err_chain(&error))?;
         if let Some(id) = reference.target().try_id() {
             tips.push(RefTip {
                 name: reference.name().as_bstr().to_str_lossy().into_owned(),
@@ -181,8 +185,11 @@ pub(super) fn delete_refs(repo: &gix::Repository, names: &[String]) -> Result<()
         )));
     }
     for name in names {
-        if let Some(reference) = repo.try_find_reference(name.as_str()).map_err(err)? {
-            reference.delete().map_err(err)?;
+        if let Some(reference) = repo
+            .try_find_reference(name.as_str())
+            .map_err(|error| err_chain(&error))?
+        {
+            reference.delete().map_err(|error| err_chain(&error))?;
         }
     }
     Ok(())
@@ -198,13 +205,16 @@ fn run(repo: gix::Repository, name: &str, auth: Option<FetchAuth>, specs: Specs)
             let header = format!("Authorization: Bearer {}", a.credential.token.expose());
             repo.config_snapshot_mut()
                 .set_value(&Http::EXTRA_HEADER, header.as_str())
-                .map_err(err)?;
+                .map_err(|error| err_chain(&error))?;
             None
         }
         other => other,
     };
 
-    let mut remote = repo.find_remote(name).map_err(err)?.with_fetch_tags(Tags::None);
+    let mut remote = repo
+        .find_remote(name)
+        .map_err(|error| err_chain(&error))?
+        .with_fetch_tags(Tags::None);
     let specs: Vec<gix::bstr::BString> = match specs {
         Specs::Configured => remote
             .refspecs(Direction::Fetch)
@@ -222,7 +232,9 @@ fn run(repo: gix::Repository, name: &str, auth: Option<FetchAuth>, specs: Specs)
             "{name} has no refspec that fetches into refs/remotes"
         )));
     }
-    remote.replace_refspecs(specs, Direction::Fetch).map_err(err)?;
+    remote
+        .replace_refspecs(specs, Direction::Fetch)
+        .map_err(|error| err_chain(&error))?;
 
     let url = remote.url(Direction::Fetch).cloned();
     let connection = remote

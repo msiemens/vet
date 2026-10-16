@@ -47,9 +47,19 @@ struct Denied(PathBuf, std::fs::Permissions);
 
 impl Denied {
     fn new(path: &Path) -> Self {
+        Self::with_mode(path, 0o000)
+    }
+
+    /// Keeps the directory traversable but unlistable: opening a known file below it is
+    /// allowed, reading the directory itself is not.
+    fn unlistable(path: &Path) -> Self {
+        Self::with_mode(path, 0o111)
+    }
+
+    fn with_mode(path: &Path, mode: u32) -> Self {
         let original = std::fs::metadata(path).unwrap().permissions();
         let mut denied = original.clone();
-        denied.set_mode(0o000);
+        denied.set_mode(mode);
         std::fs::set_permissions(path, denied).unwrap();
         Self(path.to_owned(), original)
     }
@@ -139,4 +149,88 @@ async fn a_tracked_file_that_cannot_be_read_is_kept_as_unavailable() {
 
     assert_eq!(names(&scan), ["secret.txt"]);
     assert_eq!(scan.status.content_unavailable, vec![path("secret.txt")]);
+}
+
+#[tokio::test]
+async fn a_tracked_file_that_vanished_is_left_out() {
+    let dir = repo();
+    let p = dir.path();
+    std::fs::write(p.join("kept.txt"), "kept\n").unwrap();
+    std::fs::write(p.join("gone.txt"), "gone\n").unwrap();
+    git(p, &["add", "-A"]);
+    git(p, &["commit", "-q", "-m", "c"]);
+    std::fs::remove_file(p.join("gone.txt")).unwrap();
+
+    let scan = reconcile(p).await.unwrap();
+
+    assert_eq!(
+        names(&scan),
+        ["kept.txt"],
+        "the index still holds the file, but it is gone from the tree"
+    );
+}
+
+#[tokio::test]
+async fn a_scan_that_cannot_read_the_worktree_root_names_the_os_error() {
+    let dir = repo();
+    let p = dir.path();
+    std::fs::write(p.join("a.txt"), "a\n").unwrap();
+
+    let _denied = Denied::unlistable(p);
+    let error = reconcile(p).await.err().expect("the scan must fail");
+
+    assert!(
+        error.message().contains("os error"),
+        "the message should carry what the OS said: {}",
+        error.message()
+    );
+}
+
+#[tokio::test]
+async fn an_unreadable_directory_does_not_hide_a_readable_sibling() {
+    let dir = repo();
+    let p = dir.path();
+    std::fs::create_dir_all(p.join("locked")).unwrap();
+    std::fs::write(p.join("locked/secret.txt"), "secret\n").unwrap();
+    std::fs::create_dir_all(p.join("readable")).unwrap();
+    std::fs::write(p.join("readable/kept.txt"), "kept\n").unwrap();
+
+    let _denied = Denied::new(&p.join("locked"));
+    let scan = reconcile(p).await.unwrap();
+
+    assert_eq!(names(&scan), ["readable/kept.txt"]);
+}
+
+#[tokio::test]
+async fn a_readable_sibling_survives_an_unreadable_directory() {
+    let dir = repo();
+    let p = dir.path();
+    std::fs::create_dir_all(p.join("readable")).unwrap();
+    std::fs::write(p.join("readable/kept.txt"), "kept\n").unwrap();
+    std::fs::create_dir_all(p.join("locked")).unwrap();
+    std::fs::write(p.join("locked/secret.txt"), "secret\n").unwrap();
+
+    let _denied = Denied::new(&p.join("locked"));
+    let scan = reconcile(p).await.unwrap();
+
+    assert_eq!(names(&scan), ["readable/kept.txt"]);
+}
+
+#[tokio::test]
+async fn a_failure_that_is_not_the_directory_itself_is_not_skipped_over() {
+    let dir = repo();
+    let p = dir.path();
+    std::fs::create_dir_all(p.join("sub")).unwrap();
+    std::fs::write(p.join("sub/kept.txt"), "kept\n").unwrap();
+    std::fs::write(p.join("sub/.gitignore"), "*.tmp\n").unwrap();
+
+    // The walk fails reading the ignore file inside the readable `sub`, not reading
+    // `sub` itself: skipping `sub` would drop its untracked files.
+    let _denied = Denied::new(&p.join("sub/.gitignore"));
+    let scan = reconcile(p).await;
+
+    assert!(
+        scan.is_err(),
+        "a directory that reads fine must not be skipped, dropping its files"
+    );
 }

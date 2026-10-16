@@ -5,7 +5,7 @@ use gix::remote::Direction;
 use vet_app::changeset::CommitId;
 use vet_app::ports::{BranchInfo, CommitInfo, GitError};
 
-use super::{err, object_id};
+use super::{err, err_chain, object_id};
 
 /// The commit `spec` names, or none when it names nothing or something that is not a commit. A
 /// spec git cannot resolve is none (gix does not tell it from a failure to read the refs); an
@@ -14,7 +14,11 @@ fn commit_of<'r>(repo: &'r gix::Repository, spec: &str) -> Result<Option<gix::Co
     let Ok(id) = repo.rev_parse_single(spec) else {
         return Ok(None);
     };
-    let object = id.object().map_err(err)?.peel_tags_to_end().map_err(err)?;
+    let object = id
+        .object()
+        .map_err(|error| err_chain(&error))?
+        .peel_tags_to_end()
+        .map_err(|error| err_chain(&error))?;
     Ok((object.kind == gix::object::Kind::Commit).then(|| object.into_commit()))
 }
 
@@ -43,14 +47,20 @@ pub(super) fn merge_base(repo: &gix::Repository, reference: &str, tip: &CommitId
 /// `origin/HEAD` if the repository has it and it points at a branch that exists, else
 /// the local branch `main` or `master`.
 pub(super) fn default_reference(repo: &gix::Repository) -> Result<Option<String>, GitError> {
-    if let Some(mut head) = repo.try_find_reference("refs/remotes/origin/HEAD").map_err(err)?
+    if let Some(mut head) = repo
+        .try_find_reference("refs/remotes/origin/HEAD")
+        .map_err(|error| err_chain(&error))?
         && head.peel_to_id().is_ok()
     {
         return Ok(Some("refs/remotes/origin/HEAD".to_owned()));
     }
     for name in ["main", "master"] {
         let full = format!("refs/heads/{name}");
-        if repo.try_find_reference(full.as_str()).map_err(err)?.is_some() {
+        if repo
+            .try_find_reference(full.as_str())
+            .map_err(|error| err_chain(&error))?
+            .is_some()
+        {
             return Ok(Some(full));
         }
     }
@@ -60,21 +70,26 @@ pub(super) fn default_reference(repo: &gix::Repository) -> Result<Option<String>
 /// The branch `origin/HEAD` points at if the repository has it and the branch exists, else the
 /// local `main` or `master`.
 pub(super) fn default_branch(repo: &gix::Repository) -> Result<Option<String>, GitError> {
-    if let Some(head) = repo.try_find_reference("refs/remotes/origin/HEAD").map_err(err)?
+    if let Some(head) = repo
+        .try_find_reference("refs/remotes/origin/HEAD")
+        .map_err(|error| err_chain(&error))?
         && let Some(target) = head.target().try_name()
         && let Some(name) = target
             .as_bstr()
             .to_str()
             .ok()
             .and_then(|t| t.strip_prefix("refs/remotes/origin/"))
-        && repo.try_find_reference(target).map_err(err)?.is_some()
+        && repo
+            .try_find_reference(target)
+            .map_err(|error| err_chain(&error))?
+            .is_some()
     {
         return Ok(Some(name.to_owned()));
     }
     for name in ["main", "master"] {
         if repo
             .try_find_reference(format!("refs/heads/{name}").as_str())
-            .map_err(err)?
+            .map_err(|error| err_chain(&error))?
             .is_some()
         {
             return Ok(Some(name.to_owned()));
@@ -93,17 +108,19 @@ pub(super) fn first_parent_range(
         .with_hidden([object_id(base)?])
         .first_parent_only()
         .all()
-        .map_err(err)?;
+        .map_err(|error| err_chain(&error))?;
     let mut range = Vec::new();
     for info in walk {
-        range.push(CommitId(info.map_err(err)?.id.to_string()));
+        range.push(CommitId(info.map_err(|error| err_chain(&error))?.id.to_string()));
     }
     range.reverse();
     Ok(range)
 }
 
 pub(super) fn commit_info(repo: &gix::Repository, commit: &CommitId) -> Result<CommitInfo, GitError> {
-    let found = repo.find_commit(object_id(commit)?).map_err(err)?;
+    let found = repo
+        .find_commit(object_id(commit)?)
+        .map_err(|error| err_chain(&error))?;
     let author = found.author().map_err(err)?;
     Ok(CommitInfo {
         id: commit.clone(),
@@ -123,10 +140,10 @@ pub(super) fn commits_behind(
         .rev_walk([object_id(tip)?])
         .with_hidden([object_id(base)?])
         .all()
-        .map_err(err)?;
+        .map_err(|error| err_chain(&error))?;
     let mut count = 0;
     for info in walk.take(max) {
-        info.map_err(err)?;
+        info.map_err(|error| err_chain(&error))?;
         count += 1;
     }
     Ok(count)
@@ -147,10 +164,10 @@ fn tracking_ref(repo: &gix::Repository, name: &gix::refs::FullNameRef) -> Option
 /// The local branches, then the remote-tracking branches (`origin/feature`, without the remote's
 /// `HEAD`) that no local branch follows at the same commit, each group by name.
 pub(super) fn branches(repo: &gix::Repository) -> Result<Vec<BranchInfo>, GitError> {
-    let current = repo.head_name().map_err(err)?;
+    let current = repo.head_name().map_err(|error| err_chain(&error))?;
     let default = repo
         .try_find_reference("refs/remotes/origin/HEAD")
-        .map_err(err)?
+        .map_err(|error| err_chain(&error))?
         .and_then(|r| {
             let target = r.target().try_name()?.as_bstr().to_str().ok()?.to_owned();
             target.strip_prefix("refs/remotes/origin/").map(str::to_owned)
@@ -159,10 +176,15 @@ pub(super) fn branches(repo: &gix::Repository) -> Result<Vec<BranchInfo>, GitErr
     let mut branches = Vec::new();
     // Remote-tracking refs a local branch follows, with the commit that branch is at.
     let mut followed = Vec::new();
-    for reference in repo.references().map_err(err)?.local_branches().map_err(err)? {
-        let mut reference = reference.map_err(err)?;
+    for reference in repo
+        .references()
+        .map_err(|error| err_chain(&error))?
+        .local_branches()
+        .map_err(|error| err_chain(&error))?
+    {
+        let mut reference = reference.map_err(|error| err_chain(&error))?;
         let name = reference.name().shorten().to_string();
-        let commit = CommitId(reference.peel_to_id().map_err(err)?.to_string());
+        let commit = CommitId(reference.peel_to_id().map_err(|error| err_chain(&error))?.to_string());
         if let Some(tracking) = tracking_ref(repo, reference.name()) {
             followed.push((tracking, commit.clone()));
         }
@@ -177,8 +199,13 @@ pub(super) fn branches(repo: &gix::Repository) -> Result<Vec<BranchInfo>, GitErr
     branches.sort_by(|a, b| a.name.cmp(&b.name));
 
     let mut remote = Vec::new();
-    for reference in repo.references().map_err(err)?.remote_branches().map_err(err)? {
-        let mut reference = reference.map_err(err)?;
+    for reference in repo
+        .references()
+        .map_err(|error| err_chain(&error))?
+        .remote_branches()
+        .map_err(|error| err_chain(&error))?
+    {
+        let mut reference = reference.map_err(|error| err_chain(&error))?;
         let full = reference.name().as_bstr().to_string();
         let name = reference.name().shorten().to_string();
         if name.ends_with("/HEAD") || branches.iter().any(|b| b.name == name) {

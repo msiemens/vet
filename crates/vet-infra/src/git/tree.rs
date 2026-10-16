@@ -8,17 +8,17 @@ use vet_app::ports::GitError;
 use vet_core::content::{EntryKind, FileEntry, RepoPath, Snapshot};
 use vet_core::merkle;
 
-use super::{BlobCache, Inner, err, object_id};
+use super::{BlobCache, Inner, err, err_chain, object_id};
 
 impl Inner {
     pub(super) fn commit_snapshot(&self, commit: &CommitId) -> Result<Snapshot, GitError> {
         let repo = self.open()?;
         let tree = repo
             .find_commit(object_id(commit)?)
-            .map_err(err)?
+            .map_err(|error| err_chain(&error))?
             .tree_id()
             .map_err(err)?;
-        let index = repo.index_from_tree(&tree).map_err(err)?;
+        let index = repo.index_from_tree(&tree).map_err(|error| err_chain(&error))?;
         let mut entries = BTreeMap::new();
         for e in index.entries() {
             let entry = tree_entry(&repo, &self.blobs, e.id, e.mode.bits())?;

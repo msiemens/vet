@@ -18,7 +18,7 @@ use vet_core::merkle;
 
 use super::stat_cache::{Record, StatCache, StatKey, file_stamp};
 use super::tree::tree_entry;
-use super::{BlobCache, err};
+use super::{BlobCache, err, err_chain};
 use crate::clock::unix_now;
 use crate::paths;
 
@@ -55,12 +55,14 @@ impl<'r> Worktree<'r> {
         stats: &'r StatCache,
         cap: u64,
     ) -> Result<Self, GitError> {
-        let index = repo.index_or_empty().map_err(err)?;
+        let index = repo.index_or_empty().map_err(|error| err_chain(&error))?;
         let stack = repo
             .attributes_only(&index, Source::WorktreeThenIdMapping)
-            .map_err(err)?
+            .map_err(|error| err_chain(&error))?
             .detach();
-        let (mut filter, attrs) = gix::filter::Pipeline::new(repo, stack).map_err(err)?.into_parts();
+        let (mut filter, attrs) = gix::filter::Pipeline::new(repo, stack)
+            .map_err(|error| err_chain(&error))?
+            .into_parts();
         let options = filter.options_mut();
         // Custom drivers are never run (§6.3).
         options.drivers.clear();
@@ -71,8 +73,8 @@ impl<'r> Worktree<'r> {
             index,
             filter,
             attrs,
-            caps: repo.filesystem_options().map_err(err)?,
-            stat: repo.stat_options().map_err(err)?,
+            caps: repo.filesystem_options().map_err(|error| err_chain(&error))?,
+            stat: repo.stat_options().map_err(|error| err_chain(&error))?,
             root: repo
                 .workdir()
                 .ok_or_else(|| GitError::failed("bare repository"))?
@@ -97,7 +99,7 @@ impl<'r> Worktree<'r> {
         tracked: Option<&gix::index::Entry>,
         keep: bool,
     ) -> Result<Option<Item>, GitError> {
-        let full = self.root.join(paths::to_path(path).map_err(err)?);
+        let full = self.root.join(paths::to_path(path).map_err(|error| err_chain(&error))?);
         let mut md = match std::fs::symlink_metadata(&full) {
             Ok(md) => md,
             Err(e) if e.kind() == ErrorKind::NotFound => return Ok(None),
@@ -223,13 +225,17 @@ impl<'r> Worktree<'r> {
 
     /// An entry the working tree cannot be read: a tracked file keeps the content
     /// git last recorded, so it is not treated as deleted; anything else is left
-    /// out. Both the path and the error are reported.
+    /// out. Both the path and the error are reported. An entry that is gone is
+    /// treated like a deletion: left out, and nothing to report.
     fn unreadable(
         &self,
         full: &Path,
         tracked: Option<&gix::index::Entry>,
         error: &std::io::Error,
     ) -> Result<Option<Item>, GitError> {
+        if error.kind() == ErrorKind::NotFound {
+            return Ok(None);
+        }
         tracing::warn!(path = %full.display(), error = %error, "skipping an entry the working tree cannot be read");
         let Some(tracked) = tracked else {
             return Ok(None);
@@ -322,8 +328,11 @@ impl<'r> Worktree<'r> {
     /// Built-in conversions (`eol`, `text`, `autocrlf`, `ident`), plus whether
     /// the path names a custom `filter` driver. `None` if nothing changed.
     fn convert(&mut self, path: &BStr, raw: &[u8]) -> Result<(Option<Vec<u8>>, bool), GitError> {
-        let rela = paths::to_path(path).map_err(err)?;
-        let platform = self.attrs.at_path(path, None, &self.repo.objects).map_err(err)?;
+        let rela = paths::to_path(path).map_err(|error| err_chain(&error))?;
+        let platform = self
+            .attrs
+            .at_path(path, None, &self.repo.objects)
+            .map_err(|error| err_chain(&error))?;
         let mut custom_filter = false;
         let (index, repo) = (&self.index, self.repo);
         let outcome = self
@@ -355,7 +364,7 @@ impl<'r> Worktree<'r> {
             ToGitOutcome::Buffer(buf) => Some(buf.to_vec()),
             ToGitOutcome::Process(mut read) => {
                 let mut out = Vec::new();
-                read.read_to_end(&mut out).map_err(err)?;
+                read.read_to_end(&mut out).map_err(|error| err_chain(&error))?;
                 Some(out)
             }
         };
@@ -364,38 +373,38 @@ impl<'r> Worktree<'r> {
 }
 
 /// Collects the dirwalk's entries, but never enters or reports a tool store, and
-/// never enters a directory it cannot read.
-struct SkipToolStores {
+/// never enters a directory named in `skip`. The walk itself is the only reader of
+/// a directory: when it cannot read one, the failure names it through `last_dir`
+/// and the walk is run again with that directory skipped. `before_read` is called
+/// with each directory about to be entered and each entry about to be reported;
+/// production uses a no-op, tests use it to change the tree under the walk.
+struct SkipToolStores<H> {
     collect: gix::dir::walk::delegate::Collect,
-    root: PathBuf,
+    /// Relative paths of directories no retry may enter.
+    skip: BTreeSet<BString>,
+    /// The directory recursion was last allowed into, and so the one whose reading
+    /// the walk failed on if it failed.
+    last_dir: Option<BString>,
+    before_read: H,
 }
 
-impl SkipToolStores {
-    fn new(root: PathBuf) -> Self {
+impl<H: FnMut(&BStr)> SkipToolStores<H> {
+    fn new(skip: BTreeSet<BString>, before_read: H) -> Self {
         Self {
             collect: gix::dir::walk::delegate::Collect::default(),
-            root,
+            skip,
+            last_dir: None,
+            before_read,
         }
     }
 
-    /// Whether the walk may enter the directory at `rela_path`; one it cannot
-    /// read is skipped, with a warning naming it.
-    fn enterable(&self, rela_path: &BStr) -> bool {
-        let Ok(rela) = paths::to_path(rela_path) else {
-            return true;
-        };
-        let full = self.root.join(rela);
-        match std::fs::read_dir(&full) {
-            Ok(_) => true,
-            Err(e) => {
-                tracing::warn!(path = %full.display(), error = %e, "skipping a directory the working tree cannot be read");
-                false
-            }
-        }
+    /// Lets `before_read` see a path just before the walk reads or reports it.
+    fn note(&mut self, rela_path: &BStr) {
+        (self.before_read)(rela_path);
     }
 }
 
-impl gix::dir::walk::Delegate for SkipToolStores {
+impl<H: FnMut(&BStr)> gix::dir::walk::Delegate for SkipToolStores<H> {
     fn emit(
         &mut self,
         entry: gix::dir::EntryRef<'_>,
@@ -404,6 +413,7 @@ impl gix::dir::walk::Delegate for SkipToolStores {
         if in_tool_store(&entry.rela_path) {
             return std::ops::ControlFlow::Continue(());
         }
+        self.note(entry.rela_path.as_ref());
         self.collect.emit(entry, collapsed_directory_status)
     }
 
@@ -423,52 +433,106 @@ impl gix::dir::walk::Delegate for SkipToolStores {
         {
             return false;
         }
-        // The worktree root stays authoritative: an unreadable root must fail the walk.
-        rela_path.is_empty() || self.enterable(rela_path.as_bstr())
+        if self.skip.contains(&rela_path) {
+            return false;
+        }
+        // gix-dir 0.30 reads a directory as the first thing it does after `can_recurse`
+        // lets it in: `can_recurse` (walk/readdir.rs:77) is followed by `recursive`
+        // (walk/readdir.rs:85), whose first act is `read_dir` (walk/readdir.rs:41); the
+        // root is the same (walk/function.rs:76 then :110). Neither the classification
+        // before `can_recurse` (walk/readdir.rs:67) nor collapsing a directory
+        // (walk/readdir.rs:288-419) reads a directory or asks again. So this is the
+        // directory the walk was reading when it fails.
+        self.note(rela_path.as_bstr());
+        self.last_dir = Some(rela_path);
+        true
     }
 }
 
-/// The files git neither tracks nor ignores, tool stores left out. The dirwalk
-/// only knows an index entry is tracked if it is flagged up to date, so it may
-/// report tracked files too; callers skip those. A directory that cannot be read
-/// is left out rather than treated as if it held nothing.
-fn untracked(repo: &gix::Repository, index: &gix::worktree::Index) -> Result<Vec<BString>, GitError> {
+/// The files git neither tracks nor ignores, tool stores left out. The dirwalk only
+/// knows an index entry is tracked if it is flagged up to date, so it may report
+/// tracked files too; callers skip those. A directory that cannot be read is left
+/// out rather than treated as if it held nothing: the walk is run again with it
+/// skipped, since the walk aborts on the first directory it cannot read and offers
+/// no way to continue.
+fn untracked<H: FnMut(&BStr)>(
+    repo: &gix::Repository,
+    index: &gix::worktree::Index,
+    mut before_read: H,
+) -> Result<Vec<BString>, GitError> {
     let root = repo
         .workdir()
         .ok_or_else(|| GitError::failed("bare repository"))?
         .to_owned();
-    let mut delegate = SkipToolStores::new(root);
-    let options = repo.dirwalk_options().map_err(err)?;
-    repo.dirwalk(
-        index,
-        Vec::<BString>::new(),
-        &AtomicBool::new(false),
-        options,
-        &mut delegate,
-    )
-    .map_err(err)?;
-    Ok(delegate
-        .collect
-        .into_entries_by_path()
-        .into_iter()
-        .filter(|(found, _)| {
-            found.status == gix::dir::entry::Status::Untracked
-                && matches!(
-                    found.disk_kind,
-                    Some(gix::dir::entry::Kind::File | gix::dir::entry::Kind::Symlink)
-                )
-        })
-        .map(|(found, _)| found.rela_path)
-        .collect())
+    let mut skip = BTreeSet::new();
+    loop {
+        // One walk; the delegate borrows `before_read` only for this pass.
+        let (last_dir, error) = {
+            let mut delegate = SkipToolStores::new(skip.clone(), &mut before_read);
+            let options = repo.dirwalk_options().map_err(|error| err_chain(&error))?;
+            let walked = repo.dirwalk(
+                index,
+                Vec::<BString>::new(),
+                &AtomicBool::new(false),
+                options,
+                &mut delegate,
+            );
+            match walked {
+                Ok(_) => {
+                    return Ok(delegate
+                        .collect
+                        .into_entries_by_path()
+                        .into_iter()
+                        .filter(|(found, _)| {
+                            found.status == gix::dir::entry::Status::Untracked
+                                && matches!(
+                                    found.disk_kind,
+                                    Some(gix::dir::entry::Kind::File | gix::dir::entry::Kind::Symlink)
+                                )
+                        })
+                        .map(|(found, _)| found.rela_path)
+                        .collect());
+                }
+                Err(error) => (delegate.last_dir, error),
+            }
+        };
+        // Only a failure to read a directory is worth another pass; anything
+        // else is the scan's own problem.
+        if error.downcast_any_ref::<std::io::Error>().is_none() {
+            return Err(err_chain(&error));
+        }
+        // A root that cannot be read stays fatal.
+        let Some(path) = last_dir else {
+            return Err(err_chain(&error));
+        };
+        if path.is_empty() || skip.contains(&path) {
+            return Err(err_chain(&error));
+        }
+        // `last_dir` could be a wrong guess if the walk failed reading something
+        // else. A directory that reads now is not the one to skip: skipping a
+        // readable directory would hide the untracked files inside it.
+        let full = paths::to_path(path.as_bstr()).map_or_else(|_| root.clone(), |rela| root.join(rela));
+        if std::fs::read_dir(&full).is_ok() {
+            return Err(err_chain(&error));
+        }
+        skip.insert(path);
+        if !error.classify().is_not_found() {
+            tracing::warn!(
+                path = %full.display(),
+                error = %super::chain_text(&error),
+                "skipping a directory the working tree cannot be read"
+            );
+        }
+    }
 }
 
 /// Every file of the tree as git sees it, without reading any: what the index
 /// holds and what is untracked and not ignored.
 pub(crate) fn list(repo: &gix::Repository) -> Result<Vec<RepoPath>, GitError> {
-    let index = repo.index_or_empty().map_err(err)?;
+    let index = repo.index_or_empty().map_err(|error| err_chain(&error))?;
     let tracked = index.entries().iter().map(|e| e.path(&index).to_vec());
     let mut files: Vec<RepoPath> = tracked
-        .chain(untracked(repo, &index)?.into_iter().map(|p| p.to_vec()))
+        .chain(untracked(repo, &index, |_| {})?.into_iter().map(|p| p.to_vec()))
         .map(RepoPath)
         .collect();
     files.sort();
@@ -477,9 +541,20 @@ pub(crate) fn list(repo: &gix::Repository) -> Result<Vec<RepoPath>, GitError> {
 }
 
 pub(crate) fn scan(repo: &gix::Repository, blobs: &BlobCache, stats: &StatCache, cap: u64) -> Result<Scan, GitError> {
+    scan_with(repo, blobs, stats, cap, |_| {})
+}
+
+/// [`scan`], with `before_read` handed to the walk so a test can change the tree under it.
+fn scan_with<H: FnMut(&BStr)>(
+    repo: &gix::Repository,
+    blobs: &BlobCache,
+    stats: &StatCache,
+    cap: u64,
+    mut before_read: H,
+) -> Result<Scan, GitError> {
     let mut wt = Worktree::new(repo, blobs, stats, cap)?;
     wt.use_stat_cache();
-    let index = repo.index_or_empty().map_err(err)?;
+    let index = repo.index_or_empty().map_err(|error| err_chain(&error))?;
     let mut entries = BTreeMap::new();
     let mut unavailable = Vec::new();
     let mut work: Vec<(BString, Option<gix::index::Entry>)> = Vec::new();
@@ -503,7 +578,7 @@ pub(crate) fn scan(repo: &gix::Repository, blobs: &BlobCache, stats: &StatCache,
     }
     let tracked_paths: BTreeSet<_> = work.iter().map(|(p, _)| p.clone()).collect();
 
-    for path in untracked(repo, &index)? {
+    for path in untracked(repo, &index, &mut before_read)? {
         if !tracked_paths.contains(&path) && !entries.contains_key(&RepoPath(path.to_vec())) {
             work.push((path, None));
         }
@@ -542,3 +617,6 @@ fn submodule_head(repo: &gix::Repository, path: &BStr) -> Option<gix::ObjectId> 
     let dir = repo.workdir()?.join(paths::to_path(path).ok()?);
     Some(gix::open(dir).ok()?.head_id().ok()?.detach())
 }
+
+#[cfg(test)]
+mod tests;

@@ -173,7 +173,10 @@ impl GixRepo {
         f: impl FnOnce(&Inner) -> Result<T, GitError> + Send + 'static,
     ) -> Result<T, GitError> {
         let inner = self.0.clone();
-        self.1.blocking(move || f(&inner)).await.map_err(err)?
+        self.1
+            .blocking(move || f(&inner))
+            .await
+            .map_err(|error| err_chain(&error))?
     }
 
     async fn write_batch(&self, root: &Path, batch: Vec<Pending>) -> Result<Vec<BlobId>, GitError> {
@@ -189,10 +192,10 @@ impl Inner {
         } else {
             gix::open(&self.root)
         }
-        .map_err(err)?;
+        .map_err(|error| err_chain(&error))?;
         // Ref updates write reflog entries, which need a committer; this only fills in a missing one.
         repo.committer_or_set_fallback(FALLBACK_NAME, FALLBACK_EMAIL)
-            .map_err(err)?;
+            .map_err(|error| err_chain(&error))?;
         Ok(repo)
     }
 
@@ -202,7 +205,7 @@ impl Inner {
         if let Some(opened) = self.opened.get() {
             return Ok(opened.to_thread_local());
         }
-        let opened = gix::ThreadSafeRepository::open(&self.root).map_err(err)?;
+        let opened = gix::ThreadSafeRepository::open(&self.root).map_err(|error| err_chain(&error))?;
         Ok(self.opened.get_or_init(|| opened).to_thread_local())
     }
 
@@ -327,8 +330,12 @@ impl BlobSession for Session<'_> {
 
 impl History for GixRepo {
     async fn head(&self) -> Result<CommitId, GitError> {
-        self.blocking(|i| Ok(CommitId(i.open()?.head_id().map_err(err)?.to_string())))
-            .await
+        self.blocking(|i| {
+            Ok(CommitId(
+                i.open()?.head_id().map_err(|error| err_chain(&error))?.to_string(),
+            ))
+        })
+        .await
     }
 
     async fn user_name(&self) -> Option<String> {
@@ -443,7 +450,7 @@ impl ChangesetRefs for GixRepo {
             let id = object_id(&commit)?;
             i.open()?
                 .reference(name, id, gix::refs::transaction::PreviousValue::Any, "vet changeset")
-                .map_err(err)?;
+                .map_err(|error| err_chain(&error))?;
             Ok(())
         })
         .await
@@ -452,10 +459,13 @@ impl ChangesetRefs for GixRepo {
     async fn delete_changeset_refs(&self, changeset: ChangesetId) -> Result<(), GitError> {
         self.blocking(move |i| {
             let repo = i.open()?;
-            let platform = repo.references().map_err(err)?;
+            let platform = repo.references().map_err(|error| err_chain(&error))?;
             let prefix = changeset_ref_prefix(changeset);
-            for reference in platform.prefixed(prefix.as_str()).map_err(err)? {
-                reference.map_err(err)?.delete().map_err(err)?;
+            for reference in platform.prefixed(prefix.as_str()).map_err(|error| err_chain(&error))? {
+                reference
+                    .map_err(|error| err_chain(&error))?
+                    .delete()
+                    .map_err(|error| err_chain(&error))?;
             }
             Ok(())
         })
@@ -512,9 +522,35 @@ fn changeset_ref_prefix(changeset: ChangesetId) -> String {
     format!("refs/vet/changesets/{}/", changeset.0)
 }
 
-/// A git error as a message that is fit to log: it may quote a remote's URL, whose credentials it hides.
-fn err(e: impl Display) -> GitError {
-    GitError::failed(vet_log::redact_urls(&e.to_string()).into_owned())
+/// A git error from a value that says only what failed, as a plain message.
+fn err(message: impl Display) -> GitError {
+    GitError::failed(vet_log::redact_urls(&message.to_string()).into_owned())
+}
+
+/// A git error from an error with a cause chain, so the innermost cause is kept: an
+/// outer frame often names only the operation while the innermost holds what the OS said.
+fn err_chain(error: &(dyn std::error::Error + 'static)) -> GitError {
+    GitError::failed(redact(error))
+}
+
+/// The text of `error` and of every cause below it, with URLs redacted.
+pub(super) fn redact(error: &(dyn std::error::Error + 'static)) -> String {
+    vet_log::redact_urls(&chain_text(error)).into_owned()
+}
+
+/// The text of `error` followed by the text of each cause, `: ` between them.
+pub(super) fn chain_text(error: &(dyn std::error::Error + 'static)) -> String {
+    let mut text = error.to_string();
+    let mut cause = error.source();
+    while let Some(error) = cause {
+        let part = error.to_string();
+        if !part.is_empty() && !text.contains(&part) {
+            text.push_str(": ");
+            text.push_str(&part);
+        }
+        cause = error.source();
+    }
+    text
 }
 
 fn object_id(commit: &CommitId) -> Result<gix::ObjectId, GitError> {

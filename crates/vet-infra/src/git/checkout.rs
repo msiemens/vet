@@ -10,7 +10,7 @@ use std::path::Path;
 use vet_app::ports::GitError;
 use vet_core::content::{BlobId, EntryKind, FileEntry, RepoPath};
 
-use super::{Inner, err};
+use super::{Inner, err_chain};
 use crate::paths;
 
 /// An entry with the bytes the content store had for it, if any.
@@ -26,7 +26,7 @@ impl Inner {
             let dest = root.join(checked(&path)?);
             if entry.kind == EntryKind::Submodule {
                 // Descent is opt-in (§6.1): the pinned commit has no content here.
-                std::fs::create_dir_all(&dest).map_err(err)?;
+                std::fs::create_dir_all(&dest).map_err(|error| err_chain(&error))?;
                 continue;
             }
             let bytes = match stored {
@@ -40,12 +40,12 @@ impl Inner {
                 },
             };
             if let Some(parent) = dest.parent() {
-                std::fs::create_dir_all(parent).map_err(err)?;
+                std::fs::create_dir_all(parent).map_err(|error| err_chain(&error))?;
             }
             if entry.kind == EntryKind::Symlink {
                 symlink(&bytes, &dest)?;
             } else {
-                std::fs::write(&dest, &bytes).map_err(err)?;
+                std::fs::write(&dest, &bytes).map_err(|error| err_chain(&error))?;
                 set_mode(&dest, entry.mode)?;
             }
         }
@@ -66,24 +66,24 @@ fn checked(path: &RepoPath) -> Result<&Path, GitError> {
             path.to_string_lossy()
         )));
     }
-    paths::to_path(&path.0).map_err(err)
+    paths::to_path(&path.0).map_err(|error| err_chain(&error))
 }
 
 #[cfg(unix)]
 fn symlink(target: &[u8], dest: &Path) -> Result<(), GitError> {
-    std::os::unix::fs::symlink(std::ffi::OsStr::from_bytes(target), dest).map_err(err)
+    std::os::unix::fs::symlink(std::ffi::OsStr::from_bytes(target), dest).map_err(|error| err_chain(&error))
 }
 
 /// Windows without symlink rights: the link target as file content.
 #[cfg(not(unix))]
 fn symlink(target: &[u8], dest: &Path) -> Result<(), GitError> {
-    std::fs::write(dest, target).map_err(err)
+    std::fs::write(dest, target).map_err(|error| err_chain(&error))
 }
 
 #[cfg(unix)]
 fn set_mode(dest: &Path, mode: u32) -> Result<(), GitError> {
     let bits = if mode & 0o111 != 0 { 0o755 } else { 0o644 };
-    std::fs::set_permissions(dest, std::fs::Permissions::from_mode(bits)).map_err(err)
+    std::fs::set_permissions(dest, std::fs::Permissions::from_mode(bits)).map_err(|error| err_chain(&error))
 }
 
 #[cfg(not(unix))]

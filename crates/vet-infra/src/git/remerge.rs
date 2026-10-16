@@ -10,12 +10,14 @@ use vet_core::content::{RepoPath, Snapshot};
 use vet_core::merkle;
 
 use super::tree::tree_entry;
-use super::{Inner, err, object_id};
+use super::{Inner, err, err_chain, object_id};
 
 impl Inner {
     pub(super) fn commit_detail(&self, commit: &CommitId) -> Result<CommitDetail, GitError> {
         let repo = self.open()?;
-        let found = repo.find_commit(object_id(commit)?).map_err(err)?;
+        let found = repo
+            .find_commit(object_id(commit)?)
+            .map_err(|error| err_chain(&error))?;
         let message = found.message().map_err(err)?;
         let author = found.author().map_err(err)?;
         Ok(CommitDetail {
@@ -37,26 +39,28 @@ impl Inner {
     /// markers in the files, as git does for a remerge. `None` unless `commit` has two parents.
     pub(super) fn remerge(&self, commit: &CommitId) -> Result<Option<Remerged>, GitError> {
         let real = self.open()?;
-        let found = real.find_commit(object_id(commit)?).map_err(err)?;
+        let found = real
+            .find_commit(object_id(commit)?)
+            .map_err(|error| err_chain(&error))?;
         let parents: Vec<_> = found.parent_ids().map(|p| p.detach()).collect();
         let [ours, theirs] = parents[..] else {
             return Ok(None);
         };
         // The merged files are written to memory only: the repository gains no objects.
         let repo = real.clone().with_object_memory();
-        let options = repo.tree_merge_options().map_err(err)?;
+        let options = repo.tree_merge_options().map_err(|error| err_chain(&error))?;
         let options = gix::merge::commit::Options::from(options).with_allow_missing_merge_base(true);
         let mut merged = repo
             .merge_commits(ours, theirs, Default::default(), options)
-            .map_err(err)?;
-        let tree = merged.tree_merge.tree.write().map_err(err)?;
+            .map_err(|error| err_chain(&error))?;
+        let tree = merged.tree_merge.tree.write().map_err(|error| err_chain(&error))?;
 
-        let index = repo.index_from_tree(&tree).map_err(err)?;
+        let index = repo.index_from_tree(&tree).map_err(|error| err_chain(&error))?;
         let mut entries = BTreeMap::new();
         let mut contents = Vec::new();
         for e in index.entries() {
             if !real.has_object(e.id) {
-                let blob = repo.find_object(e.id).map_err(err)?;
+                let blob = repo.find_object(e.id).map_err(|error| err_chain(&error))?;
                 contents.push(blob.data.clone());
             }
             let entry = tree_entry(&repo, &self.blobs, e.id, e.mode.bits())?;
