@@ -3,9 +3,11 @@
 // pane is put at when its view is rebuilt, and the scroll offsets a changeset is brought back at.
 
 import { Debounced } from "../../lib/debounced.ts";
+import type { Mode } from "../../lib/viewMode.ts";
 import type { TabId } from "../../state/commands";
-import { type FilePositions, type SavedView, type Storage, ViewMemory } from "./changesetViews.ts";
+import type { FilePositions, SavedView } from "./changesetViews.ts";
 import type { PanePosition } from "./editor/ChangesetView";
+import type { ReviewMemory } from "./reviewMemory.ts";
 import { hasDiff } from "./tabModel.ts";
 
 /** The tabs and positions are saved this long after the last change. */
@@ -16,13 +18,20 @@ export class ViewPersistence {
   private pending = new Map<TabId, FilePositions>();
   /** Scroll positions the next builds start at, instead of carrying the old views' over. */
   private restore?: { scroll: Map<TabId, number> };
-  /** What each changeset of the repository had open when it was last on view, for when it comes back. */
-  private memory?: ViewMemory;
   private saving = new Debounced();
-  private readonly storage: Storage;
+  /** What the screens before this one remembered, which a changeset on view again finds. */
+  private readonly memory: ReviewMemory;
 
-  constructor(storage: Storage) {
-    this.storage = storage;
+  constructor(memory: ReviewMemory) {
+    this.memory = memory;
+  }
+
+  /** The diff mode chosen last, which a diff tab opens in. */
+  get diffMode(): Mode {
+    return this.memory.diffMode;
+  }
+  set diffMode(mode: Mode) {
+    this.memory.diffMode = mode;
   }
 
   /** Remembers where a pane was, for the view that replaces it once its source has read. */
@@ -69,14 +78,12 @@ export class ViewPersistence {
 
   /** Remembers the tabs and where the panes are for the changeset `key`. */
   remember(key: string, view: SavedView) {
-    this.memory ??= new ViewMemory(this.storage);
-    this.memory.set(key, view);
+    this.memory.views.set(key, view);
   }
 
   /** What was remembered of the changeset `key`, if anything. */
   stored(key: string): SavedView | undefined {
-    this.memory ??= new ViewMemory(this.storage);
-    return this.memory.get(key);
+    return this.memory.views.get(key);
   }
 
   /** Saves the views once the changes pause. */

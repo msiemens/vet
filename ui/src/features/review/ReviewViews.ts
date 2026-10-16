@@ -72,8 +72,6 @@ export class ReviewViews {
   private roots = new Map<TabId, HTMLElement>();
   /** The scroll root of each attached file tab's text view. */
   private textRoots = new Map<TabId, HTMLElement>();
-  /** The diff mode chosen last, which a diff tab opens in. */
-  private mode: Mode = "unified";
 
   private backend: Backend;
   /** The changeset on screen as the views read it: its source, plus the files it is narrowed to and where failures are reported. */
@@ -104,10 +102,7 @@ export class ReviewViews {
 
   /** The diff mode chosen last, which a diff tab opens in. */
   get diffMode(): Mode {
-    return this.mode;
-  }
-  set diffMode(mode: Mode) {
-    this.mode = mode;
+    return this.persistence.diffMode;
   }
 
   /** The Changes tab's scroll root. */
@@ -275,7 +270,7 @@ export class ReviewViews {
     const path = pathOf(id);
     if (!modesOf(kindOf(id), this.scopes.fileChanged(id)).includes(mode)) return;
     const from = this.tabs.modes.get(id);
-    if (mode !== "file") this.mode = mode;
+    if (mode !== "file") this.persistence.diffMode = mode;
     if (from === mode) return;
     if (path === undefined) {
       this.tabs.modes.set(id, mode);
@@ -470,7 +465,7 @@ export class ReviewViews {
   /** The diff mode the tab's diff view draws in: the tab's own, or while it shows its text, the one chosen last. */
   private diffModeOf(id: TabId): Mode {
     const mode = this.tabs.modes.get(id);
-    return mode === undefined || mode === "file" ? this.mode : mode;
+    return mode === undefined || mode === "file" ? this.persistence.diffMode : mode;
   }
 
   /** Runs a request that marks or comments in `source`, unless the view on screen is read-only: then it says so and `refuse` answers. */

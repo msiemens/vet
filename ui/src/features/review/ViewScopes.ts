@@ -23,8 +23,6 @@ export type ScopeListener = (scope: ViewSource, paths: ReadonlySet<string> | "al
 export class ViewScopes {
   /** The scopes held, by `scopeKey`. */
   private scopes = new Map<string, { scope: ViewScope; off: () => void }>();
-  /** Another changeset is on its way: the open tabs are the old one's, and no scope may read for them. */
-  private frozen = false;
 
   /** The changeset on screen: its source, the commit it shows, and where a scope's answer goes back into it. */
   private changeset: ViewSource & Pick<ChangesetSource, "shownCommit" | "adopt">;
@@ -56,15 +54,6 @@ export class ViewScopes {
     this.offWhole();
   }
 
-  get isFrozen(): boolean {
-    return this.frozen;
-  }
-
-  /** Holds (`true`) or lets go of (`false`) the scopes while another changeset is on its way. */
-  setFrozen(frozen: boolean) {
-    this.frozen = frozen;
-  }
-
   /**
    * What the scope of a tab is, if it is not the view on screen: a tab at a commit stays there, and a
    * file tab shows the changeset (the store's whole view) while a commit is on screen.
@@ -92,7 +81,7 @@ export class ViewScopes {
     const scope = this.makeScope(spec, (shown, update) => this.changeset.adopt(shown, update));
     const off = scope.subscribe((paths) => this.written(scope, paths));
     this.scopes.set(key, { scope, off });
-    if (!this.frozen) void scope.load();
+    void scope.load();
     return scope;
   }
 
@@ -162,11 +151,10 @@ export class ViewScopes {
   /** Reads the scopes the open tabs need again, as the changeset moved on. */
   reload() {
     this.prune();
-    if (this.frozen) return;
     for (const { scope } of this.scopes.values()) void scope.load();
   }
 
-  /** Drops every scope, as another changeset is brought on view. */
+  /** Drops every scope. */
   drop() {
     for (const { off } of this.scopes.values()) off();
     this.scopes.clear();

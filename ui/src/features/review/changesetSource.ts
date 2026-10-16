@@ -1,10 +1,10 @@
-// What the review controller and its modules read of the open changeset and ask of it. The whole
-// changeset store implements it; naming the part keeps the coupling visible and the modules testable.
+// What the review controller and its modules read of the open changeset and ask of it. The changeset's
+// session implements it; naming the part keeps the coupling visible and the modules testable.
 
-import type { Changeset } from "../../state/changeset.svelte";
+import type { ChangesetSession } from "../../state/changesetSession.svelte";
 
 export type ChangesetSource = Pick<
-  Changeset,
+  ChangesetSession,
   | "baseChanged"
   | "currentShown"
   | "currentLayout"

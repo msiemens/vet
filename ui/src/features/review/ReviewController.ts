@@ -2,6 +2,7 @@
 // on the active view. Each tab's pane hands its scroll root to `attach`; the controller builds
 // the tab's view in it. The work itself lives in the view host, the navigation, the commands, the
 // scopes, the find and the persistence; this owns the screen's lifecycle and coordinates them.
+// A controller is made for one changeset's session and destroyed with the screen it belongs to.
 
 import type { ChangedSymbol } from "../../generated/ChangedSymbol";
 import type { CheckRun } from "../../generated/CheckRun";
@@ -15,9 +16,9 @@ import { preferences } from "../../lib/preferences.svelte";
 import type { SoftWrap } from "../../lib/softWrap";
 import type { Backend } from "../../state/backend";
 import { keyId } from "../../state/changesetKey";
+import type { ChangesetSession } from "../../state/changesetSession.svelte";
 import { commands } from "../../state/commands";
 import type { TabId } from "../../state/commands";
-import { opened } from "../../state/opened.svelte";
 import { type Frame, type ViewLayout } from "../../state/reviewModel";
 import type { ViewChange } from "../../state/viewChange";
 import { semantic } from "../../state/semantic.svelte";
@@ -26,12 +27,12 @@ import { isCurrent } from "../../state/shown";
 import { threads } from "../../state/threads.svelte";
 import { type ViewSource, newScope } from "../../state/viewScope.svelte";
 import type { OpenedResult } from "../search";
-import { type ChangesetSource } from "./changesetSource";
 import { type FilePositions, type SavedView, restoredTabs } from "./changesetViews";
 import { type FindOptions } from "./editor/findMatches";
 import { FindControl } from "./FindControl";
 import { reviewFind } from "./FindState.svelte";
 import { provideActions } from "./reviewActions";
+import { reviewMemory } from "./reviewMemory";
 import { CHANGES, type Origin, pathOf } from "./tabModel";
 import { Tabs } from "./Tabs.svelte";
 import { ViewCommands } from "./ViewCommands";
@@ -42,11 +43,11 @@ import { ViewScopes } from "./ViewScopes";
 
 export type { ChangesetSource } from "./changesetSource";
 
-/** Where the views of the changesets of the repository on view are kept. */
-const projectViews = {
+/** What the screens of the sessions of the repository on view remember of its changesets. */
+const memoryOf = reviewMemory({
   read: () => preferences.read("project", "tabs"),
   write: (value: string | undefined) => preferences.write("project", "tabs", value),
-};
+});
 
 export class ReviewController {
   readonly tabs = new Tabs("unified");
@@ -62,8 +63,11 @@ export class ReviewController {
   private readonly nav: ViewNavigation;
   private readonly commands: ViewCommands;
 
-  /** The changeset on view, by `keyId`; unknown before the first manifest. */
-  private key?: string;
+  /** The changeset the controller is of, by `keyId`. */
+  private readonly key: string;
+  /** The tabs are those of the changeset, brought back, and can be remembered. */
+  private brought = false;
+  private destroyed = false;
   /** The views built last show the changeset's own files, not those of a range or a commit. */
   private plain = true;
   /** The Changes tab of the views built last going to its first hunk. */
@@ -73,11 +77,12 @@ export class ReviewController {
 
   constructor(
     readonly backend: Backend,
-    private changeset: ChangesetSource,
+    private changeset: ChangesetSession,
     private fileMenu: (path: string, x: number, y: number) => void,
   ) {
     semantic.reset(); // the controller belongs to one repository's screen
-    this.persistence = new ViewPersistence(projectViews);
+    this.key = keyId(changeset.key);
+    this.persistence = new ViewPersistence(memoryOf(session.repo));
     this.scopes = new ViewScopes(
       changeset,
       changeset.whole,
@@ -120,16 +125,6 @@ export class ReviewController {
     const offContext = commands.provide(() => this.commands.facts());
     const offResync = session.onResync(() => this.scopes.reload());
     const offOrigins = semantic.onOrigins((path) => this.views.refreshDiagnostics(path));
-    // The open tabs are the old changeset's until the new one's manifest has come and brought its tabs back.
-    const offOpening = opened.onOpening((opening) => {
-      if (opening.type === "requested") {
-        this.scopes.drop();
-        this.scopes.setFrozen(true);
-      } else if (opening.type === "unannounced") {
-        this.scopes.setFrozen(false);
-        this.scopes.reload();
-      }
-    });
     const offViewChange = changeset.onViewChange((frame, change) => this.viewChanged(frame, change));
     this.unsubscribe = () => {
       offViewChange();
@@ -139,8 +134,11 @@ export class ReviewController {
       offContext();
       offResync();
       offOrigins();
-      offOpening();
     };
+    // The session clears itself as it ends; the tabs are remembered before that.
+    changeset.lifetime.add(() => {
+      if (!this.destroyed) this.saveView();
+    });
     this.unsubscribeEvents = backend.onEvent((event) => {
       if (event.project !== backend.project) return;
       // A server installed or reconfigured elsewhere may answer differently now.
@@ -181,7 +179,8 @@ export class ReviewController {
     this.nav.cancel();
     this.persistence.cancelScheduled();
     this.findControl.cancel();
-    this.saveView();
+    if (this.changeset.lifetime.alive) this.saveView();
+    this.destroyed = true;
     this.unsubscribe();
     this.unsubscribeEvents();
     this.scopes.drop();
@@ -351,7 +350,7 @@ export class ReviewController {
     this.findControl.setOptions(patch);
   }
 
-  /** The views of the tabs now, as the persistence keeps them. Where a pane has no view to ask (its tab's diff pane while the next changeset loads), the position stored for it stays. */
+  /** The views of the tabs now, as the persistence keeps them. Where a pane has no view to ask (it is not built yet), the position stored for it stays. */
   private capture(key: string): SavedView {
     const before = this.persistence.stored(key);
     // A range or a commit shows other files than the changeset's own: the positions of what it shows are not kept.
@@ -378,10 +377,9 @@ export class ReviewController {
     };
   }
 
-  /** Remembers the tabs and where the panes are for the changeset on view. */
+  /** Remembers the tabs and where the panes are for the changeset. */
   private saveView() {
-    const repo = session.repo;
-    if (repo === undefined || this.key === undefined) return;
+    if (session.repo === undefined || !this.brought) return;
     this.persistence.remember(this.key, this.capture(this.key));
   }
 
@@ -391,49 +389,31 @@ export class ReviewController {
   };
 
   /**
-   * The store says the views changed: a newer revision, or another range, commit or filter, which
-   * start the Changes tab at the top. A manifest of another changeset first remembers the tabs and
-   * positions of the one that was on view, and brings back those of the new one, if it was on view
-   * before.
+   * The session says the views changed: a newer revision, or another range, commit or filter, which
+   * start the Changes tab at the top. Before `open` has brought the tabs back, it draws what the
+   * session holds.
    */
-  private viewChanged({ layout, facts }: Frame, change: ViewChange) {
-    const key = keyId(facts.target.changeset);
-    const switching = this.key !== undefined && key !== this.key;
-    if (this.scopes.isFrozen) {
-      this.scopes.setFrozen(false);
-      if (!switching) this.scopes.reload(); // the scopes made meanwhile have read nothing
-    }
-    const brought = switching ? this.switchTo(key) : undefined;
-    if (!switching) this.tabs.dropStale((id, path) => this.scopes.stillChanged(id, path));
-    this.key = key;
+  private viewChanged({ layout }: Frame, change: ViewChange) {
+    if (!this.brought) return;
+    this.tabs.dropStale((id, path) => this.scopes.stillChanged(id, path));
     this.plain = !layout.interdiff && this.changeset.shownCommit === undefined;
     if (!this.views.diff(CHANGES)) return;
-    this.drawUpdate(layout, switching || change === "start", switching, brought);
+    this.drawUpdate(change === "start");
   }
 
   /** Rebuilds the views; where `top`, the Changes tab starts at the top. */
-  private drawUpdate(layout: ViewLayout, top: boolean, switching: boolean, brought?: SavedView): void {
+  private drawUpdate(top: boolean): void {
     // Another range, commit or filter is another set of files. A file's tab keeps its lines (`build`).
-    if (top && !switching) this.persistence.beginRestore([CHANGES]);
+    if (top) this.persistence.beginRestore([CHANGES]);
     this.views.show();
-    const restored = switching && this.restoreChanges(brought, layout);
-    if (!restored && top) this.arriving = this.views.changes.goToHunk(0);
+    if (top) this.arriving = this.views.changes.goToHunk(0);
     // The new views load what is in view and the margin; the rest trickles while the reviewer is idle.
     this.views.startTrickle();
   }
 
-  /** Remembers the changeset on view and brings back the tabs of `next`; answers what was remembered of it. */
-  private switchTo(next: string): SavedView | undefined {
-    this.persistence.cancelScheduled();
-    this.saveView();
-    return this.bringBack(next);
-  }
-
-  /** Sets the tabs the changeset `key` had, and what its panes are put at when they are built. Each tab is judged by the view it reads. */
-  private bringBack(key: string): SavedView | undefined {
-    const saved = session.repo === undefined ? undefined : this.persistence.stored(key);
-    this.scopes.drop();
-    this.scopes.setFrozen(false);
+  /** Sets the tabs the changeset had when it was last on view, and what its panes are put at when they are built. Each tab is judged by the view it reads. */
+  private bringBack(): SavedView | undefined {
+    const saved = session.repo === undefined ? undefined : this.persistence.stored(this.key);
     const { open, active, modes } = restoredTabs(
       saved,
       (tab, path) => this.scopes.stillChanged(tab, path),
@@ -447,6 +427,7 @@ export class ReviewController {
     this.persistence.setPending(saved?.panes);
     // Every diff view starts at the top; a remembered position is put on it once it is built.
     this.persistence.beginRestore(open);
+    this.brought = true;
     return saved;
   }
 
@@ -459,15 +440,13 @@ export class ReviewController {
     return true;
   }
 
-  /** Takes the manifest the store holds and renders it, answering whether it did (not when the project was closed). */
+  /** Takes the manifest the session holds and renders it, answering whether it did (not when the session ended meanwhile). */
   async open(): Promise<boolean> {
     this.views.destroyDiff(CHANGES);
-    const frame = await (await opened.current())?.frame();
-    if (!frame) return false; // the project was closed meanwhile
-    const { layout, facts } = frame;
-    this.key = keyId(facts.target.changeset);
-    const saved = this.bringBack(this.key);
-    this.plain = !layout.interdiff && this.changeset.shownCommit === undefined;
+    const frame = await this.changeset.frame();
+    if (!frame || !this.changeset.lifetime.alive) return false;
+    const saved = this.bringBack();
+    this.plain = !frame.layout.interdiff && this.changeset.shownCommit === undefined;
     await this.drawOpen(saved);
     return true;
   }

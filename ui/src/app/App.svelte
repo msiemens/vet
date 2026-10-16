@@ -39,7 +39,6 @@
   import ContextMenu from "../lib/ui/ContextMenu.svelte";
   import Toast from "../lib/ui/Toast.svelte";
   import { changeGate } from "../lib/ui/changeGate";
-  import { changeset } from "../state/changeset.svelte";
   import { CommitList } from "../state/commitList";
   import { checks } from "../state/checks.svelte";
   import { canRestartBackend, hasNativeDialogs, hasNativeMenu } from "../state/host";
@@ -276,7 +275,7 @@
         />
         <ReviewScreen
           backend={session.backend}
-          {changeset}
+          changeset={opened.session}
           leftTool={shell.left.tool}
           leftOpen={shell.left.open}
           rightTool={shell.right.tool}

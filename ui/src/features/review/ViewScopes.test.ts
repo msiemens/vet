@@ -105,19 +105,13 @@ void test("a tab's scope is the view it reads; a tab on the view on screen reads
   assert.equal(made.length, 1, "no scope is made for the whole view");
 });
 
-void test("a scope reads at once unless it is frozen, and is read again only when not frozen", () => {
+void test("a scope reads when it is made, and again when the changeset moved on", () => {
   const { scopes, made } = registry(["changes", "pin:beef:file.rs"]);
-  scopes.setFrozen(true);
   scopes.sourceOf("pin:beef:file.rs");
-  assert.equal(made[0].loads.n, 0, "a frozen scope reads nothing");
-
-  scopes.setFrozen(false);
-  scopes.reload();
   assert.equal(made[0].loads.n, 1);
 
-  scopes.setFrozen(true);
   scopes.reload();
-  assert.equal(made[0].loads.n, 1, "frozen scopes are not read again");
+  assert.equal(made[0].loads.n, 2);
 });
 
 void test("a scope no open tab reads is dropped when the tabs are pruned", () => {

@@ -1,6 +1,6 @@
 <script lang="ts">
   import type { Snippet } from "svelte";
-  import { onMount, untrack } from "svelte";
+  import { untrack } from "svelte";
   import type { MenuSpec } from "../../lib/commandMenu";
   import { repoName } from "../../lib/paths";
   import Banner from "../../lib/ui/Banner.svelte";
@@ -8,8 +8,7 @@
   import type { SoftWrap } from "../../lib/softWrap";
   import { changeGate } from "../../lib/ui/changeGate";
   import type { Backend } from "../../state/backend";
-  import type { Changeset } from "../../state/changeset.svelte";
-  import { keyId } from "../../state/changesetKey";
+  import type { ChangesetSession } from "../../state/changesetSession.svelte";
   import type { CommandContext } from "../../state/commands";
   import { commands } from "../../state/commands";
   import { contextMenus } from "../../state/contextMenu.svelte";
@@ -71,8 +70,8 @@
     onclose,
   }: {
     backend: Backend;
-    /** What the controller reads and writes the open changeset through. */
-    changeset: Changeset;
+    /** The session of the changeset on view; the views and their controller are made for one session and end with it. None while another loads. */
+    changeset: ChangesetSession | undefined;
     /** Which files wrap their long lines; the owner applies a change to the controller. */
     softWrap: SoftWrap;
     /** Opens Settings at the review filter. */
@@ -102,14 +101,9 @@
   const openMenu = (spec: MenuSpec, x: number, y: number, subject?: Partial<CommandContext>) =>
     void contextMenus.open(spec, x, y, subject);
 
-  // The backend and the changeset are fixed for a mounted screen.
-  // svelte-ignore state_referenced_locally
-  const controller = new ReviewController(backend, changeset, (path, x, y) =>
-    openMenu(fileHeaderMenu, x, y, { target: { path, dir: false } }),
-  );
-  // svelte-ignore state_referenced_locally
-  controller.softWrap = softWrap;
-  const tabs = controller.tabs;
+  /** Controls the views of the session on view: made with the session, destroyed when it ends. */
+  let controller = $state.raw<ReviewController>();
+  const tabs = $derived(controller?.tabs);
   let tree = $state<FileTree>();
   let selected = $state<string>();
   /** The file picked in the tree, until the Changes tab moves on. */
@@ -117,15 +111,14 @@
 
   /** What the loading note names. */
   const project = $derived(session.repo === undefined ? "the changeset" : repoName(session.repo));
-  /** The changeset on view, which the screen reads; the controller reads it through `changeset`. */
-  const current = $derived(opened.session);
   const loading = $derived(opened.loading);
-  const revision = $derived(current?.layout?.shown.revision);
+  const revision = $derived(changeset?.layout?.shown.revision);
   /** The Changes tab lists no file, and says why instead. */
   const empty = $derived.by((): EmptyView | undefined => {
-    const layout = current?.layout;
-    const facts = current?.facts;
-    if (loading || !current || !layout || !facts || current.shownFiles.length || current.baseChanged) return undefined;
+    const layout = changeset?.layout;
+    const facts = changeset?.facts;
+    if (loading || !changeset || !layout || !facts || changeset.shownFiles.length || changeset.baseChanged)
+      return undefined;
     const view = layout.shown.view.type;
     return emptyView({
       key: facts.target.changeset,
@@ -141,32 +134,26 @@
       repo: session.repo,
       versions: versions.items,
       interdiff: layout.interdiff,
-      commits: current.commits,
-      commitIndex: current.shownCommit,
+      commits: changeset.commits,
+      commitIndex: changeset.shownCommit,
       pullRequest: platform.info,
       threads: { total: threads.items.length, open: threads.items.filter((t) => t.status === "open").length },
       now: minute.now,
     });
   });
-  const narrowed = $derived(current?.facts?.narrowing && narrowingLabel(current.facts.filter, current.facts.narrowing));
+  const narrowed = $derived(
+    changeset?.facts?.narrowing && narrowingLabel(changeset.facts.filter, changeset.facts.narrowing),
+  );
   /** What the Changes tool says under its header while it lists no file. */
   const none = $derived(
-    current?.layout?.excluded.length
+    changeset?.layout?.excluded.length
       ? "No files to review"
-      : current?.shownCommit === undefined
+      : changeset?.shownCommit === undefined
         ? "No changed files"
         : "No files in this commit",
   );
   /** The tree's group of excluded files is open. */
   let excludedOpen = $state(false);
-  // Another changeset has other excluded files.
-  let excludedOf: string | undefined;
-  $effect(() => {
-    const id = current?.facts && keyId(current.facts.target.changeset);
-    if (id === excludedOf) return;
-    excludedOf = id;
-    untrack(() => (excludedOpen = false));
-  });
 
   function act(action: Action) {
     switch (action.id) {
@@ -181,62 +168,78 @@
       case "provider":
         return void commands.run("changeset.openInBrowser");
       case "back":
-        return void current?.showWhole();
+        return void changeset?.showWhole();
       case "next":
-        return void current?.stepCommit(1);
+        return void changeset?.stepCommit(1);
       case "step":
-        return void (action.n !== undefined && current?.showCommit(action.n));
+        return void (action.n !== undefined && changeset?.showCommit(action.n));
       case "filter":
         return onfilter();
       case "show":
         excludedOpen = true;
         return ontool("changes");
       case "narrow":
-        return void current?.narrow(action.filter);
+        return void changeset?.narrow(action.filter);
       case "reset":
-        return void current?.narrow(undefined);
+        return void changeset?.narrow(undefined);
       case "pick":
-        return void (action.n !== undefined && current?.setRange(pickRange(versions.items, action.n)));
+        return void (action.n !== undefined && changeset?.setRange(pickRange(versions.items, action.n)));
       case "openFile":
-        return void (action.path !== undefined && controller.openSource(ON_SCREEN, action.path));
+        return void (action.path !== undefined && controller?.openSource(ON_SCREEN, action.path));
     }
   }
   /** The commit on view, while the changeset is reviewed by commit. */
-  const commit = $derived(current?.shownCommit === undefined ? undefined : current.commits[current.shownCommit]);
-  const highlighted = $derived(pathOf(tabs.active) ?? selected);
+  const commit = $derived(changeset?.shownCommit === undefined ? undefined : changeset.commits[changeset.shownCommit]);
+  const highlighted = $derived((tabs && pathOf(tabs.active)) ?? selected);
   // The tree marks the file the viewer is in: a file tab's, else the one picked in the tree, else
   // the file at the top of the Changes tab, which follows its scrolling.
-  const marked = $derived(pathOf(tabs.active) ?? picked ?? tabs.changesFile);
+  const marked = $derived((tabs && pathOf(tabs.active)) ?? picked ?? tabs?.changesFile);
   // A pick in the tree gives way once the Changes tab moves on.
   const pickedChanged = changeGate();
   $effect(() => {
-    if (pickedChanged(tabs.changesFile)) untrack(() => (picked = undefined));
+    if (pickedChanged(tabs?.changesFile)) untrack(() => (picked = undefined));
   });
   // The active tab has hunks to step through: the Changes tab, or a changed file's.
-  const stepping = $derived(kindOf(tabs.active) === "changes" || controller.fileChanged(tabs.active));
+  const stepping = $derived(
+    !!tabs && !!controller && (kindOf(tabs.active) === "changes" || controller.fileChanged(tabs.active)),
+  );
   /** The commit the active file tab stays at. */
-  const pinned = $derived(commitOf(tabs.active));
-  const fileOf = (path: string) => current?.reviewed(path);
+  const pinned = $derived(tabs && commitOf(tabs.active));
+  const fileOf = (path: string) => changeset?.reviewed(path);
   // The Structure tool lists the symbols of the file the active tab shows, in the view the tab reads.
   $effect(() => {
-    const layout = current?.layout;
+    const layout = changeset?.layout;
     // No layout has no target either; reading it keeps the effect on the manifest, which `shown` alone is untracked of.
-    structure.show(layout === undefined ? undefined : controller.structureTarget());
+    structure.show(layout === undefined || !controller ? undefined : controller.structureTarget());
   });
 
-  onMount(() => {
-    const stopHook = exposeRendered(() => controller.rendered());
+  // A controller is made for each session and ends with it; what the screen holds of the changeset starts over.
+  $effect(() => {
+    const owner = changeset;
+    if (!owner) return;
+    return untrack(() => start(owner));
+  });
+
+  function start(owner: ChangesetSession): () => void {
+    const made = new ReviewController(backend, owner, (path, x, y) =>
+      openMenu(fileHeaderMenu, x, y, { target: { path, dir: false } }),
+    );
+    made.softWrap = softWrap;
+    controller = made;
+    selected = picked = undefined;
+    excludedOpen = false;
+    const stopHook = exposeRendered(() => made.rendered());
     const stopCommands = provideActions({
       copyText: (text) => void copyText(text),
       excludePath: (path, dir) => void excludePath(path, dir),
-      reviewOnly: (path) => void opened.session?.reviewOnly(path),
+      reviewOnly: (path) => void owner.reviewOnly(path),
       setFolderSeen: (path, seen) => {
-        const shown = opened.session?.currentShown();
-        if (shown) void opened.session?.setDirectorySeen(shown, path, seen);
+        const shown = owner.currentShown();
+        if (shown) void owner.setDirectorySeen(shown, path, seen);
       },
-      closeTab: (tab) => tabs.close(tab),
-      closeOtherTabs: (tab) => tabs.closeOthers(tab),
-      stepTab: (delta) => tabs.step(delta),
+      closeTab: (tab) => made.tabs.close(tab),
+      closeOtherTabs: (tab) => made.tabs.closeOthers(tab),
+      stepTab: (delta) => made.tabs.step(delta),
       revealFile: () => {
         if (!tree) return false;
         void tree.reveal();
@@ -244,36 +247,38 @@
       },
     });
     let live = true;
-    controller.open().then(
-      (ready) => live && ready && onready(controller),
+    made.open().then(
+      (ready) => live && ready && onready(made),
       (e: unknown) => live && void session.abandon(e),
     );
     return () => {
       live = false;
       stopCommands();
       stopHook();
-      controller.destroy();
+      made.destroy();
+      if (controller === made) controller = undefined;
       onclose?.();
     };
-  });
+  }
 
-  const range = $derived(current?.layout?.interdiff);
+  const range = $derived(changeset?.layout?.interdiff);
   const readOnly = $derived(range?.markable === false);
   // A range shows the threads of its new side: they are read again for each range.
   const viewChanged = changeGate();
   $effect(() => {
-    if (viewChanged(current?.viewKey ?? rangeKey(undefined))) untrack(() => void threads.reload());
+    if (viewChanged(changeset?.viewKey ?? rangeKey(undefined))) untrack(() => void threads.reload());
   });
 
   // The open tabs, the active one or a view mode changed: the tabs are remembered.
   const tabsChanged = changeGate();
   $effect(() => {
+    if (!tabs || !controller) return;
     const open = tabs.open;
     if (tabsChanged(open.length, tabs.active, ...open, ...open.map((id) => tabs.modes.get(id)))) {
       untrack(() => {
-        controller.scheduleSave();
-        controller.pruneScopes();
-        controller.syncFind();
+        controller?.scheduleSave();
+        controller?.pruneScopes();
+        controller?.syncFind();
       });
     }
   });
@@ -281,11 +286,11 @@
   /** Shows the file in the Changes tab; an unchanged file is only selected. */
   function select(path: string) {
     selected = picked = path;
-    void controller.revealInChanges(path);
+    void controller?.revealInChanges(path);
   }
 
   function openSymbol(row: SymbolRow) {
-    if (row.change) void controller.jumpToSymbol({ symbol: row.symbol, change: row.change });
+    if (row.change) void controller?.jumpToSymbol({ symbol: row.symbol, change: row.change });
   }
 
   /** Inside an editor the app's own menu replaces the webview's, except in a text field. It acts on the editor clicked. */
@@ -302,35 +307,35 @@
   <SideBar side="left" defaultWidth="var(--w-tree)">
     {#if leftTool === "comments"}
       <CommentsPanel
-        onselect={(thread) => void controller.goToThread(thread)}
-        card={(thread, open, toggle) => controller.threadCard(thread, open, toggle)}
+        onselect={(thread) => void controller?.goToThread(thread)}
+        card={(thread, open, toggle) => controller?.threadCard(thread, open, toggle) ?? document.createElement("div")}
       />
-    {:else if loading}
+    {:else if loading || !changeset || !controller}
       <p class="empty">Loading {project}…</p>
     {:else}
       <FileTree
         bind:this={tree}
         tool={leftTool === "all" || leftTool === "commits" ? leftTool : "changes"}
-        paths={current?.paths ?? []}
+        paths={changeset.paths}
         {fileOf}
         {revision}
         list={(path) => listDirectory(path)}
         selected={marked}
         excluded={{
-          lines: current?.layout?.excludedLines ?? 0,
-          items: current?.layout?.excludedItems ?? 0,
-          groups: current?.layout?.excluded ?? [],
+          lines: changeset.layout?.excludedLines ?? 0,
+          items: changeset.layout?.excludedItems ?? 0,
+          groups: changeset.layout?.excluded ?? [],
         }}
         bind:excludedOpen
         {narrowed}
-        onreset={() => void current?.narrow(undefined)}
+        onreset={() => void changeset.narrow(undefined)}
         {none}
-        changes={current?.shownCommit === undefined ? (current?.paths.length ?? 0) : (current.facts?.files ?? 0)}
-        commits={current?.commits ?? []}
-        commit={current?.commitIndex}
-        oncommit={(index) => void current?.showCommit(index)}
+        changes={changeset.shownCommit === undefined ? changeset.paths.length : (changeset.facts?.files ?? 0)}
+        commits={changeset.commits}
+        commit={changeset.commitIndex}
+        oncommit={(index) => void changeset.showCommit(index)}
         onselect={select}
-        onopen={(path) => void controller.openSource(ON_SCREEN, path)}
+        onopen={(path) => void controller?.openSource(ON_SCREEN, path)}
         onopensymbol={openSymbol}
         onmenu={(path, dir, x, y) => openMenu(treeMenu(dir), x, y, { target: { path, dir } })}
       />
@@ -340,18 +345,18 @@
 
 <main>
   <div class="strip">
-    {#if !loading}
+    {#if !loading && changeset && controller && tabs}
       <TabStrip
         {tabs}
-        files={current?.shownFiles ?? []}
+        files={changeset.shownFiles}
         {scope}
         {commit}
-        unitOf={(id) => controller.commitUnit(id)}
+        unitOf={(id) => controller?.commitUnit(id)}
         onmenu={(id, x, y) => openMenu(tabMenu, x, y, { tab: id })}
       />
     {/if}
     <span class="grow"></span>
-    {#if !loading}
+    {#if !loading && tabs}
       <ViewControls
         mode={tabs.modes.get(tabs.active)}
         {stepping}
@@ -363,58 +368,66 @@
   {#if range && readOnly}
     <Banner message="Read-only: marks and comments are made on the latest push or All changes." />
   {/if}
-  {#if pinned !== undefined}<CommitStrip id={pinned} commit={controller.commitUnit(tabs.active)} />{/if}
-  {#if commit && tabs.active === CHANGES}<CommitHeader {commit} />{/if}
-  {#if controller.find.open.has(tabs.active)}
-    <FindBar
-      find={controller.find}
-      fileView={tabs.modes.get(tabs.active) === "file"}
-      unchanged={kindOf(tabs.active) === "file" && !controller.fileChanged(tabs.active)}
-      onoption={(patch) => controller.setFindOptions(patch)}
-      onstep={(delta) => void controller.stepFind(delta)}
-      onclose={() => controller.closeFind()}
-    />
-  {/if}
-  {#if controller.find.wrapped}
-    {#key controller.find.wrapped.n}
-      <Toast
-        message={controller.find.wrapped.text}
-        duration={2500}
-        onclose={() => (controller.find.wrapped = undefined)}
+  {#if controller && tabs}
+    {#if pinned !== undefined}<CommitStrip id={pinned} commit={controller.commitUnit(tabs.active)} />{/if}
+    {#if commit && tabs.active === CHANGES}<CommitHeader {commit} />{/if}
+    {#if controller.find.open.has(tabs.active)}
+      <FindBar
+        find={controller.find}
+        fileView={tabs.modes.get(tabs.active) === "file"}
+        unchanged={kindOf(tabs.active) === "file" && !controller.fileChanged(tabs.active)}
+        onoption={(patch) => controller?.setFindOptions(patch)}
+        onstep={(delta) => void controller?.stepFind(delta)}
+        onclose={() => controller?.closeFind()}
       />
-    {/key}
+    {/if}
+    {#if controller.find.wrapped}
+      {#key controller.find.wrapped.n}
+        <Toast
+          message={controller.find.wrapped.text}
+          duration={2500}
+          onclose={() => controller && (controller.find.wrapped = undefined)}
+        />
+      {/key}
+    {/if}
   {/if}
   <!-- The handler only replaces the webview's menu inside an editor. -->
   <!-- svelte-ignore a11y_no_static_element_interactions -->
   <div class="panes" class:readonly={readOnly} class:loading oncontextmenu={paneMenu}>
     {#if loading}
       <p class="empty">Loading {project}…</p>
-    {:else if empty && tabs.active === CHANGES}
+    {:else if empty && tabs?.active === CHANGES}
       <EmptyChanges view={empty} onact={act} />
     {/if}
-    {#each tabs.open as id (id)}
-      {@const path = pathOf(id)}
-      {@const text = tabs.modes.get(id) === "file"}
-      <!-- A file's tab has a pane for its diff, while the changeset changes the file, and one for its text. -->
-      {#if controller.hasDiffPane(id)}
-        <div class="pane" class:active={tabs.active === id && !text}>
-          <div class="scroll" {@attach (root) => controller.attach(id, root)}></div>
-        </div>
-      {/if}
-      {#if path !== undefined}
-        <div class="pane" class:active={tabs.active === id && text}>
-          <div class="scroll" {@attach (root) => controller.attachText(id, root)}></div>
-        </div>
-      {/if}
-    {/each}
+    <!-- The panes and the views in them belong to the controller of one session. -->
+    {#if controller && tabs}
+      {@const owner = controller}
+      {#key owner}
+        {#each tabs.open as id (id)}
+          {@const path = pathOf(id)}
+          {@const text = tabs.modes.get(id) === "file"}
+          <!-- A file's tab has a pane for its diff, while the changeset changes the file, and one for its text. -->
+          {#if owner.hasDiffPane(id)}
+            <div class="pane" class:active={tabs.active === id && !text}>
+              <div class="scroll" {@attach (root) => owner.attach(id, root)}></div>
+            </div>
+          {/if}
+          {#if path !== undefined}
+            <div class="pane" class:active={tabs.active === id && text}>
+              <div class="scroll" {@attach (root) => owner.attachText(id, root)}></div>
+            </div>
+          {/if}
+        {/each}
+      {/key}
+    {/if}
   </div>
   {#if bottomOpen}
     <Dock>{@render bottom?.({ selected: highlighted, select })}</Dock>
   {/if}
   {#if structure.popup}
     <StructurePopup
-      onjump={(symbol, removed) => void controller.jumpToOutlineSymbol(symbol, removed)}
-      oneditor={() => controller.focusEditor()}
+      onjump={(symbol, removed) => void controller?.jumpToOutlineSymbol(symbol, removed)}
+      oneditor={() => controller?.focusEditor()}
     />
   {/if}
 </main>
