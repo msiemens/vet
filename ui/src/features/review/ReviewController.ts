@@ -17,6 +17,7 @@ import type { Backend } from "../../state/backend";
 import { keyId } from "../../state/changesetKey";
 import { commands } from "../../state/commands";
 import type { TabId } from "../../state/commands";
+import { opened } from "../../state/opened.svelte";
 import { type Frame, type ViewLayout } from "../../state/reviewModel";
 import type { ViewChange } from "../../state/viewChange";
 import { semantic } from "../../state/semantic.svelte";
@@ -120,7 +121,7 @@ export class ReviewController {
     const offResync = session.onResync(() => this.scopes.reload());
     const offOrigins = semantic.onOrigins((path) => this.views.refreshDiagnostics(path));
     // The open tabs are the old changeset's until the new one's manifest has come and brought its tabs back.
-    const offOpening = changeset.onOpening((opening) => {
+    const offOpening = opened.onOpening((opening) => {
       if (opening.type === "requested") {
         this.scopes.drop();
         this.scopes.setFrozen(true);
@@ -461,7 +462,7 @@ export class ReviewController {
   /** Takes the manifest the store holds and renders it, answering whether it did (not when the project was closed). */
   async open(): Promise<boolean> {
     this.views.destroyDiff(CHANGES);
-    const frame = await this.changeset.frame();
+    const frame = await (await opened.current())?.frame();
     if (!frame) return false; // the project was closed meanwhile
     const { layout, facts } = frame;
     this.key = keyId(facts.target.changeset);

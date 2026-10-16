@@ -8,6 +8,7 @@ import { appState } from "../../src/app/appState.svelte.ts";
 import { findInFiles } from "../../src/features/search/FindInFiles.svelte.ts";
 import { changeset } from "../../src/state/changeset.svelte.ts";
 import { keyId } from "../../src/state/changesetKey.ts";
+import { STALE_NOTICE } from "../../src/lib/notice.ts";
 import { opened } from "../../src/state/opened.svelte.ts";
 import { shell } from "../../src/features/chrome/shell.svelte.ts";
 import { preferences } from "../../src/lib/preferences.svelte.ts";
@@ -626,6 +627,29 @@ export const sessions: Record<SessionName, (h: Harness) => Promise<void>> = {
         backend.toggleHunk = toggle;
       },
       ONE,
+    );
+    // The viewer is told the view is gone; the harness checks the notice.
+    await h.step(
+      "a comment on a changeset that is switched away from is not sent",
+      async () => {
+        const shown = opened.session?.currentShown();
+        if (!shown) throw new Error("no changeset is on view");
+        const backend = session.connected();
+        const create = backend.createThread.bind(backend);
+        let sent = 0;
+        backend.createThread = (...args) => {
+          sent++;
+          return create(...args);
+        };
+        const switching = changeset.openChangeset({ type: "branch", name: "feature" });
+        if (opened.session) throw new Error("the session outlived the request for another changeset");
+        const created = await threads.create(shown, { type: "changeset" }, "late");
+        await switching;
+        backend.createThread = create;
+        if (created || sent) throw new Error("a comment was sent while no changeset was on view");
+        await h.until(() => opened.session !== undefined && !opened.loading, "the changeset");
+      },
+      { notice: STALE_NOTICE },
     );
   },
 

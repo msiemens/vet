@@ -19,7 +19,10 @@ class Shell {
   /** The left rail as it shows: the Commits tool while the changeset is reviewed by commit. */
   get left(): ToolWindow {
     const session = opened.session;
-    return { tool: toolFor(this.leftChosen.tool, session?.lens, session?.commitCount ?? 0), open: this.leftChosen.open };
+    return {
+      tool: toolFor(this.leftChosen.tool, session?.lens, session?.commitCount ?? 0),
+      open: this.leftChosen.open,
+    };
   }
 
   /** Shows the queue, or the review of the changeset on view. */

@@ -126,7 +126,9 @@
   );
   const actions = $derived(actionCandidates(commandEntries(commands, palette.context)));
   /** The files the changeset does not change, once the list of all of them is here. */
-  const others = $derived(palette.files ? unchangedCandidates(palette.files.paths, new Set(opened.session?.paths)) : []);
+  const others = $derived(
+    palette.files ? unchangedCandidates(palette.files.paths, new Set(opened.session?.paths)) : [],
+  );
   const typed = $derived(palette.query.trim());
   const revision = $derived(opened.session?.layout?.shown.revision);
   /** The servers are asked for symbols by name when unchanged files are searched and symbols are listed. */
@@ -139,7 +141,9 @@
   );
   const found = $derived(answer?.languages ?? []);
   /** The changed files whose changed symbols are not known: the servers' symbols in them could be changed ones. */
-  const unsettled = $derived(new Set((opened.session?.paths ?? []).filter((p) => symbols.files.get(p)?.state !== "done")));
+  const unsettled = $derived(
+    new Set((opened.session?.paths ?? []).filter((p) => symbols.files.get(p)?.state !== "done")),
+  );
   const candidates: Candidates = $derived({
     file: palette.unchanged ? [...files, ...others] : files,
     symbol: [...symbolList, ...serverSymbolCandidates(found, symbolList, unsettled)],

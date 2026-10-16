@@ -14,10 +14,13 @@
   import { commands } from "../../state/commands";
   import { contextMenus } from "../../state/contextMenu.svelte";
   import { minute } from "../../state/minute.svelte";
+  import { opened } from "../../state/opened.svelte";
   import { platform } from "../../state/platform.svelte";
+  import { excludePath, listDirectory } from "../../state/projectRequests";
   import { session } from "../../state/session.svelte";
   import { structure } from "../../state/structure.svelte";
   import { threads } from "../../state/threads.svelte";
+  import { rangeKey } from "../../state/timelineRange";
   import { versions } from "../../state/versions.svelte";
   import { CommentsPanel } from "../comments";
   import { copyText } from "../platform";
@@ -68,7 +71,7 @@
     onclose,
   }: {
     backend: Backend;
-    /** What the backend sent about the open changeset. */
+    /** What the controller reads and writes the open changeset through. */
     changeset: Changeset;
     /** Which files wrap their long lines; the owner applies a change to the controller. */
     softWrap: SoftWrap;
@@ -114,13 +117,15 @@
 
   /** What the loading note names. */
   const project = $derived(session.repo === undefined ? "the changeset" : repoName(session.repo));
-  const revision = $derived(changeset.layout?.shown.revision);
+  /** The changeset on view, which the screen reads; the controller reads it through `changeset`. */
+  const current = $derived(opened.session);
+  const loading = $derived(opened.loading);
+  const revision = $derived(current?.layout?.shown.revision);
   /** The Changes tab lists no file, and says why instead. */
   const empty = $derived.by((): EmptyView | undefined => {
-    const layout = changeset.layout;
-    const facts = changeset.facts;
-    if (changeset.loading || !layout || !facts || changeset.shownFiles.length || changeset.baseChanged)
-      return undefined;
+    const layout = current?.layout;
+    const facts = current?.facts;
+    if (loading || !current || !layout || !facts || current.shownFiles.length || current.baseChanged) return undefined;
     const view = layout.shown.view.type;
     return emptyView({
       key: facts.target.changeset,
@@ -136,21 +141,19 @@
       repo: session.repo,
       versions: versions.items,
       interdiff: layout.interdiff,
-      commits: changeset.commits,
-      commitIndex: changeset.shownCommit,
+      commits: current.commits,
+      commitIndex: current.shownCommit,
       pullRequest: platform.info,
       threads: { total: threads.items.length, open: threads.items.filter((t) => t.status === "open").length },
       now: minute.now,
     });
   });
-  const narrowed = $derived(
-    changeset.facts?.narrowing && narrowingLabel(changeset.facts.filter, changeset.facts.narrowing),
-  );
+  const narrowed = $derived(current?.facts?.narrowing && narrowingLabel(current.facts.filter, current.facts.narrowing));
   /** What the Changes tool says under its header while it lists no file. */
   const none = $derived(
-    changeset.layout?.excluded.length
+    current?.layout?.excluded.length
       ? "No files to review"
-      : changeset.shownCommit === undefined
+      : current?.shownCommit === undefined
         ? "No changed files"
         : "No files in this commit",
   );
@@ -159,7 +162,7 @@
   // Another changeset has other excluded files.
   let excludedOf: string | undefined;
   $effect(() => {
-    const id = changeset.facts && keyId(changeset.facts.target.changeset);
+    const id = current?.facts && keyId(current.facts.target.changeset);
     if (id === excludedOf) return;
     excludedOf = id;
     untrack(() => (excludedOpen = false));
@@ -178,28 +181,28 @@
       case "provider":
         return void commands.run("changeset.openInBrowser");
       case "back":
-        return void changeset.showWhole();
+        return void current?.showWhole();
       case "next":
-        return void changeset.stepCommit(1);
+        return void current?.stepCommit(1);
       case "step":
-        return void (action.n !== undefined && changeset.showCommit(action.n));
+        return void (action.n !== undefined && current?.showCommit(action.n));
       case "filter":
         return onfilter();
       case "show":
         excludedOpen = true;
         return ontool("changes");
       case "narrow":
-        return void changeset.narrow(action.filter);
+        return void current?.narrow(action.filter);
       case "reset":
-        return void changeset.narrow(undefined);
+        return void current?.narrow(undefined);
       case "pick":
-        return void (action.n !== undefined && changeset.setRange(pickRange(versions.items, action.n)));
+        return void (action.n !== undefined && current?.setRange(pickRange(versions.items, action.n)));
       case "openFile":
         return void (action.path !== undefined && controller.openSource(ON_SCREEN, action.path));
     }
   }
   /** The commit on view, while the changeset is reviewed by commit. */
-  const commit = $derived(changeset.shownCommit === undefined ? undefined : changeset.commits[changeset.shownCommit]);
+  const commit = $derived(current?.shownCommit === undefined ? undefined : current.commits[current.shownCommit]);
   const highlighted = $derived(pathOf(tabs.active) ?? selected);
   // The tree marks the file the viewer is in: a file tab's, else the one picked in the tree, else
   // the file at the top of the Changes tab, which follows its scrolling.
@@ -213,10 +216,10 @@
   const stepping = $derived(kindOf(tabs.active) === "changes" || controller.fileChanged(tabs.active));
   /** The commit the active file tab stays at. */
   const pinned = $derived(commitOf(tabs.active));
-  const fileOf = (path: string) => changeset.reviewed(path);
+  const fileOf = (path: string) => current?.reviewed(path);
   // The Structure tool lists the symbols of the file the active tab shows, in the view the tab reads.
   $effect(() => {
-    const layout = changeset.layout;
+    const layout = current?.layout;
     // No layout has no target either; reading it keeps the effect on the manifest, which `shown` alone is untracked of.
     structure.show(layout === undefined ? undefined : controller.structureTarget());
   });
@@ -225,11 +228,11 @@
     const stopHook = exposeRendered(() => controller.rendered());
     const stopCommands = provideActions({
       copyText: (text) => void copyText(text),
-      excludePath: (path, dir) => void changeset.excludePath(path, dir),
-      reviewOnly: (path) => void changeset.reviewOnly(path),
+      excludePath: (path, dir) => void excludePath(path, dir),
+      reviewOnly: (path) => void opened.session?.reviewOnly(path),
       setFolderSeen: (path, seen) => {
-        const shown = changeset.currentShown();
-        if (shown) void changeset.setDirectorySeen(shown, path, seen);
+        const shown = opened.session?.currentShown();
+        if (shown) void opened.session?.setDirectorySeen(shown, path, seen);
       },
       closeTab: (tab) => tabs.close(tab),
       closeOtherTabs: (tab) => tabs.closeOthers(tab),
@@ -242,7 +245,7 @@
     });
     let live = true;
     controller.open().then(
-      (opened) => live && opened && onready(controller),
+      (ready) => live && ready && onready(controller),
       (e: unknown) => live && void session.abandon(e),
     );
     return () => {
@@ -254,12 +257,12 @@
     };
   });
 
-  const range = $derived(changeset.layout?.interdiff);
+  const range = $derived(current?.layout?.interdiff);
   const readOnly = $derived(range?.markable === false);
   // A range shows the threads of its new side: they are read again for each range.
   const viewChanged = changeGate();
   $effect(() => {
-    if (viewChanged(changeset.viewKey)) untrack(() => void threads.reload());
+    if (viewChanged(current?.viewKey ?? rangeKey(undefined))) untrack(() => void threads.reload());
   });
 
   // The open tabs, the active one or a view mode changed: the tabs are remembered.
@@ -302,30 +305,30 @@
         onselect={(thread) => void controller.goToThread(thread)}
         card={(thread, open, toggle) => controller.threadCard(thread, open, toggle)}
       />
-    {:else if changeset.loading}
+    {:else if loading}
       <p class="empty">Loading {project}…</p>
     {:else}
       <FileTree
         bind:this={tree}
         tool={leftTool === "all" || leftTool === "commits" ? leftTool : "changes"}
-        paths={changeset.paths}
+        paths={current?.paths ?? []}
         {fileOf}
         {revision}
-        list={(path) => changeset.listDirectory(path)}
+        list={(path) => listDirectory(path)}
         selected={marked}
         excluded={{
-          lines: changeset.layout?.excludedLines ?? 0,
-          items: changeset.layout?.excludedItems ?? 0,
-          groups: changeset.layout?.excluded ?? [],
+          lines: current?.layout?.excludedLines ?? 0,
+          items: current?.layout?.excludedItems ?? 0,
+          groups: current?.layout?.excluded ?? [],
         }}
         bind:excludedOpen
         {narrowed}
-        onreset={() => void changeset.narrow(undefined)}
+        onreset={() => void current?.narrow(undefined)}
         {none}
-        changes={changeset.shownCommit === undefined ? changeset.paths.length : (changeset.facts?.files ?? 0)}
-        commits={changeset.commits}
-        commit={changeset.commitIndex}
-        oncommit={(index) => void changeset.showCommit(index)}
+        changes={current?.shownCommit === undefined ? (current?.paths.length ?? 0) : (current.facts?.files ?? 0)}
+        commits={current?.commits ?? []}
+        commit={current?.commitIndex}
+        oncommit={(index) => void current?.showCommit(index)}
         onselect={select}
         onopen={(path) => void controller.openSource(ON_SCREEN, path)}
         onopensymbol={openSymbol}
@@ -337,10 +340,10 @@
 
 <main>
   <div class="strip">
-    {#if !changeset.loading}
+    {#if !loading}
       <TabStrip
         {tabs}
-        files={changeset.shownFiles}
+        files={current?.shownFiles ?? []}
         {scope}
         {commit}
         unitOf={(id) => controller.commitUnit(id)}
@@ -348,7 +351,7 @@
       />
     {/if}
     <span class="grow"></span>
-    {#if !changeset.loading}
+    {#if !loading}
       <ViewControls
         mode={tabs.modes.get(tabs.active)}
         {stepping}
@@ -383,8 +386,8 @@
   {/if}
   <!-- The handler only replaces the webview's menu inside an editor. -->
   <!-- svelte-ignore a11y_no_static_element_interactions -->
-  <div class="panes" class:readonly={readOnly} class:loading={changeset.loading} oncontextmenu={paneMenu}>
-    {#if changeset.loading}
+  <div class="panes" class:readonly={readOnly} class:loading oncontextmenu={paneMenu}>
+    {#if loading}
       <p class="empty">Loading {project}…</p>
     {:else if empty && tabs.active === CHANGES}
       <EmptyChanges view={empty} onact={act} />

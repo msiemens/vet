@@ -11,7 +11,6 @@ export type ChangesetSource = Pick<
   | "layoutOf"
   | "admit"
   | "adopt"
-  | "onOpening"
   | "onViewChange"
   | "shownCommit"
   | "whole"
@@ -29,7 +28,5 @@ export type ChangesetSource = Pick<
   | "reconfirmFile"
   | "baseDiff"
   | "commentTarget"
-  | "frame"
-  | "refresh"
   | "reportFailure"
 >;

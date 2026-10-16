@@ -393,9 +393,7 @@
       panel
       icon
       tone="warn"
-      message="{limited}{onlyStoodIn(failures)
-        ? ''
-        : ' Errors about unresolved names may not be real.'}"
+      message="{limited}{onlyStoodIn(failures) ? '' : ' Errors about unresolved names may not be real.'}"
     >
       {#snippet details()}
         <RestoreFailureList {failures} />
