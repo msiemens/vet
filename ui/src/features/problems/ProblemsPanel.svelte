@@ -27,7 +27,7 @@
   import Spinner from "../../lib/ui/Spinner.svelte";
   import TreeRow from "../../lib/ui/TreeRow.svelte";
   import VirtualRows from "../../lib/ui/VirtualRows.svelte";
-  import { changeset } from "../../state/changeset.svelte";
+  import { opened } from "../../state/opened.svelte";
   import {
     type Grouping,
     type Level,
@@ -161,19 +161,21 @@
       : []),
   ]);
 
-  const limited = $derived(changeset.restoreFailures.length ? limitedMessage(changeset.restoreFailures) : undefined);
+  const failures = $derived(opened.session?.restoreFailures ?? []);
+  const limited = $derived(failures.length ? limitedMessage(failures) : undefined);
   const latest = $derived(versions.items.at(-1)?.n);
   const lensNote = $derived.by(() => {
     const code = latest === undefined ? "the latest code" : `the latest code (v${latest})`;
-    if (changeset.shownCommit !== undefined) {
-      const id = changeset.commits[changeset.shownCommit]?.commit.shortId;
+    const session = opened.session;
+    if (session?.shownCommit !== undefined) {
+      const id = session.commits[session.shownCommit]?.commit.shortId;
       return `Showing the problems of ${code}. The commit on view${id ? `, ${id},` : ""} is not analysed.`;
     }
-    return changeset.range ? `Showing the problems of ${code}. The range on view is not analysed.` : undefined;
+    return session?.range ? `Showing the problems of ${code}. The range on view is not analysed.` : undefined;
   });
   const unknownWhy = $derived(problems.unknownWhy(scopePaths));
   const unknownFiles = $derived(problems.unknownFiles(scopePaths).length);
-  const baseId = $derived(changeset.facts?.base.commit.shortId);
+  const baseId = $derived(opened.session?.facts?.base.commit.shortId);
 
   const keyOf = (item: Item) => (item.kind === "problem" ? `p:${item.problem.id}` : item.key);
 
@@ -391,12 +393,12 @@
       panel
       icon
       tone="warn"
-      message="{limited}{onlyStoodIn(changeset.restoreFailures)
+      message="{limited}{onlyStoodIn(failures)
         ? ''
         : ' Errors about unresolved names may not be real.'}"
     >
       {#snippet details()}
-        <RestoreFailureList failures={changeset.restoreFailures} />
+        <RestoreFailureList {failures} />
       {/snippet}
     </Banner>
   {/if}

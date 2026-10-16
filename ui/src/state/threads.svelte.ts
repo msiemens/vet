@@ -6,14 +6,23 @@ import type { Thread } from "../generated/Thread";
 import type { ThreadStatus } from "../generated/ThreadStatus";
 import type { ThreadTarget } from "../generated/ThreadTarget";
 import type { Backend } from "./backend";
-import { changeset } from "./changeset.svelte";
+import { STALE_NOTICE } from "../lib/notice";
 import { followProject, whileOpen } from "./followProject";
 import { notices } from "./notices.svelte";
+import { opened } from "./opened.svelte";
 import { Resource } from "./resource";
 import { atRevision } from "./revision";
 import type { Shown } from "./shown";
 import { rangeKey } from "./timelineRange";
 import { CHANGESET } from "./view";
+
+/** Whether `shown` is the view on screen; with no changeset on view it is not, and the viewer is told. */
+function admitOnView(shown: Shown): boolean {
+  const session = opened.session;
+  if (session) return session.admit(shown);
+  notices.show(STALE_NOTICE);
+  return false;
+}
 
 class ThreadStore {
   /** In creation order, resolved at `revision`. Immutable snapshots, replaced as a whole. */
@@ -56,8 +65,8 @@ class ThreadStore {
     const backend = this.backend;
     if (!backend) return;
     // A commit has no threads of its own: the comments are the changeset's, as the Comments tool window shows them.
-    const { range } = changeset;
-    const view = range ? changeset.view : CHANGESET;
+    const range = opened.session?.range;
+    const view = range && opened.session ? opened.session.view : CHANGESET;
     await this.reads.load(async () => {
       const { revision, threads } = await backend.threads(view);
       return { revision, threads, key: rangeKey(range) };
@@ -69,7 +78,7 @@ class ThreadStore {
     shown: Shown,
     target: ThreadTarget,
     body: string,
-    admit: (shown: Shown) => boolean = (s) => changeset.admit(s),
+    admit: (shown: Shown) => boolean = admitOnView,
   ): Promise<boolean> {
     if (!admit(shown)) return false;
     return this.change(this.backend?.createThread(shown.revision, target, body, shown.view), shown.revision);
@@ -171,7 +180,7 @@ class ThreadStore {
 
   /** A rejected request is normally a stale revision: the threads are fetched again and the viewer repeats the action. */
   private fail(error: unknown, sent?: number) {
-    changeset.reportFailure(error, sent);
+    opened.session?.reportFailure(error, sent);
     void this.reload();
   }
 }

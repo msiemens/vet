@@ -8,9 +8,9 @@
   import MoreRow from "../../lib/ui/MoreRow.svelte";
   import ScrollArea from "../../lib/ui/ScrollArea.svelte";
   import TreeRow from "../../lib/ui/TreeRow.svelte";
-  import { changeset } from "../../state/changeset.svelte";
   import { commands } from "../../state/commands";
   import { contextMenus } from "../../state/contextMenu.svelte";
+  import { opened } from "../../state/opened.svelte";
   import { threads } from "../../state/threads.svelte";
   import PanelTabs from "../../lib/ui/PanelTabs.svelte";
   import { platform } from "../../state/platform.svelte";
@@ -59,7 +59,7 @@
 
   async function post() {
     // The panel is no view of files: it comments on the changeset as the manifest on screen is of.
-    const onScreen = changeset.currentShown();
+    const onScreen = opened.session?.currentShown();
     if (!onScreen || !canSubmit(draft.body, sending)) return;
     sending = true;
     const sent = await threads.create(onScreen, { type: "changeset" }, draft.body.trim());

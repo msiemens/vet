@@ -4,7 +4,7 @@
 // the hunks' review state and says how complete the picture is (SPEC §7.3, I6).
 
 import type { Unavailable } from "../generated/Unavailable";
-import { changeset } from "./changeset.svelte";
+import { opened } from "./opened.svelte";
 import type { FileDiagnostics } from "./semantic.svelte";
 import { type Counts, type FileHunks, type Problem, countsOf, problemsOf } from "./problemRows";
 import { type Origins, type Summary, originsOf, summarize } from "./problemsSummary";
@@ -22,11 +22,11 @@ export interface NotAnalysed {
 class ProblemsState {
   /** The changeset's files that have text to analyse, whatever view the review shows. */
   readonly changed = $derived.by(() => {
-    const files = changeset.wholeFrame?.layout.files ?? [];
+    const files = opened.session?.wholeFrame?.layout.files ?? [];
     return files.filter((f) => f.status !== "deleted" && f.targetLines > 0).map((f) => f.path);
   });
   /** How many files the changeset changes, with or without text. */
-  readonly changedCount = $derived(changeset.wholeFrame?.layout.files.length ?? 0);
+  readonly changedCount = $derived(opened.session?.wholeFrame?.layout.files.length ?? 0);
   /** The changed files a language serves, which are analysed. */
   readonly analysable = $derived(this.changed.filter((p) => this.served(p)));
   readonly problems: Problem[] = $derived(this.problemsOf(this.analysable));
@@ -60,7 +60,7 @@ class ProblemsState {
   }
 
   private hunksOf(path: string): FileHunks | undefined {
-    const file = changeset.whole.reviewed(path);
+    const file = opened.session?.whole.reviewed(path);
     return file && { hunks: file.hunks, states: file.review.hunks };
   }
 

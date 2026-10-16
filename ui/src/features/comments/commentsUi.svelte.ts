@@ -2,7 +2,7 @@
 // components bind and the intents that change them (`commentsUiModel.ts` holds the plain transitions).
 // The pull request's data is `state/platform.svelte.ts`'s.
 
-import { changeset } from "../../state/changeset.svelte";
+import { opened } from "../../state/opened.svelte";
 import { session } from "../../state/session.svelte";
 import {
   type CommentsTab,
@@ -65,7 +65,7 @@ class CommentsUi {
   constructor() {
     followCommentsUi(
       {
-        onOpening: (listener) => changeset.onOpening(listener),
+        onOpening: (listener) => opened.onOpening(listener),
         onClose: (listener) => session.onClose(listener),
       },
       this.state,

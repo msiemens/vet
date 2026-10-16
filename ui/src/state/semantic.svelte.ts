@@ -13,11 +13,11 @@ import type { Unavailable } from "../generated/Unavailable";
 import { isAbort } from "../lib/abort";
 import { STALE_NOTICE } from "../lib/notice";
 import type { HoverAnswer } from "./backend";
-import { changeset } from "./changeset.svelte";
 import { commands } from "./commands";
 import { DefinitionProbe } from "./definitionProbe";
 import { InFlight } from "./inFlight";
 import { notices } from "./notices.svelte";
+import { opened } from "./opened.svelte";
 import { type SemanticSummary, summarize } from "./semanticSummary";
 import { servedBy } from "./servedBy.svelte";
 import { serverList } from "./serverList.svelte";
@@ -59,7 +59,7 @@ class SemanticStore {
     );
     $effect.root(() => {
       $effect(() => {
-        const revision = changeset.layout?.shown.revision;
+        const revision = opened.session?.layout?.shown.revision;
         untrack(() => this.enter(revision));
       });
     });
@@ -160,7 +160,7 @@ class SemanticStore {
     } catch (error) {
       // Only the changeset moving on aborts a definition: the view that asked is about to be replaced.
       if (isAbort(error)) notices.show(STALE_NOTICE);
-      else changeset.reportFailure(error, revision);
+      else opened.session?.reportFailure(error, revision);
     }
     return undefined;
   }

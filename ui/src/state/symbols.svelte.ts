@@ -23,8 +23,8 @@ import { errorText } from "../lib/errorText";
 import { isAbort } from "../lib/abort";
 import { kindOf } from "../lib/requestError";
 import type { Backend } from "./backend";
-import { changeset } from "./changeset.svelte";
 import { CursorFollow } from "./cursorFollow";
+import { opened } from "./opened.svelte";
 import { whileReview } from "./reviewFollow";
 import { type IsLatest, Latest } from "./resource";
 import { session } from "./session.svelte";
@@ -111,9 +111,9 @@ class SymbolsState {
       });
       const stopEffect = $effect.root(() => {
         $effect(() => {
-          const layout = changeset.layout;
+          const layout = opened.session?.layout;
           // The semantic layer has the changeset's snapshots: not a commit's, and not a range's.
-          const analysable = changeset.shownCommit === undefined && layout?.interdiff === undefined;
+          const analysable = opened.session?.shownCommit === undefined && layout?.interdiff === undefined;
           const revision = layout?.shown.revision;
           const paths = layout?.files.filter((f) => f.hunks.length > 0).map((f) => f.path);
           untrack(() => {
@@ -228,7 +228,7 @@ class SymbolsState {
     if (shown.change === undefined) return;
     // A removed symbol of a renamed file has the file's old path.
     const { path } = shown.symbol.id;
-    const file = changeset.layout?.files.find((f) => f.path === path || f.oldPath === path);
+    const file = opened.session?.layout?.files.find((f) => f.path === path || f.oldPath === path);
     this.reveal = { symbol: shown.symbol, path: file?.path ?? path, n: ++this.revealed };
   }
 

@@ -9,7 +9,7 @@ import type { Side } from "../generated/Side";
 import { isAbort } from "../lib/abort";
 import { errorText } from "../lib/errorText";
 import type { SearchQuery, SearchResults } from "./backend";
-import { changeset } from "./changeset.svelte";
+import { opened } from "./opened.svelte";
 import { type ChangedFile, type Place, placesFromRows, placesFromSearch } from "./foundPlace";
 import { type Filters, NO_FILTERS } from "./findRows";
 import { diffRuns, isStale, linesToLocate, ranVersion, slotFor } from "./findRuns";
@@ -128,7 +128,7 @@ class FindSets {
 
   /** The revision on show, which a set is stale against. */
   get revision(): number | undefined {
-    return changeset.layout?.shown.revision;
+    return opened.session?.layout?.shown.revision;
   }
 
   /** The version a run of `spec` is of, which the set records and the stale banner names files since. */
@@ -216,8 +216,9 @@ class FindSets {
 
   /** What the changeset on show says of a changed file, if its view is the changeset's. */
   private changedFile = (path: string): ChangedFile | undefined => {
-    if (changeset.view.type !== "changeset") return undefined;
-    const file = changeset.reviewed(path);
+    const session = opened.session;
+    if (session?.view.type !== "changeset") return undefined;
+    const file = session.reviewed(path);
     return file && { status: file.status, completion: file.completion, hunks: file.hunks, states: file.review.hunks };
   };
 
