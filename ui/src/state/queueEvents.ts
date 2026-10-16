@@ -15,8 +15,6 @@ export interface QueueActions {
   load(recount?: boolean): void;
   /** List the pull requests again. */
   loadPullRequests(): void;
-  /** List the local changesets and the pull requests. */
-  loadAll(): void;
   /** Show those rows of the changeset's lines as they were counted. */
   takeLines(changesets: readonly ChangesetKey[], lines: readonly (LineDelta | null | undefined)[]): void;
   /** Show what the details that were read add to those pull request rows. */
@@ -30,7 +28,9 @@ export function queueEvent(event: SessionEvent, actions: QueueActions): void {
   switch (event.type) {
     case "changesetOpened":
     case "reviewStarted":
-      actions.loadAll();
+      // Opening a changeset or starting a review moves no row of the platform's list: the local rows
+      // are enough, so no `loadPullRequests`.
+      actions.load();
       return;
     case "changesetsChanged":
       actions.load();

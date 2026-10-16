@@ -15,6 +15,7 @@ import { Debounced } from "../lib/debounced";
 import { changeset } from "./changeset.svelte";
 import { keyId } from "./changesetKey";
 import { type QueueActions, queueEvent, withDetails } from "./queueEvents";
+import { queueEntries, queueRows } from "./queueEntries";
 import { Latest } from "./resource";
 import type { Frame, Parts, ReviewedFile, ViewLayout } from "./reviewModel";
 import { session } from "./session.svelte";
@@ -57,6 +58,19 @@ class QueueStore {
   /** Which revision and view the review shows. */
   private screen = $derived(`${changeset.layout?.shown.revision}/${changeset.viewKey}`);
 
+  /**
+   * The queue's rows: the local changesets and the pull requests, each with the lines and progress it
+   * shows, the changeset on view's live. The queue, the switcher and Search Everywhere read this.
+   */
+  entries = $derived(
+    queueEntries(
+      queueRows(this.local, this.pullRequests),
+      this.onView && keyId(this.onView),
+      this.onViewFrame,
+      this.lines,
+    ),
+  );
+
   /** The list follows the changeset on view for as long as a project is open. */
   private get projectOpen() {
     return session.repo !== undefined;
@@ -72,7 +86,6 @@ class QueueStore {
       const actions: QueueActions = {
         load: (recount) => void this.load(recount),
         loadPullRequests: () => void this.loadPullRequests(),
-        loadAll: () => void this.loadAll(),
         takeLines: (changesets, lines) => this.takeLines(changesets, lines),
         takeDetails: (changed) => this.takeDetails(changed),
         follow: () => this.follow(),
@@ -223,6 +236,14 @@ class QueueStore {
   /** The local changesets show as soon as they are listed, the pull requests when the platform answers. */
   async loadAll() {
     await Promise.all([this.load(), this.loadPullRequests()]);
+  }
+
+  /**
+   * Shows the queue: lists the local changesets and reads the pull request list. Showing the queue is
+   * not a reason to ask the platforms, so this reads the list that is; a refresh is asked for.
+   */
+  async show() {
+    await this.loadAll();
   }
 
   /** Fetches the remotes, then lists again, the pull requests too. */

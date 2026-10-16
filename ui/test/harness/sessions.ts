@@ -347,16 +347,30 @@ export const sessions: Record<SessionName, (h: Harness) => Promise<void>> = {
     await h.step("seen after reconnecting", () => hunk(h, "b.txt", 1), ONE);
   },
 
-  /** The pull requests are asked of the platform once for a view of the list, and once more for a burst of events. */
+  /**
+   * The pull request list is read when the queue is shown and on a refresh, and never by opening a
+   * changeset or starting a review.
+   */
   async listings(h) {
-    await h.step("the list is asked for", () => queue.loadAll(), { listings: 1 });
+    await h.step("the queue is shown", () => queue.show(), { listings: 1 });
     await h.step(
-      "a burst of events",
-      () => {
-        for (let i = 0; i < 10; i++) void queue.loadAll();
+      "a changeset is opened",
+      async () => {
+        await changeset.openChangeset({ type: "branch", name: "feature" });
+        await h.until(() => changeset.facts?.target.changeset.type === "branch", "the branch");
       },
-      { listings: 2 },
+      { listings: 0 },
     );
+    await h.step(
+      "a review is started",
+      async () => {
+        await h.until(() => changeset.paths.length > 0, "the branch's files");
+        await hunk(h, first(), 0);
+        await h.until(() => changeset.facts?.review.state === "open", "the review to start");
+      },
+      { marks: 1, listings: 0 },
+    );
+    await h.step("the queue is refreshed", () => queue.refresh(), { listings: 1 });
   },
 
   /** Choosing rows of the queue puts changesets on view without asking the language servers for anything; the review screen does. */

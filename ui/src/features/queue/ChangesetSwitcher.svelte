@@ -1,5 +1,4 @@
 <script lang="ts">
-  import { untrack } from "svelte";
   import { Preference } from "../../lib/preferences.svelte";
   import Chip from "../../lib/ui/Chip.svelte";
   import Icon from "../../lib/ui/Icon.svelte";
@@ -13,14 +12,12 @@
   import ChangesetName from "./ChangesetName.svelte";
   import {
     type Label,
+    type QueueEntry,
     SWITCHER_FILTERS,
-    changesOf,
     commentCount,
     filterRows,
     labelOf,
     parseTab,
-    queueRows,
-    reviewedOf,
     sourceText,
     updatedText,
   } from "./queueRows";
@@ -45,16 +42,8 @@
   let query = $state("");
   const filter = $derived(kept.value);
 
-  const rows = $derived(queueRows(queue.local, queue.pullRequests));
+  const rows = $derived(queue.entries);
   const shown = $derived(filterRows(rows, filter, query));
-  const onViewId = $derived(queue.onView && keyId(queue.onView));
-  const own = $derived(queue.onViewFrame);
-
-  // The changesets are listed afresh each time the popover opens.
-  $effect(() => {
-    if (!open) return;
-    untrack(() => void queue.loadAll());
-  });
 
   /** An action under the rows that runs a command. */
   const action = (id: string, text: string) => ({
@@ -72,7 +61,7 @@
   label="Search changesets"
   items={shown}
   key={(row) => keyId(row.key)}
-  isOn={(row) => keyId(row.key) === onViewId}
+  isOn={(row: QueueEntry) => row.onView}
   listLabel="Changesets"
   empty={rows.length ? "No matching changesets" : "No changesets"}
   actions={[action("view.queue", "Open queue"), action("changeset.openPullRequest", "Open pull request…")]}
@@ -97,14 +86,12 @@
     />
   {/snippet}
   {#snippet row(changeset)}
-    {@const id = keyId(changeset.key)}
-    {@const numbers = id === onViewId ? own : undefined}
-    {@const changes = changesOf(changeset, numbers?.layout.delta, queue.lines.get(id))}
+    {@const changes = changeset.changes}
     {@const comments = commentCount(changeset)}
     <span class="row">
       <span class="line">
         <span class="name"><ChangesetName label={labelOf(changeset)} /></span>
-        <ReviewedCell reviewed={reviewedOf(changeset.review, numbers?.facts.completion)} width={48} />
+        <ReviewedCell reviewed={changeset.reviewed} width={48} />
       </span>
       <span class="line sub">
         <span class="detail">

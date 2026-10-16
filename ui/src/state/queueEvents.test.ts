@@ -37,7 +37,6 @@ void test("the event that details were read patches the rows and lists nothing a
   const actions: QueueActions = {
     load: () => did.push("load"),
     loadPullRequests: () => did.push("listPullRequests"),
-    loadAll: () => did.push("loadAll"),
     takeLines: () => did.push("takeLines"),
     takeDetails: (changed) => did.push(`takeDetails ${changed.length}`),
     follow: () => did.push("follow"),
@@ -46,6 +45,22 @@ void test("the event that details were read patches the rows and lists nothing a
   queueEvent({ type: "pullRequestsChanged", project: 1, changed: [update(7)] }, actions);
 
   assert.deepEqual(did, ["takeDetails 1"]);
+});
+
+void test("opening a changeset and starting a review list the local rows and no pull requests", () => {
+  const did: string[] = [];
+  const actions: QueueActions = {
+    load: () => did.push("load"),
+    loadPullRequests: () => did.push("listPullRequests"),
+    takeLines: () => did.push("takeLines"),
+    takeDetails: () => did.push("takeDetails"),
+    follow: () => did.push("follow"),
+  };
+
+  queueEvent({ type: "changesetOpened", project: 1, revision: 1, changeset: { type: "workingTree" } }, actions);
+  queueEvent({ type: "reviewStarted", project: 1, review: { state: "open", version: 1, updatedAt: 0 } }, actions);
+
+  assert.deepEqual(did, ["load", "load"]);
 });
 
 void test("the details that were read show in the row they changed and in no other", () => {

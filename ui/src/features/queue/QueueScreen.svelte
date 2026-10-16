@@ -24,17 +24,14 @@
   import ChangesCell from "./ChangesCell.svelte";
   import ChangesetName from "./ChangesetName.svelte";
   import {
-    type QueueRow,
+    type QueueEntry,
     type QueueTab,
     TABS,
     authorOf,
-    changesOf,
     commentCount,
     filterRows,
     labelOf,
     parseTab,
-    queueRows,
-    reviewedOf,
     sourceText,
     statusOrder,
     stepTab,
@@ -61,7 +58,7 @@
     onopenlog: (run: CheckRun) => void;
   } = $props();
 
-  const COLUMNS: Column<QueueRow>[] = [
+  const COLUMNS: Column<QueueEntry>[] = [
     { id: "changeset", label: "Changeset", flex: true, min: 320, sortBy: (row) => labelOf(row).text },
     { id: "status", label: "Status", width: 130, min: 60, sortBy: statusOrder },
     { id: "author", label: "Author", width: 140, min: 60, sortBy: (row) => authorOf(row)?.name },
@@ -85,13 +82,12 @@
   let query = $state("");
   let sort = $state<Sort>();
 
-  const rows = $derived(queueRows(queue.local, queue.pullRequests));
+  const rows = $derived(queue.entries);
   const counts = $derived(tabCounts(rows));
   const shown = $derived(sortRows(filterRows(rows, tab, query), COLUMNS, sort));
   /** The repositories whose pull requests could not be listed. */
   const unlisted = $derived(tab === "all" || tab === "prs" ? queue.sources.filter((s) => s.error !== undefined) : []);
-  const onViewId = $derived(queue.onView && keyId(queue.onView));
-  const current = $derived(rows.find((r) => keyId(r.key) === onViewId));
+  const current = $derived(rows.find((r) => r.onView));
   /** The changeset's own numbers, whatever range or commit the review shows. */
   const own = $derived(queue.onViewFrame);
 
@@ -106,30 +102,27 @@
   }
 
   onMount(() => {
-    void queue.loadAll();
+    void queue.show();
     const unregister = commands.register(...queueTabCommands({ stepTab: (delta) => showTab(stepTab(tab, delta)) }));
     return () => {
       unregister();
     };
   });
 
-  /** What the table knows of a row's lines: only the changeset on view has them. */
-  const ownOf = (row: QueueRow) => (keyId(row.key) === onViewId ? own : undefined);
-
   /** The selected row is the changeset on view: choosing one puts it on view. */
-  function select(row: QueueRow) {
-    if (keyId(row.key) !== onViewId) commands.run(`changeset.open:${keyId(row.key)}`);
+  function select(row: QueueEntry) {
+    if (!row.onView) commands.run(`changeset.open:${keyId(row.key)}`);
   }
 
   /** Puts the changeset on view and shows its review. */
-  function openRow(row: QueueRow) {
+  function openRow(row: QueueEntry) {
     select(row);
     onopen();
   }
 
   let highlighted = $state(-1);
   let tableBody = $state<HTMLElement>();
-  const nav = new ListNav<QueueRow>({
+  const nav = new ListNav<QueueEntry>({
     element: () => tableBody,
     items: () => shown,
     single: select,
@@ -140,7 +133,7 @@
   $effect(() => () => nav.cancel());
 
   /** A right click selects the row at once, and opens its menu. */
-  function openMenu(e: MouseEvent, row: QueueRow, index: number) {
+  function openMenu(e: MouseEvent, row: QueueEntry, index: number) {
     nav.cancel();
     highlighted = index;
     select(row);
@@ -180,18 +173,16 @@
       aria-label="Changesets"
     >
       {#each shown as row, index (keyId(row.key))}
-        {@const id = keyId(row.key)}
-        {@const numbers = ownOf(row)}
-        {@const changes = changesOf(row, numbers?.layout.delta, queue.lines.get(id))}
+        {@const changes = row.changes}
         {@const author = authorOf(row)}
         {@const comments = commentCount(row)}
         <button
           class="flat pick row"
-          class:on={id === onViewId}
+          class:on={row.onView}
           class:cur={index === highlighted}
           type="button"
           tabindex="-1"
-          aria-current={id === onViewId}
+          aria-current={row.onView}
           onclick={(e) => nav.click(e, index)}
           oncontextmenu={(e) => openMenu(e, row, index)}
         >
@@ -210,7 +201,7 @@
           </span>
           <span class="source">{sourceText(row)}</span>
           <span class="delta"><ChangesCell {changes} /></span>
-          <span><ReviewedCell reviewed={reviewedOf(row.review, numbers?.facts.completion)} /></span>
+          <span><ReviewedCell reviewed={row.reviewed} /></span>
           <span class="icons">
             <CiStatus state={row.pullRequest?.ci} />
             {#if comments > 0}

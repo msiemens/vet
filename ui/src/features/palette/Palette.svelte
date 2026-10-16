@@ -34,7 +34,7 @@
   import { serverList } from "../../state/serverList.svelte";
   import { threads } from "../../state/threads.svelte";
   import { symbols } from "../../state/symbols.svelte";
-  import { queueRows, labelOf, reviewedOf, sourceText } from "../queue";
+  import { labelOf, sourceText } from "../queue";
   import { SymbolGlyph } from "../symbols";
   import type { Choice } from "./choice";
   import { tabStep } from "./tabKey";
@@ -102,20 +102,18 @@
       ),
     ),
   );
-  const onViewId = $derived(queue.onView && keyId(queue.onView));
   const changesets = $derived(
     changesetCandidates(
-      queueRows(queue.local, queue.pullRequests).map((row) => {
-        const id = keyId(row.key);
+      queue.entries.map((row) => {
         const { number, text } = labelOf(row);
-        const reviewed = reviewedOf(row.review, id === onViewId ? queue.onViewFrame?.facts.completion : undefined);
+        const reviewed = row.reviewed;
         return {
-          id,
+          id: keyId(row.key),
           number,
           title: text,
           source: sourceText(row),
           github: row.key.type === "pullRequest",
-          onView: id === onViewId,
+          onView: row.onView,
           progress:
             reviewed.kind === "progress"
               ? { kind: "progress", seen: reviewed.seen, oldBase: reviewed.oldBase }
@@ -216,11 +214,6 @@
   const typedChanged = changeGate();
   $effect(() => {
     if (typedChanged(palette.query, palette.tab)) cursor = 0;
-  });
-
-  // The changesets are listed afresh each time the popup opens, as the switcher's popover does.
-  $effect(() => {
-    void queue.loadAll();
   });
 
   const nav = new ListNav<Entry>({

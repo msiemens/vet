@@ -2,34 +2,25 @@
 // belongs to, the words of its Source and Updated columns, and what its progress column shows.
 
 import type { ChangesetRow } from "../../generated/ChangesetRow";
-import type { Completion } from "../../generated/Completion";
-import type { LineDelta } from "../../generated/LineDelta";
 import type { PullRequestRow } from "../../generated/PullRequestRow";
 import type { QueueStatus } from "../../generated/QueueStatus";
-import type { RowReview } from "../../generated/RowReview";
 import type { Target } from "../../generated/Target";
 import { plural } from "../../lib/format.ts";
 import { shortTime } from "../../lib/shortTime.ts";
+import type { QueueRow } from "../../state/queueEntries.ts";
 
-/** A row of the queue: a local changeset, or a pull request with what the platform lists of it. */
-export type QueueRow = ChangesetRow & { pullRequest?: PullRequestRow };
-
-/** The queue's rows: the local changesets, then the pull requests. */
-export function queueRows(local: readonly ChangesetRow[], pullRequests: readonly PullRequestRow[]): QueueRow[] {
-  return [...local, ...pullRequests.map(pullRequestRow)];
-}
-
-/** A pull request as a row, which has no threads of its own listed: its comments are the platform's count. */
-export function pullRequestRow(pullRequest: PullRequestRow): QueueRow {
-  return {
-    key: pullRequest.key,
-    title: pullRequest.title,
-    checkedOut: false,
-    openThreads: 0,
-    review: pullRequest.review,
-    pullRequest,
-  };
-}
+// The rows themselves and what the Changes and Reviewed columns show of them live in the queue
+// store's pure module; the switcher and the panel read the same functions through here.
+export {
+  type Changes,
+  type QueueEntry,
+  type QueueRow,
+  type Reviewed,
+  changesOf,
+  pullRequestRow,
+  queueRows,
+  reviewedOf,
+} from "../../state/queueEntries.ts";
 
 /** What a row says of its comments: a pull request's, as the platform counts them, else the open threads. */
 export function commentCount(row: QueueRow): number {
@@ -123,27 +114,6 @@ export function sourceText(row: QueueRow): string {
   return ahead === undefined ? "local" : `local · ${plural(ahead, "commit")}`;
 }
 
-/** What the Changes column says of a row. */
-export type Changes =
-  /** The backend has not counted the lines yet. */
-  | { kind: "pending" }
-  /** There are none: nothing changed, or the row has no lines to count. */
-  | { kind: "none" }
-  | { kind: "lines"; lines: LineDelta };
-
-/**
- * The lines of a row, from the most current source: `own`, the live manifest, when the row is the
- * changeset on view; else `counted`, what the backend counted between the commits of the row's base
- * and tip (`null`: there are none to count), the same rule the review view uses; else what the
- * platform lists of a pull request, until the backend's count replaces it (D93). The working tree
- * has its manifest only.
- */
-export function changesOf(row: QueueRow, own: LineDelta | undefined, counted: LineDelta | null | undefined): Changes {
-  const known = own ?? counted ?? row.pullRequest?.lines;
-  if (known) return known.added + known.removed > 0 ? { kind: "lines", lines: known } : { kind: "none" };
-  return row.key.type === "workingTree" || counted === null ? { kind: "none" } : { kind: "pending" };
-}
-
 /** The label of a pull request's status chip. */
 export function statusText(status: QueueStatus): string {
   switch (status) {
@@ -225,7 +195,7 @@ export function tabCounts(rows: readonly QueueRow[]): Record<QueueTab, number> {
 }
 
 /** The rows of a tab whose name or source contain every word of `query`, ignoring case; the order is kept. */
-export function filterRows(rows: readonly QueueRow[], tab: QueueTab, query: string): QueueRow[] {
+export function filterRows<R extends QueueRow>(rows: readonly R[], tab: QueueTab, query: string): R[] {
   const words = query.toLowerCase().split(/\s+/).filter(Boolean);
   return rows.filter((row) => {
     if (!inTab(row, tab)) return false;
@@ -233,36 +203,4 @@ export function filterRows(rows: readonly QueueRow[], tab: QueueTab, query: stri
     const text = `${number} ${name} ${sourceText(row)}`.toLowerCase();
     return words.every((w) => text.includes(w));
   });
-}
-
-/** What the progress column shows of a row. */
-export type Reviewed =
-  /** Not started. */
-  | { kind: "none" }
-  /** A review is open and its progress is not known here. */
-  | { kind: "started" }
-  | { kind: "progress"; seen: number; oldBase: number }
-  /** Finished; `percent` is known when it was complete. */
-  | { kind: "finished"; percent?: number };
-
-/**
- * `completion` is the live progress of the changeset on view; any other row has the progress stored with
- * its review, if that was ever measured.
- */
-export function reviewedOf(
-  review: RowReview,
-  completion?: Pick<Completion, "seenPercent" | "oldBasePercent">,
-): Reviewed {
-  switch (review.state) {
-    case "none":
-      return { kind: "none" };
-    case "open": {
-      const progress = completion ?? review.progress;
-      return progress
-        ? { kind: "progress", seen: progress.seenPercent, oldBase: progress.oldBasePercent }
-        : { kind: "started" };
-    }
-    case "finished":
-      return review.complete ? { kind: "finished", percent: 100 } : { kind: "finished" };
-  }
 }
