@@ -1,11 +1,14 @@
 // The scripted sessions. Each runs in a process and backend of its own; a step ends when the window has
 // settled, and then the stores are compared with the backend.
 
+import type { ChangesetKey } from "../../src/generated/ChangesetKey.ts";
 import type { View } from "../../src/generated/View.ts";
 import type { Request } from "../../src/generated/Request.ts";
 import { appState } from "../../src/app/appState.svelte.ts";
 import { findInFiles } from "../../src/features/search/FindInFiles.svelte.ts";
 import { changeset } from "../../src/state/changeset.svelte.ts";
+import { keyId } from "../../src/state/changesetKey.ts";
+import { opened } from "../../src/state/opened.svelte.ts";
 import { shell } from "../../src/features/chrome/shell.svelte.ts";
 import { preferences } from "../../src/lib/preferences.svelte.ts";
 import { problems } from "../../src/state/problems.svelte.ts";
@@ -586,6 +589,43 @@ export const sessions: Record<SessionName, (h: Harness) => Promise<void>> = {
         }
       },
       { marks: 8 },
+    );
+    await h.step("changesets asked for one after another without waiting", async () => {
+      const feature: ChangesetKey = { type: "branch", name: "feature" };
+      const tree: ChangesetKey = { type: "workingTree" };
+      for (const key of [tree, feature, tree, feature, tree]) void changeset.openChangeset(key);
+      await changeset.openChangeset(feature);
+      await h.until(() => opened.session !== undefined && !opened.loading, "the last changeset");
+      // What the invariants then compare with the backend is the changeset it has on view, whichever of the
+      // requests it served last: nothing of the changesets passed through is left in it.
+      const key = opened.session?.key;
+      if (!key || keyId(key) !== keyId(changeset.facts?.target.changeset ?? tree))
+        throw new Error("the session on view is not of the changeset the manifest is of");
+    });
+    await h.step(
+      "a mark answered after its changeset was switched away from",
+      async () => {
+        const backend = session.connected();
+        const toggle = backend.toggleHunk.bind(backend);
+        let arrived = false;
+        let release!: () => void;
+        const held = new Promise<void>((resolve) => (release = resolve));
+        // The answer of the changeset on view comes after the next one is on view, as a failure.
+        backend.toggleHunk = async (...args) => {
+          await toggle(...args);
+          arrived = true;
+          await held;
+          throw new Error("a late failure");
+        };
+        const marking = hunk(h, "b.txt", 0);
+        await h.until(() => arrived, "the mark to be answered");
+        await changeset.openChangeset({ type: "workingTree" });
+        await h.until(() => opened.session !== undefined && !opened.loading, "the next changeset");
+        release();
+        await marking;
+        backend.toggleHunk = toggle;
+      },
+      ONE,
     );
   },
 

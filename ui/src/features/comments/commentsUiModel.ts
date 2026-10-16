@@ -4,7 +4,7 @@
 // reactive wrapper is `commentsUi.svelte.ts`.
 
 import type { Verdict } from "../../generated/Verdict";
-import type { Opening } from "../../state/changeset.svelte";
+import type { Opening } from "../../state/openedProtocol";
 
 /** The tab the Comments tool window shows. */
 export type CommentsTab = "review" | "conversation";

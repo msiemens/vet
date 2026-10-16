@@ -1,842 +1,383 @@
-// What the backend sent about the open changeset. Progress and review state are the
-// backend's; this holds and distributes them (SPEC I5).
+// The changeset on view as the window's stores and views read it, forwarded to the session of the changeset
+// that is on view. Before the first changeset is read and while another loads there is no session, and
+// the forwarding object answers as an empty store does. Temporary: the views read the session themselves.
 
 import { untrack } from "svelte";
 import type { BaseDiff } from "../generated/BaseDiff";
 import type { Completion } from "../generated/Completion";
-import type { ReviewUpdate } from "../generated/ReviewUpdate";
-import type { Manifest } from "../generated/Manifest";
-import type { RestoreFailure } from "../generated/RestoreFailure";
-import type { ReviewFilter } from "../generated/ReviewFilter";
-import type { NonTextKind } from "../generated/NonTextKind";
-import type { ChangesetKey } from "../generated/ChangesetKey";
 import type { CommentAt } from "../generated/CommentAt";
-import type { View } from "../generated/View";
 import type { CommitUnit } from "../generated/CommitUnit";
 import type { Lens } from "../generated/Lens";
-import { errorText } from "../lib/errorText";
+import type { NonTextKind } from "../generated/NonTextKind";
+import type { ChangesetKey } from "../generated/ChangesetKey";
+import type { RestoreFailure } from "../generated/RestoreFailure";
+import type { ReviewFilter } from "../generated/ReviewFilter";
+import type { View } from "../generated/View";
 import { STALE_NOTICE } from "../lib/notice";
-import { pathsBelow } from "../lib/paths";
-import { isKind } from "../lib/requestError";
+import { RequestError } from "../lib/requestError";
+import type { ChangesetSession } from "./changesetSession.svelte";
 import { CommitList } from "./commitList";
-import { commitToShow, neighbour } from "./commitLens";
-import { keyId } from "./changesetKey";
 import { notices } from "./notices.svelte";
-import { PendingOpen } from "./pendingOpen";
-import { Latest, Resource } from "./resource";
+import { opened } from "./opened.svelte";
 import {
-  type ChangesetFacts,
-  type FileLayout,
-  type FileState,
-  type Frame,
-  type ReviewedFile,
-  type ViewLayout,
-  partsOf,
-} from "./reviewModel";
-import { newReviewCells } from "./reviewCells.svelte";
-import { whileReview } from "./reviewFollow";
-import { reportFailure, reviewMarks } from "./reviewMarks";
-import { reviewShown } from "./reviewShown.svelte";
-import { type WriteListener } from "./reviewSource";
-import { session } from "./session.svelte";
-import { type Shown, isCurrent } from "./shown";
+  changesetLines,
+  excludePath,
+  fetchRemotes,
+  folders,
+  listChangesets,
+  listDirectory,
+  listPullRequests,
+  patternMatches,
+  setFilter,
+  setProjectTrusted,
+  trustPullRequest,
+} from "./projectRequests";
+import { resubscribing } from "./resubscribing";
+import type { Answer } from "./reviewMarks";
+import { session as connection } from "./session.svelte";
+import type { ChangesetFacts, FileLayout, FileState, Frame, ReviewedFile, ViewLayout } from "./reviewModel";
+import type { WriteListener } from "./reviewSource";
+import type { Shown } from "./shown";
+import { type Range, rangeKey, rangeView } from "./timelineRange";
+import type { ViewChange } from "./viewChange";
 import type { ViewSource } from "./viewScope.svelte";
-import { type Range, normalised, rangeKey, rangeView } from "./timelineRange";
-import { commitView } from "./view";
-import { type ViewChange, type ViewPoint, viewChange, viewPoint } from "./viewChange";
-import { refetchesWhole } from "./wholeFetch";
-import { type WholeView, newWhole } from "./wholeView.svelte";
-
-/** What happens to the changeset on view: another is asked for, announced to be fetched, or the ask came to nothing. */
-export type Opening = { type: "requested" } | { type: "opened"; changeset: ChangesetKey } | { type: "unannounced" };
+import type { WholeView } from "./wholeView.svelte";
 
 const NO_PATHS: readonly string[] = [];
+const NO_FAILURES: RestoreFailure[] = [];
+const NO_COMMITS: CommitUnit[] = [];
 
-class ChangesetStore implements ViewSource {
-  /** What the view of the last refresh looks like: its files' structure and its base. Replaced only by a manifest. */
-  layout = $state.raw<ViewLayout>();
-  /** What is true of the changeset as a whole, whatever view is shown. */
-  facts = $state.raw<ChangesetFacts>();
-  /** The changeset as a whole: its files and their review state, whatever range or commit the view on screen shows. */
-  readonly whole: WholeView = newWhole();
-  /** The whole-changeset view was fed by the refresh underway; it needs no read of its own then. */
-  private fed = false;
-  /** How far the view's files are reviewed. */
-  viewCompletion = $state.raw<Completion>();
-  /** Dependency restores that failed: the analysis of those projects is limited. Pushed as they happen. */
-  restoreFailures = $state.raw<RestoreFailure[]>([]);
-  /**
-   * The current review state of each file of the view, one reactive cell per path: a review update invalidates
-   * only its file. It knows which change of the backend the state is as of; updates and manifests older than
-   * it do not replace it.
-   */
-  private cells = newReviewCells();
-  /** The requests that mark, as the view on screen sends them. */
-  private marks = reviewMarks({
-    backend: () => session.connected(),
-    admit: (shown) => this.admit(shown),
-    current: () => this.currentShown(),
-    apply: (update) => this.applyReview(update),
-    refresh: () => this.refresh(),
-    hunks: (path) => this.cells.state(path)?.review.hunks ?? [],
-  });
+/** Listeners given to the forwarding objects stay on whichever session is on view. */
+const onView = <L>(attach: (session: ChangesetSession, listener: L) => () => void) =>
+  resubscribing<ChangesetSession, L>(
+    { now: () => opened.session, onReplaced: (listener) => void opened.onSession(listener) },
+    attach,
+  );
 
-  /**
-   * The versions the review view compares instead of showing the changeset; none for the changeset.
-   * Set it with `setRange`.
-   */
-  range = $state.raw<Range>();
-  /**
-   * The commit the review view shows while the changeset is reviewed by commit: the index into
-   * `commits`. A range takes its place, and the changeset's lens brings it back.
-   */
-  commitIndex = $state<number>();
-  /** The commit the manifest is of; `commitIndex` moves first and this follows with the manifest. */
-  shownCommit = $state<number>();
-  /** The commit that was on view last, which by commit shows again. */
-  private lastCommit = 0;
-  /** The commits with their own progress, oldest first; loaded only while the review screen shows the changeset by commit. */
-  commits = $state.raw<CommitUnit[]>([]);
-  /** The commits by revision, held in one place: this store, a tab at a commit and Find in Files read from here. */
-  readonly commitList = new CommitList(() => session.connected().commits());
-  /** The per-commit reads the store started; only the latest may set the list it shows. */
-  private commitReads = new Latest();
-  /** Whether the review screen is shown: only it reads the per-commit list. */
-  private commitsFollowed = false;
-  /** A manifest is being fetched. */
-  private fetching = $state(false);
-  private manifestLoads = new Resource<{ manifest: Manifest; commit: number | undefined }>({
-    busy: (on) => (this.fetching = on),
-    apply: ({ manifest, commit }) => {
-      const parts = partsOf(manifest, commit);
-      const heldFacts = this.facts;
-      // A mark answered after the manifest was read is newer than the manifest, whenever the manifest arrives.
-      const newer = this.cells.order.load(
-        parts.seq,
-        parts.layout.paths,
-        isCurrent(parts.layout.shown, this.layout?.shown),
-      );
-      this.layout = parts.layout;
-      this.viewCompletion = newer.completion && this.viewCompletion ? this.viewCompletion : parts.completion;
-      this.facts = newer.changeset && heldFacts ? { ...parts.facts, completion: heldFacts.completion } : parts.facts;
-      this.shownCommit = commit;
-      this.restoreFailures = manifest.restoreFailures;
-      this.cells.replace(parts.states, newer);
-      if (parts.facts.lens === "perCommit" && parts.facts.commits > 1) void this.loadCommits();
-      else this.commits = [];
-      this.announce();
-    },
-  });
-  /** Another changeset was asked for and is not announced yet. */
-  private opening = $state(false);
-  private pendingOpen = new PendingOpen((on) => (this.opening = on));
-  private openingListeners = new Set<(opening: Opening) => void>();
-  /** What requests about the files read: the interdiff of `range`, a commit, or the changeset. */
-  get view(): View {
-    return this.range || this.commitIndex === undefined ? rangeView(this.range) : commitView(this.commitIndex);
-  }
-  /** The range or commit the layout is of, as a string; empty for the changeset. */
-  viewKey = $derived(rangeKey(this.layout?.interdiff) + (this.shownCommit === undefined ? "" : `c${this.shownCommit}`));
+/** A request about a view that has no session: the views it came from are gone. */
+function gone(): Promise<void> {
+  notices.show(STALE_NOTICE);
+  return Promise.resolve();
+}
 
-  /**
-   * While the review view shows only the files that had hunks seen against an old base when it was
-   * asked for: their paths. Re-confirming does not shrink it, so the view stays as it is.
-   */
-  private limitedTo = $state.raw<ReadonlySet<string>>();
-  get baseChanged(): ReadonlySet<string> | undefined {
-    return this.limitedTo;
+/** The part of a view that file tabs read, forwarded to what `target` is now. */
+abstract class ForwardedView implements ViewSource {
+  protected abstract get target(): ViewSource | undefined;
+  protected abstract attach(session: ChangesetSession, listener: WriteListener): () => void;
+  private watch = onView<WriteListener>((session, listener) => this.attach(session, listener));
+
+  currentShown(): Shown | undefined {
+    return untrack(() => this.target)?.currentShown();
   }
 
-  /** What the views last told about, which the next change is told against; kept while the next changeset loads. */
-  private viewed?: ViewPoint;
-  private viewListeners = new Set<(frame: Frame, change: ViewChange) => void>();
-
-  /** Same array while only review state changes. */
-  paths = $derived(this.layout?.paths ?? NO_PATHS);
-  private layouts = $derived(new Map(this.layout?.files.map((file) => [file.path, file])));
-  /** The files the Changes tab shows: all of them, or those of `baseChanged`. */
-  shownFiles = $derived.by(() => {
-    const files = this.layout?.files ?? [];
-    return this.baseChanged ? files.filter((f) => this.baseChanged?.has(f.path)) : files;
-  });
-
-  /** The head commit of a pull request, whose checks the toolbar shows; none for another changeset. */
-  get headCommit(): string | undefined {
-    const facts = this.facts;
-    return facts?.target.changeset.type === "pullRequest" ? facts.target.head : undefined;
+  currentLayout(): ViewLayout | undefined {
+    return untrack(() => this.target)?.currentLayout();
   }
 
-  /** The commit whose runs the Pipelines tool shows: the one on view by commit, else the head. */
-  get pipelineCommit(): string | undefined {
-    return this.shownCommit === undefined ? this.headCommit : this.commits[this.shownCommit]?.commit.id;
-  }
-
-  /** How many files have hunks seen against an older base, which "review only these" narrows to. */
-  get baseChangedCount(): number {
-    return this.baseChanged ? this.baseChangedFiles().length : 0;
-  }
-
-  /** Whether a review of the changeset is open (SPEC §6: Finish review ends it). */
-  get reviewOpen(): boolean {
-    return this.facts?.review.state === "open";
-  }
-
-  /** The lens the changeset is reviewed in; none before the first manifest. */
-  get lens(): Lens | undefined {
-    return this.facts?.lens;
-  }
-
-  /** How many commits the changeset has. */
-  get commitCount(): number {
-    return this.facts?.commits ?? 0;
-  }
-
-  /** The commit on view, with its own progress; none for the whole changeset. */
-  get shownCommitUnit(): CommitUnit | undefined {
-    return this.shownCommit === undefined ? undefined : this.commits[this.shownCommit];
-  }
-
-  /** The progress the header shows: the commit on view's own, else the view's. */
-  get shownCompletion(): Completion | undefined {
-    return this.shownCommit === undefined ? this.viewCompletion : (this.facts?.completion ?? this.viewCompletion);
-  }
-
-  /** The structure of a file of the view. */
   layoutOf(path: string): FileLayout | undefined {
-    return this.layouts.get(path);
+    return this.target?.layoutOf(path);
   }
 
-  /** The review state of a file of the view as it is now. */
-  file(path: string): FileState | undefined {
-    return this.cells.file(path);
-  }
-
-  /** A file of the view with its review state as it is now; to be read, not kept. */
-  reviewed(path: string): ReviewedFile | undefined {
-    const layout = this.layouts.get(path);
-    const state = this.cells.file(path);
-    return layout && state && { ...layout, ...state };
-  }
-
-  /** The review state of a file at the moment of use; reads nothing reactively. */
   state(path: string): FileState | undefined {
-    return this.cells.state(path);
+    return untrack(() => this.target)?.state(path);
   }
 
   version(path: string): number {
-    return this.cells.version(path);
+    return untrack(() => this.target)?.version(path) ?? 0;
   }
 
-  /** The layout of the view on screen, for reading at the moment of use; reads nothing reactively. */
-  currentLayout(): ViewLayout | undefined {
-    return untrack(() => this.layout);
+  subscribe(listener: WriteListener): () => void {
+    return this.watch(listener);
   }
 
-  /** What is true of the changeset as a whole, for reading at the moment of use; reads nothing reactively. */
-  currentFacts(): ChangesetFacts | undefined {
-    return untrack(() => this.facts);
-  }
-
-  /**
-   * The whole changeset's files and base with what is true of it, whatever range or commit the review
-   * shows: what Problems and the queue panel read.
-   */
-  get wholeFrame(): Frame | undefined {
-    const layout = this.whole.layout;
-    return layout && this.facts && { layout, facts: this.facts };
-  }
-
-  /**
-   * The frame on view, reading the manifest only when the store holds none: the review screen is
-   * rebuilt from the store, which keeps the manifest current for the queue too.
-   */
-  async frame(): Promise<Frame | undefined> {
-    if (this.layout && this.facts) return { layout: this.layout, facts: this.facts };
-    return this.refresh();
-  }
-
-  constructor() {
-    session.onConnect((backend) =>
-      backend.onEvent((event) => {
-        if (event.project !== backend.project) return;
-        if (event.type === "changesetOpened") {
-          if (!this.pendingOpen.announced(keyId(event.changeset))) return;
-          this.clear();
-          this.notifyOpening({ type: "opened", changeset: event.changeset });
-          void this.reread(event.revision);
-        } else if (event.type === "snapshotSettled") void this.reread(event.revision);
-        else if (event.type === "targetChanged") void this.reread(undefined);
-        else if (event.type === "lensChanged") void this.followLens(event.lens);
-        // A mark made in a range or a commit is announced as that of the changeset's file, which they do not show.
-        else if (event.type === "reviewChanged" && event.revision === this.layout?.shown.revision) {
-          if (this.showsChangeset) this.applyReview(event.update);
-          else this.applyTotals(event.update);
-          this.whole.heard(event.update, event.revision);
-        } else if (event.type === "reviewStarted" && this.facts) this.facts = { ...this.facts, review: event.review };
-        else if (event.type === "restoreFailed") this.restoreFailures = event.failures;
-      }),
-    );
-    // The changeset on view is read for the queue as well: the review screen is not what loads it.
-    session.onOpen(() => void this.reread(undefined));
-    session.onResync(() => {
-      if (this.layout) void this.reread(undefined);
-    });
-    session.onClose(() => {
-      this.clear();
-      this.viewed = undefined;
-    });
-    // The per-commit list is the review screen's, like the versions and the symbols: it follows the
-    // screen and owns nothing of a changeset nobody shows.
-    whileReview(() => {
-      this.commitsFollowed = true;
-      if (this.facts?.lens === "perCommit" && this.facts.commits > 1) void this.loadCommits();
-      return () => {
-        this.commitsFollowed = false;
-        this.commitReads.cancel();
-        this.commits = [];
-      };
-    });
-    // The backend is told the review screen shows only once the changeset it will show is on view.
-    $effect.root(() => {
-      $effect(() => {
-        const loading = this.loading;
-        untrack(() => (reviewShown.onView = !loading));
-      });
-    });
-  }
-
-  /**
-   * Drops everything of the changeset on view, for the views to show that the next one is loading.
-   * A manifest fetch underway is of the changeset dropped and counts for nothing.
-   */
-  private clear() {
-    this.manifestLoads.cancel();
-    this.layout = this.facts = this.viewCompletion = undefined;
-    this.range = undefined;
-    this.limitedTo = undefined;
-    this.commitIndex = this.shownCommit = undefined;
-    this.lastCommit = 0;
-    this.commits = [];
-    this.commitReads.cancel();
-    this.restoreFailures = [];
-    this.cells.reset();
-    this.whole.clear();
-  }
-
-  /**
-   * The first manifest of a project or of the changeset just opened is being fetched: nothing of the
-   * changeset is known, and the views show that instead of what was on view before.
-   */
-  get loading(): boolean {
-    return this.opening || (this.fetching && !this.layout);
-  }
-
-  /** The layout on screen is of the changeset as a whole, not of a range or a commit. */
-  private get showsChangeset(): boolean {
-    return this.layout?.shown.view.type === "changeset";
-  }
-
-  /**
-   * Called when a changeset is asked for (whatever belongs to the changeset on view is to be dropped
-   * now), when the backend announced the one on view (to be read anew; not an earlier request's while a
-   * newer is pending) and when it answered without announcing one (the changeset on view stays, to be
-   * read again). Returns the unsubscribe function.
-   */
-  onOpening(listener: (opening: Opening) => void): () => void {
-    this.openingListeners.add(listener);
-    return () => this.openingListeners.delete(listener);
-  }
-
-  private notifyOpening(opening: Opening) {
-    for (const listener of this.openingListeners) listener(opening);
-  }
-
-  /**
-   * Called with the frame on view when the views it shows changed: a newer revision, another range or
-   * commit, or another filter. The listener is told which (see `viewChange`). Returns the unsubscribe function.
-   */
-  onViewChange(listener: (frame: Frame, change: ViewChange) => void): () => void {
-    this.viewListeners.add(listener);
-    return () => this.viewListeners.delete(listener);
-  }
-
-  /** Tells the listeners what changed about the frame on view since the last time. */
-  private announce() {
-    const { layout, facts } = this;
-    if (!layout || !facts) return;
-    const point = viewPoint(layout, this.shownCommit, this.limitedTo);
-    const change = viewChange(this.viewed, point);
-    this.viewed = point;
-    if (change === "none") return;
-    for (const listener of this.viewListeners) listener({ layout, facts }, change);
-  }
-
-  private limit(files: ReadonlySet<string> | undefined) {
-    this.limitedTo = files;
-    this.announce();
-  }
-
-  /**
-   * Fetches the manifest again; the revision may have moved. Only the latest fetch counts: an older
-   * one that settles later gives the latest's manifest. Resolves with nothing when the project was
-   * closed meanwhile.
-   */
-  async refresh(): Promise<Frame | undefined> {
-    const loaded = await this.manifestLoads.load(() => this.fetchManifest());
-    return loaded && this.layout && this.facts && { layout: this.layout, facts: this.facts };
-  }
-
-  /**
-   * Reads the manifest of the view on screen again, and the changeset as a whole when the view is not
-   * it: a settle, a target change, a resync or another changeset. A mark is written into the whole
-   * view by its own announcement instead, so a burst of marks reads nothing.
-   */
-  private async reread(revision: number | undefined) {
-    this.fed = false;
-    try {
-      await this.refresh();
-    } catch (error) {
-      notices.report(error);
-    }
-    if (this.wholeFed || this.view.type === "changeset") return;
-    if (refetchesWhole(revision, this.whole.revision)) await this.whole.reload();
-  }
-
-  /** Whether the refresh that just ran fed the whole-changeset view; read after an await, so not narrowed. */
-  private get wholeFed(): boolean {
-    return this.fed;
-  }
-
-  /**
-   * The manifest of the view. A range that covers every push becomes the changeset, which only the
-   * manifest's latest version says, and the commit the lens asks for is shown instead of the changeset, as the
-   * manifest says too. A range or commit the backend does not find (its versions or commit are gone) gives
-   * way to the changeset.
-   */
-  private async fetchManifest(): Promise<{ manifest: Manifest; commit: number | undefined }> {
-    const backend = session.connected();
-    for (let attempt = 0; ; attempt++) {
-      const range = this.range;
-      const commit = range ? undefined : this.commitIndex;
-      let manifest: Manifest;
-      try {
-        manifest = await backend.manifest(this.view);
-      } catch (error) {
-        if ((!range && commit === undefined) || !isKind(error, "notFound")) throw error;
-        if (range) this.range = undefined;
-        else this.commitIndex = undefined;
-        notices.report(error);
-        continue;
-      }
-      const latest = manifest.review.state === "open" ? manifest.review.version : undefined;
-      if (range && normalised(range, latest) === undefined && attempt < 3) {
-        this.range = undefined;
-        continue;
-      }
-      // The changeset manifest is the changeset as a whole, whether the view settles on it or moves on
-      // to the commit the lens asks for: it is held for Problems, the queue panel and a whole tab.
-      if (!range && commit === undefined) {
-        this.whole.adopt(partsOf(manifest, undefined));
-        this.fed = true;
-      }
-      if (!range) {
-        const wanted = commitToShow(manifest.lens, manifest.commits, this.lastCommit);
-        if (wanted !== commit && attempt < 3) {
-          this.commitIndex = wanted;
-          continue;
-        }
-      }
-      return { manifest, commit };
-    }
-  }
-
-  /** Reads the commits again, with their progress. Only the latest reading counts. */
-  async loadCommits() {
-    if (!this.commitsFollowed) return;
-    const revision = this.layout?.shown.revision;
-    if (revision === undefined) return;
-    const isLatest = this.commitReads.begin();
-    try {
-      const { revision: answered, units } = await this.commitList.reload();
-      // A list of a revision the view moved on from says nothing of the one on screen.
-      if (isLatest() && answered === revision) this.commits = units;
-    } catch (error) {
-      if (isLatest()) notices.failed("Could not load the commits", error);
-    }
-  }
-
-  /** Shows what the commit at `index` changed, and fetches its manifest. */
-  async showCommit(index: number) {
-    this.lastCommit = index;
-    this.range = undefined;
-    this.commitIndex = index;
-    try {
-      await this.refresh();
-    } catch (error) {
-      notices.report(error);
-    }
-  }
-
-  /**
-   * Goes to the commit `delta` away from the one on view, if there is one; answers whether it did.
-   * It does not wrap around: the first and the last commit are the ends.
-   */
-  stepCommit(delta: number): boolean {
-    if (this.shownCommit === undefined) return false;
-    const to = neighbour(this.shownCommit, delta, this.facts?.commits ?? 0);
-    if (to === undefined) return false;
-    void this.showCommit(to);
-    return true;
-  }
-
-  /**
-   * Reviews the changeset in `lens`, which the backend remembers for it. The backend pushes `lensChanged`, which
-   * shows the view that goes with it.
-   */
-  async showLens(lens: Lens) {
-    try {
-      await session.connected().setLens(lens);
-    } catch (error) {
-      notices.report(error);
-    }
-  }
-
-  /** The changeset is reviewed in `lens` now, as this window or another chose: shows the view that goes with it. */
-  private async followLens(lens: Lens) {
-    // The commits replace a range; leaving them for a range keeps it, already on view.
-    if (lens === "perCommit") this.range = undefined;
-    else if (this.range) return;
-    this.commitIndex = lens === "perCommit" ? this.lastCommit : undefined;
-    try {
-      await this.refresh();
-    } catch (error) {
-      notices.report(error);
-    }
-  }
-
-  /** Shows the changeset as a whole, out of a range and out of the commits (the backend remembers the "All changes" lens), and fetches its manifest. */
-  async showWhole() {
-    if (this.range) await this.setRange(undefined);
-    if (this.facts?.lens === "perCommit") await this.showLens("squash");
-    this.commitIndex = undefined;
-    try {
-      await this.refresh();
-    } catch (error) {
-      notices.report(error);
-    }
-  }
-
-  /**
-   * Shows the interdiff of `range`, or the whole changeset for none, and fetches its manifest. It
-   * leaves the by commit lens, which the range replaces.
-   */
-  async setRange(range: Range | undefined) {
-    const leavingCommits = this.facts?.lens === "perCommit";
-    if (range) this.limit(undefined);
-    this.range = range;
-    if (range) this.commitIndex = undefined;
-    // With the range set, the lens change it causes shows nothing new and loads nothing.
-    if (leavingCommits) await this.showLens("squash");
-    try {
-      await this.refresh();
-    } catch (error) {
-      notices.report(error);
-    }
-  }
-
-  /** What the layout on screen is of, which the views are built for; none before the first manifest. Reads nothing reactively. */
-  currentShown(): Shown | undefined {
-    return untrack(() => this.layout?.shown);
-  }
-
-  /**
-   * Whether a request built for `shown` may go out: the manifest is still the one it was built from and
-   * no other view has been asked for since. If not, the views it came from are about to be replaced
-   * and the viewer is told so.
-   */
   admit(shown: Shown): boolean {
-    const asked = this.layout && { revision: this.layout.shown.revision, view: this.view };
-    if (isCurrent(shown, asked)) return true;
+    const target = untrack(() => this.target);
+    if (target) return target.admit(shown);
     notices.show(STALE_NOTICE);
     return false;
   }
 
-  /** Flips one hunk of the file in `shown`, the view the caller displays; the backend rejects a stale revision. */
-  toggleHunk(shown: Shown, path: string, hunk: number) {
-    return this.marks.toggleHunk(shown, path, hunk);
+  toggleHunk(shown: Shown, path: string, hunk: number): Promise<void> {
+    return this.target?.toggleHunk(shown, path, hunk) ?? gone();
   }
 
-  /** Flips the flag of one hunk. */
-  toggleFlag(shown: Shown, path: string, hunk: number) {
-    return this.marks.toggleFlag(shown, path, hunk);
+  toggleFlag(shown: Shown, path: string, hunk: number): Promise<void> {
+    return this.target?.toggleFlag(shown, path, hunk) ?? gone();
   }
 
-  /** Flips the acknowledgement of one non-text item. */
-  toggleItem(shown: Shown, path: string, kind: NonTextKind) {
-    return this.marks.toggleItem(shown, path, kind);
+  toggleItem(shown: Shown, path: string, kind: NonTextKind): Promise<void> {
+    return this.target?.toggleItem(shown, path, kind) ?? gone();
   }
 
-  /** Marks everything of a file seen, or takes every mark back if it all is seen already. */
-  toggleFileSeen(shown: Shown, path: string) {
-    return this.marks.toggleFileSeen(shown, path);
+  toggleFileSeen(shown: Shown, path: string): Promise<void> {
+    return this.target?.toggleFileSeen(shown, path) ?? gone();
   }
 
-  /** Marks everything of every file of the view below the directory `dir` seen, or takes every mark back. */
-  async setDirectorySeen(shown: Shown, dir: string, seen: boolean) {
-    const paths = pathsBelow(this.paths, dir);
-    if (paths.length) await this.marks.setFilesSeen(shown, paths, seen);
+  reconfirmFile(shown: Shown, path: string): Promise<void> {
+    return this.target?.reconfirmFile(shown, path) ?? gone();
   }
 
-  /** Marks the hunks of a file seen against an old base seen again. */
-  reconfirmFile(shown: Shown, path: string) {
-    return this.marks.reconfirmFile(shown, path);
+  async baseDiff(shown: Shown, path: string, hunk: number): Promise<BaseDiff | undefined> {
+    const target = this.target;
+    if (target) return target.baseDiff(shown, path, hunk);
+    await gone();
+    return undefined;
   }
 
-  /** The files that have hunks seen against an old base, as they are now. */
-  baseChangedFiles(): string[] {
-    return this.paths.filter((path) => this.file(path)?.review.hunks.includes("seenAgainstOldBase"));
-  }
-
-  /** Shows only the files with hunks seen against an old base in the review view, which then shows the changeset. */
-  async showBaseChanged() {
-    if (this.range) await this.setRange(undefined);
-    this.limit(new Set(this.baseChangedFiles()));
-  }
-
-  /** Shows every file again. */
-  showAll() {
-    this.limit(undefined);
-  }
-
-  /** Re-confirms every hunk seen against an old base of the changeset. */
-  async reconfirmAll() {
-    const shown = this.currentShown();
-    if (!shown) return;
-    for (const path of this.baseChangedFiles()) {
-      // A request that failed refetched the manifest: the rest asks again.
-      if (this.layout?.shown.revision !== shown.revision) return;
-      await this.reconfirmFile(shown, path);
-    }
-  }
-
-  /** The base diff of a hunk seen against an old base; `undefined` after showing why it could not be had. */
-  baseDiff(shown: Shown, path: string, hunk: number): Promise<BaseDiff | undefined> {
-    return this.marks.baseDiff(shown, path, hunk);
-  }
-
-  /** Where a comment on a part of the file attaches in `shown`; rejects if `shown` is not current. */
   commentTarget(shown: Shown, path: string, at: CommentAt) {
-    return this.marks.commentTarget(shown, path, at);
-  }
-
-  /** The changesets on offer and the one on view; `undefined` after showing why they could not be listed. */
-  async listChangesets() {
-    try {
-      return await session.connected().listChangesets();
-    } catch (error) {
-      notices.report(error);
-      return undefined;
-    }
-  }
-
-  /** The open pull requests on offer; `undefined` after showing why they could not be listed. */
-  async listPullRequests() {
-    try {
-      return await session.connected().listPullRequests();
-    } catch (error) {
-      notices.report(error);
-      return undefined;
-    }
-  }
-
-  /** The lines each of `keys` changes, in order; `undefined` where counting failed. */
-  async changesetLines(keys: ChangesetKey[]) {
-    try {
-      return await session.connected().changesetLines(keys);
-    } catch {
-      return undefined;
-    }
-  }
-
-  /**
-   * Puts a changeset on view. What is on view belongs to another changeset from now on and is dropped; the
-   * backend pushes `changesetOpened`, which fetches the manifest. If it answers without (the changeset
-   * is on view already, or it refused), the changeset on view is read again.
-   */
-  async openChangeset(key: ChangesetKey) {
-    const backend = session.connected();
-    const token = this.pendingOpen.begin(keyId(key));
-    this.clear();
-    this.notifyOpening({ type: "requested" });
-    try {
-      await backend.openChangeset(key);
-    } catch (error) {
-      notices.report(error);
-    }
-    if (!this.pendingOpen.settle(token)) return;
-    this.notifyOpening({ type: "unannounced" });
-    await this.refresh().catch((error: unknown) => notices.report(error));
-  }
-
-  /** Fetches the remotes. The footer shows the task; the lists follow with `changesetsChanged`. */
-  async fetch() {
-    try {
-      await session.connected().fetch();
-    } catch (error) {
-      notices.report(error);
-    }
-  }
-
-  /**
-   * Ends the open review and says how it ended. The backend pushes `snapshotSettled`, which
-   * fetches the manifest again, back to browsing.
-   */
-  async finishReview() {
-    try {
-      this.range = undefined;
-      const complete = await session.connected().finishReview();
-      notices.show(complete ? "Review finished: everything was seen" : "Review finished with unseen changes left");
-    } catch (error) {
-      notices.report(error);
-    }
-  }
-
-  /**
-   * Replaces the repository's review filter. The backend pushes `snapshotSettled`, which fetches the new
-   * manifest. Resolves with the backend's message if it refused the filter (a bad glob).
-   */
-  async setFilter(filter: ReviewFilter): Promise<string | undefined> {
-    try {
-      await session.connected().setProjectFilter(filter);
-      return undefined;
-    } catch (error) {
-      return errorText(error);
-    }
-  }
-
-  /** What each glob of the draft `filter` matches in the changeset on view; `undefined` if it could not be asked. */
-  async patternMatches(filter: ReviewFilter) {
-    try {
-      return await session.connected().patternMatches(filter);
-    } catch {
-      return undefined;
-    }
-  }
-
-  /** The names of the folders directly in the repository's folder `path` (`""` is the root); `undefined` if there is no such folder. */
-  async folders(path: string) {
-    try {
-      const { entries } = await session.connected().listDirectory(path);
-      return entries.filter((e) => e.kind === "dir").map((e) => e.name);
-    } catch {
-      return undefined;
-    }
-  }
-
-  /** Marks the repository trusted or not. The backend then pushes `targetChanged`, which fetches the manifest that says so. */
-  async setProjectTrusted(trusted: boolean) {
-    try {
-      await session.connected().setProjectTrusted(trusted);
-    } catch (error) {
-      notices.report(error);
-    }
-  }
-
-  /** Trusts the pull request on view at its current head; announced like `setProjectTrusted`. */
-  async trustPullRequest() {
-    try {
-      await session.connected().trustPullRequest();
-    } catch (error) {
-      notices.report(error);
-    }
-  }
-
-  /** Excludes `path` (a file, or a folder with `dir`) from the review. As with `setFilter`, the backend then pushes `snapshotSettled`. */
-  async excludePath(path: string, dir: boolean) {
-    try {
-      await session.connected().excludePath(path, dir);
-    } catch (error) {
-      notices.report(error);
-    }
-  }
-
-  /** Limits this review to the folder `path`; the project's filter stays as it is. */
-  async reviewOnly(path: string) {
-    const filter = this.facts?.filter;
-    if (!filter) return;
-    await this.narrow({ ...filter, roots: [path] });
-  }
-
-  /**
-   * Narrows this review to `filter` in place of the project's, or ends the narrowing for none. As with `setFilter`,
-   * the backend then pushes `snapshotSettled`.
-   */
-  async narrow(filter: ReviewFilter | undefined) {
-    const changeset = this.facts?.target.changeset;
-    if (!changeset) return;
-    try {
-      await session.connected().narrowReview(changeset, filter);
-    } catch (error) {
-      notices.report(error);
-    }
-  }
-
-  /** The children of a directory of the target snapshot; `undefined` after showing why it failed. */
-  async listDirectory(path: string) {
-    try {
-      return await session.connected().listDirectory(path);
-    } catch (error) {
-      notices.report(error);
-      return undefined;
-    }
-  }
-
-  /**
-   * Tells the viewer why a request failed. When the manifest has moved on from the revision the
-   * request was sent for, the views are about to be replaced and the action has to be repeated.
-   */
-  reportFailure(error: unknown, sent?: number) {
-    reportFailure(error, sent, this.layout?.shown.revision);
-  }
-
-  /** An answer another view of this window got for the view on screen's own lines (a tab at the commit on screen): it is as good as one this store asked for. */
-  adopt(shown: Shown, update: ReviewUpdate) {
-    if (isCurrent(shown, this.currentShown())) this.applyReview(update);
-  }
-
-  /**
-   * Applies an update of the view on screen. What the window holds of the file and of the totals is
-   * kept if it is as new or newer, so an update that arrives twice (as the answer and as the event)
-   * or after a later one changes nothing.
-   */
-  private applyReview(update: ReviewUpdate) {
-    const facts = this.facts;
-    if (!this.layout || !facts) return;
-    const known = this.cells.has(update.path);
-    const fresh = this.cells.order.file(update.path, update.seq);
-    const completion = this.cells.order.completion(update.seq);
-    // Only the changeset's own view says how far the changeset as a whole is.
-    const whole = this.showsChangeset && this.cells.order.changeset(update.seq);
-    if (!fresh && !completion && !whole) return;
-    if (completion) this.viewCompletion = update.changeset;
-    if (whole) this.facts = { ...facts, completion: update.changeset };
-    if (fresh && known) this.cells.put(update.path, { review: update.review, completion: update.completion });
-    if (facts.lens === "perCommit" && facts.commits > 1) void this.loadCommits();
-  }
-
-  /** A mark in the changeset's file, which a range or commit on screen does not show: the changeset's progress and the commits' follow. */
-  private applyTotals(update: ReviewUpdate) {
-    if (!this.facts || !this.cells.order.changeset(update.seq)) return;
-    this.facts = { ...this.facts, completion: update.changeset };
-    void this.loadCommits();
-  }
-
-  /** Calls `listener` after review state was written, with the paths it concerns; returns the unsubscribe function. */
-  subscribe(listener: WriteListener): () => void {
-    return this.cells.subscribe(listener);
+    const target = this.target;
+    if (target) return target.commentTarget(shown, path, at);
+    notices.show(STALE_NOTICE);
+    return Promise.reject(new RequestError("outdated", STALE_NOTICE));
   }
 }
 
-export type Changeset = ChangesetStore;
+/** The changeset as a whole, whatever range or commit the review shows. */
+class ForwardedWhole extends ForwardedView {
+  protected get target(): WholeView | undefined {
+    return opened.session?.whole;
+  }
 
-export const changeset = new ChangesetStore();
+  protected attach(session: ChangesetSession, listener: WriteListener) {
+    return session.whole.subscribe(listener);
+  }
+
+  get layout(): ViewLayout | undefined {
+    return this.target?.layout;
+  }
+
+  get revision(): number | undefined {
+    return this.target?.revision;
+  }
+
+  reviewed(path: string): ReviewedFile | undefined {
+    return this.target?.reviewed(path);
+  }
+
+  heard(update: Answer, revision: number) {
+    this.target?.heard(update, revision);
+  }
+}
+
+class ForwardedChangeset extends ForwardedView {
+  protected get target(): ChangesetSession | undefined {
+    return opened.session;
+  }
+
+  protected attach(session: ChangesetSession, listener: WriteListener) {
+    return session.subscribe(listener);
+  }
+
+  readonly whole = new ForwardedWhole();
+
+  get layout(): ViewLayout | undefined {
+    return opened.session?.layout;
+  }
+
+  get facts(): ChangesetFacts | undefined {
+    return opened.session?.facts;
+  }
+
+  get viewCompletion(): Completion | undefined {
+    return opened.session?.viewCompletion;
+  }
+
+  get restoreFailures(): RestoreFailure[] {
+    return opened.session?.restoreFailures ?? NO_FAILURES;
+  }
+
+  get range(): Range | undefined {
+    return opened.session?.range;
+  }
+
+  get commitIndex(): number | undefined {
+    return opened.session?.commitIndex;
+  }
+
+  get shownCommit(): number | undefined {
+    return opened.session?.shownCommit;
+  }
+
+  get commits(): CommitUnit[] {
+    return opened.session?.commits ?? NO_COMMITS;
+  }
+
+  private noCommits = new CommitList(() => connection.connected().commits());
+
+  /** The commits by revision; the list of the session on view. */
+  get commitList(): CommitList {
+    return opened.session?.commitList ?? this.noCommits;
+  }
+
+  get view(): View {
+    return opened.session?.view ?? rangeView(undefined);
+  }
+
+  get viewKey(): string {
+    return opened.session?.viewKey ?? rangeKey(undefined);
+  }
+
+  get baseChanged(): ReadonlySet<string> | undefined {
+    return opened.session?.baseChanged;
+  }
+
+  get paths(): readonly string[] {
+    return opened.session?.paths ?? NO_PATHS;
+  }
+
+  get shownFiles() {
+    return opened.session?.shownFiles ?? [];
+  }
+
+  get headCommit(): string | undefined {
+    return opened.session?.headCommit;
+  }
+
+  get pipelineCommit(): string | undefined {
+    return opened.session?.pipelineCommit;
+  }
+
+  get baseChangedCount(): number {
+    return opened.session?.baseChangedCount ?? 0;
+  }
+
+  get reviewOpen(): boolean {
+    return opened.session?.reviewOpen ?? false;
+  }
+
+  get lens(): Lens | undefined {
+    return opened.session?.lens;
+  }
+
+  get commitCount(): number {
+    return opened.session?.commitCount ?? 0;
+  }
+
+  get shownCommitUnit(): CommitUnit | undefined {
+    return opened.session?.shownCommitUnit;
+  }
+
+  get shownCompletion(): Completion | undefined {
+    return opened.session?.shownCompletion;
+  }
+
+  get wholeFrame(): Frame | undefined {
+    return opened.session?.wholeFrame;
+  }
+
+  /** A changeset is being read and nothing of it is known yet. */
+  get loading(): boolean {
+    return opened.loading;
+  }
+
+  file(path: string): FileState | undefined {
+    return opened.session?.file(path);
+  }
+
+  reviewed(path: string): ReviewedFile | undefined {
+    return opened.session?.reviewed(path);
+  }
+
+  currentFacts(): ChangesetFacts | undefined {
+    return untrack(() => opened.session)?.currentFacts();
+  }
+
+  /** The frame on view, read once a session is there to hold it. */
+  async frame(): Promise<Frame | undefined> {
+    return (await opened.current())?.frame();
+  }
+
+  readonly onOpening = (listener: Parameters<typeof opened.onOpening>[0]) => opened.onOpening(listener);
+
+  readonly onViewChange = onView<(frame: Frame, change: ViewChange) => void>((session, listener) =>
+    session.onViewChange(listener),
+  );
+
+  openChangeset(key: ChangesetKey) {
+    return opened.open(key);
+  }
+
+  async refresh(): Promise<Frame | undefined> {
+    return (await opened.current())?.refresh();
+  }
+
+  async loadCommits() {
+    await opened.session?.loadCommits();
+  }
+
+  async showCommit(index: number) {
+    await opened.session?.showCommit(index);
+  }
+
+  stepCommit(delta: number): boolean {
+    return opened.session?.stepCommit(delta) ?? false;
+  }
+
+  async showLens(lens: Lens) {
+    await opened.session?.showLens(lens);
+  }
+
+  async showWhole() {
+    await opened.session?.showWhole();
+  }
+
+  async setRange(range: Range | undefined) {
+    await opened.session?.setRange(range);
+  }
+
+  async setDirectorySeen(shown: Shown, dir: string, seen: boolean) {
+    await (opened.session?.setDirectorySeen(shown, dir, seen) ?? gone());
+  }
+
+  baseChangedFiles(): string[] {
+    return opened.session?.baseChangedFiles() ?? [];
+  }
+
+  async showBaseChanged() {
+    await opened.session?.showBaseChanged();
+  }
+
+  showAll() {
+    opened.session?.showAll();
+  }
+
+  async reconfirmAll() {
+    await opened.session?.reconfirmAll();
+  }
+
+  async finishReview() {
+    await opened.session?.finishReview();
+  }
+
+  async reviewOnly(path: string) {
+    await opened.session?.reviewOnly(path);
+  }
+
+  async narrow(filter: ReviewFilter | undefined) {
+    await opened.session?.narrow(filter);
+  }
+
+  reportFailure(error: unknown, sent?: number) {
+    opened.session?.reportFailure(error, sent);
+  }
+
+  adopt(shown: Shown, update: Parameters<ChangesetSession["adopt"]>[1]) {
+    opened.session?.adopt(shown, update);
+  }
+
+  readonly listChangesets = listChangesets;
+  readonly listPullRequests = listPullRequests;
+  readonly changesetLines = changesetLines;
+  readonly fetch = fetchRemotes;
+  readonly setFilter = setFilter;
+  readonly patternMatches = patternMatches;
+  readonly folders = folders;
+  readonly setProjectTrusted = setProjectTrusted;
+  readonly trustPullRequest = trustPullRequest;
+  readonly excludePath = excludePath;
+  readonly listDirectory = listDirectory;
+}
+
+export type Changeset = ForwardedChangeset;
+
+export const changeset = new ForwardedChangeset();

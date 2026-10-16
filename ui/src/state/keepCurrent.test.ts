@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import type { SessionEvent } from "./backend.ts";
-import type { Opening } from "./changeset.svelte.ts";
+import type { Opening } from "./openedProtocol.ts";
 import { type Followed, type Upstream, keepCurrent } from "./keepCurrent.ts";
 
 function setup() {

@@ -9,6 +9,7 @@ import type { View } from "../../src/generated/View.ts";
 import type { Backend } from "../../src/state/backend.ts";
 import { keyId } from "../../src/state/changesetKey.ts";
 import { changeset } from "../../src/state/changeset.svelte.ts";
+import { opened } from "../../src/state/opened.svelte.ts";
 import { changesOf, reviewedOf } from "../../src/state/queueEntries.ts";
 import { queue } from "../../src/state/queue.svelte.ts";
 import { reviewShown } from "../../src/state/reviewShown.svelte.ts";
@@ -65,6 +66,12 @@ export async function checkInvariants(other: Backend): Promise<Violation[]> {
   ]);
 
   differ("shownView", "the view the layout is of", layout.shown.view, view);
+  differ(
+    "sessionKey",
+    "the changeset of the session on view",
+    opened.session && keyId(opened.session.key),
+    keyId(facts.target.changeset),
+  );
 
   differ(
     "fileReview",

@@ -3,7 +3,7 @@
 
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import type { Opening } from "../../state/changeset.svelte.ts";
+import type { Opening } from "../../state/openedProtocol.ts";
 import {
   type CommentsUpstream,
   cancelChangesetComment,

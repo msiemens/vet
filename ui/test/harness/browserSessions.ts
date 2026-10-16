@@ -105,9 +105,9 @@ export const sessions: Record<string, (d: Driver) => Promise<void>> = {
   /** A change that no notification announced is still drawn once the view is looked at again. */
   async healing(d) {
     await d.step("opened", () => Promise.resolve());
-    await d.page(`(() => { const l = __t.changeset.cells.listeners; window.__muted = new Set(l); l.clear(); })()`);
+    await d.page(`(() => { const l = __t.opened.session.cells.listeners; window.__muted = new Set(l); l.clear(); })()`);
     await d.step("another window marks while the views are not told", () => d.otherMark("b.txt", 0), { stale: true });
-    await d.page(`window.__muted.forEach((l) => __t.changeset.cells.listeners.add(l))`);
+    await d.page(`window.__muted.forEach((l) => __t.opened.session.cells.listeners.add(l))`);
     await d.step("the view is scrolled", () =>
       d.page(`document.querySelector(".pane.active .scroll").dispatchEvent(new Event("scroll"))`),
     );

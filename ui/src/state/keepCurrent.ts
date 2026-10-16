@@ -3,7 +3,7 @@
 // holds when another changeset is put on view.
 
 import type { SessionEvent } from "./backend.ts";
-import type { Opening } from "./changeset.svelte.ts";
+import type { Opening } from "./openedProtocol.ts";
 
 /** Where a store that follows the open project hears of what changes it. */
 export interface Upstream {
@@ -11,7 +11,7 @@ export interface Upstream {
   onEvent(listener: (event: SessionEvent) => void): () => void;
   /** Calls `listener` when the connection is up again, with the project open on it. */
   onResync(listener: () => void): () => void;
-  /** Calls `listener` as a changeset is put on view, see `ChangesetStore.onOpening`. */
+  /** Calls `listener` as a changeset is put on view, see `Opened.onOpening`. */
   onOpening(listener: (opening: Opening) => void): () => void;
 }
 

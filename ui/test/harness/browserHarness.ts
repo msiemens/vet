@@ -127,8 +127,9 @@ export async function runBrowserSession(
   await page.goto(url);
   await until(`!!document.querySelector(".body")`, "the app");
   await evaluate(`(async () => {
-    const [changeset, session, commands, versions, notices] = await Promise.all([
+    const [changeset, opened, session, commands, versions, notices] = await Promise.all([
       import("/src/state/changeset.svelte.ts"),
+      import("/src/state/opened.svelte.ts"),
       import("/src/state/session.svelte.ts"),
       import("/src/state/commands.ts"),
       import("/src/state/versions.svelte.ts"),
@@ -136,6 +137,7 @@ export async function runBrowserSession(
     ]);
     window.__t = {
       changeset: changeset.changeset,
+      opened: opened.opened,
       session: session.session,
       notices: notices.notices,
       commands: commands.commands,

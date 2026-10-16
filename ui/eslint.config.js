@@ -102,7 +102,7 @@ export default defineConfig(
     rules: { "no-restricted-imports": ["error", { patterns: [connection, manifestShapes] }] },
   },
   {
-    files: ["src/state/changeset.svelte.ts", "src/state/reviewModel.ts", "src/**/*.test.ts"],
+    files: ["src/state/changesetSession.svelte.ts", "src/state/reviewModel.ts", "src/**/*.test.ts"],
     ignores: ["src/state/connection.test.ts"],
     rules: { "no-restricted-imports": ["error", { patterns: [connection] }] },
   },

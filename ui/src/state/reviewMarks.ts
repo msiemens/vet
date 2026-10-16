@@ -30,6 +30,8 @@ export interface MarkHost {
   refresh(): Promise<unknown>;
   /** The states of a file's hunks as the host holds them. */
   hunks(path: string): readonly HunkState[];
+  /** Whether the host is gone (its changeset was switched away from): a failure of its requests is not told. */
+  ended?(): boolean;
 }
 
 /**
@@ -43,6 +45,10 @@ export function reportFailure(error: unknown, sent: number | undefined, current:
 }
 
 export function reviewMarks(host: MarkHost) {
+  const fail = (error: unknown, sent: number) => {
+    if (!host.ended?.()) reportFailure(error, sent, host.current()?.revision);
+  };
+
   /**
    * Applies the answers of a request unless the view it was sent for has been replaced (the manifest of the
    * new one has the state). A rejected request is normally a stale revision: the state is read anew and the
@@ -54,7 +60,7 @@ export function reviewMarks(host: MarkHost) {
       if (isCurrent(sent, host.current())) for (const update of updates) host.apply(update, sent);
     } catch (error) {
       await host.refresh().catch(() => undefined);
-      reportFailure(error, sent.revision, host.current()?.revision);
+      fail(error, sent.revision);
     }
   }
 
@@ -102,7 +108,7 @@ export function reviewMarks(host: MarkHost) {
       try {
         return atRevision(host.current()?.revision, await host.backend().baseDiff(shown.revision, path, hunk));
       } catch (error) {
-        reportFailure(error, shown.revision, host.current()?.revision);
+        fail(error, shown.revision);
         return undefined;
       }
     },

@@ -35,6 +35,8 @@ class Whole implements ViewSource {
   /** The newest change of the backend this view reflects. */
   private seen = -1;
   private reads = new Latest();
+  /** Whether the changeset this view belongs to was switched away from. */
+  private ended: () => boolean;
   private marks = reviewMarks({
     backend: () => session.connected(),
     admit: (shown) => this.admit(shown),
@@ -42,7 +44,12 @@ class Whole implements ViewSource {
     apply: (update) => this.applyUpdate(update),
     refresh: () => this.reload(),
     hunks: (path) => this.cells.state(path)?.review.hunks ?? [],
+    ended: () => this.ended(),
   });
+
+  constructor(ended: () => boolean) {
+    this.ended = ended;
+  }
 
   /** The revision the whole changeset was read at; none before the first read. */
   get revision(): number | undefined {
@@ -167,4 +174,4 @@ class Whole implements ViewSource {
 
 export type WholeView = Whole;
 
-export const newWhole = (): WholeView => new Whole();
+export const newWhole = (ended: () => boolean): WholeView => new Whole(ended);
