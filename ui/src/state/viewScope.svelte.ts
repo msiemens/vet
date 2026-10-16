@@ -9,6 +9,7 @@ import type { CommitUnit } from "../generated/CommitUnit";
 import type { NonTextKind } from "../generated/NonTextKind";
 import { STALE_NOTICE } from "../lib/notice";
 import type { Backend } from "./backend";
+import type { CommitList } from "./commitList";
 import { notices } from "./notices.svelte";
 import { Resource } from "./resource";
 import { newReviewCells } from "./reviewCells.svelte";
@@ -45,9 +46,6 @@ interface Loaded {
   commit?: CommitUnit;
 }
 
-/** How often a read is made again when the commits and the manifest turn out to be of different revisions. */
-const PAIRING_ATTEMPTS = 3;
-
 class Scope implements ViewSource {
   /** The view's files; none before the first manifest. */
   layout = $state.raw<ViewLayout>();
@@ -63,7 +61,7 @@ class Scope implements ViewSource {
   /** A failure of reading was reported and nothing has been read since. */
   private reported = false;
   private pending: Promise<void> = Promise.resolve();
-  private loads = new Resource<Loaded | "gone">({ apply: (loaded) => this.apply(loaded) });
+  private loads = new Resource<Loaded | "gone" | "stale">({ apply: (loaded) => this.apply(loaded) });
   private marks = reviewMarks({
     backend: () => this.backend,
     admit: (shown) => this.admit(shown),
@@ -81,6 +79,8 @@ class Scope implements ViewSource {
     private backend: Backend,
     readonly spec: ScopeSpec,
     private marked: (shown: Shown, update: Answer) => void,
+    private commits: CommitList,
+    private revision: () => number | undefined,
   ) {}
 
   /** Reads the manifest of the view; the latest read counts. */
@@ -115,26 +115,32 @@ class Scope implements ViewSource {
     else void this.load();
   }
 
-  /** The commit and the manifest it was read with are of one revision, else they are read again. */
-  private async fetch(): Promise<Loaded | "gone"> {
+  /**
+   * The commit's manifest and the commits are paired by revision. A view the changeset has moved
+   * past reads nothing: `"stale"` keeps what the scope holds and says nothing, since the store's
+   * next reload reads the newer revision; only a real failure is reported.
+   */
+  private async fetch(): Promise<Loaded | "gone" | "stale"> {
     if (this.spec.type === "changeset") return { parts: partsOf(await this.backend.manifest(CHANGESET), undefined) };
     const id = this.spec.id;
-    for (let attempt = 1; ; attempt++) {
-      const { revision, commits } = await this.backend.commits();
-      const index = commits.findIndex((c) => c.commit.id === id);
-      if (index < 0) return "gone";
-      const parts = partsOf(await this.backend.manifest(commitView(index)), index);
-      if (parts.revision === revision) return { parts, commit: commits[index] };
-      if (attempt >= PAIRING_ATTEMPTS) throw new Error("The commits changed while they were read");
-    }
+    const revision = this.revision();
+    if (revision === undefined) return "stale";
+    const commits = await this.commits.at(revision);
+    if (!commits) return "stale";
+    const index = commits.findIndex((c) => c.commit.id === id);
+    if (index < 0) return "gone";
+    const parts = partsOf(await this.backend.manifest(commitView(index)), index);
+    if (parts.revision !== revision) return "stale";
+    return { parts, commit: commits[index] };
   }
 
-  private apply(loaded: Loaded | "gone") {
+  private apply(loaded: Loaded | "gone" | "stale") {
     if (loaded === "gone") {
       this.gone = true;
       this.cells.clearedAll();
       return;
     }
+    if (loaded === "stale") return;
     const { parts, commit } = loaded;
     const newer = this.cells.order.load(
       parts.seq,
@@ -223,4 +229,6 @@ export const newScope = (
   backend: Backend,
   spec: ScopeSpec,
   marked: (shown: Shown, update: Answer) => void,
-): ViewScope => new Scope(backend, spec, marked);
+  commits: CommitList,
+  revision: () => number | undefined,
+): ViewScope => new Scope(backend, spec, marked, commits, revision);

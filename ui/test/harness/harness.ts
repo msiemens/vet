@@ -55,7 +55,7 @@ export interface Harness {
   step(
     name: string,
     run: () => unknown,
-    expected?: { marks?: number; notice?: string; listings?: number; rejected?: number },
+    expected?: { marks?: number; notice?: string; listings?: number; rejected?: number; commits?: number },
   ): Promise<void>;
   /** Resolves when `condition` holds; fails after a while. */
   until(condition: () => boolean, what: string): Promise<void>;
@@ -160,6 +160,7 @@ export async function runSession(name: SessionName, script: (h: Harness) => Prom
       async step(name, run, expected = {}) {
         const marksBefore = sent.filter((r) => MARKS.has(r.type)).length;
         const listingsBefore = sent.filter((r) => r.type === "listPullRequests").length;
+        const commitsBefore = sent.filter((r) => r.type === "commits").length;
         failed.length = 0;
         notices.close();
         await run();
@@ -174,6 +175,9 @@ export async function runSession(name: SessionName, script: (h: Harness) => Prom
         const listings = sent.filter((r) => r.type === "listPullRequests").length - listingsBefore;
         if (expected.listings !== undefined && listings !== expected.listings)
           step("the number of times the step asked for the pull requests", listings, expected.listings);
+        const commits = sent.filter((r) => r.type === "commits").length - commitsBefore;
+        if (expected.commits !== undefined && commits !== expected.commits)
+          step("the number of times the step asked for the commits", commits, expected.commits);
         if (failed.length !== (expected.rejected ?? 0)) step("requests the backend rejected", failed.slice(), []);
         if (notices.text !== expected.notice) step("the notice after the step", notices.text, expected.notice);
         results.push({ name, violations });

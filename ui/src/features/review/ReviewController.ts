@@ -86,7 +86,7 @@ export class ReviewController {
       changeset,
       this.tabs,
       (scope, paths) => this.scopeWritten(scope, paths),
-      (spec, marked) => newScope(backend, spec, marked),
+      (spec, marked) => newScope(backend, spec, marked, changeset.commitList, () => changeset.currentShown()?.revision),
     );
     this.findControl = new FindControl(this.find, this.tabs, {
       finder: (id, pane) => (pane === "text" ? this.views.text(id) : this.views.diff(id)),

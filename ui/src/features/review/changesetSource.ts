@@ -13,6 +13,7 @@ export type ChangesetSource = Pick<
   | "adopt"
   | "onOpening"
   | "shownCommit"
+  | "commitList"
   | "stepCommit"
   | "setRange"
   | "showWhole"

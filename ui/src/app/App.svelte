@@ -418,6 +418,7 @@
     files={changeset.facts?.files ?? 0}
     range={changeset.range ?? defaultRange(versions.items)}
     revision={changeset.layout?.shown.revision ?? 0}
+    commitList={changeset.commitList}
     onopen={(result) => {
       shell.show("review");
       appState.whenReview((c) => void c.openFound(result));

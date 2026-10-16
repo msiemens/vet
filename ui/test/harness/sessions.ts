@@ -117,17 +117,17 @@ export const sessions: Record<SessionName, (h: Harness) => Promise<void>> = {
     );
   },
 
-  /** The changeset reviewed by commit: marks, stepping, and the lens back. */
+  /** The changeset reviewed by commit: marks, stepping, and the lens back. The store reads the commits again on each mark and view change. */
   async commits(h) {
-    await h.step("opened the branch by commit", () => reviewByCommit(h));
-    await h.step("seen in a commit", () => hunk(h, first(), 0), ONE);
-    await h.step("next commit", () => changeset.showCommit(1));
-    await h.step("flagged in a commit", () => flag(h, first(), 0), ONE);
-    await h.step("file seen in a commit", () => file(h, first()), ONE);
-    await h.step("last commit", () => changeset.showCommit(2));
-    await h.step("lens back to the whole", () => changeset.showLens("squash"));
-    await h.step("seen in the changeset", () => hunk(h, "a.txt", 0), ONE);
-    await h.step("by commit again", () => changeset.showLens("perCommit"));
+    await h.step("opened the branch by commit", () => reviewByCommit(h), { commits: 1 });
+    await h.step("seen in a commit", () => hunk(h, first(), 0), { ...ONE, commits: 2 });
+    await h.step("next commit", () => changeset.showCommit(1), { commits: 1 });
+    await h.step("flagged in a commit", () => flag(h, first(), 0), { ...ONE, commits: 2 });
+    await h.step("file seen in a commit", () => file(h, first()), { ...ONE, commits: 2 });
+    await h.step("last commit", () => changeset.showCommit(2), { commits: 1 });
+    await h.step("lens back to the whole", () => changeset.showLens("squash"), { commits: 0 });
+    await h.step("seen in the changeset", () => hunk(h, "a.txt", 0), { ...ONE, commits: 0 });
+    await h.step("by commit again", () => changeset.showLens("perCommit"), { commits: 1 });
   },
 
   /**
@@ -203,70 +203,109 @@ export const sessions: Record<SessionName, (h: Harness) => Promise<void>> = {
     });
   },
 
-  /** A scope of a commit that is not the one on screen has that commit's files and marks, and keeps them while the window moves on. */
+  /** A scope of a commit that is not the one on screen has that commit's files and marks, and keeps them while the window moves on. Its commits come from the store's list, not a read of its own. */
   async pinned(h) {
-    await h.step("opened the branch by commit", () => reviewByCommit(h));
+    await h.step("opened the branch by commit", () => reviewByCommit(h), { commits: 1 });
     const commit = (index: number): View => ({ type: "commit", index });
     const id = changeset.commits[0].commit.id;
-    const scope = newScope(h.other, { type: "commit", id }, () => undefined);
+    const scope = newScope(
+      h.other,
+      { type: "commit", id },
+      () => undefined,
+      changeset.commitList,
+      () => changeset.currentShown()?.revision,
+    );
     const hunksOf = (layout: { files: readonly { path: string; hunks: readonly unknown[] }[] } | undefined) =>
       layout?.files.find((f) => f.path === "a.txt")?.hunks.length;
-    await h.step("another commit on screen", async () => {
-      await changeset.showCommit(2);
-      await scope.load();
-      const own = await h.other.manifest(commit(0));
-      const wanted = own.files.find((f) => f.path === "a.txt")?.hunks.length;
-      if (!wanted || hunksOf(scope.layout) !== wanted || scope.commit?.commit.id !== id)
-        throw new Error("the scope does not read its own commit");
-      if (hunksOf(changeset.currentLayout()) === wanted) throw new Error("the commits cannot be told apart");
-      const text = await h.other.fileText("b.txt", commit(0));
-      if (text.content.type !== "text" || text.content.text.includes("c2"))
-        throw new Error("a file the commit does not touch is not read as the commit leaves it");
-      const missing = await h.other.fileText("not/there.txt", commit(0));
-      if (missing.content.type !== "noText" || missing.content.reason !== "absent")
-        throw new Error("a file the commit lacks is not answered as absent");
-    });
-    await h.step("a mark in the scope", async () => {
-      const shown = scope.currentShown();
-      if (!shown) throw new Error("the scope has not read");
-      await scope.toggleHunk(shown, "a.txt", 0);
-      const own = await h.other.manifest(commit(0));
-      const held = scope.state("a.txt")?.review.hunks;
-      const real = own.files.find((f) => f.path === "a.txt")?.review.hunks;
-      if (held?.[0] !== "seen" || JSON.stringify(held) !== JSON.stringify(real))
-        throw new Error("the scope does not hold the mark");
-    });
-    await h.step("a mark made elsewhere is read once, its echo is not read again", async () => {
-      let reads = 0;
-      const manifest = h.other.manifest.bind(h.other);
-      h.other.manifest = (view) => {
-        reads++;
-        return manifest(view);
-      };
-      const revision = scope.currentShown()?.revision ?? -1;
-      const answer = await h.other.toggleHunk(revision, "a.txt", 1, commit(0));
-      scope.heard(answer, revision);
-      await scope.whenLoaded();
-      if (scope.state("a.txt")?.review.hunks[1] !== "seen") throw new Error("the scope did not follow the mark");
-      const afterMark = reads;
-      scope.heard(answer, revision);
-      await scope.whenLoaded();
-      if (reads !== afterMark || afterMark !== 1) throw new Error(`the scope read ${reads} times for one mark`);
-      h.other.manifest = manifest;
-    });
-    await h.step("the changeset's scope takes a mark of its file as the store does", async () => {
-      const whole = newScope(h.other, { type: "changeset" }, () => undefined);
-      await whole.load();
-      const revision = whole.currentShown()?.revision ?? -1;
-      const answer = await h.other.toggleHunk(revision, "b.txt", 0, CHANGESET);
-      whole.heard(answer, revision);
-      if (whole.state("b.txt")?.review.hunks[0] !== "seen") throw new Error("the changeset's scope did not follow");
-    });
+    await h.step(
+      "another commit on screen",
+      async () => {
+        const before = changeset.commits;
+        await changeset.showCommit(2);
+        // Wait for the store's list to be of the revision on screen, so the scope reuses it rather than racing its read.
+        await h.until(() => changeset.commits !== before, "the commits of the commit on screen");
+        await scope.load();
+        const own = await h.other.manifest(commit(0));
+        const wanted = own.files.find((f) => f.path === "a.txt")?.hunks.length;
+        if (!wanted || hunksOf(scope.layout) !== wanted || scope.commit?.commit.id !== id)
+          throw new Error("the scope does not read its own commit");
+        if (hunksOf(changeset.currentLayout()) === wanted) throw new Error("the commits cannot be told apart");
+        const text = await h.other.fileText("b.txt", commit(0));
+        if (text.content.type !== "text" || text.content.text.includes("c2"))
+          throw new Error("a file the commit does not touch is not read as the commit leaves it");
+        const missing = await h.other.fileText("not/there.txt", commit(0));
+        if (missing.content.type !== "noText" || missing.content.reason !== "absent")
+          throw new Error("a file the commit lacks is not answered as absent");
+      },
+      { commits: 1 },
+    );
+    await h.step(
+      "a mark in the scope",
+      async () => {
+        const shown = scope.currentShown();
+        if (!shown) throw new Error("the scope has not read");
+        await scope.toggleHunk(shown, "a.txt", 0);
+        const own = await h.other.manifest(commit(0));
+        const held = scope.state("a.txt")?.review.hunks;
+        const real = own.files.find((f) => f.path === "a.txt")?.review.hunks;
+        if (held?.[0] !== "seen" || JSON.stringify(held) !== JSON.stringify(real))
+          throw new Error("the scope does not hold the mark");
+      },
+      { commits: 1 },
+    );
+    await h.step(
+      "a mark made elsewhere is read once, its echo is not read again",
+      async () => {
+        let reads = 0;
+        const manifest = h.other.manifest.bind(h.other);
+        h.other.manifest = (view) => {
+          reads++;
+          return manifest(view);
+        };
+        const revision = scope.currentShown()?.revision ?? -1;
+        const before = changeset.commits;
+        const answer = await h.other.toggleHunk(revision, "a.txt", 1, commit(0));
+        await h.until(() => changeset.commits !== before, "the commits after the mark");
+        scope.heard(answer, revision);
+        await scope.whenLoaded();
+        if (scope.state("a.txt")?.review.hunks[1] !== "seen") throw new Error("the scope did not follow the mark");
+        const afterMark = reads;
+        scope.heard(answer, revision);
+        await scope.whenLoaded();
+        if (reads !== afterMark || afterMark !== 1) throw new Error(`the scope read ${reads} times for one mark`);
+        h.other.manifest = manifest;
+      },
+      { commits: 1 },
+    );
+    await h.step(
+      "the changeset's scope takes a mark of its file as the store does",
+      async () => {
+        const whole = newScope(
+          h.other,
+          { type: "changeset" },
+          () => undefined,
+          changeset.commitList,
+          () => changeset.currentShown()?.revision,
+        );
+        await whole.load();
+        const revision = whole.currentShown()?.revision ?? -1;
+        const answer = await h.other.toggleHunk(revision, "b.txt", 0, CHANGESET);
+        whole.heard(answer, revision);
+        if (whole.state("b.txt")?.review.hunks[0] !== "seen") throw new Error("the changeset's scope did not follow");
+      },
+      { commits: 1 },
+    );
     // A tab on the changeset while a commit is on screen comments through its own view, not the one on screen.
     await h.step(
       "a comment from the changeset's scope while a commit is on screen",
       async () => {
-        const whole = newScope(h.other, { type: "changeset" }, () => undefined);
+        const whole = newScope(
+          h.other,
+          { type: "changeset" },
+          () => undefined,
+          changeset.commitList,
+          () => changeset.currentShown()?.revision,
+        );
         await whole.load();
         const shown = whole.currentShown();
         if (!shown) throw new Error("the scope has not read");
@@ -277,8 +316,33 @@ export const sessions: Record<SessionName, (h: Harness) => Promise<void>> = {
         );
         if (!sent) throw new Error("the comment was refused");
       },
-      ONE,
+      { ...ONE, commits: 0 },
     );
+    // A background read that races the changeset moving on keeps the scope and says nothing; the
+    // store's reload reads the newer revision and brings the scope up to date then.
+    await h.step("a scope read that races a revision change is silent and catches up on the next read", async () => {
+      let revision = changeset.currentShown()?.revision ?? -1;
+      const racing = newScope(
+        h.other,
+        { type: "commit", id },
+        () => undefined,
+        changeset.commitList,
+        () => revision,
+      );
+      await racing.load();
+      const wasRevision = racing.currentShown()?.revision ?? -1;
+      if (wasRevision !== revision) throw new Error("the racing scope did not read its revision");
+      h.fixture.push("a.txt", "p9", [2, 10, 30]);
+      await h.until(() => (changeset.layout?.shown.revision ?? -1) > wasRevision, "the changeset to move on");
+      // The scope reads at the old revision, which the backend has moved past: it keeps its view and says nothing.
+      await racing.load();
+      if (racing.currentShown()?.revision !== wasRevision) throw new Error("the racing read replaced the scope's view");
+      // The store's reload reads at the revision now on view, and the scope catches up with it.
+      revision = changeset.currentShown()?.revision ?? -1;
+      await racing.load();
+      if (revision <= wasRevision) throw new Error("the changeset did not move to a newer revision");
+      if ((racing.currentShown()?.revision ?? -1) !== revision) throw new Error("the scope did not catch up");
+    });
   },
 
   /** A mark sent while the commit to show has not arrived is meant for the commit on screen. */

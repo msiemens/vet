@@ -43,7 +43,8 @@ import type { ViewScopes } from "./ViewScopes";
 export class ViewNavigation {
   private backend: Backend;
   /** The changeset on screen as the navigation reads it: its source, plus the commit it shows, where failures are reported and how the view is switched. */
-  private changeset: ViewSource & Pick<ChangesetSource, "shownCommit" | "reportFailure" | "setRange" | "showWhole">;
+  private changeset: ViewSource &
+    Pick<ChangesetSource, "shownCommit" | "commitList" | "reportFailure" | "setRange" | "showWhole">;
   private tabs: Tabs;
   private scopes: ViewScopes;
   private views: ReviewViews;
@@ -53,7 +54,8 @@ export class ViewNavigation {
 
   constructor(
     backend: Backend,
-    changeset: ViewSource & Pick<ChangesetSource, "shownCommit" | "reportFailure" | "setRange" | "showWhole">,
+    changeset: ViewSource &
+      Pick<ChangesetSource, "shownCommit" | "commitList" | "reportFailure" | "setRange" | "showWhole">,
     tabs: Tabs,
     scopes: ViewScopes,
     views: ReviewViews,
@@ -178,17 +180,15 @@ export class ViewNavigation {
   }
 
   /**
-   * The full id of the commit on screen, if one is. The commits are asked for rather than taken from
-   * the store, whose list may not be of this revision yet; a reply of another revision, or a commit
-   * that changed meanwhile, is an error.
+   * The full id of the commit on screen, if one is. The commits come from the store's list by
+   * revision; a list the changeset has moved past, or a commit that changed meanwhile, is an error.
    */
   private async commitOnScreen(): Promise<string | undefined> {
     const index = this.changeset.shownCommit;
     const shown = this.changeset.currentShown();
     if (index === undefined || !shown) return undefined;
-    const { revision, commits } = await this.backend.commits();
-    const id =
-      revision === shown.revision && this.changeset.shownCommit === index ? commits[index]?.commit.id : undefined;
+    const commits = await this.changeset.commitList.at(shown.revision);
+    const id = this.changeset.shownCommit === index ? commits?.[index]?.commit.id : undefined;
     if (id === undefined) throw new RequestError("outdated", STALE_NOTICE);
     return id;
   }

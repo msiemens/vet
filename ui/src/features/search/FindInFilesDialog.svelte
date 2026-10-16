@@ -32,6 +32,7 @@
   import TreeRow from "../../lib/ui/TreeRow.svelte";
   import VirtualRows from "../../lib/ui/VirtualRows.svelte";
   import type { Backend, SearchQuery, SearchResults } from "../../state/backend";
+  import type { CommitList } from "../../state/commitList";
   import { commands } from "../../state/commands";
   import type { KeptSearch } from "../../state/findSets.svelte";
   import { isMac } from "../../state/host";
@@ -57,6 +58,7 @@
     files,
     range,
     revision,
+    commitList,
     onopen,
     onkeep,
   }: {
@@ -69,6 +71,8 @@
     range?: { from: number; to: number };
     /** The changeset's revision: a new one runs the search again. */
     revision: number;
+    /** The commits of the changeset by revision, which the scope choices name. */
+    commitList: CommitList;
     /** Shows a result; `ownTab` is asked for by the viewer. The dialog is closed already. */
     onopen: (result: OpenedResult) => void;
     /** Keeps the results in the Find tool. The dialog is closed already. */
@@ -102,9 +106,13 @@
   const current = $derived(at >= 0 ? rows[at] : undefined);
 
   onMount(() => {
-    void backend.commits().then(
-      ({ commits: units }) =>
-        (commits = units.map((u) => ({ shortId: u.commit.shortId, subject: u.commit.subject, id: u.commit.id }))),
+    void commitList.at(revision).then(
+      (units) =>
+        (commits = (units ?? []).map((u) => ({
+          shortId: u.commit.shortId,
+          subject: u.commit.subject,
+          id: u.commit.id,
+        }))),
       () => undefined,
     );
   });

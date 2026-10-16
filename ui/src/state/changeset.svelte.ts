@@ -18,6 +18,7 @@ import { errorText } from "../lib/errorText";
 import { STALE_NOTICE } from "../lib/notice";
 import { pathsBelow } from "../lib/paths";
 import { isKind } from "../lib/requestError";
+import { CommitList } from "./commitList";
 import { commitToShow, neighbour } from "./commitLens";
 import { keyId } from "./changesetKey";
 import { notices } from "./notices.svelte";
@@ -90,6 +91,9 @@ class ChangesetStore implements ViewSource {
   private lastCommit = 0;
   /** The commits with their own progress, oldest first; loaded only while the review screen shows the changeset by commit. */
   commits = $state.raw<CommitUnit[]>([]);
+  /** The commits by revision, held in one place: this store, a tab at a commit and Find in Files read from here. */
+  readonly commitList = new CommitList(() => session.connected().commits());
+  /** The per-commit reads the store started; only the latest may set the list it shows. */
   private commitReads = new Latest();
   /** Whether the review screen is shown: only it reads the per-commit list. */
   private commitsFollowed = false;
@@ -368,10 +372,13 @@ class ChangesetStore implements ViewSource {
   /** Reads the commits again, with their progress. Only the latest reading counts. */
   async loadCommits() {
     if (!this.commitsFollowed) return;
+    const revision = this.layout?.shown.revision;
+    if (revision === undefined) return;
     const isLatest = this.commitReads.begin();
     try {
-      const { commits } = await session.connected().commits();
-      if (isLatest()) this.commits = commits;
+      const { revision: answered, units } = await this.commitList.reload();
+      // A list of a revision the view moved on from says nothing of the one on screen.
+      if (isLatest() && answered === revision) this.commits = units;
     } catch (error) {
       if (isLatest()) notices.failed("Could not load the commits", error);
     }
