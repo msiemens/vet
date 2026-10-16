@@ -14,7 +14,6 @@ class FakeScope {
   readonly loads = { n: 0 };
   readonly answers = { n: 0 };
   readonly offs = { n: 0 };
-  private listeners = new Set<WriteListener>();
 
   readonly spec: ScopeSpec;
   readonly commit?: CommitUnit;

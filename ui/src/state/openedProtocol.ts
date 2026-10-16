@@ -6,9 +6,6 @@
 import type { ChangesetKey } from "../generated/ChangesetKey";
 import { keyId } from "./changesetKey.ts";
 
-/** What happens to the changeset on view: another is asked for, announced to be fetched, or the ask came to nothing. */
-export type Opening = { type: "requested" } | { type: "opened"; changeset: ChangesetKey } | { type: "unannounced" };
-
 /** What the protocol does to the window; the holder of the session implements it. */
 export interface OpenedEffects {
   /** Ends the session on view, if there is one. */
@@ -17,8 +14,6 @@ export interface OpenedEffects {
   build(key: ChangesetKey, revision: number): void;
   /** Runs the session `build` made. */
   start(revision: number): void;
-  /** Tells whoever follows the switch. */
-  notify(opening: Opening): void;
   /** Whether an open request is out, which the views show as loading. */
   busy(on: boolean): void;
   /** Reads the manifest and builds the session from what the backend has. */
@@ -45,7 +40,6 @@ export class OpenedProtocol {
     this.epoch++;
     this.effects.busy(true);
     this.effects.dispose();
-    this.effects.notify({ type: "requested" });
     return ++this.seq;
   }
 
@@ -63,7 +57,6 @@ export class OpenedProtocol {
     this.epoch++;
     this.effects.dispose();
     this.effects.build(key, revision);
-    this.effects.notify({ type: "opened", changeset: key });
     this.effects.start(revision);
   }
 
@@ -76,7 +69,6 @@ export class OpenedProtocol {
     if (token !== this.seq || !this.active) return;
     this.active = false;
     this.effects.busy(false);
-    this.effects.notify({ type: "unannounced" });
     await this.effects.read();
   }
 

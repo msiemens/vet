@@ -86,7 +86,7 @@ export function registerCommands(): () => void {
     }),
     ...queueCommands({
       open: (key) => {
-        if (!queue.onView || keyId(queue.onView) !== keyId(key)) void opened.open(key);
+        if (!opened.session || keyId(opened.session.key) !== keyId(key)) void opened.open(key);
         shell.show("review");
       },
       copyText: (text) => void copyText(text),

@@ -28,8 +28,6 @@ class QueueStore {
   pullRequests = $state.raw<PullRequestRow[]>([]);
   /** How asking each GitHub repository of the project went; empty until the platform has answered. */
   sources = $state.raw<PullRequestSource[]>([]);
-  /** The changeset on view. */
-  onView = $state.raw<ChangesetKey>();
   /** A refresh is fetching the remotes. */
   refreshing = $state(false);
   /** The local changesets are being listed. */
@@ -57,7 +55,7 @@ class QueueStore {
   entries = $derived(
     queueEntries(
       queueRows(this.local, this.pullRequests),
-      this.onView && keyId(this.onView),
+      opened.session && keyId(opened.session.key),
       opened.session?.wholeFrame,
       this.lines,
     ),
@@ -99,7 +97,6 @@ class QueueStore {
       this.local = [];
       this.pullRequests = [];
       this.sources = [];
-      this.onView = undefined;
       this.listingLocal = false;
       this.listingPullRequests = false;
       this.listing = undefined;
@@ -133,7 +130,6 @@ class QueueStore {
     this.listingLocal = false;
     if (!listed) return;
     this.local = listed.rows;
-    this.onView = listed.onView;
     void this.countLines(recount);
   }
 

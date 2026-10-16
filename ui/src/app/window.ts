@@ -48,11 +48,9 @@ export function installWindow(): () => void {
   void hostLabel().then((label) => (appState.host = label));
   session.onConnect(reveal);
   void session.connect().then(reveal);
-  // The Pipelines tool belongs to a pull request: a changeset that opens as another kind closes it, one
-  // still loading (none announced) keeps it.
-  const stopPipelines = opened.onOpening((opening) => {
-    if (opening.type === "opened" && !belongsTo(opening.changeset.type) && shell.bottom === "pipelines")
-      shell.hideBottom();
+  // The Pipelines tool belongs to a pull request: a changeset of another kind closes it.
+  const stopPipelines = opened.onSession((next) => {
+    if (next && !belongsTo(next.key.type) && shell.bottom === "pipelines") shell.hideBottom();
   });
   const stopMenu = mainMenu.listen();
   const stopDoubleShift = watchDoubleShift(

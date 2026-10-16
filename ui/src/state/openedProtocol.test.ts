@@ -14,7 +14,6 @@ function setup() {
     dispose: () => log.push("dispose"),
     build: (key, revision) => log.push(`build ${key.type === "branch" ? key.name : key.type}@${revision}`),
     start: (revision) => log.push(`start@${revision}`),
-    notify: (opening) => log.push(`notify ${opening.type}`),
     busy: (on) => {
       busy = on;
       log.push(`busy ${on}`);
@@ -27,15 +26,15 @@ function setup() {
   return { protocol, log, reads, busy: () => busy };
 }
 
-void test("a request ends the session at once, and the announcement builds the next, told before it runs", () => {
+void test("a request ends the session at once, and the announcement builds the next", () => {
   const { protocol, log, busy } = setup();
   const token = protocol.request(branch("a"));
   assert.equal(busy(), true);
-  assert.deepEqual(log, ["busy true", "dispose", "notify requested"]);
+  assert.deepEqual(log, ["busy true", "dispose"]);
   log.length = 0;
   protocol.announced(branch("a"), 7);
   assert.equal(busy(), false);
-  assert.deepEqual(log, ["busy false", "dispose", "build a@7", "notify opened", "start@7"]);
+  assert.deepEqual(log, ["busy false", "dispose", "build a@7", "start@7"]);
   log.length = 0;
   void protocol.answered(token);
   assert.deepEqual(log, [], "an answer to an announced request reads nothing");
@@ -47,7 +46,7 @@ void test("an answer without an announcement builds from the manifest", async ()
   log.length = 0;
   const answered = protocol.answered(token);
   assert.equal(busy(), false);
-  assert.deepEqual(log, ["busy false", "notify unannounced", "read"]);
+  assert.deepEqual(log, ["busy false", "read"]);
   reads[0]();
   await answered;
 });
@@ -64,7 +63,7 @@ void test("a second request overtakes the first: its answer and announcement bui
   assert.deepEqual(log, [], "an earlier request's changeset is not shown for a moment");
   protocol.announced(branch("b"), 4);
   assert.equal(busy(), false);
-  assert.deepEqual(log, ["busy false", "dispose", "build b@4", "notify opened", "start@4"]);
+  assert.deepEqual(log, ["busy false", "dispose", "build b@4", "start@4"]);
   log.length = 0;
   await protocol.answered(second);
   assert.deepEqual(log, []);
@@ -73,7 +72,7 @@ void test("a second request overtakes the first: its answer and announcement bui
 void test("a changeset opened by another window is built when no request is pending", () => {
   const { protocol, log } = setup();
   protocol.announced(branch("x"), 2);
-  assert.deepEqual(log, ["dispose", "build x@2", "notify opened", "start@2"]);
+  assert.deepEqual(log, ["dispose", "build x@2", "start@2"]);
 });
 
 void test("closing while a request is out ends the session and drops the late answer and announcement", async () => {

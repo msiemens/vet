@@ -157,7 +157,7 @@ export const choiceHost: ChoiceHost = {
     appState.whenReview((c) => void c.revealSymbol({ symbol, change }));
   },
   openChangeset: (id) => {
-    if (!queue.onView || keyId(queue.onView) !== id) commands.run(`changeset.open:${id}`);
+    if (!opened.session || keyId(opened.session.key) !== id) commands.run(`changeset.open:${id}`);
   },
   openThread: (id) => {
     const thread = opened.session?.threads.items.find((t) => t.id === id);

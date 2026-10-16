@@ -70,7 +70,7 @@
   }
 
   // Keys work as soon as the list opens, and the focus goes back where it was when it closes.
-  let sheet: HTMLElement | undefined;
+  let sheet = $state<HTMLElement>();
   let scope: FocusScope | undefined;
   // Before the list renders: the vote picker's menu takes the focus as it mounts.
   $effect.pre(() => {

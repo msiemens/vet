@@ -485,9 +485,9 @@ export class Backend {
   }
 
   /** The changesets on offer, the working tree first, and the one on view. */
-  async listChangesets(): Promise<{ rows: ChangesetRow[]; onView: ChangesetKey }> {
-    const { rows, onView } = await this.call({ type: "listChangesets", project: this.pid });
-    return { rows, onView };
+  async listChangesets(): Promise<{ rows: ChangesetRow[] }> {
+    const { rows } = await this.call({ type: "listChangesets", project: this.pid });
+    return { rows };
   }
 
   /**

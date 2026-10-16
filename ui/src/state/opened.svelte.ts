@@ -9,7 +9,7 @@ import { type ChangesetSession, type SessionStart, newSession } from "./changese
 import { discardPrompt } from "./discardPrompt.svelte";
 import { whenDiscarded } from "./discard";
 import { notices } from "./notices.svelte";
-import { type Opening, OpenedProtocol } from "./openedProtocol";
+import { OpenedProtocol } from "./openedProtocol";
 import { reviewShown } from "./reviewShown.svelte";
 import { session as connection } from "./session.svelte";
 import { CHANGESET } from "./view";
@@ -25,15 +25,11 @@ class Opened {
   /** What the views were last told about, which the next session's first change is told against. */
   private viewed?: ViewPoint;
   private waiting: ((session: ChangesetSession | undefined) => void)[] = [];
-  private openingListeners = new Set<(opening: Opening) => void>();
   private sessionListeners = new Set<(session: ChangesetSession | undefined) => void>();
   private protocol = new OpenedProtocol({
     dispose: () => this.drop(),
     build: (key) => this.make(key),
     start: (revision) => this.session?.start(revision),
-    notify: (opening) => {
-      for (const listener of this.openingListeners) listener(opening);
-    },
     busy: (on) => (this.asking = on),
     read: () => this.read(),
   });
@@ -90,17 +86,6 @@ class Opened {
       notices.report(error);
     }
     await this.protocol.answered(token);
-  }
-
-  /**
-   * Called when a changeset is asked for (whatever belongs to the changeset on view is to be dropped
-   * now), when the backend announced the one on view (to be read anew; not an earlier request's while a
-   * newer is pending) and when it answered without announcing one (the changeset on view stays, to be
-   * read again). Returns the unsubscribe function.
-   */
-  onOpening(listener: (opening: Opening) => void): () => void {
-    this.openingListeners.add(listener);
-    return () => this.openingListeners.delete(listener);
   }
 
   /** Called with the session on view whenever it is replaced, and with none when it ends. Returns the unsubscribe function. */

@@ -7,7 +7,7 @@ import { errorText } from "../lib/errorText";
 import { notices } from "./notices.svelte";
 import { session } from "./session.svelte";
 
-/** The changesets on offer and the one on view; `undefined` after showing why they could not be listed. */
+/** The changesets on offer; `undefined` after showing why they could not be listed. */
 export async function listChangesets() {
   try {
     return await session.connected().listChangesets();

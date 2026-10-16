@@ -12,7 +12,7 @@ import type { Verdict } from "../generated/Verdict";
 import { HoldTimer } from "../lib/ui/holdTimer";
 import { AccountResync } from "./accountResync";
 import type { Backend } from "./backend";
-import { whileOpen } from "./followProject";
+import { whileOpen } from "./whileOpen";
 import { notices } from "./notices.svelte";
 import { opened } from "./opened.svelte";
 
