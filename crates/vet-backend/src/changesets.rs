@@ -1,7 +1,7 @@
 //! Requests about which changeset is on view and which there are.
 
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use futures::StreamExt;
 use futures::stream::FuturesOrdered;
@@ -93,7 +93,10 @@ impl Orchestrator {
             self.store.clone(),
             self.platforms.known(),
             list.clone(),
-            self.config.prefetch_pace,
+            Prefetch {
+                pace: self.config.prefetch_pace,
+                announce: self.config.prefetch_announce,
+            },
         );
         open.open.keep_prefetching(prefetching);
         for source in &list.sources {
@@ -234,19 +237,33 @@ impl Orchestrator {
     }
 }
 
-/// How many of the newest listed pull requests have their details fetched ahead of the queue:
-/// enough that the ones the viewer is likely to open are ready, few enough to stay gentle on the
-/// platform.
+/// How a prefetch run is paced, and how often it tells the window.
+struct Prefetch {
+    /// How long between two pull requests asked.
+    pace: Duration,
+    /// How long between two announcements that the details changed the list.
+    announce: Duration,
+}
+
+/// How many of the newest listed pull requests of a platform whose list already carries their
+/// details have their discussion fetched ahead of the queue: enough that the ones the viewer is
+/// likely to open are ready, few enough to stay gentle on the platform. A platform whose list
+/// leaves the details apart (`PlatformTraits::details_apart`) has no such cap: without them the
+/// rows cannot show their state at all.
 const PREFETCH_LIMIT: usize = 20;
 
-/// Fetches the details of the newest listed pull requests whose `updatedAt` the stored copy does
-/// not have, in the background, so a revisit shows them at once. An unchanged pull request is not
-/// asked for. The platform is asked `pace` between two; an account that is limited or failing is
-/// left alone for the rest of the run, a pull request that is merely gone is passed over. Never
-/// delays the list the viewer asked for; the task is handed to the project, which replaces it with
-/// the next list's and stops it when the project closes. What the list shows of a pull request
-/// that its details add (`PullRequestCache::fill`) is announced once the run is through
-/// (`PullRequestsChanged`), also for a copy kept from an earlier run that the cache did not have.
+/// Fetches the details of the listed pull requests whose `updatedAt` the stored copy does not
+/// have, in the background, so a revisit shows them at once. An unchanged pull request is not
+/// asked for. The run is paced by [`Prefetch`]; an account that is limited or failing is left
+/// alone for the rest of the run, a pull request that is merely gone is passed over. A platform
+/// whose list leaves the details apart (`PlatformTraits::details_apart`) is asked for every listed
+/// pull request; another for at most [`PREFETCH_LIMIT`] of them, whose list already carries them.
+/// Never delays the list the viewer asked for; the task is handed to the project, which replaces
+/// it with the next list's and stops it when the project closes. What the list shows of a pull
+/// request that its details add (`PullRequestCache::fill`) is announced (`PullRequestsChanged`)
+/// while the run changes it, coalesced to one every `Prefetch::announce`, and once more at the
+/// end when anything changed since the last, also for a copy kept from an earlier run that the
+/// cache did not have.
 fn prefetch_details(
     open: &Arc<Open>,
     platforms: Arc<Platforms>,
@@ -254,16 +271,24 @@ fn prefetch_details(
     store: SqliteStore,
     known: Arc<PullRequestCache>,
     list: PullRequestList,
-    pace: Duration,
+    timing: Prefetch,
 ) -> tokio::task::AbortHandle {
     let announcer = open.clone();
+    let Prefetch { pace, announce } = timing;
     let prefetching = async move {
         let mut stopped: std::collections::HashSet<String> = std::collections::HashSet::new();
-        let mut fetched = 0usize;
-        let mut listing_changed = false;
+        let mut capped = 0usize;
+        let mut changed = false;
+        let mut announced_at: Option<Instant> = None;
         for listed in &list.rows {
-            if fetched >= PREFETCH_LIMIT {
-                break;
+            // What changed since the last announcement reaches the window without waiting for the
+            // run to end, but no faster than `announce`.
+            if changed && announced_at.is_none_or(|at| at.elapsed() >= announce) {
+                announcer
+                    .subscribers
+                    .broadcast(Event::PullRequestsChanged { project: announcer.id });
+                announced_at = Some(Instant::now());
+                changed = false;
             }
             let account = listed.remote.account();
             if stopped.contains(&account) {
@@ -273,6 +298,17 @@ fn prefetch_details(
                 stopped.insert(account);
                 continue;
             }
+            let hosting = match kind_of(&listed.remote, &accounts).await {
+                Ok(kind) => platforms.hosting(kind),
+                Err(error) => {
+                    tracing::warn!(repository = %listed.remote, %error, "prefetching a pull request of an unknown host");
+                    continue;
+                }
+            };
+            let apart = hosting.traits().details_apart;
+            if !apart && capped >= PREFETCH_LIMIT {
+                continue;
+            }
             let stored = store.stored_discussion(listed.remote.clone(), listed.row.number).await;
             if let Ok(Some(stored)) = &stored
                 && stored.updated_at == listed.row.updated_at
@@ -280,7 +316,7 @@ fn prefetch_details(
                 // Nothing changed since the copy that is kept: no call is made, and the list shows
                 // what it says.
                 if known.discussion(&listed.remote, listed.row.number).is_none() {
-                    listing_changed |= known.record_discussion(
+                    changed |= known.record_discussion(
                         &listed.remote,
                         listed.row.number,
                         stored.synced_at,
@@ -289,19 +325,13 @@ fn prefetch_details(
                 }
                 continue;
             }
-            fetched += 1;
-            let hosting = match kind_of(&listed.remote, &accounts).await {
-                Ok(kind) => platforms.hosting(kind),
-                Err(error) => {
-                    tracing::warn!(repository = %listed.remote, %error, "prefetching a pull request of an unknown host");
-                    continue;
-                }
-            };
+            if !apart {
+                capped += 1;
+            }
             match hosting.discussion(&listed.remote, listed.row.number).await {
                 Ok(discussion) => {
                     let at = unix_now();
-                    listing_changed |=
-                        known.record_discussion(&listed.remote, listed.row.number, at, discussion.clone());
+                    changed |= known.record_discussion(&listed.remote, listed.row.number, at, discussion.clone());
                     if let Err(error) = store
                         .writes()
                         .set_discussion(
@@ -333,7 +363,7 @@ fn prefetch_details(
             }
             tokio::time::sleep(pace).await;
         }
-        if listing_changed {
+        if changed {
             announcer
                 .subscribers
                 .broadcast(Event::PullRequestsChanged { project: announcer.id });

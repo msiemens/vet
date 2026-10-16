@@ -85,6 +85,10 @@ pub struct Config {
     /// How long to wait between two pull requests whose details are fetched ahead of the queue,
     /// so a platform that Vet only reacts to (rather than tracks the budget of) is asked gently.
     pub prefetch_pace: Duration,
+    /// How long between two announcements that the prefetched details changed the listed pull
+    /// requests, so a run over many pull requests does not tell the window once per pull request.
+    /// One is still made when the run ends with a change since the last.
+    pub prefetch_announce: Duration,
     /// How long the backend waits before asking the platform about the checks of the commits on
     /// view again, while some of them are still running.
     pub checks_pace: Duration,
@@ -102,6 +106,7 @@ impl Default for Config {
             orphan_grace: Duration::from_secs(15),
             fetch_interval: vet_app::fetch::DEFAULT_INTERVAL,
             prefetch_pace: Duration::from_millis(400),
+            prefetch_announce: Duration::from_secs(5),
             checks_pace: Duration::from_secs(30),
             checks_settle: Duration::from_secs(3),
         }

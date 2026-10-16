@@ -30,6 +30,7 @@ use crate::common::{Client, git, init, write};
 const NOW: &str = "2024-05-01T12:00:00Z";
 
 /// One pull request the fake lists.
+#[derive(Clone)]
 pub(crate) struct Pr {
     pub(crate) number: u64,
     /// The platform's `updatedAt`, which a later change moves.
@@ -84,6 +85,15 @@ pub(crate) struct Mock {
     /// Whether the search was asked for what is expensive to work out for every pull request:
     /// the review threads, the reviewers' verdicts, the review decision or the merge state.
     pub(crate) search_asked_expensive_fields: bool,
+}
+
+/// What the Azure DevOps fake answers, and how it goes.
+#[derive(Default)]
+struct AzureMock {
+    /// The pull requests the list endpoint holds.
+    prs: Vec<Pr>,
+    /// How many single-pull-request reads arrived: one per prefetched discussion.
+    discussions: usize,
 }
 
 fn user_json() -> String {
@@ -331,6 +341,85 @@ fn github(mock: Arc<Mutex<Mock>>) -> Fake {
     })
 }
 
+/// The list endpoint of the fake Azure DevOps repository.
+const AZURE_PULLS: &str = "/contoso/shop/_apis/git/repositories/api/pullrequests";
+
+/// The signed-in user of the fake, as `access.rs` reads it.
+fn azure_profile() -> String {
+    json!({ "authenticatedUser": {
+        "id": "me-id",
+        "providerDisplayName": "Ada Lovelace",
+        "properties": { "Account": { "$type": "System.String", "$value": "ada@contoso.com" } }
+    } })
+    .to_string()
+}
+
+/// One pull request, as the Azure DevOps list and single-pull-request endpoints answer it. The
+/// project carries no id, so no policy evaluation is asked for.
+fn azure_pr(pr: &Pr) -> Value {
+    json!({
+        "pullRequestId": pr.number,
+        "title": format!("PR {}", pr.number),
+        "description": pr.description,
+        "createdBy": { "id": "grace-id", "displayName": "Grace", "uniqueName": "grace@contoso.com", "isContainer": false },
+        "creationDate": "2024-05-01T12:00:00Z",
+        "isDraft": false,
+        "labels": [],
+        "sourceRefName": "refs/heads/feature",
+        "targetRefName": "refs/heads/main",
+        "status": "active",
+        "url": format!("https://dev.azure.com/contoso/_apis/git/repositories/api/pullRequests/{}", pr.number),
+        "repository": {
+            "id": "r",
+            "name": "api",
+            "url": "https://dev.azure.com/contoso/_apis/git/repositories/api",
+            "project": { "name": "Shop", "visibility": "private" }
+        },
+        "lastMergeSourceCommit": { "commitId": pr.head },
+        "reviewers": []
+    })
+}
+
+/// A server that answers like Azure DevOps: the viewer, the list of pull requests, and one pull
+/// request's threads, iterations and statuses, all without any.
+fn azure(mock: Arc<Mutex<AzureMock>>) -> Fake {
+    Fake::start(move |request, _| {
+        let path = request.path.split('?').next().unwrap().to_lowercase();
+        let path = path.as_str();
+        if path.ends_with("/_apis/connectiondata") {
+            return Canned::json(&azure_profile());
+        }
+        if path.ends_with("/_apis/identities") {
+            return Canned::json(r#"{"count":0,"value":[]}"#);
+        }
+        if path == AZURE_PULLS {
+            let mock = mock.lock().unwrap();
+            let value: Vec<Value> = mock.prs.iter().map(azure_pr).collect();
+            return Canned::json(&json!({ "count": value.len(), "value": value }).to_string());
+        }
+        if let Some(rest) = path.strip_prefix(&format!("{AZURE_PULLS}/")) {
+            let mut mock = mock.lock().unwrap();
+            let (number, tail) = match rest.split_once('/') {
+                Some((number, tail)) => (number, Some(tail)),
+                None => (rest, None),
+            };
+            let number: u64 = number.parse().unwrap_or(0);
+            let Some(pr) = mock.prs.iter().find(|p| p.number == number).cloned() else {
+                return Canned::status(404, r#"{"message":"not found"}"#);
+            };
+            return match tail {
+                None => {
+                    // A discussion reads the pull request itself once before its threads.
+                    mock.discussions += 1;
+                    Canned::json(&azure_pr(&pr).to_string())
+                }
+                Some(_) => Canned::json(r#"{"count":0,"value":[]}"#),
+            };
+        }
+        Canned::status(404, r#"{"message":"unexpected query"}"#)
+    })
+}
+
 /// A bare repository the wrapper serves: `main` at the base commit and `refs/pull/7/head` at the
 /// head. Answers the two commits and the wrapper's path.
 fn served(dir: &Path) -> (String, String, PathBuf) {
@@ -414,6 +503,48 @@ pub(crate) fn fixture() -> (Arc<Mutex<Mock>>, Fake, tempfile::TempDir, tempfile:
     (mock, fake, repo, scratch)
 }
 
+/// A project whose `origin` is `dev.azure.com/contoso/Shop/api`, fetched through `wrapper`.
+fn azure_project(wrapper: &Path) -> tempfile::TempDir {
+    let repo = tempfile::tempdir().unwrap();
+    init(repo.path());
+    write(repo.path(), "a.txt", "base\n");
+    git(repo.path(), &["add", "-A"]);
+    git(repo.path(), &["commit", "-qm", "base"]);
+    git(
+        repo.path(),
+        &[
+            "remote",
+            "add",
+            "origin",
+            "ssh://git@ssh.dev.azure.com/v3/contoso/Shop/api",
+        ],
+    );
+    git(repo.path(), &["config", "core.sshCommand", wrapper.to_str().unwrap()]);
+    git(repo.path(), &["config", "ssh.variant", "ssh"]);
+    repo
+}
+
+/// `count` pull requests the fake Azure DevOps lists, all new, and the bare repository their heads
+/// are fetched from.
+fn azure_fixture(count: u64) -> (Arc<Mutex<AzureMock>>, Fake, tempfile::TempDir, tempfile::TempDir) {
+    let scratch = tempfile::tempdir().unwrap();
+    let (_base, head, wrapper) = served(scratch.path());
+    let mock = Arc::new(Mutex::new(AzureMock {
+        prs: (0..count)
+            .map(|i| Pr {
+                number: 7 + i,
+                updated_at: format!("2024-06-{:02}T12:00:00Z", i + 1),
+                description: format!("pr {}", i + 1),
+                head: head.clone(),
+            })
+            .collect(),
+        ..AzureMock::default()
+    }));
+    let fake = azure(mock.clone());
+    let repo = azure_project(&wrapper);
+    (mock, fake, repo, scratch)
+}
+
 pub(crate) fn config() -> Config {
     Config {
         debounce: Duration::from_millis(150),
@@ -440,6 +571,23 @@ pub(crate) async fn backend_with(data: &Path, base: &str, config: Config) -> (Ar
         .call(Request::SetCredentials {
             host: "github.com".into(),
             token: Secret("gho_secret".into()),
+            validate: false,
+        })
+        .await
+        .unwrap();
+    (orchestrator, client)
+}
+
+/// A backend whose Azure DevOps answers at `base`, with the credential the fake accepts.
+async fn azure_backend(data: &Path, base: &str) -> (Arc<Orchestrator>, Client) {
+    let orchestrator = Arc::new(
+        Orchestrator::new(open_store(data).await.unwrap(), config()).with_platform_endpoints(None, Some(base)),
+    );
+    let client = Client::new(&orchestrator);
+    client
+        .call(Request::SetCredentials {
+            host: "dev.azure.com/contoso".into(),
+            token: Secret("pat_secret".into()),
             validate: false,
         })
         .await
@@ -773,4 +921,115 @@ async fn the_details_are_shown_from_the_store_after_a_restart_and_refreshed_afte
         tokio::time::sleep(Duration::from_millis(10)).await;
     }
     assert_eq!(refreshed, "second", "the platform's answer replaces the stored copy");
+}
+
+/// Replaces the mock's list with `count` pull requests from 7 on, so a listing longer than the
+/// prefetch limit can be made.
+fn many_prs(mock: &Mutex<Mock>, count: u64) {
+    let mut mock = mock.lock().unwrap();
+    let head = mock.prs[0].head.clone();
+    mock.prs = (0..count)
+        .map(|i| Pr {
+            number: 7 + i,
+            updated_at: format!("2024-06-{:02}T12:00:00Z", i + 1),
+            description: format!("pr {}", i + 1),
+            head: head.clone(),
+        })
+        .collect();
+}
+
+/// A platform whose list leaves the expensive fields out has no prefetch limit: without the
+/// details the rows cannot show their state at all.
+#[cfg(debug_assertions)]
+#[tokio::test]
+async fn a_platform_that_leaves_details_apart_has_every_listed_pull_request_prefetched() {
+    let (mock, fake, repo, _scratch) = fixture();
+    many_prs(&mock, 25);
+    let (_handler, client) = backend(repo.path(), &fake.base()).await;
+    let project = client.open(repo.path()).await;
+
+    list(&client, project).await;
+    background_ended(&client, project, "prefetch").await;
+
+    assert_eq!(
+        answered(&mock),
+        25,
+        "GitHub leaves the details out of its list, so every listed pull request is fetched"
+    );
+}
+
+/// A platform whose list already carries the details keeps the limit: more would only cost calls
+/// for what the list says anyway.
+#[cfg(debug_assertions)]
+#[tokio::test]
+async fn a_platform_whose_list_carries_the_details_still_stops_at_the_limit() {
+    let (mock, fake, repo, _scratch) = azure_fixture(25);
+    let data = tempfile::tempdir().unwrap();
+    let (_handler, client) = azure_backend(data.path(), &fake.base()).await;
+    let project = client.open(repo.path()).await;
+
+    list(&client, project).await;
+    background_ended(&client, project, "prefetch").await;
+
+    assert_eq!(
+        mock.lock().unwrap().discussions,
+        20,
+        "the limit still bounds a platform whose list carries the details"
+    );
+}
+
+/// A run longer than the coalescing window tells the window before it is through, so the chips
+/// the details add appear while the queue is looked at rather than minutes later.
+#[cfg(debug_assertions)]
+#[tokio::test]
+async fn the_changed_list_is_announced_while_a_long_prefetch_still_runs() {
+    let (mock, fake, repo, _scratch) = fixture();
+    many_prs(&mock, 25);
+    // A detail the list leaves out, so reading each discussion changes what the queue shows.
+    mock.lock().unwrap().unresolved_threads = 1;
+    let data = tempfile::tempdir().unwrap();
+    let config = Config {
+        prefetch_pace: Duration::from_millis(20),
+        prefetch_announce: Duration::from_millis(60),
+        ..config()
+    };
+    let (_handler, mut client) = backend_with(data.path(), &fake.base(), config).await;
+    let project = client.open(repo.path()).await;
+
+    list(&client, project).await;
+
+    // Every change since the last announcement is told at most once per window, so a run that
+    // takes many windows tells the window more than once: only the last may wait for the run.
+    let mut announced = 0usize;
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(30);
+    loop {
+        announced += drain_announcements(&mut client.inbox);
+        let (started, live) = client.handler.background_counts(project, "prefetch");
+        if started > 0 && live == 0 {
+            break;
+        }
+        assert!(tokio::time::Instant::now() < deadline, "the prefetch did not end");
+        tokio::time::sleep(Duration::from_millis(5)).await;
+    }
+    announced += drain_announcements(&mut client.inbox);
+
+    assert!(
+        announced >= 2,
+        "the changed list was announced only once, when the run was through"
+    );
+}
+
+/// How many announcements that the listed pull requests changed are waiting for the connection.
+#[cfg(debug_assertions)]
+fn drain_announcements(inbox: &mut tokio::sync::mpsc::Receiver<ServerMessage>) -> usize {
+    std::iter::from_fn(|| inbox.try_recv().ok())
+        .filter(|m| {
+            matches!(
+                m,
+                ServerMessage::Event {
+                    event: Event::PullRequestsChanged { .. }
+                }
+            )
+        })
+        .count()
 }
