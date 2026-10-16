@@ -133,7 +133,9 @@ export class ReviewController {
     const offResync = session.onResync(() => this.scopes.reload());
     const offOrigins = semantic.onOrigins((path) => this.views.refreshDiagnostics(path));
     const offViewChange = changeset.onViewChange((frame, change) => this.viewChanged(frame, change));
+    const offScopes = changeset.onScopesReload(() => this.scopes.reload());
     this.unsubscribe = () => {
+      offScopes();
       offViewChange();
       offReview();
       offThreads();
@@ -154,8 +156,6 @@ export class ReviewController {
         this.views.refreshDiagnostics();
       } else if (event.type === "reviewChanged") {
         this.scopes.heard(event.update, event.revision);
-      } else if (event.type === "snapshotSettled" || event.type === "targetChanged") {
-        this.scopes.reload();
       }
     });
   }

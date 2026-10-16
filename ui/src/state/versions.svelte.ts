@@ -2,12 +2,9 @@
 // review screen shows them, so they are read while it is shown.
 
 import type { VersionInfo } from "../generated/VersionInfo";
-import type { Backend, SessionEvent } from "./backend";
+import type { Backend } from "./backend";
 import { notices } from "./notices.svelte";
 import { Resource } from "./resource";
-
-// A settled snapshot or a base move adds a version; a mark changes where the review last was.
-const RELOAD_ON: readonly SessionEvent["type"][] = ["snapshotSettled", "reviewStarted", "reviewChanged"];
 
 class Versions {
   /** Oldest first; none while browsing, as versions are recorded only while a review is open. */
@@ -46,12 +43,9 @@ class Versions {
     this.items = [];
   }
 
-  hear(event: SessionEvent) {
-    if (this.following && RELOAD_ON.includes(event.type)) void this.reads.load(() => this.backend().versions());
-  }
-
-  resync() {
-    if (this.following) void this.reads.load(() => this.backend().versions());
+  /** Reads the versions again while the review screen is shown: a version was added or the review moved on. */
+  async reload() {
+    if (this.following) await this.reads.load(() => this.backend().versions());
   }
 }
 

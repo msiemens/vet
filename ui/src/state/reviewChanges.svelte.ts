@@ -4,7 +4,7 @@
 // its result set ran at. It lives as long as the session: the queue screen shows it too.
 
 import { SvelteMap } from "svelte/reactivity";
-import type { Backend, SessionEvent } from "./backend";
+import type { Backend } from "./backend";
 
 /** How many files differ between two versions, and which versions they are. */
 export interface ChangeCount {
@@ -12,9 +12,6 @@ export interface ChangeCount {
   to: number;
   files: number;
 }
-
-// A new version, a started review or a mark moves where the review last was: ask again.
-const RELOAD_ON: readonly SessionEvent["type"][] = ["snapshotSettled", "reviewStarted", "reviewChanged"];
 
 class ReviewChanges {
   /** The answer per version asked for; an event that moves the versions clears it. */
@@ -32,15 +29,6 @@ class ReviewChanges {
     this.ended = true;
     this.answers.clear();
     this.asking.clear();
-  }
-
-  hear(event: SessionEvent) {
-    if (RELOAD_ON.includes(event.type)) this.reload();
-  }
-
-  /** The connection came back: ask again. */
-  resync() {
-    this.reload();
   }
 
   /** How many files differ between version `version` and the current one, once it is known. */
@@ -64,8 +52,8 @@ class ReviewChanges {
       .finally(() => this.asking.delete(version));
   }
 
-  /** Asks again for every version asked about so far: an event moved where the changes are. */
-  private reload() {
+  /** Asks again for every version asked about so far: the versions or where the review last was moved. */
+  reload() {
     const asked = [...this.answers.keys()];
     this.answers.clear();
     for (const version of asked) this.ensure(version);

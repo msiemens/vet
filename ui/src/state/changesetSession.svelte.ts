@@ -28,6 +28,8 @@ import { type SessionChecks, newChecks } from "./checks.svelte";
 import { Lifetime } from "./lifetime";
 import { notices } from "./notices.svelte";
 import { type SessionPullRequest, newPullRequest } from "./pullRequest.svelte";
+import { ReadFlush } from "./readFlush";
+import { type ReadState, readsFor } from "./sessionReads";
 import { Latest, Resource } from "./resource";
 import {
   type ChangesetFacts,
@@ -81,6 +83,10 @@ class Session implements ViewSource {
   readonly whole: WholeView = newWhole(() => !this.lifetime.alive);
   /** The whole-changeset view was fed by the refresh underway; it needs no read of its own then. */
   private fed = false;
+  /** The reads the events ask for, run together on the next task. */
+  private readonly flush: ReadFlush;
+  /** Reads the file tabs' scopes again, once the controller of the review screen has registered. */
+  private scopesReload?: () => void;
   /** The comment threads, one list per view: the changeset's and the range on view. */
   readonly threads: SessionThreads;
   /** The versions of the open review; read while the review screen is shown. */
@@ -308,6 +314,21 @@ class Session implements ViewSource {
     });
     this.pullRequest =
       start.key.type === "pullRequest" ? newPullRequest({ backend: () => session.connected() }) : undefined;
+    this.flush = new ReadFlush(
+      {
+        manifest: () => this.readManifest(),
+        whole: (revision) => this.readWhole(revision),
+        threads: () => this.threads.reload(),
+        pullRequest: async () => {
+          await this.pullRequest?.reload();
+        },
+        versions: () => this.versions.reload(),
+        changesSince: () => this.reviewChanges.reload(),
+        commits: () => this.loadCommits(),
+        scopes: () => this.scopesReload?.(),
+      },
+      this.lifetime,
+    );
     this.lifetime.add(() => this.pullRequest?.clear());
     this.lifetime.add(() => this.reviewChanges.end());
     this.lifetime.add(() => this.findSets.end());
@@ -328,8 +349,8 @@ class Session implements ViewSource {
     void this.reread(undefined);
     void this.threads.reload();
     void this.pullRequest?.reload();
-    this.versions.resync();
-    this.reviewChanges.resync();
+    void this.versions.reload();
+    this.reviewChanges.reload();
     this.structure.resync();
   }
 
@@ -370,18 +391,11 @@ class Session implements ViewSource {
   /** An event of the project, other than the announcement of a changeset. */
   hear(event: SessionEvent) {
     if (!this.lifetime.alive) return;
-    this.versions.hear(event);
     this.symbols.hear(event);
     this.structure.hear(event);
-    this.reviewChanges.hear(event);
-    this.pullRequest?.hear(event);
     this.checks.hear(event);
-    if (event.type === "snapshotSettled") {
-      void this.reread(event.revision);
-      void this.threads.reload();
-    } else if (event.type === "threadsChanged") void this.threads.reload();
-    else if (event.type === "targetChanged") void this.reread(undefined);
-    else if (event.type === "lensChanged") void this.followLens(event.lens);
+    this.flush.want(readsFor(event, this.readState()));
+    if (event.type === "lensChanged") this.applyLens(event.lens);
     // A mark made in a range or a commit is announced as that of the changeset's file, which they do not show.
     else if (event.type === "reviewChanged" && event.revision === this.layout?.shown.revision) {
       if (this.showsChangeset) this.applyReview(event.update);
@@ -389,6 +403,30 @@ class Session implements ViewSource {
       this.whole.heard(event.update, event.revision);
     } else if (event.type === "reviewStarted" && this.facts) this.facts = { ...this.facts, review: event.review };
     else if (event.type === "restoreFailed") this.restoreFailures = event.failures;
+  }
+
+  private readState(): ReadState {
+    return {
+      reviewShown: this.reviewShown,
+      hasPullRequest: this.pullRequest !== undefined,
+      shownRevision: this.layout?.shown.revision,
+      showsChangeset: this.showsChangeset,
+      inRange: this.range !== undefined,
+      byCommit: this.facts?.lens === "perCommit" && this.facts.commits > 1,
+    };
+  }
+
+  /** Whether reads are waiting or underway for the events heard; the window is not settled before they are done. */
+  get settling(): boolean {
+    return this.flush.pending;
+  }
+
+  /** `reload` is called when the file tabs' scopes must read again, which is after the manifest they depend on. Returns the unsubscribe function. */
+  onScopesReload(reload: () => void): () => void {
+    this.scopesReload = reload;
+    return () => {
+      if (this.scopesReload === reload) this.scopesReload = undefined;
+    };
   }
 
   /**
@@ -457,11 +495,17 @@ class Session implements ViewSource {
   }
 
   /**
-   * Reads the manifest of the view on screen again, and the changeset as a whole when the view is not
-   * it: a settle, a target change, a resync or another changeset. A mark is written into the whole
-   * view by its own announcement instead, so a burst of marks reads nothing.
+   * Reads the manifest of the view on screen, and the changeset as a whole when the view is not it, at
+   * once: the first read of a changeset and a resync. The events read through the flush. A mark is
+   * written into the whole view by its own announcement instead, so a burst of marks reads nothing.
    */
   private async reread(revision: number | undefined) {
+    const fed = await this.readManifest();
+    if (!fed) await this.readWhole(revision);
+  }
+
+  /** Reads the manifest of the view on screen; answers whether that fed the whole-changeset view. */
+  private async readManifest(): Promise<boolean> {
     this.fed = false;
     try {
       await this.refresh();
@@ -469,7 +513,12 @@ class Session implements ViewSource {
       if (this.lifetime.alive) notices.report(error);
     }
     this.seed = undefined;
-    if (!this.lifetime.alive || this.wholeFed || this.view.type === "changeset") return;
+    return this.wholeFed;
+  }
+
+  /** Reads the changeset as a whole when the view on screen is not it and the event moved it past what is held. */
+  private async readWhole(revision: number | undefined) {
+    if (!this.lifetime.alive || this.view.type === "changeset") return;
     if (refetchesWhole(revision, this.whole.revision)) await this.whole.reload();
   }
 
@@ -581,17 +630,12 @@ class Session implements ViewSource {
     }
   }
 
-  /** The changeset is reviewed in `lens` now, as this window or another chose: shows the view that goes with it. */
-  private async followLens(lens: Lens) {
+  /** The changeset is reviewed in `lens` now, as this window or another chose: picks the view that goes with it, whose manifest is read next. */
+  private applyLens(lens: Lens) {
     // The commits replace a range; leaving them for a range keeps it, already on view.
     if (lens === "perCommit") this.range = undefined;
     else if (this.range) return;
     this.commitIndex = lens === "perCommit" ? this.lastCommit : undefined;
-    try {
-      await this.refresh();
-    } catch (error) {
-      notices.report(error);
-    }
   }
 
   /** Shows the changeset as a whole, out of a range and out of the commits (the backend remembers the "All changes" lens), and fetches its manifest. */
@@ -776,14 +820,12 @@ class Session implements ViewSource {
     if (completion) this.viewCompletion = update.changeset;
     if (whole) this.facts = { ...facts, completion: update.changeset };
     if (fresh && known) this.cells.put(update.path, { review: update.review, completion: update.completion });
-    if (facts.lens === "perCommit" && facts.commits > 1) void this.loadCommits();
   }
 
-  /** A mark in the changeset's file, which a range or commit on screen does not show: the changeset's progress and the commits' follow. */
+  /** A mark in the changeset's file, which a range or commit on screen does not show: the changeset's progress follows. */
   private applyTotals(update: ReviewUpdate) {
     if (!this.facts || !this.cells.order.changeset(update.seq)) return;
     this.facts = { ...this.facts, completion: update.changeset };
-    void this.loadCommits();
   }
 
   /** Calls `listener` after review state was written, with the paths it concerns; returns the unsubscribe function. */

@@ -2,10 +2,8 @@
 // vote and the platform's traits. Only a session for a pull request has one.
 
 import type { PullRequestInfo } from "../generated/PullRequestInfo";
-import type { Backend, SessionEvent } from "./backend";
+import type { Backend } from "./backend";
 import { Resource } from "./resource";
-
-const RELOAD_ON: readonly SessionEvent["type"][] = ["platformStatus", "threadsChanged"];
 
 /** What the pull request info asks of its session. */
 export interface PullRequestHost {
@@ -39,10 +37,6 @@ class PullRequest {
   /** The viewer's comments and staged vote that wait to be posted. */
   get outgoingCount(): number {
     return this.info?.outgoing.count ?? 0;
-  }
-
-  hear(event: SessionEvent) {
-    if (RELOAD_ON.includes(event.type)) void this.reload();
   }
 
   /** The session ended: an answer still on its way counts for nothing. */
