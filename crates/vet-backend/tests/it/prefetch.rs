@@ -727,6 +727,46 @@ async fn announced_changes(client: &mut Client, numbers: &[u64]) -> Vec<(u64, Up
     }
 }
 
+/// What a client that follows the events does with them: the rows it listed, patched in place
+/// with what each `PullRequestsChanged` carried, and no further list. Waits until every `number`
+/// has been patched. A run may announce its changes in more than one event.
+#[cfg(debug_assertions)]
+async fn patched_rows(client: &mut Client, project: ProjectId, numbers: &[u64]) -> Vec<(u64, PullRequestRow)> {
+    let listed = rows(client, project).await;
+    let mut updates: std::collections::HashMap<u64, PullRequestUpdate> = std::collections::HashMap::new();
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(30);
+    loop {
+        while let Ok(message) = client.inbox.try_recv() {
+            if let ServerMessage::Event {
+                event: Event::PullRequestsChanged { changed, .. },
+            } = message
+            {
+                updates.extend(changed.into_iter().map(|update| (number(&update.key), update)));
+            }
+        }
+        if numbers.iter().all(|wanted| updates.contains_key(wanted)) {
+            break;
+        }
+        assert!(
+            tokio::time::Instant::now() < deadline,
+            "the rows were not all patched; saw {:?}",
+            updates.keys().collect::<Vec<_>>()
+        );
+        tokio::time::sleep(Duration::from_millis(5)).await;
+    }
+    listed
+        .into_iter()
+        .map(|(number, mut row)| {
+            if let Some(update) = updates.get(&number) {
+                row.status = update.status;
+                row.unresolved_threads = update.unresolved_threads;
+                row.changes_requested.clone_from(&update.changes_requested);
+            }
+            (number, row)
+        })
+        .collect()
+}
+
 #[cfg(debug_assertions)]
 #[tokio::test]
 async fn the_details_of_a_listed_pull_request_are_fetched_ahead_and_a_changed_one_again_but_not_an_unchanged_one() {
@@ -754,6 +794,65 @@ async fn the_details_of_a_listed_pull_request_are_fetched_ahead_and_a_changed_on
     list(&client, project).await;
     assert_eq!(stored_description(repo.path(), 7).await.as_deref(), Some("third"));
     assert_eq!(answered(&mock), 3, "a changed pull request is fetched");
+}
+
+/// The list is filled from what the details last read: a platform's list leaves out the
+/// unresolved threads and who asked for changes, and once the prefetch read them the rows show
+/// them.
+#[tokio::test]
+async fn a_row_is_listed_without_its_threads_and_has_them_once_its_details_are_fetched() {
+    let (mock, fake, repo, _scratch) = fixture();
+    {
+        let mut mock = mock.lock().unwrap();
+        mock.unresolved_threads = 2;
+        mock.asking_changes = Some("Linus".to_owned());
+        mock.blocked = Some(7);
+    }
+    let (_handler, mut client) = backend(repo.path(), &fake.base()).await;
+    let project = client.open(repo.path()).await;
+
+    let before = rows(&client, project).await;
+
+    assert!(
+        !mock.lock().unwrap().search_asked_expensive_fields,
+        "the search asks for what is expensive to work out for every pull request"
+    );
+    for (number, row) in &before {
+        assert_eq!(
+            (row.status, row.unresolved_threads, row.changes_requested.len()),
+            (None, 0, 0),
+            "#{number}: the search does not say"
+        );
+    }
+
+    // The prefetch reads the details, and says that the list shows more of them now.
+    tokio::time::timeout(Duration::from_secs(30), async {
+        loop {
+            if let Some(ServerMessage::Event {
+                event: Event::PullRequestsChanged { .. },
+            }) = client.inbox.recv().await
+            {
+                break;
+            }
+        }
+    })
+    .await
+    .expect("the list was not announced to have changed");
+
+    // A fresh list, as the client would ask for after the announcement, is filled from what the
+    // details last read.
+    for (number, row) in rows(&client, project).await {
+        assert_eq!(row.unresolved_threads, 2, "#{number}");
+        if number == 7 {
+            assert_eq!(row.status, Some(QueueStatus::Blocked));
+        } else {
+            let asked: Vec<_> = row.changes_requested.iter().map(|c| c.reviewer.as_str()).collect();
+            assert_eq!(
+                (row.status, asked),
+                (Some(QueueStatus::ChangesRequested), vec!["Linus"])
+            );
+        }
+    }
 }
 
 #[tokio::test]
@@ -818,11 +917,11 @@ async fn the_details_that_were_read_are_announced_with_the_fields_they_add_to_th
     );
 }
 
-/// A run over many pull requests asks the platform to list them once and is not restarted: the
-/// changed rows it announces are what the client patches, so nothing lists again.
+/// A client that patches the rows the announcements carry, as the queue does, is given all it
+/// needs by them: it lists once, and the run that listing started is not restarted.
 #[cfg(debug_assertions)]
 #[tokio::test]
-async fn a_prefetch_run_lists_the_platform_once_and_is_not_restarted() {
+async fn the_announced_rows_let_a_client_patch_them_without_listing_again_or_restarting_the_run() {
     let (mock, fake, repo, _scratch) = fixture();
     many_prs(&mock, 25);
     mock.lock().unwrap().unresolved_threads = 1;
@@ -835,24 +934,20 @@ async fn a_prefetch_run_lists_the_platform_once_and_is_not_restarted() {
     let (_handler, mut client) = backend_with(data.path(), &fake.base(), config).await;
     let project = client.open(repo.path()).await;
 
-    list(&client, project).await;
     let numbers: Vec<u64> = (7..7 + 25).collect();
-    let changed = announced_changes(&mut client, &numbers).await;
+    let patched = patched_rows(&mut client, project, &numbers).await;
     background_ended(&client, project, "prefetch").await;
 
-    assert_eq!(
-        changed
-            .iter()
-            .map(|(number, _)| *number)
-            .collect::<std::collections::BTreeSet<_>>()
-            .len(),
-        25,
-        "every listed pull request's details were carried"
-    );
+    for (number, row) in patched {
+        assert_eq!(
+            row.unresolved_threads, 1,
+            "#{number}: the announcement carried what its details added"
+        );
+    }
     assert_eq!(
         mock.lock().unwrap().lists,
         1,
-        "the platform was asked to list once, and the run did not list again"
+        "the client patched the rows instead of listing again"
     );
     assert_eq!(
         background_started(&client, project, "prefetch"),
