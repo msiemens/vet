@@ -78,7 +78,7 @@ Each store follows the events of what it shows:
 - `structure.svelte.ts` (a session's outline and selection, while the review screen is shown; sort, changed-only and the popup are the window's) — `serversChanged`, the session resyncing: reads the outline again.
 - `pendingEdits.svelte.ts` — `editsPending`: whether edits wait to settle.
 - `platform.svelte.ts` — `platformStatus`: the status, which a `PullRequestInfo` answer also sets; `notification`: the bell's list and its card.
-- `progress.svelte.ts` — `task`: the running tasks, and the last failed sync and checks refresh until one of their kind succeeds.
+- `progress.svelte.ts` — `task`: the running tasks, and the last failed sync and checks refresh until one of their kind succeeds or another changeset comes on view.
 - `serverList.svelte.ts` — `serversChanged`, `serverRuntimes`, `serverInstallOutput`: the servers and an install's output.
 - `servedBy.svelte.ts` — `serversChanged`: which server serves each file.
 - `ReviewController.ts` — `serversChanged`: drops the semantic answers and re-asks; `reviewChanged`: hands the update to the scope that made it. The tabs' scopes read again when the session's flush calls them, after the manifest.
