@@ -17,22 +17,24 @@ use crate::open::Booted;
 /// Files analysed at once, as the window did.
 const AT_ONCE: usize = 4;
 
-/// Starts (or restarts) the task that analyses the changeset's changed symbols. A newer run
-/// replaces the older; the review screen going away or the project closing stops it.
-pub(crate) fn refresh_symbols_in_background(open: Arc<Open>) {
+/// The kind and slot of the run that analyses the changed symbols.
+pub(crate) const KIND: &str = "symbols";
+
+/// Starts the run that analyses the changed symbols of `revision`. It replaces an older run; the
+/// supervisor stops it when the review screen goes away or the project closes.
+pub(crate) fn start(open: &Arc<Open>, revision: u32) {
     open.supervisor
-        .replace("symbols", open.supervisor.track("symbols", run(open.clone())));
+        .replace(KIND, open.supervisor.track(KIND, run(open.clone(), revision)));
 }
 
 /// Analyses each changed file's symbols, the open ones first, a few at a time, and pushes each
 /// answer as it comes. Stops when nothing is left, the review screen goes away or the revision
 /// moves (a newer run analyses the new revision).
-async fn run(open: Arc<Open>) {
+async fn run(open: Arc<Open>, revision: u32) {
     let booted = match open.booted().await {
         Ok(booted) => booted.clone(),
         Err(_) => return,
     };
-    let revision = booted.session.revision().await;
     let (opened, rest) = changed_files(&open, &booted, |file| !file.hunks.is_empty()).await;
     let total = (opened.len() + rest.len()) as u32;
     let done = Arc::new(AtomicU32::new(0));

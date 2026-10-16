@@ -45,6 +45,7 @@ use crate::feed::Feed;
 use crate::hosting::{Announcer, Hosting, Platforms};
 use crate::mutex::lock;
 use crate::screens::ReviewScreens;
+use crate::supervisor::Policy;
 use crate::{LanguageServers, Live, Open, Orchestrator, PlatformAccounts, Semantic, start_servers_in_background};
 
 /// The least time between two progress announcements of one task, so a step that
@@ -130,6 +131,9 @@ pub(crate) struct Wired {
     /// The project's background runs: the settle loop, the fetch timer, the feed, the analysis, the
     /// checks, the copy ahead and the server starts. They end with the project.
     pub(crate) supervisor: Supervisor,
+    /// What the supervisor keeps running for the state of the project: the analysis of the
+    /// changeset on view.
+    pub(crate) policy: Policy,
     /// For tests: how many boots this project attempted and how many settle loops it started, so
     /// a failed boot can be told from a boot that never happened, and a retry from a second loop.
     /// A debug build only.
@@ -293,6 +297,14 @@ impl Wired {
         // Off view and without a review, the working tree is not scanned: an edit only marks it
         // changed, and coming on view settles it once.
         .wanted(session.settle_wanted());
+        // Attached once, after the last step that can fail, so the analysis never follows a boot
+        // that did not succeed.
+        crate::reconcile::attach(
+            &self.supervisor,
+            &self.policy,
+            entry.clone(),
+            session.revisions().subscribe(),
+        );
         {
             let (session, subscribers, entry) = (session.clone(), subscribers.clone(), entry.clone());
             let edit_subscribers = subscribers.clone();
@@ -486,7 +498,12 @@ impl Orchestrator {
         // An edit the watcher has not delivered yet is work the client would otherwise miss: have
         // the settle loop look at the working tree as it is now.
         open.settle_flush.request();
-        while !open.quiet() {
+        // The work a change of state calls for is started before it is asked whether any runs.
+        loop {
+            crate::reconcile::reconcile(&open).await;
+            if open.quiet() {
+                break;
+            }
             tokio::time::sleep(Duration::from_millis(10)).await;
         }
         Ok(Response::Done)
@@ -496,6 +513,7 @@ impl Orchestrator {
     pub(crate) async fn close(&self, id: ProjectId, from: &Connection) -> Result<()> {
         if let Ok(open) = self.projects.find(id).await {
             open.screens.set(from, false);
+            open.policy.screen_changed();
         }
         Ok(self.projects.close(id, from).await?)
     }
@@ -558,6 +576,7 @@ impl Orchestrator {
             #[cfg(debug_assertions)]
             analysis_failures: self.analysis_failures.clone(),
             supervisor,
+            policy: Policy::default(),
             #[cfg(debug_assertions)]
             boots: Arc::default(),
             #[cfg(debug_assertions)]

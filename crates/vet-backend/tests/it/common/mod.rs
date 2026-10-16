@@ -321,8 +321,13 @@ pub async fn background_live(client: &Client, project: ProjectId, kind: &'static
 
 /// A handler on a fresh data directory, which the caller keeps alive.
 pub async fn handler() -> (Arc<Orchestrator>, tempfile::TempDir) {
+    handler_with(config()).await
+}
+
+/// As `handler`, on `config`.
+pub async fn handler_with(config: Config) -> (Arc<Orchestrator>, tempfile::TempDir) {
     let data = tempfile::tempdir().unwrap();
-    let handler = Arc::new(Orchestrator::new(open_store(data.path()).await.unwrap(), config()));
+    let handler = Arc::new(Orchestrator::new(open_store(data.path()).await.unwrap(), config));
     (handler, data)
 }
 

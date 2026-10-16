@@ -6,28 +6,33 @@ use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
+use vet_backend::Config;
 use vet_protocol::{ChangesetKey, ProjectId, Request};
 
 #[cfg(debug_assertions)]
 use crate::common::background_started;
-use crate::common::{Client, git, handler, repo_with, write};
+use crate::common::{Client, config, git, handler_with, repo_with, write};
 
 const SERVER: &str = "#!/bin/sh\n\
     if [ \"$1\" = \"--version\" ]; then echo fake-server 1.0; exit 0; fi\n\
     echo launched >> \"@LAUNCHES@\"\n\
-    exec cat > /dev/null\n";
+    cat > /dev/null\n";
 
-struct Rig {
-    client: Client,
-    project: ProjectId,
+pub(crate) struct Rig {
+    pub(crate) client: Client,
+    pub(crate) project: ProjectId,
     launches: PathBuf,
-    repo: tempfile::TempDir,
+    pub(crate) repo: tempfile::TempDir,
     _tools: tempfile::TempDir,
     _data: tempfile::TempDir,
 }
 
 impl Rig {
-    async fn start() -> Self {
+    pub(crate) async fn start() -> Self {
+        Self::start_with(config()).await
+    }
+
+    pub(crate) async fn start_with(config: Config) -> Self {
         let repo = repo_with(
             &[
                 (
@@ -38,7 +43,7 @@ impl Rig {
             ],
             &[],
         );
-        let (handler, data) = handler().await;
+        let (handler, data) = handler_with(config).await;
         let client = Client::new(&handler);
         let project = client.open(repo.path()).await;
 
@@ -66,7 +71,7 @@ impl Rig {
     }
 
     /// A branch that changes `src/lib.rs` to return `value`.
-    fn branch(&self, name: &str, value: u32) {
+    pub(crate) fn branch(&self, name: &str, value: u32) {
         let dir: &Path = self.repo.path();
         git(dir, &["checkout", "-q", "-b", name, "main"]);
         write(dir, "src/lib.rs", &format!("pub fn f() -> u32 {{\n    {value}\n}}\n"));
@@ -75,7 +80,7 @@ impl Rig {
     }
 
     /// Puts the branch on view, as a row of the queue does.
-    async fn open(&self, branch: &str) {
+    pub(crate) async fn open(&self, branch: &str) {
         self.client
             .call(Request::OpenChangeset {
                 project: self.project,
@@ -85,7 +90,7 @@ impl Rig {
             .unwrap();
     }
 
-    async fn show_review(&self, shown: bool) {
+    pub(crate) async fn show_review(&self, shown: bool) {
         self.client
             .call(Request::SetReviewShown {
                 project: self.project,
@@ -100,7 +105,7 @@ impl Rig {
     }
 
     /// Waits until more servers were launched than `before`.
-    async fn launched_beyond(&self, before: usize) {
+    pub(crate) async fn launched_beyond(&self, before: usize) {
         for _ in 0..600 {
             if self.launched() > before {
                 return;

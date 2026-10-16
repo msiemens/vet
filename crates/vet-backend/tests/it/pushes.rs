@@ -41,7 +41,7 @@ fn text(n: usize, edited: &[usize]) -> String {
 
 /// The states of the source branch the fake lists, oldest first.
 #[derive(Default)]
-struct Mock {
+pub(crate) struct Mock {
     head: String,
     /// The base commit every iteration shares.
     base: String,
@@ -157,7 +157,7 @@ fn azure_devops(mock: Arc<Mutex<Mock>>, number: u64) -> Fake {
 }
 
 /// What the fake repository serves, and its work tree.
-struct Served {
+pub(crate) struct Served {
     base: String,
     head1: String,
     head2: String,
@@ -262,13 +262,13 @@ fn config_fetching_every(fetch_interval: Duration) -> Config {
 }
 
 /// The remote key of the fake repository.
-fn remote() -> &'static str {
+pub(crate) fn remote() -> &'static str {
     "dev.azure.com/contoso/Shop/api"
 }
 
-struct Rig {
-    client: Client,
-    project: ProjectId,
+pub(crate) struct Rig {
+    pub(crate) client: Client,
+    pub(crate) project: ProjectId,
     _repo: tempfile::TempDir,
     _data: tempfile::TempDir,
     _scratch: tempfile::TempDir,
@@ -298,7 +298,7 @@ async fn backend_fetching_every(data: &Path, fake: &Fake, fetch_interval: Durati
 }
 
 impl Rig {
-    async fn start(fake: &Fake, repo: tempfile::TempDir, scratch: tempfile::TempDir) -> Self {
+    pub(crate) async fn start(fake: &Fake, repo: tempfile::TempDir, scratch: tempfile::TempDir) -> Self {
         let data = tempfile::tempdir().unwrap();
         let (_orchestrator, client) = backend(data.path(), fake).await;
         let project = client.open(repo.path()).await;
@@ -311,7 +311,7 @@ impl Rig {
         }
     }
 
-    async fn open(&self) {
+    pub(crate) async fn open(&self) {
         self.client
             .call(Request::OpenChangeset {
                 project: self.project,
@@ -339,7 +339,7 @@ impl Rig {
         }
     }
 
-    async fn toggle_file(&self, path: &str) {
+    pub(crate) async fn toggle_file(&self, path: &str) {
         let revision = self.manifest().await.revision;
         self.client
             .call(Request::ToggleFileSeen {
@@ -369,7 +369,7 @@ impl Rig {
         paths
     }
 
-    async fn fetch(&self) {
+    pub(crate) async fn fetch(&self) {
         self.client
             .call(Request::Fetch { project: self.project })
             .await
@@ -402,7 +402,7 @@ async fn manifest_of(client: &Client, project: ProjectId) -> Manifest {
 }
 
 /// The fake for a pull request 7 whose source branch is at its first push.
-fn fixture() -> (Arc<Mutex<Mock>>, Fake, tempfile::TempDir, tempfile::TempDir, Served) {
+pub(crate) fn fixture() -> (Arc<Mutex<Mock>>, Fake, tempfile::TempDir, tempfile::TempDir, Served) {
     let scratch = tempfile::tempdir().unwrap();
     let (served, wrapper) = served(scratch.path());
     let mock = Arc::new(Mutex::new(Mock {
@@ -556,7 +556,7 @@ async fn push_case(
 }
 
 /// The author's push, recorded by the platform, as the fake serves it.
-fn push_again(mock: &Arc<Mutex<Mock>>, served: &Served) {
+pub(crate) fn push_again(mock: &Arc<Mutex<Mock>>, served: &Served) {
     push_branch(served);
     let mut mock = mock.lock().unwrap();
     mock.head = served.head2.clone();

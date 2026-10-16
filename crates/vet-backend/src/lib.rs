@@ -24,11 +24,13 @@ mod mutex;
 mod open;
 mod problems;
 mod projects;
+mod reconcile;
 mod references;
 mod review;
 mod screens;
 mod semantic;
 mod servers;
+mod supervisor;
 mod symbols;
 mod sync;
 mod threads;
@@ -270,7 +272,9 @@ impl Orchestrator {
     /// log lines say so.
     async fn find(&self, id: ProjectId) -> Result<Arc<Open>> {
         tracing::Span::current().record("project", id);
-        Ok(self.projects.find(id).await?)
+        let open = self.projects.find(id).await?;
+        reconcile::touched(&open);
+        Ok(open)
     }
 
     /// At startup: removes what a launch that died left, then the kept trees
@@ -376,7 +380,8 @@ impl Orchestrator {
 
 impl Handler for Orchestrator {
     async fn handle(&self, request: Request, events: Events) -> std::result::Result<Response, Failure> {
-        Ok(self.answer(request, &Connection(events)).await?)
+        let from = Connection(events);
+        Ok(reconcile::reconciling(self.answer(request, &from)).await?)
     }
 }
 
@@ -744,6 +749,8 @@ impl Orchestrator {
 /// shows it (`SetReviewShown`), nothing starts, and coming up starts them. The
 /// checks of the changeset on view are for both screens — the queue shows the
 /// selected pull request's checks too — so they start whatever screen shows it.
+/// The symbols and problems analysis is not started here: the supervisor's policy keeps it for the
+/// revision and screen state.
 fn start_servers_in_background(open: Arc<Open>) {
     checks::refresh_checks_in_background(open.clone());
     // A new revision or a change of trust can put a policy on view that a running server may not
@@ -759,8 +766,6 @@ fn start_servers_in_background(open: Arc<Open>) {
     if !open.screens.shown() {
         return;
     }
-    symbols::refresh_symbols_in_background(open.clone());
-    problems::refresh_problems_in_background(open.clone());
     let starting = open.clone();
     let task = async move {
         if let Ok(booted) = starting.booted().await {

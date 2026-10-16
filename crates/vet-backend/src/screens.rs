@@ -39,9 +39,10 @@ impl ReviewScreens {
 }
 
 impl Orchestrator {
-    /// The connection shows the review screen of the project or leaves it. Coming up starts the
-    /// servers the changeset on view needs, and copies the working tree's dirty content ahead of
-    /// a review once, since the queue copied nothing.
+    /// The connection shows the review screen of the project or leaves it. The changed symbols and
+    /// problems are analysed for the review screen only, which the supervisor's policy follows.
+    /// Coming up starts the servers the changeset on view needs, and copies the working tree's
+    /// dirty content ahead of a review once, since the queue copied nothing.
     pub(crate) async fn set_review_shown(
         &self,
         project: ProjectId,
@@ -50,6 +51,7 @@ impl Orchestrator {
     ) -> Result<Response> {
         let open: Arc<Open> = self.find(project).await?;
         open.screens.set(from, shown);
+        open.policy.screen_changed();
         if shown {
             start_servers_in_background(open.clone());
             // The queue copied nothing: the review screen that comes back copies the tree once.
@@ -60,11 +62,6 @@ impl Orchestrator {
                 }
             };
             tokio::spawn(boot);
-        } else {
-            // The changed symbols and problems are analysed for the review screen only. The checks
-            // stay: the queue shows the selected pull request's checks too.
-            open.supervisor.stop("symbols");
-            open.supervisor.stop("problems");
         }
         Ok(Response::Done)
     }
@@ -80,9 +77,7 @@ impl Orchestrator {
     /// failed. Only while the review screen shows the changeset, which is what the panel is on.
     pub(crate) async fn refresh_problems(&self, project: ProjectId) -> Result<Response> {
         let open: Arc<Open> = self.find(project).await?;
-        if open.screens.shown() {
-            crate::problems::refresh_problems_in_background(open);
-        }
+        open.policy.rerun_problems();
         Ok(Response::Done)
     }
 }

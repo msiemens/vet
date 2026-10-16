@@ -63,6 +63,7 @@ impl Orchestrator {
         let ready = self.ready(project).await?;
         let started = ready.restart_server(language).await;
         ready.subscribers.broadcast(Event::ServersChanged { project });
+        ready.open.policy.servers_replaced();
         start_servers_in_background(ready.open.clone());
         started?;
         self.servers_of(&ready.open).await
@@ -104,6 +105,7 @@ impl Orchestrator {
         }
         for open in self.projects.all().await {
             open.subscribers.broadcast(Event::ServersChanged { project: open.id });
+            open.policy.servers_replaced();
             start_servers_in_background(open);
         }
     }

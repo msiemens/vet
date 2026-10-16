@@ -2,6 +2,7 @@
 //! link the whole dependency tree on its own.
 
 mod acceptance;
+mod analysis;
 mod caches;
 mod cancel;
 mod checks;

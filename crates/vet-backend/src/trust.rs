@@ -29,5 +29,6 @@ async fn trust_changed(ready: Ready) {
     ready.retire_disallowed_servers().await;
     ready.subscribers.broadcast(Event::TargetChanged { project: ready.id });
     ready.subscribers.broadcast(Event::ServersChanged { project: ready.id });
+    ready.open.policy.policy_changed();
     start_servers_in_background(ready.open);
 }
