@@ -377,12 +377,18 @@ async fn a_revision_move_on_a_pull_request_reads_the_checks_again() {
 #[tokio::test]
 async fn signing_in_again_reads_the_checks_of_the_pull_request_on_view_again() {
     let (mock, fake, repo, _scratch) = fixture();
-    mock.lock().unwrap().check_runs = CHECKS_SUCCESS.to_owned();
+    {
+        let mut mock = mock.lock().unwrap();
+        mock.check_runs = CHECKS_SUCCESS.to_owned();
+        mock.checks_only_token = Some("gho_secret_2".to_owned());
+    }
     let (_handler, mut client) = backend(repo.path(), &fake.base()).await;
     let project = open_review(&client, repo.path()).await;
-    let _ = next_checks(&mut client.inbox, project, Duration::from_secs(5))
+    let (refused, error, _) = next_checks(&mut client.inbox, project, Duration::from_secs(5))
         .await
-        .expect("a round");
+        .expect("the refusal is told");
+    assert!(error.is_some(), "the platform refused the credential");
+    assert!(refused.iter().all(|c| c.runs.is_empty()), "{refused:?}");
 
     client
         .call(Request::SetCredentials {
@@ -393,10 +399,18 @@ async fn signing_in_again_reads_the_checks_of_the_pull_request_on_view_again() {
         .await
         .unwrap();
 
-    let (again, ..) = next_checks(&mut client.inbox, project, Duration::from_secs(5))
+    let (again, error, _) = next_checks(&mut client.inbox, project, Duration::from_secs(5))
         .await
         .expect("the checks are read again with the new credentials");
+    assert_eq!(error, None);
     assert_eq!(again[0].state, Some(CiState::Success));
+    assert_eq!(again[0].runs.len(), 1);
+    let asked = mock.lock().unwrap().checks_authorizations.clone();
+    assert!(asked.first().is_some_and(|a| a.ends_with("gho_secret")), "refused read");
+    assert!(
+        asked.last().is_some_and(|a| a.ends_with("gho_secret_2")),
+        "answered read"
+    );
 }
 
 #[cfg(debug_assertions)]
