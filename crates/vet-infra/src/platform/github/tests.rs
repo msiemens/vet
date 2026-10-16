@@ -1214,6 +1214,54 @@ async fn checks_that_are_done_are_asked_for_once_and_running_ones_again() {
     );
 }
 
+/// Hands out the token it holds now.
+struct Switch(Mutex<&'static str>);
+
+impl CredentialProvider for Switch {
+    fn credential(&self, _: &str, _: i64) -> impl Future<Output = Option<Credential>> + Send {
+        std::future::ready(Some(Credential {
+            token: vet_app::platform::Token::new(*self.0.lock().unwrap()).unwrap(),
+            source: vet_app::platform::CredentialSource::Pat,
+        }))
+    }
+}
+
+#[tokio::test]
+async fn checks_refused_for_a_credential_are_asked_again_with_the_one_that_replaces_it() {
+    let fake = Fake::start(|request, _| {
+        if request.path.starts_with("/repos/acme/app/commits/abc123/check-runs") {
+            if request.header("authorization") != Some("Bearer new") {
+                return Canned::status(401, r#"{"message":"Bad credentials"}"#);
+            }
+            Canned::json(RUNS)
+        } else if request.path.starts_with("/repos/acme/app/commits/abc123/status") {
+            Canned::json(STATUSES)
+        } else {
+            Canned::status(404, r#"{"message":"Not Found"}"#)
+        }
+    });
+    let credentials = Arc::new(Switch(Mutex::new("old")));
+    let client = client_with(&fake, credentials.clone());
+
+    let refused = client.checks(&remote(), "abc123").await.unwrap_err();
+    assert!(matches!(refused, PlatformError::Rejected(_)), "{refused:?}");
+
+    *credentials.0.lock().unwrap() = "new";
+    let found = client.checks(&remote(), "abc123").await.unwrap();
+    assert_eq!(found.checks.len(), 4);
+    let sent: Vec<_> = fake
+        .requests()
+        .iter()
+        .filter(|r| r.path.contains("check-runs"))
+        .map(|r| r.header("authorization").map(str::to_owned))
+        .collect();
+    assert_eq!(
+        sent,
+        [Some("Bearer old".to_owned()), Some("Bearer new".to_owned())],
+        "the refusal was not kept, and the new credential was sent"
+    );
+}
+
 #[tokio::test]
 async fn something_that_is_not_a_commit_id_is_not_sent() {
     let fake = checks_server(Arc::new(Mutex::new(RUNS.to_owned())));
