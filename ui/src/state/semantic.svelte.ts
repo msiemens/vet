@@ -40,8 +40,6 @@ class SemanticStore {
   files = new SvelteMap<string, FileDiagnostics>();
   /** What `files` held when the revision last advanced, for what shows until the new revision has answered. */
   previous = $state.raw<ReadonlyMap<string, FileDiagnostics>>(new Map());
-  /** Counts the times the answers were dropped. */
-  generation = $state(0);
   private hovering = new InFlight<HoverAnswer>();
   private probe = new DefinitionProbe((key, signal) => this.lookUp(key, signal));
   /** The files the backend could not answer for, and why. */
@@ -94,7 +92,6 @@ class SemanticStore {
   private drop() {
     this.files.clear();
     this.missing.clear();
-    this.generation++;
     this.hovering.clear();
     this.probe.clear();
   }
