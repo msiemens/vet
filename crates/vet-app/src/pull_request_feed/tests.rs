@@ -1030,3 +1030,136 @@ async fn the_head_of_the_pull_request_on_view_is_fetched_though_the_platform_doe
     assert!(held.contains(&PullRequestRefs::of(&app, 3).head), "{held:?}");
     assert_eq!(counting(&log, "heads_fetched"), 1);
 }
+
+/// A feed, running, that has not listed yet, over a platform that lists #7 of `acme/app`; the
+/// feed's clock says 1_000.
+fn unlisted_feed() -> (TestFeed, Log, Fake, Arc<Health>) {
+    let log = Log::default();
+    let app = github("acme/app");
+    let platform = listing(&log, vec![(app.clone(), vec![7])]);
+    let health = Arc::new(Health::new(|_| {}));
+    let side = Side {
+        platform: platform.clone(),
+        health: health.clone(),
+        known: Arc::default(),
+        fetch: Arc::new(Fetch::new(
+            Readable::of(vec![info("origin", "https://github.com/acme/app")]),
+            Tasks::default(),
+        )),
+        accounts: vec![],
+    };
+    let feed = PullRequestFeed::new(side, MemStore::default(), project(&log), || 1_000, zero());
+    let _run = tokio::spawn(feed.clone().run());
+    (feed, log, platform, health)
+}
+
+/// Has `github.com` answer that it is rate limited until `retry_at`.
+async fn limit(health: &Health, retry_at: i64) {
+    let _ = health
+        .watch("github.com", PlatformKind::GitHub, async {
+            Err::<(), _>(PlatformError::RateLimited {
+                message: "slow down".to_owned(),
+                retry_at: Some(retry_at),
+            })
+        })
+        .await;
+}
+
+/// A feed whose first listing, of #7 of `acme/app`, was asked for, and whose platform then lists #7
+/// and #8 and has `github.com` rate limited until `retry_at`.
+async fn listed_then_limited(retry_at: i64) -> (TestFeed, Log) {
+    let (feed, log, platform, health) = unlisted_feed();
+    feed.manual().await;
+    platform.lists(vec![(github("acme/app"), vec![7, 8])]);
+    limit(&health, retry_at).await;
+    (feed, log)
+}
+
+type TestFeed = PullRequestFeed<Side<Fake, Readable>, MemStore, ProjectFake>;
+
+/// Waits until the feed's list satisfies `done`.
+async fn until(feed: &TestFeed, done: impl Fn(&PullRequestList) -> bool) {
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(2);
+    while !done(&feed.list().await.unwrap()) && tokio::time::Instant::now() < deadline {
+        tokio::time::sleep(Duration::from_millis(5)).await;
+    }
+}
+
+fn limit_of(list: &PullRequestList) -> Option<&PlatformError> {
+    list.sources[0].error.as_ref()
+}
+
+#[tokio::test]
+async fn a_timer_or_accounts_cycle_does_not_ask_a_limited_account_and_keeps_its_rows() {
+    for accounts in [false, true] {
+        let (feed, log) = listed_then_limited(1_500).await;
+        if accounts {
+            feed.accounts();
+        } else {
+            feed.timer();
+        }
+        until(&feed, |list| limit_of(list).is_some()).await;
+
+        let list = feed.list().await.unwrap();
+        assert!(
+            matches!(
+                limit_of(&list),
+                Some(PlatformError::RateLimited {
+                    retry_at: Some(1_500),
+                    ..
+                })
+            ),
+            "accounts: {accounts}, the source reports the limit"
+        );
+        assert_eq!(numbers(&list), [7], "accounts: {accounts}, the last rows are kept");
+        assert_eq!(
+            counting(&log, "list"),
+            1,
+            "accounts: {accounts}, the account was not asked"
+        );
+    }
+}
+
+#[tokio::test]
+async fn a_timer_cycle_asks_again_once_the_retry_time_has_passed() {
+    let (feed, log) = listed_then_limited(900).await;
+    feed.timer();
+    until(&feed, |list| list.has(&github("acme/app"), 8)).await;
+
+    assert_eq!(numbers(&feed.list().await.unwrap()), [8, 7]);
+    assert_eq!(counting(&log, "list"), 2);
+}
+
+#[tokio::test]
+async fn a_manual_refresh_asks_a_limited_account() {
+    let (feed, log) = listed_then_limited(1_500).await;
+    feed.manual().await;
+
+    let list = feed.list().await.unwrap();
+    assert_eq!(numbers(&list), [8, 7]);
+    assert!(limit_of(&list).is_none());
+    assert_eq!(counting(&log, "list"), 2);
+}
+
+#[tokio::test]
+async fn the_first_listing_asks_a_limited_account() {
+    let (feed, log, _, health) = unlisted_feed();
+    limit(&health, 1_500).await;
+
+    let list = feed.list().await.unwrap();
+
+    assert_eq!(numbers(&list), [7]);
+    assert!(limit_of(&list).is_none());
+    assert_eq!(counting(&log, "list"), 1);
+}
+
+#[tokio::test]
+async fn a_manual_request_merged_into_a_timer_cycle_makes_it_ask() {
+    let (feed, log) = listed_then_limited(1_500).await;
+    // Both requests are made before the run loop can start a cycle, which then serves both.
+    feed.timer();
+    feed.manual().await;
+
+    assert_eq!(counting(&log, "list"), 2, "one cycle served both");
+    assert_eq!(numbers(&feed.list().await.unwrap()), [8, 7]);
+}

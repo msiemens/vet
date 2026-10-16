@@ -16,11 +16,13 @@ use tokio::sync::Notify;
 
 use crate::fetch::{Credentials, Fetch, FetchMark};
 use crate::mutex::lock;
-use crate::platform::{Added, Platform, PlatformKind, Platforms, PullRequest, PullRequestCache, RemoteKey, Standing};
+use crate::platform::{
+    Added, Platform, PlatformError, PlatformKind, Platforms, PullRequest, PullRequestCache, RemoteKey, Standing,
+};
 use crate::ports::{Fetcher, LiveStore, ReviewWrites};
 use crate::pull_request::{
-    ListedPullRequest, PullRequestList, delete_pull_request_refs, fetch_listed_heads, hosted_repositories,
-    hosts_to_ask_about, list_pull_requests, row_of, unlisted_fetched, unlisted_row,
+    ListedPullRequest, PullRequestList, RepositoryStatus, delete_pull_request_refs, fetch_listed_heads,
+    hosted_repositories, hosts_to_ask_about, list_pull_requests, row_of, unlisted_fetched, unlisted_row,
 };
 use crate::session::{SessionError, UnixClock};
 
@@ -134,10 +136,13 @@ pub trait Project {
 /// pull request on view the moment before the listing, and the mark the refs were at before it,
 /// which [`prune`] keeps what is fetched after it. A repository the platform cannot answer for is
 /// reported in `sources`, the others still list; a failure before any listing, such as unreadable
-/// remotes, fails the whole call.
+/// remotes, fails the whole call. Unless the cycle `asks`, an account that is rate limited until
+/// after `now` is not asked: its repositories report the limit and list no rows.
 async fn listed<H: Hostings, P: Project>(
     platforms: &H,
     project: &P,
+    asks: bool,
+    now: i64,
 ) -> Result<(PullRequestList, Option<(RemoteKey, u64)>, FetchMark), SessionError> {
     let fetch = platforms.fetch();
     let remotes = fetch.remotes().await?;
@@ -171,10 +176,47 @@ async fn listed<H: Hostings, P: Project>(
     }
     let on_view = project.on_view().await;
     let since = fetch.mark();
-    let list = list_pull_requests(&platforms.hosting(PlatformKind::GitHub), &github)
+    let list = list_unless_limited(platforms, PlatformKind::GitHub, &github, asks, now)
         .await
-        .and(list_pull_requests(&platforms.hosting(PlatformKind::AzureDevOps), &azure_devops).await);
+        .and(list_unless_limited(platforms, PlatformKind::AzureDevOps, &azure_devops, asks, now).await);
     Ok((list, on_view, since))
+}
+
+/// The open pull requests of `repositories` on the platform `kind`, leaving out the ones of an
+/// account that is limited until after `now` when the cycle does not `ask`. The sources keep the
+/// order of `repositories`.
+async fn list_unless_limited<H: Hostings>(
+    platforms: &H,
+    kind: PlatformKind,
+    repositories: &[RemoteKey],
+    asks: bool,
+    now: i64,
+) -> PullRequestList {
+    let limit_of = |remote: &RemoteKey| match platforms.standing(&remote.account()) {
+        Some(Standing::Failing(error @ PlatformError::RateLimited { retry_at: Some(at), .. })) if at > now => {
+            Some(error)
+        }
+        _ => None,
+    };
+    let (skipped, asked): (Vec<_>, Vec<_>) = if asks {
+        (Vec::new(), repositories.iter().map(|r| (r, None)).collect())
+    } else {
+        repositories
+            .iter()
+            .map(|r| (r, limit_of(r)))
+            .partition(|(_, limit)| limit.is_some())
+    };
+    let asked: Vec<RemoteKey> = asked.into_iter().map(|(remote, _)| remote.clone()).collect();
+    let mut list = list_pull_requests(&platforms.hosting(kind), &asked).await;
+    list.sources
+        .extend(skipped.into_iter().map(|(remote, error)| RepositoryStatus {
+            remote: remote.clone(),
+            error,
+            truncated: false,
+        }));
+    list.sources
+        .sort_by_key(|source| repositories.iter().position(|r| *r == source.remote));
+    list
 }
 
 /// The feed of a project: the last listing, the requests to list again, and the cycles they run.
@@ -210,6 +252,9 @@ struct State<A> {
     /// The generations of `joins` and `manuals` that cycles have covered.
     joins_done: u64,
     manuals_done: u64,
+    /// An Initial request is waiting for a cycle, which then asks every account. A Manual request
+    /// needs no flag: its generation says it.
+    initial: bool,
     /// The last listing, as the platforms gave it.
     listed: Option<PullRequestList>,
     /// The row of the pull request on view when the platforms' listing leaves it out, which the
@@ -254,6 +299,7 @@ impl<A> Default for State<A> {
             manuals: 0,
             joins_done: 0,
             manuals_done: 0,
+            initial: false,
             listed: None,
             extra: None,
             on_view_changes: 0,
@@ -334,8 +380,8 @@ where
     pub async fn run(self) {
         let mut prefetch: Option<Pin<Box<dyn Future<Output = ()> + Send>>> = None;
         loop {
-            if let Some(covering) = self.pending() {
-                match self.cycle().await {
+            if let Some((covering, asks)) = self.pending() {
+                match self.cycle(asks).await {
                     Cycle::Changed(list) => prefetch = Some(self.prefetch_work(list)),
                     Cycle::Unchanged => {}
                     Cycle::Failed(error) => self.failed(error),
@@ -362,10 +408,17 @@ where
         }
     }
 
-    /// The manual generation a cycle starting now would cover, if anything asks for a cycle.
-    fn pending(&self) -> Option<u64> {
-        let state = lock(&self.inner.state);
-        (state.joins_done < state.joins || state.manuals_done < state.manuals).then_some(state.manuals)
+    /// The manual generation a cycle starting now would cover, if anything asks for a cycle, and
+    /// whether that cycle asks every account: it does when a Manual or Initial request is among
+    /// those it serves, and skips the rate limited accounts when only the Timer and Accounts ones are.
+    fn pending(&self) -> Option<(u64, bool)> {
+        let mut state = lock(&self.inner.state);
+        if state.joins_done >= state.joins && state.manuals_done >= state.manuals {
+            return None;
+        }
+        let initial = std::mem::take(&mut state.initial);
+        let asks = initial || state.manuals_done < state.manuals;
+        Some((state.manuals, asks))
     }
 
     /// Lets go of the busy guard, unless a request arrived meanwhile. Answers whether it did.
@@ -390,6 +443,7 @@ where
                     state.manuals
                 }
                 Refresh::Initial | Refresh::Timer | Refresh::Accounts => {
+                    state.initial |= matches!(kind, Refresh::Initial);
                     state.joins += 1;
                     state.joins
                 }
@@ -413,10 +467,12 @@ where
     /// One cycle: list, publish when the list differs from the last, prune, fetch the heads and
     /// hand the details back for the prefetch. The listing of a repository that fails keeps the rows
     /// of the last list for it, with its error in its source. The heads are fetched on every
-    /// successful cycle, changed or not: a head fetch that failed is retried by the next one.
-    async fn cycle(&self) -> Cycle {
+    /// successful cycle, changed or not: a head fetch that failed is retried by the next one. A
+    /// cycle that does not `ask` leaves the accounts that are rate limited alone.
+    async fn cycle(&self, asks: bool) -> Cycle {
         let on_view_changes = lock(&self.inner.state).on_view_changes;
-        let (fresh, on_view, since) = match listed(&self.inner.platforms, &self.inner.project).await {
+        let now = (self.inner.now)();
+        let (fresh, on_view, since) = match listed(&self.inner.platforms, &self.inner.project, asks, now).await {
             Ok(got) => got,
             Err(error) => return Cycle::Failed(error),
         };
