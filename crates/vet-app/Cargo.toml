@@ -12,10 +12,10 @@ vet-semantic.workspace = true
 vet-engine.workspace = true
 # The runtime-agnostic async mutex that serializes a session's review state, the
 # timeout on a CLI tool's answer, and the worktree file whose text the semantic
-# layer compares a revision's with (D97).
-tokio = { workspace = true, features = ["sync", "time", "fs"] }
-# Asking a platform for several commits' checks at once.
-futures = { workspace = true, features = ["alloc"] }
+# layer compares a revision's with (D97), and the tasks a project's background runs are.
+tokio = { workspace = true, features = ["sync", "time", "fs", "rt"] }
+# Asking a platform for several commits' checks at once, and containing a panic in a background run.
+futures = { workspace = true, features = ["alloc", "std"] }
 # What `az` prints, and the stored form of what a platform said of a pull request.
 serde = { workspace = true, features = ["derive"] }
 serde_json.workspace = true
@@ -26,7 +26,9 @@ percent-encoding.workspace = true
 [dev-dependencies]
 # The worktree directories the semantic tests ask over.
 tempfile.workspace = true
-tokio = { workspace = true, features = ["macros", "rt", "time"] }
+tokio = { workspace = true, features = ["macros", "rt", "rt-multi-thread", "time"] }
+# Reading what a background run logs.
+tracing-subscriber = { workspace = true, features = ["fmt"] }
 
 [features]
 # The store-port contract (`store_contract.rs`): not needed in the product, compiled for the

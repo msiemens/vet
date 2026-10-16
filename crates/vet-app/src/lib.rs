@@ -28,6 +28,7 @@ pub mod semantics;
 pub mod servers;
 pub mod session;
 pub mod settle;
+pub mod supervise;
 pub mod trust;
 
 /// The contract of the store ports (T4): run against the fake from here and against
