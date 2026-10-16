@@ -9,6 +9,7 @@ import type { View } from "../../src/generated/View.ts";
 import type { Backend } from "../../src/state/backend.ts";
 import { keyId } from "../../src/state/changesetKey.ts";
 import { changeset } from "../../src/state/changeset.svelte.ts";
+import { changesOf, reviewedOf } from "../../src/state/queueEntries.ts";
 import { queue } from "../../src/state/queue.svelte.ts";
 import { reviewShown } from "../../src/state/reviewShown.svelte.ts";
 import { rangeKey } from "../../src/state/timelineRange.ts";
@@ -82,22 +83,33 @@ export async function checkInvariants(other: Backend): Promise<Violation[]> {
   differ("base", "base of the view", baseOf(layout.base), baseOf(fresh.base));
   differ("reviewInfo", "review of the changeset", versionOf(facts), versionOf(fresh));
 
-  // The queue and the switcher show the changeset's own numbers as the on-view row's, whatever view the review shows.
-  const onView = queue.onViewFrame;
+  // The queue panel and Problems read the store's whole-changeset view; the selected row's own
+  // numbers come from it, whatever view the review shows.
+  const wholeFrame = changeset.wholeFrame;
   differ(
-    "onViewRowFacts",
-    "what the on-view row of the queue takes of the changeset",
-    onView && {
-      completion: onView.facts.completion,
-      delta: onView.layout.delta,
-      files: onView.layout.paths,
-      base: baseOf(onView.layout.base),
+    "wholeFrame",
+    "the whole-changeset view",
+    wholeFrame && {
+      completion: wholeFrame.facts.completion,
+      delta: wholeFrame.layout.delta,
+      files: wholeFrame.layout.paths,
+      base: baseOf(wholeFrame.layout.base),
     },
     {
       completion: whole.completion,
       delta: whole.delta,
       files: whole.files.map((f) => f.path),
       base: baseOf(whole.base),
+    },
+  );
+  const entry = queue.entries.find((e) => e.onView);
+  differ(
+    "onViewRowWhole",
+    "the selected row's numbers from the whole view",
+    entry && { changes: entry.changes, reviewed: entry.reviewed },
+    entry && {
+      changes: changesOf(entry, wholeFrame?.layout.delta, queue.lines.get(keyId(entry.key))),
+      reviewed: reviewedOf(entry.review, wholeFrame?.facts.completion),
     },
   );
 

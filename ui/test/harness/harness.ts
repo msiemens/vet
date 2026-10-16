@@ -39,6 +39,9 @@ const MARKS = new Set<Request["type"]>([
 
 const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
 
+/** A request that reads the whole changeset: a manifest of the changeset view. */
+const isWholeFetch = (r: Request) => r.type === "manifest" && r.view.type === "changeset";
+
 export interface Harness {
   readonly fixture: Fixture;
   /** A second connection to the same project: another window, and the source of fresh reads. */
@@ -55,7 +58,14 @@ export interface Harness {
   step(
     name: string,
     run: () => unknown,
-    expected?: { marks?: number; notice?: string; listings?: number; rejected?: number; commits?: number },
+    expected?: {
+      marks?: number;
+      notice?: string;
+      listings?: number;
+      rejected?: number;
+      commits?: number;
+      whole?: number;
+    },
   ): Promise<void>;
   /** Resolves when `condition` holds; fails after a while. */
   until(condition: () => boolean, what: string): Promise<void>;
@@ -161,6 +171,7 @@ export async function runSession(name: SessionName, script: (h: Harness) => Prom
         const marksBefore = sent.filter((r) => MARKS.has(r.type)).length;
         const listingsBefore = sent.filter((r) => r.type === "listPullRequests").length;
         const commitsBefore = sent.filter((r) => r.type === "commits").length;
+        const wholeBefore = sent.filter(isWholeFetch).length;
         failed.length = 0;
         notices.close();
         await run();
@@ -178,6 +189,9 @@ export async function runSession(name: SessionName, script: (h: Harness) => Prom
         const commits = sent.filter((r) => r.type === "commits").length - commitsBefore;
         if (expected.commits !== undefined && commits !== expected.commits)
           step("the number of times the step asked for the commits", commits, expected.commits);
+        const whole = sent.filter(isWholeFetch).length - wholeBefore;
+        if (expected.whole !== undefined && whole !== expected.whole)
+          step("the number of times the step read the whole changeset", whole, expected.whole);
         if (failed.length !== (expected.rejected ?? 0)) step("requests the backend rejected", failed.slice(), []);
         if (notices.text !== expected.notice) step("the notice after the step", notices.text, expected.notice);
         results.push({ name, violations });

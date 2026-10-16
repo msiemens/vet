@@ -1,6 +1,7 @@
-// What each tab reads: the changeset store for the tabs that show the view on screen, and a `ViewScope`
-// of its own for a tab that stays at a commit (or on the whole changeset while a commit is shown). One
-// registry makes each view's scope once and drops it with the last tab that reads it.
+// What each tab reads: the changeset store for the tabs that show the view on screen, the store's
+// whole-changeset view for a file tab that stays on the changeset while a commit is shown, and a
+// `ViewScope` of its own for a tab that stays at a commit. One registry makes each commit's scope
+// once and drops it with the last tab that reads it.
 
 import type { CommitUnit } from "../../generated/CommitUnit";
 import type { Side } from "../../generated/Side";
@@ -8,16 +9,16 @@ import type { TabId } from "../../state/commands";
 import type { Answer } from "../../state/reviewMarks";
 import { type ScopeSpec, scopeKey } from "../../state/scopeSpec.ts";
 import type { Shown } from "../../state/shown";
-import type { ViewScope, ViewSource } from "../../state/viewScope.svelte";
+import type { CommitSpec, ViewScope, ViewSource } from "../../state/viewScope.svelte";
 import type { ChangesetSource } from "./changesetSource";
 import type { Tabs } from "./Tabs.svelte";
 import { commitOf, kindOf, pathOf } from "./tabModel.ts";
 
-/** Makes the scope of a view; the real one is `newScope`, plugged in so this module reaches no runes. */
-export type ScopeFactory = (spec: ScopeSpec, marked: (shown: Shown, update: Answer) => void) => ViewScope;
+/** Makes the scope of a commit; the real one is `newScope`, plugged in so this module reaches no runes. */
+export type ScopeFactory = (spec: CommitSpec, marked: (shown: Shown, update: Answer) => void) => ViewScope;
 
 /** Anything a scope read; the views of the tabs that read it follow. */
-export type ScopeListener = (scope: ViewScope, paths: ReadonlySet<string> | "all") => void;
+export type ScopeListener = (scope: ViewSource, paths: ReadonlySet<string> | "all") => void;
 
 export class ViewScopes {
   /** The scopes held, by `scopeKey`. */
@@ -30,9 +31,13 @@ export class ViewScopes {
   private tabs: Tabs;
   private written: ScopeListener;
   private makeScope: ScopeFactory;
+  /** The whole-changeset view the store holds: what a file tab reads while a commit is on screen. */
+  private whole: ViewSource;
+  private offWhole: () => void;
 
   constructor(
     changeset: ViewSource & Pick<ChangesetSource, "shownCommit" | "adopt">,
+    whole: ViewSource,
     tabs: Tabs,
     written: ScopeListener,
     makeScope: ScopeFactory,
@@ -41,6 +46,14 @@ export class ViewScopes {
     this.tabs = tabs;
     this.written = written;
     this.makeScope = makeScope;
+    this.whole = whole;
+    // The whole view is read by the store, not made here; its writes still reach the tabs that read it.
+    this.offWhole = whole.subscribe((paths) => written(whole, paths));
+  }
+
+  /** Takes the whole view's listener off; the screen that reads it is going away. */
+  dispose() {
+    this.offWhole();
   }
 
   get isFrozen(): boolean {
@@ -54,7 +67,7 @@ export class ViewScopes {
 
   /**
    * What the scope of a tab is, if it is not the view on screen: a tab at a commit stays there, and a
-   * file tab shows the changeset while a commit is on screen.
+   * file tab shows the changeset (the store's whole view) while a commit is on screen.
    */
   specOf(id: TabId): ScopeSpec | undefined {
     const commit = commitOf(id);
@@ -65,11 +78,13 @@ export class ViewScopes {
   /** What the tab reads its file and review state from. */
   sourceOf(id: TabId): ViewSource {
     const spec = this.specOf(id);
-    return spec ? this.scope(spec) : this.changeset;
+    if (!spec) return this.changeset;
+    if (spec.type === "changeset") return this.whole;
+    return this.scope(spec);
   }
 
-  /** The scope of `spec`, made once and kept until the last tab that reads it goes. */
-  scope(spec: ScopeSpec): ViewScope {
+  /** The scope of the commit `spec`, made once and kept until the last tab that reads it goes. */
+  scope(spec: CommitSpec): ViewScope {
     const key = scopeKey(spec);
     const held = this.scopes.get(key);
     if (held) return held.scope;
@@ -81,7 +96,7 @@ export class ViewScopes {
     return scope;
   }
 
-  /** The scope of a tab at a commit; none for the tabs that read the view on screen. */
+  /** The scope of a tab at a commit; none for the tabs that read the view on screen or the whole changeset. */
   commitScope(id: TabId): ViewScope | undefined {
     const commit = commitOf(id);
     return commit === undefined ? undefined : this.scope({ type: "commit", id: commit });
@@ -125,7 +140,7 @@ export class ViewScopes {
   }
 
   /** The tabs that read `scope`. */
-  tabsOf(scope: ViewScope): TabId[] {
+  tabsOf(scope: ViewSource): TabId[] {
     return this.tabs.open.filter((id) => this.specOf(id) !== undefined && this.sourceOf(id) === scope);
   }
 

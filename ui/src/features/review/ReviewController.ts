@@ -22,7 +22,7 @@ import { semantic } from "../../state/semantic.svelte";
 import { session } from "../../state/session.svelte";
 import { isCurrent } from "../../state/shown";
 import { threads } from "../../state/threads.svelte";
-import { type ViewScope, newScope } from "../../state/viewScope.svelte";
+import { type ViewSource, newScope } from "../../state/viewScope.svelte";
 import type { OpenedResult } from "../search";
 import { type ChangesetSource } from "./changesetSource";
 import { type FilePositions, type SavedView, restoredTabs } from "./changesetViews";
@@ -84,6 +84,7 @@ export class ReviewController {
     this.persistence = new ViewPersistence(projectViews);
     this.scopes = new ViewScopes(
       changeset,
+      changeset.whole,
       this.tabs,
       (scope, paths) => this.scopeWritten(scope, paths),
       (spec, marked) => newScope(backend, spec, marked, changeset.commitList, () => changeset.currentShown()?.revision),
@@ -157,7 +158,7 @@ export class ReviewController {
   }
 
   /** A scope read its manifest or took review state: the views of its tabs follow. */
-  private scopeWritten(scope: ViewScope, paths: ReadonlySet<string> | "all") {
+  private scopeWritten(scope: ViewSource, paths: ReadonlySet<string> | "all") {
     if (scope.gone) {
       // The commit is not among the changeset's any more (a rewritten branch): its tabs have nothing to show.
       for (const id of this.scopes.tabsOf(scope)) this.tabs.close(id);
@@ -186,6 +187,7 @@ export class ReviewController {
     this.unsubscribe();
     this.unsubscribeEvents();
     this.scopes.drop();
+    this.scopes.dispose();
     this.views.destroy();
   }
 

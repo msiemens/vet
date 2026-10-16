@@ -89,7 +89,7 @@
   const unlisted = $derived(tab === "all" || tab === "prs" ? queue.sources.filter((s) => s.error !== undefined) : []);
   const current = $derived(rows.find((r) => r.onView));
   /** The changeset's own numbers, whatever range or commit the review shows. */
-  const own = $derived(queue.onViewFrame);
+  const own = $derived(changeset.wholeFrame);
 
   function showTab(id: QueueTab) {
     tabKept.value = id;

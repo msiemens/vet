@@ -761,6 +761,28 @@ export const sessions: Record<string, (d: Driver) => Promise<void>> = {
     await hidePalette();
   },
 
+  /**
+   * Problems lists the changeset's files, not the commit's, while a commit is on view: it reads the
+   * store's whole-changeset view, which the commit on screen is not.
+   */
+  async problems(d) {
+    await d.openBranch();
+    await d.page(`__t.changeset.showLens("perCommit")`);
+    await d.until(`__t.changeset.shownCommit !== undefined`, "a commit on view");
+    await d.page(
+      `(async () => { const { shell } = await import("/src/features/chrome/shell.svelte.ts"); shell.showBottom("problems"); return true; })()`,
+    );
+    await d.until(`document.querySelector("section[aria-label=Problems]") !== null`, "the Problems tool");
+    const files = ["a.txt", "b.txt", "c.txt"];
+    await d.until(
+      `(() => { const s = document.querySelector("section[aria-label=Problems]")?.innerText ?? ""; return ${JSON.stringify(files)}.every((p) => s.includes(p)); })()`,
+      "the changeset's files in Problems",
+    );
+    const shown = (await d.page(`document.querySelector("section[aria-label=Problems]").innerText`)) as string;
+    for (const path of files)
+      if (!shown.includes(path)) throw new Error(`Problems does not list ${path} while a commit is on view:\n${shown}`);
+  },
+
   /** Changes since the last review, run from the queue, reads the versions the screen's start makes, once. */
   async sinceLast(d) {
     await d.page(`__t.commands.run("view.review")`);

@@ -117,6 +117,42 @@ export const sessions: Record<SessionName, (h: Harness) => Promise<void>> = {
     );
   },
 
+  /**
+   * The whole changeset is read once per revision: a burst of marks in a range or in a commit reads
+   * nothing of it, and a settle reads it once.
+   */
+  async whole(h) {
+    await h.step("hunk seen", () => hunk(h, "b.txt", 0), ONE);
+    await h.step("version settled", () => settleVersion(h));
+    await h.step("a range is shown", () => changeset.setRange(defaultRange(versions.items)));
+    await h.step(
+      "a burst of marks in a range sends no whole-changeset fetch",
+      () => {
+        void hunk(h, first(), 0);
+        void hunk(h, first(), 1);
+      },
+      { marks: 2, whole: 0 },
+    );
+    await h.step("opened the branch by commit", () => reviewByCommit(h), { commits: 1 });
+    await h.step(
+      "a burst of marks in a commit sends no whole-changeset fetch",
+      () => {
+        void hunk(h, first(), 0);
+        void flag(h, first(), 1);
+      },
+      { marks: 2, whole: 0 },
+    );
+    await h.step(
+      "a settle sends one whole-changeset fetch",
+      async () => {
+        const before = changeset.layout?.shown.revision ?? -1;
+        h.fixture.push("a.txt", "p9", [2, 10, 30]);
+        await h.until(() => (changeset.layout?.shown.revision ?? -1) > before, "the new revision");
+      },
+      { whole: 1 },
+    );
+  },
+
   /** The changeset reviewed by commit: marks, stepping, and the lens back. The store reads the commits again on each mark and view change. */
   async commits(h) {
     await h.step("opened the branch by commit", () => reviewByCommit(h), { commits: 1 });
@@ -278,37 +314,24 @@ export const sessions: Record<SessionName, (h: Harness) => Promise<void>> = {
       { commits: 1 },
     );
     await h.step(
-      "the changeset's scope takes a mark of its file as the store does",
+      "the whole-changeset view takes a mark of its file as the store does",
       async () => {
-        const whole = newScope(
-          h.other,
-          { type: "changeset" },
-          () => undefined,
-          changeset.commitList,
-          () => changeset.currentShown()?.revision,
-        );
-        await whole.load();
+        const whole = changeset.whole;
         const revision = whole.currentShown()?.revision ?? -1;
         const answer = await h.other.toggleHunk(revision, "b.txt", 0, CHANGESET);
         whole.heard(answer, revision);
-        if (whole.state("b.txt")?.review.hunks[0] !== "seen") throw new Error("the changeset's scope did not follow");
+        if (whole.state("b.txt")?.review.hunks[0] !== "seen")
+          throw new Error("the whole-changeset view did not follow");
       },
       { commits: 1 },
     );
-    // A tab on the changeset while a commit is on screen comments through its own view, not the one on screen.
+    // A tab on the changeset while a commit is on screen comments through the whole view, not the one on screen.
     await h.step(
-      "a comment from the changeset's scope while a commit is on screen",
+      "a comment from the whole-changeset view while a commit is on screen",
       async () => {
-        const whole = newScope(
-          h.other,
-          { type: "changeset" },
-          () => undefined,
-          changeset.commitList,
-          () => changeset.currentShown()?.revision,
-        );
-        await whole.load();
+        const whole = changeset.whole;
         const shown = whole.currentShown();
-        if (!shown) throw new Error("the scope has not read");
+        if (!shown) throw new Error("the whole changeset has not read");
         const target = { type: "file", side: "target", path: "a.txt" } as const;
         const sent = await h.asElement(
           () => threads.create(shown, target, "a file note", (s) => whole.admit(s)),

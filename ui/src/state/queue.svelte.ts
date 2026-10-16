@@ -3,7 +3,6 @@
 // changesets come at once; the pull requests, which the platform has to be asked for, follow, and
 // the lines each row changes come last, row by row, as the backend counts them.
 
-import { untrack } from "svelte";
 import { SvelteMap } from "svelte/reactivity";
 import type { ChangesetKey } from "../generated/ChangesetKey";
 import type { ChangesetRow } from "../generated/ChangesetRow";
@@ -17,7 +16,6 @@ import { keyId } from "./changesetKey";
 import { type QueueActions, queueEvent, withDetails } from "./queueEvents";
 import { queueEntries, queueRows } from "./queueEntries";
 import { Latest } from "./resource";
-import type { Frame, Parts, ReviewedFile, ViewLayout } from "./reviewModel";
 import { session } from "./session.svelte";
 
 /** A list shown follows a version or a mark this long after the last one. */
@@ -43,20 +41,13 @@ class QueueStore {
    */
   lines = new SvelteMap<string, LineDelta | null>();
   /** Only the latest load of each kind counts. */
-  private reads = { local: new Latest(), pullRequests: new Latest(), lines: new Latest(), whole: new Latest() };
+  private reads = { local: new Latest(), pullRequests: new Latest(), lines: new Latest() };
   /**
    * The platform is being asked for the pull requests. A request for another listing while it is on its
    * way marks it `again`, and one more follows when it is done: a burst of events costs at most two.
    */
   private listing?: { again: boolean; done: Promise<void> };
-  /**
-   * The changeset on view as a whole while the review view shows a range or a commit, whose layout is
-   * not the changeset's; read while a project is open.
-   */
-  private whole = $state.raw<Parts>();
   private following = new Debounced();
-  /** Which revision and view the review shows. */
-  private screen = $derived(`${changeset.layout?.shown.revision}/${changeset.viewKey}`);
 
   /**
    * The queue's rows: the local changesets and the pull requests, each with the lines and progress it
@@ -66,7 +57,7 @@ class QueueStore {
     queueEntries(
       queueRows(this.local, this.pullRequests),
       this.onView && keyId(this.onView),
-      this.onViewFrame,
+      changeset.wholeFrame,
       this.lines,
     ),
   );
@@ -77,11 +68,6 @@ class QueueStore {
   }
 
   constructor() {
-    $effect.root(() => {
-      $effect(() => {
-        if (this.projectOpen && this.screen) untrack(() => void this.loadWhole());
-      });
-    });
     session.onConnect((backend) => {
       const actions: QueueActions = {
         load: (recount) => void this.load(recount),
@@ -117,8 +103,6 @@ class QueueStore {
       this.listingPullRequests = false;
       this.listing = undefined;
       this.lines.clear();
-      this.reads.whole.cancel();
-      this.whole = undefined;
       this.following.cancel();
     });
   }
@@ -126,54 +110,7 @@ class QueueStore {
   /** Lists the local changesets again once a burst of marks pauses, while a project is open. */
   private follow() {
     if (!this.projectOpen) return;
-    this.following.schedule(FOLLOW_AFTER_MS, () => {
-      void this.load(false);
-      void this.loadWhole();
-    });
-  }
-
-  /** Reads the changeset's own layout and file states, which only a range or a commit on screen needs. Only the latest reading counts. */
-  private async loadWhole() {
-    const isLatest = this.reads.whole.begin();
-    const shown = changeset.layout;
-    if (!shown || shown.shown.view.type === "changeset") {
-      this.whole = undefined;
-      return;
-    }
-    const whole = await changeset.wholeParts();
-    if (isLatest()) this.whole = whole;
-  }
-
-  /**
-   * The changeset on view as a whole, not the range or commit the review shows: its files (the review's
-   * own while it shows the changeset, else those read for the revision on screen) and what is true of
-   * it. None while that is not known.
-   */
-  private get wholeLayout(): ViewLayout | undefined {
-    const layout = changeset.layout;
-    if (!layout) return undefined;
-    if (layout.shown.view.type === "changeset") return layout;
-    return this.whole?.layout.shown.revision === layout.shown.revision ? this.whole.layout : undefined;
-  }
-
-  /**
-   * The changeset on view as a whole: its files and base, and what is true of it; none while that is not
-   * known.
-   */
-  get onViewFrame(): Frame | undefined {
-    const layout = this.wholeLayout;
-    const facts = changeset.facts;
-    return layout && facts && { layout, facts };
-  }
-
-  /** A file of the changeset on view as a whole, with its review state. */
-  onViewFile(path: string): ReviewedFile | undefined {
-    const layout = this.wholeLayout;
-    if (!layout) return undefined;
-    if (layout === changeset.layout) return changeset.reviewed(path);
-    const file = layout.files.find((f) => f.path === path);
-    const state = this.whole?.states.get(path);
-    return file && state && { ...file, ...state };
+    this.following.schedule(FOLLOW_AFTER_MS, () => void this.load(false));
   }
 
   /** Something of the list is being fetched or listed. */

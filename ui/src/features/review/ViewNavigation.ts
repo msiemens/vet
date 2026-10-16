@@ -267,8 +267,7 @@ export class ViewNavigation {
     }
     const id = fileTab(path, commit);
     const source = this.scopes.sourceOf(id);
-    const spec = this.scopes.specOf(id);
-    const scope = spec && this.scopes.scope(spec);
+    const scope = this.scopes.specOf(id)?.type === "commit" ? this.scopes.commitScope(id) : undefined;
     await scope?.whenLoaded();
     if (scope?.gone) {
       notices.show("That commit is not in the changeset any more");

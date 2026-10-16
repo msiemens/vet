@@ -4,7 +4,7 @@ import type { CommitUnit } from "../../generated/CommitUnit";
 import type { ScopeSpec } from "../../state/scopeSpec";
 import type { Answer } from "../../state/reviewMarks";
 import type { WriteListener } from "../../state/reviewSource";
-import type { ViewScope } from "../../state/viewScope.svelte";
+import type { ViewScope, ViewSource } from "../../state/viewScope.svelte";
 import type { ChangesetSource } from "./changesetSource";
 import type { Tabs } from "./Tabs.svelte.ts";
 import { ViewScopes } from "./ViewScopes.ts";
@@ -55,13 +55,26 @@ function changesetOf(init: { shownCommit?: number; layout?: { interdiff?: { mark
   };
 }
 
+/** A whole-changeset view stand-in: only what the registry subscribes to. */
+function wholeOf() {
+  const listeners = new Set<WriteListener>();
+  return {
+    subscribe(listener: WriteListener) {
+      listeners.add(listener);
+      return () => listeners.delete(listener);
+    },
+  } as unknown as ViewSource;
+}
+
 /** A registry over fake tabs, a fake changeset and a fake scope factory; answers the scopes it made. */
 function registry(open: string[], changeset = changesetOf()) {
   const made: FakeScope[] = [];
   const told: { scope: ViewScope; paths: ReadonlySet<string> | "all" }[] = [];
   const tabs = { open };
+  const whole = wholeOf();
   const scopes = new ViewScopes(
     changeset as unknown as ChangesetSource,
+    whole,
     tabs as unknown as Tabs,
     (scope, paths) => told.push({ scope, paths }),
     (spec) => {
@@ -70,11 +83,11 @@ function registry(open: string[], changeset = changesetOf()) {
       return scope as unknown as ViewScope;
     },
   );
-  return { scopes, changeset, tabs, made, told };
+  return { scopes, changeset, tabs, whole, made, told };
 }
 
 void test("a tab's scope is the view it reads; a tab on the view on screen reads the store", () => {
-  const { scopes, changeset, made } = registry(["changes", "file:a.rs", "pin:beef:file.rs"]);
+  const { scopes, changeset, whole, made } = registry(["changes", "file:a.rs", "pin:beef:file.rs"]);
   assert.equal(scopes.specOf("changes"), undefined);
   assert.equal(scopes.specOf("file:a.rs"), undefined);
   assert.deepEqual(scopes.specOf("pin:beef:file.rs"), { type: "commit", id: "beef" });
@@ -82,13 +95,14 @@ void test("a tab's scope is the view it reads; a tab on the view on screen reads
   assert.equal(scopes.sourceOf("pin:beef:file.rs"), scopes.sourceOf("pin:beef:file.rs"));
   assert.equal(made.length, 1, "the same view's scope is made once");
 
-  // A commit is on screen: a file tab then reads the changeset's own view (not the commit's).
+  // A commit is on screen: a file tab then reads the changeset's whole view, not the commit's.
   changeset.shownCommit = 2;
   assert.deepEqual(scopes.specOf("file:a.rs"), { type: "changeset" });
   assert.equal(scopes.showsCommit("file:a.rs"), false, "it reads the changeset, not the commit on screen");
   assert.equal(scopes.showsCommit("pin:beef:file.rs"), true);
   assert.equal(scopes.showsCommit("changes"), true);
-  assert.equal(scopes.sourceOf("file:a.rs") === changeset, false);
+  assert.equal(scopes.sourceOf("file:a.rs"), whole, "a whole tab reads the store's whole view");
+  assert.equal(made.length, 1, "no scope is made for the whole view");
 });
 
 void test("a scope reads at once unless it is frozen, and is read again only when not frozen", () => {

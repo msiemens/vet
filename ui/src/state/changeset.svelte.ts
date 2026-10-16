@@ -29,7 +29,6 @@ import {
   type FileLayout,
   type FileState,
   type Frame,
-  type Parts,
   type ReviewedFile,
   type ViewLayout,
   partsOf,
@@ -43,7 +42,9 @@ import { session } from "./session.svelte";
 import { type Shown, isCurrent } from "./shown";
 import type { ViewSource } from "./viewScope.svelte";
 import { type Range, normalised, rangeKey, rangeView } from "./timelineRange";
-import { CHANGESET, commitView } from "./view";
+import { commitView } from "./view";
+import { refetchesWhole } from "./wholeFetch";
+import { type WholeView, newWhole } from "./wholeView.svelte";
 
 /** What happens to the changeset on view: another is asked for, announced to be fetched, or the ask came to nothing. */
 export type Opening = { type: "requested" } | { type: "opened"; changeset: ChangesetKey } | { type: "unannounced" };
@@ -55,6 +56,10 @@ class ChangesetStore implements ViewSource {
   layout = $state.raw<ViewLayout>();
   /** What is true of the changeset as a whole, whatever view is shown. */
   facts = $state.raw<ChangesetFacts>();
+  /** The changeset as a whole: its files and their review state, whatever range or commit the view on screen shows. */
+  readonly whole: WholeView = newWhole();
+  /** The whole-changeset view was fed by the refresh underway; it needs no read of its own then. */
+  private fed = false;
   /** How far the view's files are reviewed. */
   viewCompletion = $state.raw<Completion>();
   /** Dependency restores that failed: the analysis of those projects is limited. Pushed as they happen. */
@@ -224,6 +229,15 @@ class ChangesetStore implements ViewSource {
   }
 
   /**
+   * The whole changeset's files and base with what is true of it, whatever range or commit the review
+   * shows: what Problems and the queue panel read.
+   */
+  get wholeFrame(): Frame | undefined {
+    const layout = this.whole.layout;
+    return layout && this.facts && { layout, facts: this.facts };
+  }
+
+  /**
    * The frame on view, reading the manifest only when the store holds none: the review screen is
    * rebuilt from the store, which keeps the manifest current for the queue too.
    */
@@ -240,21 +254,23 @@ class ChangesetStore implements ViewSource {
           if (!this.pendingOpen.announced(keyId(event.changeset))) return;
           this.clear();
           this.notifyOpening({ type: "opened", changeset: event.changeset });
-          void this.refresh().catch((error: unknown) => notices.report(error));
-        } else if (event.type === "snapshotSettled" || event.type === "targetChanged") void this.refresh();
+          void this.reread(event.revision);
+        } else if (event.type === "snapshotSettled") void this.reread(event.revision);
+        else if (event.type === "targetChanged") void this.reread(undefined);
         else if (event.type === "lensChanged") void this.followLens(event.lens);
         // A mark made in a range or a commit is announced as that of the changeset's file, which they do not show.
         else if (event.type === "reviewChanged" && event.revision === this.layout?.shown.revision) {
           if (this.showsChangeset) this.applyReview(event.update);
           else this.applyTotals(event.update);
+          this.whole.heard(event.update, event.revision);
         } else if (event.type === "reviewStarted" && this.facts) this.facts = { ...this.facts, review: event.review };
         else if (event.type === "restoreFailed") this.restoreFailures = event.failures;
       }),
     );
     // The changeset on view is read for the queue as well: the review screen is not what loads it.
-    session.onOpen(() => void this.refresh().catch((error: unknown) => notices.report(error)));
+    session.onOpen(() => void this.reread(undefined));
     session.onResync(() => {
-      if (this.layout) this.refresh().catch((error: unknown) => notices.report(error));
+      if (this.layout) void this.reread(undefined);
     });
     session.onClose(() => this.clear());
     // The per-commit list is the review screen's, like the versions and the symbols: it follows the
@@ -292,6 +308,7 @@ class ChangesetStore implements ViewSource {
     this.commitReads.cancel();
     this.restoreFailures = [];
     this.cells.reset();
+    this.whole.clear();
   }
 
   /**
@@ -333,6 +350,27 @@ class ChangesetStore implements ViewSource {
   }
 
   /**
+   * Reads the manifest of the view on screen again, and the changeset as a whole when the view is not
+   * it: a settle, a target change, a resync or another changeset. A mark is written into the whole
+   * view by its own announcement instead, so a burst of marks reads nothing.
+   */
+  private async reread(revision: number | undefined) {
+    this.fed = false;
+    try {
+      await this.refresh();
+    } catch (error) {
+      notices.report(error);
+    }
+    if (this.wholeFed || this.view.type === "changeset") return;
+    if (refetchesWhole(revision, this.whole.revision)) await this.whole.reload();
+  }
+
+  /** Whether the refresh that just ran fed the whole-changeset view; read after an await, so not narrowed. */
+  private get wholeFed(): boolean {
+    return this.fed;
+  }
+
+  /**
    * The manifest of the view. A range that covers every push becomes the changeset, which only the
    * manifest's latest version says, and the commit the lens asks for is shown instead of the changeset, as the
    * manifest says too. A range or commit the backend does not find (its versions or commit are gone) gives
@@ -357,6 +395,12 @@ class ChangesetStore implements ViewSource {
       if (range && normalised(range, latest) === undefined && attempt < 3) {
         this.range = undefined;
         continue;
+      }
+      // The changeset manifest is the changeset as a whole, whether the view settles on it or moves on
+      // to the commit the lens asks for: it is held for Problems, the queue panel and a whole tab.
+      if (!range && commit === undefined) {
+        this.whole.adopt(partsOf(manifest, undefined));
+        this.fed = true;
       }
       if (!range) {
         const wanted = commitToShow(manifest.lens, manifest.commits, this.lastCommit);
@@ -546,15 +590,6 @@ class ChangesetStore implements ViewSource {
   /** Where a comment on a part of the file attaches in `shown`; rejects if `shown` is not current. */
   commentTarget(shown: Shown, path: string, at: CommentAt) {
     return this.marks.commentTarget(shown, path, at);
-  }
-
-  /** The changeset on view as a whole, whatever range or commit is shown; `undefined` where it could not be read. */
-  async wholeParts(): Promise<Parts | undefined> {
-    try {
-      return partsOf(await session.connected().manifest(CHANGESET), undefined);
-    } catch {
-      return undefined;
-    }
   }
 
   /** The changesets on offer and the one on view; `undefined` after showing why they could not be listed. */

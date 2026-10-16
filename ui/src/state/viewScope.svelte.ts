@@ -17,10 +17,12 @@ import { type Answer, reviewMarks } from "./reviewMarks";
 import { type FileLayout, type FileState, type Parts, type ViewLayout, partsOf } from "./reviewModel";
 import type { ReviewSource, WriteListener } from "./reviewSource";
 import { type Shown, isCurrent } from "./shown";
-import { CHANGESET, commitView } from "./view";
+import { commitView } from "./view";
 
 /** What a file tab reads and does in its view: the changeset store implements it for the view on screen, `ViewScope` for the others. */
 export interface ViewSource extends ReviewSource {
+  /** The view is gone from the changeset (a rewritten commit); only a `ViewScope` of a commit can be. */
+  readonly gone?: boolean;
   /** What the layout is of; none before the first manifest. Reads nothing reactively. */
   currentShown(): Shown | undefined;
   currentLayout(): ViewLayout | undefined;
@@ -45,6 +47,9 @@ interface Loaded {
   parts: Parts;
   commit?: CommitUnit;
 }
+
+/** A commit of the changeset, by full id: the view a tab reads that is not the one on screen. */
+export type CommitSpec = Extract<ScopeSpec, { type: "commit" }>;
 
 class Scope implements ViewSource {
   /** The view's files; none before the first manifest. */
@@ -77,7 +82,7 @@ class Scope implements ViewSource {
   /** `marked` is told of every answer a mark got here, since the view on screen may show the same lines. */
   constructor(
     private backend: Backend,
-    readonly spec: ScopeSpec,
+    readonly spec: CommitSpec,
     private marked: (shown: Shown, update: Answer) => void,
     private commits: CommitList,
     private revision: () => number | undefined,
@@ -106,13 +111,12 @@ class Scope implements ViewSource {
 
   /**
    * The backend announced a mark of the changeset's file, as the answer to a request and as an event.
-   * The changeset's own scope takes it as the store does; a commit's has no word of its lines in it,
-   * so it reads again, unless it has what the update says already (its own mark).
+   * A commit has no word of its lines in it, so it reads again, unless it has what the update says
+   * already (its own mark).
    */
   heard(update: Answer, revision: number) {
     if (revision !== this.layout?.shown.revision || update.seq <= this.seen) return;
-    if (this.spec.type === "changeset") this.applyUpdate(update);
-    else void this.load();
+    void this.load();
   }
 
   /**
@@ -121,7 +125,6 @@ class Scope implements ViewSource {
    * next reload reads the newer revision; only a real failure is reported.
    */
   private async fetch(): Promise<Loaded | "gone" | "stale"> {
-    if (this.spec.type === "changeset") return { parts: partsOf(await this.backend.manifest(CHANGESET), undefined) };
     const id = this.spec.id;
     const revision = this.revision();
     if (revision === undefined) return "stale";
@@ -224,10 +227,10 @@ class Scope implements ViewSource {
 
 export type ViewScope = Scope;
 
-/** A scope of `spec`; `marked` is told of every answer a mark got in it. */
+/** A scope of the commit `spec`; `marked` is told of every answer a mark got in it. */
 export const newScope = (
   backend: Backend,
-  spec: ScopeSpec,
+  spec: CommitSpec,
   marked: (shown: Shown, update: Answer) => void,
   commits: CommitList,
   revision: () => number | undefined,
