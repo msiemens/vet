@@ -43,7 +43,6 @@
   import { servedBy } from "../../state/servedBy.svelte";
   import { serverList } from "../../state/serverList.svelte";
   import { indexingOf } from "../../state/serverStatus";
-  import { versions } from "../../state/versions.svelte";
 
   let {
     openFiles,
@@ -163,7 +162,7 @@
 
   const failures = $derived(opened.session?.restoreFailures ?? []);
   const limited = $derived(failures.length ? limitedMessage(failures) : undefined);
-  const latest = $derived(versions.items.at(-1)?.n);
+  const latest = $derived(opened.session?.versions.items.at(-1)?.n);
   const lensNote = $derived.by(() => {
     const code = latest === undefined ? "the latest code" : `the latest code (v${latest})`;
     const session = opened.session;

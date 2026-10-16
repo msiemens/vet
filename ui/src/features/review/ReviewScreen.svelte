@@ -18,7 +18,6 @@
   import { excludePath, listDirectory } from "../../state/projectRequests";
   import { session } from "../../state/session.svelte";
   import { structure } from "../../state/structure.svelte";
-  import { versions } from "../../state/versions.svelte";
   import { CommentsPanel } from "../comments";
   import { copyText } from "../platform";
   import { StructurePopup } from "../structure";
@@ -130,7 +129,7 @@
       filter: facts.filter,
       narrowing: facts.narrowing,
       repo: session.repo,
-      versions: versions.items,
+      versions: changeset.versions.items,
       interdiff: layout.interdiff,
       commits: changeset.commits,
       commitIndex: changeset.shownCommit,
@@ -184,7 +183,7 @@
       case "reset":
         return void changeset?.narrow(undefined);
       case "pick":
-        return void (action.n !== undefined && changeset?.setRange(pickRange(versions.items, action.n)));
+        return void (action.n !== undefined && changeset?.setRange(pickRange(changeset.versions.items, action.n)));
       case "openFile":
         return void (action.path !== undefined && controller?.openSource(ON_SCREEN, action.path));
     }

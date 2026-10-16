@@ -13,7 +13,6 @@ import { opened } from "../../src/state/opened.svelte.ts";
 import { changesOf, reviewedOf } from "../../src/state/queueEntries.ts";
 import { queue } from "../../src/state/queue.svelte.ts";
 import { reviewShown } from "../../src/state/reviewShown.svelte.ts";
-import { versions } from "../../src/state/versions.svelte.ts";
 import { CHANGESET } from "../../src/state/view.ts";
 
 export interface Violation {
@@ -130,7 +129,7 @@ export async function checkInvariants(other: Backend): Promise<Violation[]> {
   differ(
     "versions",
     "the versions",
-    reviewShown.on ? versions.items.map((v) => [v.n, v.reviewedHere]) : versions.items,
+    reviewShown.on ? current.versions.items.map((v) => [v.n, v.reviewedHere]) : current.versions.items,
     reviewShown.on ? backendVersions.map((v) => [v.n, v.reviewedHere]) : [],
   );
   const unit = (list: typeof commits) => list.map((c) => [c.commit.id, c.completion]);

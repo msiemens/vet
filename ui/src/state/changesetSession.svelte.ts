@@ -36,7 +36,11 @@ import {
 } from "./reviewModel";
 import { newReviewCells } from "./reviewCells.svelte";
 import { reportFailure, reviewMarks } from "./reviewMarks";
+import { whileReviewShown } from "./reviewFollow";
+import { type SessionReviewChanges, newReviewChanges } from "./reviewChanges.svelte";
 import { type WriteListener } from "./reviewSource";
+import { type SessionPipelines, newPipelines } from "./pipelines.svelte";
+import { type SessionVersions, newVersions } from "./versions.svelte";
 import { session } from "./session.svelte";
 import { type Shown, isCurrent } from "./shown";
 import { type SessionThreads, newThreads } from "./threads.svelte";
@@ -48,7 +52,6 @@ import { refetchesWhole } from "./wholeFetch";
 import { type WholeView, newWhole } from "./wholeView.svelte";
 
 const NO_PATHS: readonly string[] = [];
-
 /** What a session is made from. */
 export interface SessionStart {
   /** The changeset the session is of, fixed for its life. */
@@ -57,8 +60,6 @@ export interface SessionStart {
   manifest?: Manifest;
   /** What the views last were told about, which the first change is told against. */
   viewed?: ViewPoint;
-  /** Whether the review screen is shown, which the per-commit list follows. */
-  reviewShown: boolean;
 }
 
 class Session implements ViewSource {
@@ -76,6 +77,12 @@ class Session implements ViewSource {
   private fed = false;
   /** The comment threads, one list per view: the changeset's and the range on view. */
   readonly threads: SessionThreads;
+  /** The versions of the open review; read while the review screen is shown. */
+  readonly versions: SessionVersions = newVersions(() => session.connected());
+  /** What differs since a version of the review; the queue screen shows it too, so it lasts as long as the session. */
+  readonly reviewChanges: SessionReviewChanges = newReviewChanges(() => session.connected());
+  /** The Pipelines tool's choice, folds and steps; the choice and folds last as long as the session. */
+  readonly pipelines: SessionPipelines = newPipelines(() => session.backend);
   /** How far the view's files are reviewed. */
   viewCompletion = $state.raw<Completion>();
   /** Dependency restores that failed: the analysis of those projects is limited. Pushed as they happen. */
@@ -117,8 +124,8 @@ class Session implements ViewSource {
   readonly commitList = new CommitList(() => session.connected().commits());
   /** The per-commit reads the store started; only the latest may set the list it shows. */
   private commitReads = new Latest();
-  /** Whether the review screen is shown: only it reads the per-commit list and the range's threads. */
-  private commitsFollowed: boolean;
+  /** Whether the review screen is shown (see `showReview`): only it reads the per-commit list, the range's threads, the versions and the Pipelines steps. */
+  private reviewShown = false;
   /** A manifest is being fetched. */
   private fetching = $state(false);
   private manifestLoads = new Resource<{ manifest: Manifest; commit: number | undefined }>({
@@ -270,20 +277,19 @@ class Session implements ViewSource {
     this.key = start.key;
     this.seed = start.manifest;
     this.viewed = start.viewed;
-    this.commitsFollowed = start.reviewShown;
-    this.threads = newThreads(
-      {
-        backend: () => session.connected(),
-        ended: () => !this.lifetime.alive,
-        admit: (shown) => this.admit(shown),
-        reportFailure: (error, sent) => this.reportFailure(error, sent),
-      },
-      start.reviewShown,
-    );
+    this.threads = newThreads({
+      backend: () => session.connected(),
+      ended: () => !this.lifetime.alive,
+      admit: (shown) => this.admit(shown),
+      reportFailure: (error, sent) => this.reportFailure(error, sent),
+    });
     this.lifetime.add(() => {
       this.clear();
       this.viewListeners.clear();
     });
+    this.lifetime.add(() => this.reviewChanges.end());
+    this.lifetime.add(session.connected().onAccountsChanged(() => this.pipelines.accountsChanged()));
+    whileReviewShown(this.lifetime, () => this.showReview());
   }
 
   /** The changeset is on view: the manifest is read, for the queue as well as the review screen. `revision` is the one the backend announced, if it did. */
@@ -297,6 +303,8 @@ class Session implements ViewSource {
     this.seed = manifest;
     void this.reread(undefined);
     void this.threads.reload();
+    this.versions.resync();
+    this.reviewChanges.resync();
   }
 
   /** Ends the session: what it started counts for nothing from now on. */
@@ -304,24 +312,31 @@ class Session implements ViewSource {
     this.lifetime.dispose();
   }
 
-  /** The review screen came up: the per-commit list is read from now on. */
-  followCommits() {
-    this.commitsFollowed = true;
+  /**
+   * What only the review screen shows is held while it is shown: the per-commit list, the range's
+   * threads, the versions and the Pipelines steps. Returns what lets go
+   * of them when the screen goes away or the session ends.
+   */
+  private showReview(): () => void {
+    this.reviewShown = true;
     this.threads.follow();
+    this.versions.follow();
     if (this.facts?.lens === "perCommit" && this.facts.commits > 1) void this.loadCommits();
-  }
-
-  /** The review screen went away. */
-  unfollowCommits() {
-    this.commitsFollowed = false;
-    this.threads.unfollow();
-    this.commitReads.cancel();
-    this.commits = [];
+    return () => {
+      this.reviewShown = false;
+      this.threads.unfollow();
+      this.versions.unfollow();
+      this.pipelines.hideSteps();
+      this.commitReads.cancel();
+      this.commits = [];
+    };
   }
 
   /** An event of the project, other than the announcement of a changeset. */
   hear(event: SessionEvent) {
     if (!this.lifetime.alive) return;
+    this.versions.hear(event);
+    this.reviewChanges.hear(event);
     if (event.type === "snapshotSettled") {
       void this.reread(event.revision);
       void this.threads.reload();
@@ -478,7 +493,7 @@ class Session implements ViewSource {
 
   /** Reads the commits again, with their progress. Only the latest reading counts. */
   async loadCommits() {
-    if (!this.commitsFollowed || !this.lifetime.alive) return;
+    if (!this.reviewShown || !this.lifetime.alive) return;
     const revision = this.layout?.shown.revision;
     if (revision === undefined) return;
     const isLatest = this.commitReads.begin();

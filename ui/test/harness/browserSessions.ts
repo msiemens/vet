@@ -484,7 +484,7 @@ export const sessions: Record<string, (d: Driver) => Promise<void>> = {
     //    file tab, a selected symbol, and a Find result that goes stale on the next revision.
     await showReview();
     await d.page(call("toggleHunk", "a.txt", 0));
-    await d.until(`__t.versions.items.length > 0`, "the first version");
+    await d.until(`__t.opened.session.versions.items.length > 0`, "the first version");
     await openFile("a.txt");
     await keepSearch();
     await chooseSymbol();
@@ -915,11 +915,11 @@ export const sessions: Record<string, (d: Driver) => Promise<void>> = {
 
     await d.manyFiles(TOTAL);
     await d.step("a hunk is seen", () => d.page(call("toggleHunk", "b.txt", 0)), ONE);
-    await d.until(`__t.versions.items.length >= 1`, "the first version");
+    await d.until(`__t.opened.session.versions.items.length >= 1`, "the first version");
     const all = await scrolledAway();
     await d.step("every file changes: a new revision", () => d.manyFiles(TOTAL, "v2"));
     await keeps("a new revision of All changes", all);
-    await d.until(`__t.versions.items.length >= 2`, "the second version");
+    await d.until(`__t.opened.session.versions.items.length >= 2`, "the second version");
 
     await scrolledAway();
     await d.step("a push is chosen", () => d.page(`__t.opened.session.setRange({ from: 1, to: 2 })`));
@@ -953,9 +953,9 @@ export const sessions: Record<string, (d: Driver) => Promise<void>> = {
     await d.page(`__t.commands.run("view.review")`);
     await d.until(`document.querySelector(".review") !== null`, "the review screen");
     await d.page(call("toggleHunk", "a.txt", 0));
-    await d.until(`__t.versions.items.length > 0`, "the first version");
+    await d.until(`__t.opened.session.versions.items.length > 0`, "the first version");
     await d.revise("b.txt", "wt2", [7, 25, 33]);
-    await d.until(`__t.versions.items.length > 1`, "the second version");
+    await d.until(`__t.opened.session.versions.items.length > 1`, "the second version");
     await d.page(`__t.commands.run("view.queue")`);
     await d.until(`document.querySelector(".review") === null`, "the review screen to go");
     await d.page(`__t.session.backend.waitForQuiet()`);

@@ -1,21 +1,21 @@
-// The Pipelines tool's state: which job is chosen and which runs are folded, the steps of the chosen
-// job, and the actions on runs. Reading the runs is the checks store's; the platform does the work
-// of an action, so this only asks and asks the checks again.
+// The Pipelines tool's state for one session: which job is chosen and which runs are folded, the steps
+// of the chosen job, and the actions on runs. Reading the runs is the checks store's; the platform does
+// the work of an action, so this only asks and asks the checks again. The choice and the folds live as
+// long as the session; the steps are the review screen's and go when it does.
 
 import { SvelteSet } from "svelte/reactivity";
 import type { PipelineAction } from "../generated/PipelineAction";
 import type { PipelineStep } from "../generated/PipelineStep";
 import { errorText } from "../lib/errorText";
 import { toggleIn } from "../lib/foldKeys";
-import { whileReview } from "./reviewFollow";
+import type { Backend } from "./backend";
 import { notices } from "./notices.svelte";
 import { Latest } from "./resource";
-import { session } from "./session.svelte";
 
 /** What `act` says to the viewer when the platform took a cancel. */
 const CANCELLING = "Cancelling. The run stops once the platform has stopped its jobs.";
 
-class PipelineStore {
+class Pipelines {
   /** The job chosen in the tool, by check id. */
   selected = $state<string>();
   /** Runs shown without their jobs, by run id. */
@@ -30,27 +30,10 @@ class PipelineStore {
   private denied = new SvelteSet<string>();
   private reads = new Latest();
   private shownFor?: { job: string; stamp: number | undefined };
+  private backend: () => Backend | undefined;
 
-  constructor() {
-    session.onConnect((backend) =>
-      backend.onAccountsChanged(() => {
-        this.denied.clear();
-      }),
-    );
-    // The steps are the review screen's; leaving it drops them and the tool reads them again.
-    whileReview(() => () => {
-      this.reads.cancel();
-      this.steps = undefined;
-      this.stepsError = undefined;
-      this.shownFor = undefined;
-    });
-    session.onClose(() => {
-      this.selected = undefined;
-      this.steps = undefined;
-      this.shownFor = undefined;
-      this.folded.clear();
-      this.denied.clear();
-    });
+  constructor(backend: () => Backend | undefined) {
+    this.backend = backend;
   }
 
   /** Whether the platform refused the token of `account` a change of runs. */
@@ -58,8 +41,21 @@ class PipelineStore {
     return account !== undefined && this.denied.has(account);
   }
 
+  /** The credentials changed: a refused token may be a different one now. */
+  accountsChanged() {
+    this.denied.clear();
+  }
+
   toggle(run: string) {
     toggleIn(this.folded, run);
+  }
+
+  /** The review screen went away: the steps are dropped and the tool reads them again. */
+  hideSteps() {
+    this.reads.cancel();
+    this.steps = undefined;
+    this.stepsError = undefined;
+    this.shownFor = undefined;
   }
 
   /**
@@ -67,12 +63,9 @@ class PipelineStore {
    * read again whenever the checks were (`stamp`), since its steps move on.
    */
   async showSteps(job: string | undefined, over: boolean, stamp: number | undefined) {
-    const backend = session.backend;
+    const backend = this.backend();
     if (job === undefined || !backend) {
-      this.reads.cancel();
-      this.steps = undefined;
-      this.stepsError = undefined;
-      this.shownFor = undefined;
+      this.hideSteps();
       return;
     }
     const known = this.shownFor;
@@ -98,7 +91,7 @@ class PipelineStore {
    * The backend looks at the checks again after it took the request and pushes them.
    */
   async act(action: PipelineAction, account: string | undefined) {
-    const backend = session.backend;
+    const backend = this.backend();
     if (this.busy || !backend) return;
     this.busy = true;
     try {
@@ -119,4 +112,6 @@ class PipelineStore {
   }
 }
 
-export const pipelines = new PipelineStore();
+export type SessionPipelines = Pipelines;
+
+export const newPipelines = (backend: () => Backend | undefined): SessionPipelines => new Pipelines(backend);

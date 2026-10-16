@@ -3,6 +3,7 @@
 // store can use it without a cycle (it is imported by `reviewShown`).
 
 import type { Backend } from "./backend";
+import type { Lifetime } from "./lifetime";
 import { reviewShown } from "./reviewShown.svelte";
 import { session } from "./session.svelte";
 import { followShown } from "./whileShown";
@@ -21,4 +22,20 @@ export function whileReview(start: (backend: Backend) => () => void): void {
     onShown: (listener) => reviewShown.onShown(listener),
     onHidden: (listener) => reviewShown.onHidden(listener),
   });
+}
+
+/**
+ * Like `whileReview`, for what one opened changeset holds: `start` runs while the review screen is
+ * shown, and what it returned runs when the screen goes away or `lifetime` ends. The repository
+ * closing ends the lifetime, so nothing here listens to it.
+ */
+export function whileReviewShown(lifetime: Lifetime, start: () => () => void): void {
+  lifetime.add(
+    followShown(start, {
+      backend: () => (lifetime.alive ? session.backend : undefined),
+      shown: () => reviewShown.on,
+      onShown: (listener) => reviewShown.onShown(listener),
+      onHidden: (listener) => reviewShown.onHidden(listener),
+    }),
+  );
 }

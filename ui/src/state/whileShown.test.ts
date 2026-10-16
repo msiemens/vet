@@ -34,7 +34,9 @@ function setup(shown: boolean, open: boolean) {
       listeners.hidden.forEach((l) => l());
     },
   };
-  return { log, sources, fire };
+  /** How many listeners are left on the screen. */
+  const listening = () => listeners.shown.size + listeners.hidden.size;
+  return { log, sources, fire, listening };
 }
 
 const start = (log: string[]) => () => {
@@ -85,6 +87,35 @@ void test("a screen already shown over an open project follows at once", () => {
   const { log, sources } = setup(true, true);
   followShown(start(log), sources);
   assert.deepEqual(log, ["start"]);
+});
+
+void test("ending the following stops what runs and leaves no listener on the screen", () => {
+  const { log, sources, fire, listening } = setup(true, true);
+  const end = followShown(start(log), sources);
+  assert.equal(listening(), 2);
+  end();
+  assert.deepEqual(log, ["start", "stop"]);
+  assert.equal(listening(), 0);
+  fire.shown();
+  assert.deepEqual(log, ["start", "stop"], "the screen coming up starts nothing");
+});
+
+void test("a following that ended starts nothing when a repository opens", () => {
+  const { log, sources, fire } = setup(false, true);
+  const end = followShown(start(log), sources);
+  end();
+  fire.shown();
+  fire.open();
+  assert.deepEqual(log, []);
+});
+
+void test("the screen going away leaves its listeners to come back", () => {
+  const { log, sources, fire, listening } = setup(true, true);
+  followShown(start(log), sources);
+  fire.hidden();
+  assert.equal(listening(), 2, "the following is not over");
+  fire.shown();
+  assert.deepEqual(log, ["start", "stop", "start"]);
 });
 
 void test("nothing starts without a project", () => {

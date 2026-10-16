@@ -5,7 +5,6 @@
 import { minute } from "../../state/minute.svelte";
 import { opened } from "../../state/opened.svelte";
 import { pendingEdits } from "../../state/pendingEdits.svelte";
-import { versions } from "../../state/versions.svelte";
 import { type BaseNote, type ScopeChip, baseNote, scopeChip } from "./scopeText";
 
 class HeaderFacts {
@@ -25,7 +24,7 @@ class HeaderFacts {
           };
     return scopeChip({
       range: session.range,
-      latest: versions.items.at(-1)?.n,
+      latest: session.versions.items.at(-1)?.n,
       commit,
       live: facts.target.changeset.type === "workingTree",
       pending: pendingEdits.waiting,

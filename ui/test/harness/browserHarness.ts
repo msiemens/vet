@@ -127,11 +127,10 @@ export async function runBrowserSession(
   await page.goto(url);
   await until(`!!document.querySelector(".body")`, "the app");
   await evaluate(`(async () => {
-    const [opened, session, commands, versions, notices] = await Promise.all([
+    const [opened, session, commands, notices] = await Promise.all([
       import("/src/state/opened.svelte.ts"),
       import("/src/state/session.svelte.ts"),
       import("/src/state/commands.ts"),
-      import("/src/state/versions.svelte.ts"),
       import("/src/state/notices.svelte.ts"),
     ]);
     window.__t = {
@@ -139,7 +138,6 @@ export async function runBrowserSession(
       session: session.session,
       notices: notices.notices,
       commands: commands.commands,
-      versions: versions.versions,
     };
     // What the page asked of the backend: the review requests it sent, and the requests that were rejected.
     const marks = new Set(["toggleHunk", "toggleFlag", "toggleItem", "toggleFileSeen", "setFilesSeen", "createThread"]);
@@ -271,7 +269,7 @@ export async function runBrowserSession(
     },
     async edit(path, tag, edited) {
       fixture.write(path, tag, edited);
-      await until(`__t.versions.items.length >= 2`, "a version for the edit");
+      await until(`__t.opened.session.versions.items.length >= 2`, "a version for the edit");
     },
     async revise(path, tag, edited) {
       const before = (await evaluate(`__t.opened.session?.layout?.shown.revision ?? -1`)) as number;

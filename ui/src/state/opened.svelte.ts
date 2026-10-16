@@ -8,7 +8,6 @@ import { keyId } from "./changesetKey";
 import { type ChangesetSession, type SessionStart, newSession } from "./changesetSession.svelte";
 import { notices } from "./notices.svelte";
 import { type Opening, OpenedProtocol } from "./openedProtocol";
-import { whileReview } from "./reviewFollow";
 import { reviewShown } from "./reviewShown.svelte";
 import { session as connection } from "./session.svelte";
 import { CHANGESET } from "./view";
@@ -54,12 +53,6 @@ class Opened {
       this.protocol.close();
       this.viewed = undefined;
       this.release();
-    });
-    // The per-commit list is the review screen's, like the versions and the symbols: it follows the
-    // screen and owns nothing of a changeset nobody shows.
-    whileReview(() => {
-      this.session?.followCommits();
-      return () => this.session?.unfollowCommits();
     });
     // The backend is told the review screen shows only once the changeset it will show is on view.
     $effect.root(() => {
@@ -135,7 +128,7 @@ class Opened {
 
   /** The session of `key` replaces the one on view. */
   private make(key: ChangesetKey, manifest?: SessionStart["manifest"]) {
-    this.set(newSession({ key, manifest, viewed: this.viewed, reviewShown: reviewShown.on }));
+    this.set(newSession({ key, manifest, viewed: this.viewed }));
   }
 
   private set(next: ChangesetSession | undefined) {

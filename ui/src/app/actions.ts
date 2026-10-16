@@ -20,7 +20,6 @@ import { serverList } from "../state/serverList.svelte";
 import { session } from "../state/session.svelte";
 import { symbols } from "../state/symbols.svelte";
 import { defaultRange } from "../state/timelineRange";
-import { versions } from "../state/versions.svelte";
 import { shell } from "../features/chrome";
 import { commentsUi } from "../features/comments";
 import { logKey } from "../features/pipelines";
@@ -69,9 +68,10 @@ export async function pickProject() {
 export async function showChangesSinceReview() {
   // The versions are the review screen's; showing it brings them, and reading them hands them over.
   shell.show("review");
-  const since = defaultRange(await versions.load());
+  const onView = await opened.current();
+  const since = defaultRange((await onView?.versions.load()) ?? []);
   if (!since) notices.show("Nothing has changed since your last review");
-  await opened.session?.setRange(since);
+  await onView?.setRange(since);
 }
 
 /** Shows a web address in the browser, if there is one. */

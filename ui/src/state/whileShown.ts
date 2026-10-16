@@ -9,25 +9,27 @@ export interface ShownSources {
   backend(): Backend | undefined;
   /** Whether the screen is shown. */
   shown(): boolean;
-  /** Calls `listener` when a repository is opened. */
-  onOpen(listener: () => void): void;
-  /** Calls `listener` when the repository is closed. */
-  onClose(listener: () => void): void;
-  /** Calls `listener` whenever the screen comes up. */
-  onShown(listener: () => void): void;
-  /** Calls `listener` whenever the screen goes away. */
-  onHidden(listener: () => void): void;
+  /** Calls `listener` when a repository is opened. Not needed by a follower that ends with its repository. */
+  onOpen?(listener: () => void): void;
+  /** Calls `listener` when the repository is closed. Not needed by a follower that ends with its repository. */
+  onClose?(listener: () => void): void;
+  /** Calls `listener` whenever the screen comes up; returns the function that stops that. */
+  onShown(listener: () => void): () => void;
+  /** Calls `listener` whenever the screen goes away; returns the function that stops that. */
+  onHidden(listener: () => void): () => void;
 }
 
 /**
  * Runs `start` for the open repository while the screen is shown, and the function it returns when
  * the screen goes away or the repository closes. Registering while the screen already shows starts it
- * at once; the start is not doubled for an opening and a showing that both arrive.
+ * at once; the start is not doubled for an opening and a showing that both arrive. Returns the function
+ * that ends the following: it stops what runs and listens to the screen no more.
  */
-export function followShown(start: (backend: Backend) => () => void, sources: ShownSources): void {
+export function followShown(start: (backend: Backend) => () => void, sources: ShownSources): () => void {
   let stop: (() => void) | undefined;
+  let ended = false;
   const begin = () => {
-    if (stop !== undefined || !sources.shown()) return;
+    if (ended || stop !== undefined || !sources.shown()) return;
     const backend = sources.backend();
     if (!backend) return;
     stop = start(backend);
@@ -36,9 +38,13 @@ export function followShown(start: (backend: Backend) => () => void, sources: Sh
     stop?.();
     stop = undefined;
   };
-  sources.onOpen(begin);
-  sources.onClose(end);
-  sources.onShown(begin);
-  sources.onHidden(end);
+  sources.onOpen?.(begin);
+  sources.onClose?.(end);
+  const unsubscribe = [sources.onShown(begin), sources.onHidden(end)];
   begin();
+  return () => {
+    ended = true;
+    for (const off of unsubscribe) off();
+    end();
+  };
 }

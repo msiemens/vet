@@ -22,7 +22,6 @@ import { serverList } from "../../src/state/serverList.svelte.ts";
 import { symbols } from "../../src/state/symbols.svelte.ts";
 import { defaultRange, rangeView } from "../../src/state/timelineRange.ts";
 import type { ViewChange } from "../../src/state/viewChange.ts";
-import { versions } from "../../src/state/versions.svelte.ts";
 import { newScope } from "../../src/state/viewScope.svelte.ts";
 import type { Harness } from "./harness.ts";
 import { onView } from "./onView.ts";
@@ -32,6 +31,9 @@ const CHANGESET: View = { type: "changeset" };
 
 /** The requests that start the language servers or ask them. */
 const ANALYSES = new Set<Request["type"]>(["diagnostics", "fileSymbols", "fileOutline", "symbolAt"]);
+
+/** The requests for what only the review screen shows. */
+const REVIEW_ONLY = new Set<Request["type"]>(["versions", "commits", "pipelineSteps"]);
 
 const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
 
@@ -76,7 +78,7 @@ function expectChanges(heard: ViewChange[], expected: ViewChange[]) {
 async function settleVersion(h: Harness) {
   h.fixture.write("b.txt", "wt2", [7, 25, 33]);
   await h.until(
-    () => versions.items.length >= 2 && opened.session?.facts?.review.state === "open",
+    () => (opened.session?.versions.items.length ?? 0) >= 2 && opened.session?.facts?.review.state === "open",
     "the second version",
   );
 }
@@ -132,7 +134,7 @@ export const sessions: Record<SessionName, (h: Harness) => Promise<void>> = {
         throw new Error(`a new version told ${JSON.stringify(changes)}, not a newer revision`);
     });
     await h.step("range shown", async () => {
-      await onView().setRange(defaultRange(versions.items));
+      await onView().setRange(defaultRange(onView().versions.items));
       expectChanges(heard(), ["start"]);
       // The invariants tell the changeset's threads from the range's only if the backend does.
       const range = onView().range;
@@ -176,7 +178,7 @@ export const sessions: Record<SessionName, (h: Harness) => Promise<void>> = {
   async whole(h) {
     await h.step("hunk seen", () => hunk(h, "b.txt", 0), ONE);
     await h.step("version settled", () => settleVersion(h));
-    await h.step("a range is shown", () => onView().setRange(defaultRange(versions.items)));
+    await h.step("a range is shown", () => onView().setRange(defaultRange(onView().versions.items)));
     await h.step(
       "a burst of marks in a range sends no whole-changeset fetch",
       () => {
@@ -485,7 +487,7 @@ export const sessions: Record<SessionName, (h: Harness) => Promise<void>> = {
       await h.other.createThread(revision, { type: "changeset" }, "from the other window", CHANGESET);
     });
     await h.step("version settled", () => settleVersion(h));
-    await h.step("range shown", () => onView().setRange(defaultRange(versions.items)));
+    await h.step("range shown", () => onView().setRange(defaultRange(onView().versions.items)));
     await h.step("other marks while in the range", () => mark("b.txt", 2));
     await h.step("back to the changeset", () => onView().setRange(undefined));
     await h.step("opened the branch by commit", () => reviewByCommit(h));
@@ -530,9 +532,14 @@ export const sessions: Record<SessionName, (h: Harness) => Promise<void>> = {
     await h.step("the queue is refreshed", () => queue.refresh(), { listings: 1 });
   },
 
-  /** Choosing rows of the queue puts changesets on view without asking the language servers for anything; the review screen does. */
+  /**
+   * Choosing rows of the queue puts changesets on view without asking the language servers for anything, and
+   * without reading the versions or the commits; the review screen does.
+   */
   async queue(h) {
     const asked = () => h.sent.filter((r) => ANALYSES.has(r.type)).length;
+    const reviewReads = () => h.sent.filter((r) => REVIEW_ONLY.has(r.type)).length;
+    const versionReads = () => h.sent.filter((r) => r.type === "versions").length;
     const told = (shown: boolean) => h.sent.filter((r) => r.type === "setReviewShown" && r.shown === shown).length;
     await h.step("rows chosen on the queue", async () => {
       // The files that are asked about are those a language serves, once the servers are known:
@@ -547,10 +554,12 @@ export const sessions: Record<SessionName, (h: Harness) => Promise<void>> = {
       if (!problems.analysable.includes("d.rs")) throw new Error("the changeset has no file to analyse");
       await sleep(500);
       if (asked() || told(true)) throw new Error("the queue asked the language servers for something");
+      if (reviewReads()) throw new Error("the queue read what only the review screen shows");
     });
     await h.step("review screen shown", async () => {
       reviewShown.set(true);
       await h.until(() => told(true) === 1, "the backend to be told");
+      await h.until(() => versionReads() === 1, "the versions to be read");
       // The backend analyses the file itself and pushes the answer; the store applies it.
       const answered = () => symbols.files.get("d.rs")?.state;
       await h.until(() => answered() === "done" || answered() === "failed", "the symbols");
@@ -559,9 +568,41 @@ export const sessions: Record<SessionName, (h: Harness) => Promise<void>> = {
       reviewShown.set(false);
       await h.until(() => told(false) === 1, "the backend to be told");
       const before = asked();
+      const readBefore = reviewReads();
       await opened.open({ type: "branch", name: "feature" });
       await sleep(500);
       if (asked() !== before) throw new Error("the queue asked the language servers for something");
+      if (reviewReads() !== readBefore) throw new Error("the queue read what only the review screen shows");
+    });
+  },
+
+  /** The Pipelines choice and folds last as long as the session, through the review screen coming and going, and end with it. */
+  async pipelines(h) {
+    const held = onView();
+    await h.step("a review is started", () => hunk(h, "b.txt", 0), ONE);
+    await h.step("a job is chosen and a run folded", () => {
+      held.pipelines.selected = "job-1";
+      held.pipelines.toggle("run-1");
+    });
+    await h.step("the review screen goes away and comes back", async () => {
+      reviewShown.set(false);
+      reviewShown.set(true);
+      await h.until(() => held.versions.items.length > 0, "the versions to be read again");
+      if (held.pipelines.selected !== "job-1" || !held.pipelines.folded.has("run-1"))
+        throw new Error("the choice and the folds did not outlast the review screen");
+    });
+    await h.step("another changeset is on view", async () => {
+      await opened.open({ type: "branch", name: "feature" });
+      await h.until(() => opened.session?.facts?.target.changeset.type === "branch", "the branch");
+      if (held.versions.items.length) throw new Error("the ended session still holds the versions");
+    });
+    await h.step("back on the first one", async () => {
+      await opened.open({ type: "workingTree" });
+      await h.until(() => opened.session?.facts?.target.changeset.type === "workingTree", "the working tree");
+      const again = onView();
+      if (again === held) throw new Error("the session was kept");
+      if (again.pipelines.selected !== undefined || again.pipelines.folded.size)
+        throw new Error("the choice and the folds of the first session are still there");
     });
   },
 

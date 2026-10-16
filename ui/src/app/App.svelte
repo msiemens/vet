@@ -60,7 +60,7 @@
   import { serverLine } from "../state/serverStatus";
   import { session } from "../state/session.svelte";
   import { defaultRange, rangeView } from "../state/timelineRange";
-  import { versions } from "../state/versions.svelte";
+  import { newPipelines } from "../state/pipelines.svelte";
   import { softWrapPreference, themePreference } from "./appPreferences.svelte";
   import { appState } from "./appState.svelte";
   import { choiceHost, goToFirstFlagged, openCheckLog, openPlace, openThread, showInBrowser } from "./actions";
@@ -113,6 +113,9 @@
   const pipelineCommit = $derived(opened.session?.pipelineCommit);
   /** Stands in for the commits of a changeset while none is on view. */
   const idleCommits = new CommitList(() => session.connected().commits());
+  /** Stands in for the Pipelines state of a changeset while none is on view. */
+  const idlePipelines = newPipelines(() => undefined);
+  const versions = $derived(opened.session?.versions.items ?? []);
   const footer = $derived({
     commit: shownCommit === undefined ? undefined : `${shownCommit + 1} / ${opened.session?.commitCount ?? 0}`,
     languageServer: serverLine(
@@ -238,7 +241,7 @@
     changesets={changesetSwitcher}
     baseNote={headerFacts.note}
     scope={headerFacts.scope}
-    onscope={versions.items.length ? () => void focusTimeline() : undefined}
+    onscope={versions.length ? () => void focusTimeline() : undefined}
     onwhole={() => void opened.session?.showWhole()}
     filtered={opened.session?.baseChanged ? baseChangedActions : undefined}
     checks={headChecks}
@@ -300,7 +303,7 @@
           {#snippet bottom({ selected, select })}
             {#if shell.bottom === "timeline"}
               <TimelinePanel
-                versions={versions.items}
+                {versions}
                 base={opened.session?.facts?.base.commit}
                 {range}
                 byCommit={shownCommit !== undefined}
@@ -329,6 +332,7 @@
               />
             {:else if shell.bottom === "pipelines"}
               <PipelinesPanel
+                pipelines={opened.session?.pipelines ?? idlePipelines}
                 checks={pipelineCommit === undefined ? undefined : checks.of(pipelineCommit)}
                 commit={pipelineCommit}
                 onlog={(job, run) => void appState.controller?.openLog(job, logKey(job, run))}
@@ -423,7 +427,7 @@
     backend={session.backend}
     view={opened.session?.view ?? rangeView(undefined)}
     files={opened.session?.facts?.files ?? 0}
-    range={opened.session?.range ?? defaultRange(versions.items)}
+    range={opened.session?.range ?? defaultRange(versions)}
     revision={opened.session?.layout?.shown.revision ?? 0}
     commitList={opened.session?.commitList ?? idleCommits}
     onopen={(result) => {

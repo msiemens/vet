@@ -15,7 +15,6 @@ import { type Filters, NO_FILTERS } from "./findRows";
 import { diffRuns, isStale, linesToLocate, ranVersion, slotFor } from "./findRuns";
 import { atRevision } from "./revision";
 import { session } from "./session.svelte";
-import { versions } from "./versions.svelte";
 
 /** Find usages of the symbol at a position of one side's text. */
 export interface UsagesSpec {
@@ -133,7 +132,10 @@ class FindSets {
 
   /** The version a run of `spec` is of, which the set records and the stale banner names files since. */
   private versionOf(spec: SetSpec): number | undefined {
-    return ranVersion(spec.type === "search" ? spec.request.scope : undefined, versions.items.at(-1)?.n);
+    return ranVersion(
+      spec.type === "search" ? spec.request.scope : undefined,
+      opened.session?.versions.items.at(-1)?.n,
+    );
   }
 
   stale(set: FindSet): boolean {

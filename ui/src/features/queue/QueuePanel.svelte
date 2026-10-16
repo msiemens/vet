@@ -26,7 +26,6 @@
   import { minute } from "../../state/minute.svelte";
   import { opened } from "../../state/opened.svelte";
   import { platform } from "../../state/platform.svelte";
-  import { reviewChanges } from "../../state/reviewChanges.svelte";
   import ChangesetName from "./ChangesetName.svelte";
   import { metaOf, reasonOf, reviewSummary, reviewerLabel, reviewersSummary } from "./queuePanel";
   import { type QueueRow, labelOf, statusTitle } from "./queueRows";
@@ -93,10 +92,11 @@
   );
   /** The version the review last marked; what changed since it is asked of the backend (D95). */
   const reviewed = $derived(row?.review.state === "open" ? row.review.lastReviewed : undefined);
-  const changesSince = $derived(reviewChanges.of(reviewed));
+  const changesSince = $derived(opened.session?.reviewChanges.of(reviewed));
   $effect(() => {
     const version = reviewed;
-    untrack(() => reviewChanges.ensure(version));
+    const changes = opened.session?.reviewChanges;
+    untrack(() => changes?.ensure(version));
   });
   const summary = $derived(
     row &&

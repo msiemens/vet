@@ -20,7 +20,7 @@
   import type { Column } from "../../lib/ui/columns";
   import { ListNav } from "../../lib/ui/listNav";
   import { checks as checkStore } from "../../state/checks.svelte";
-  import { pipelines } from "../../state/pipelines.svelte";
+  import type { SessionPipelines } from "../../state/pipelines.svelte";
   import { platform } from "../../state/platform.svelte";
   import {
     type ActionKind,
@@ -34,6 +34,7 @@
   } from "./pipelineRows";
 
   let {
+    pipelines,
     checks,
     commit,
     onlog,
@@ -42,6 +43,8 @@
     oneditor,
     onclose,
   }: {
+    /** The choice, folds and steps of the changeset on view. */
+    pipelines: SessionPipelines;
     /** The checks of the commit on view; none until the platform has answered. */
     checks?: CommitChecks;
     /** The full id of that commit; none while the changeset loads. */

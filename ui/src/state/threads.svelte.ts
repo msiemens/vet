@@ -37,7 +37,7 @@ class Threads {
   range = $state.raw<ThreadCell>();
   /** The range the review view is of. */
   private ranged = $state.raw<Where>();
-  private reviewShown: boolean;
+  private reviewShown = false;
   private host: ThreadsHost;
   private wholeReads = new Resource<ThreadCell>({
     apply: (cell) => this.take("whole", cell),
@@ -49,9 +49,8 @@ class Threads {
   });
   private listeners = new Set<() => void>();
 
-  constructor(host: ThreadsHost, reviewShown: boolean) {
+  constructor(host: ThreadsHost) {
     this.host = host;
-    this.reviewShown = reviewShown;
   }
 
   /** The threads beside the view on screen: its own once read, else the changeset's. */
@@ -272,4 +271,4 @@ class Threads {
 
 export type SessionThreads = Threads;
 
-export const newThreads = (host: ThreadsHost, reviewShown: boolean): SessionThreads => new Threads(host, reviewShown);
+export const newThreads = (host: ThreadsHost): SessionThreads => new Threads(host);

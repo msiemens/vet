@@ -1,23 +1,26 @@
-// The versions of the open review, as the backend lists them: the timeline's rows.
+// The versions of a session's open review, as the backend lists them: the timeline's rows. Only the
+// review screen shows them, so they are read while it is shown.
 
 import type { VersionInfo } from "../generated/VersionInfo";
-import type { Backend } from "./backend";
-import { followProject } from "./followProject";
-import { whileReview } from "./reviewFollow";
+import type { Backend, SessionEvent } from "./backend";
 import { notices } from "./notices.svelte";
 import { Resource } from "./resource";
-import { session } from "./session.svelte";
 
-class VersionStore {
+// A settled snapshot or a base move adds a version; a mark changes where the review last was.
+const RELOAD_ON: readonly SessionEvent["type"][] = ["snapshotSettled", "reviewStarted", "reviewChanged"];
+
+class Versions {
   /** Oldest first; none while browsing, as versions are recorded only while a review is open. */
   items = $state.raw<VersionInfo[]>([]);
+  private following = false;
+  private backend: () => Backend;
   private reads = new Resource<VersionInfo[]>({
     apply: (versions) => (this.items = versions),
     failed: (error) => notices.failed("Could not load the timeline", error),
   });
 
-  constructor() {
-    whileReview((backend) => this.start(backend));
+  constructor(backend: () => Backend) {
+    this.backend = backend;
   }
 
   /**
@@ -28,29 +31,30 @@ class VersionStore {
   async load(): Promise<VersionInfo[]> {
     const running = this.reads.running;
     if (running) await running;
-    else {
-      const backend = session.backend;
-      if (backend) await this.reads.load(() => backend.versions());
-    }
+    else await this.reads.load(() => this.backend().versions());
     return this.items;
   }
 
-  /** Loads the versions and keeps them current; the returned function stops that. */
-  private start(backend: Backend): () => void {
-    const stop = followProject(backend, {
-      // A settled snapshot or a base move adds a version; a mark changes where the review last was;
-      // another changeset has versions of its own.
-      reloadOn: ["snapshotSettled", "reviewStarted", "reviewChanged"],
-      reload: () => void this.reads.load(() => backend.versions()),
-      cancel: () => this.reads.cancel(),
-      clear: () => (this.items = []),
-    });
-    return () => {
-      stop();
-      this.reads.cancel();
-      this.items = [];
-    };
+  follow() {
+    this.following = true;
+    void this.reads.load(() => this.backend().versions());
+  }
+
+  unfollow() {
+    this.following = false;
+    this.reads.cancel();
+    this.items = [];
+  }
+
+  hear(event: SessionEvent) {
+    if (this.following && RELOAD_ON.includes(event.type)) void this.reads.load(() => this.backend().versions());
+  }
+
+  resync() {
+    if (this.following) void this.reads.load(() => this.backend().versions());
   }
 }
 
-export const versions = new VersionStore();
+export type SessionVersions = Versions;
+
+export const newVersions = (backend: () => Backend): SessionVersions => new Versions(backend);
