@@ -1,7 +1,7 @@
 // The shell's own state: the screen shown and the tool windows of the rails and the dock. What `App`
 // passes to the chrome and the review screen, and what the tool commands act on.
 
-import { changeset } from "../../state/changeset.svelte";
+import { opened } from "../../state/opened.svelte";
 import { reviewShown } from "../../state/reviewShown.svelte";
 import { COMMITS, FALLBACK, lensOnSelect, toolFor } from "./commitsTool";
 import { type Screen, TOOLS } from "./tools";
@@ -18,7 +18,8 @@ class Shell {
 
   /** The left rail as it shows: the Commits tool while the changeset is reviewed by commit. */
   get left(): ToolWindow {
-    return { tool: toolFor(this.leftChosen.tool, changeset.lens, changeset.commitCount), open: this.leftChosen.open };
+    const session = opened.session;
+    return { tool: toolFor(this.leftChosen.tool, session?.lens, session?.commitCount ?? 0), open: this.leftChosen.open };
   }
 
   /** Shows the queue, or the review of the changeset on view. */
@@ -69,7 +70,7 @@ class Shell {
    * to review by commit.
    */
   private selectLeft(tool: string) {
-    if (tool === COMMITS && changeset.commitCount <= 1) {
+    if (tool === COMMITS && (opened.session?.commitCount ?? 0) <= 1) {
       this.leftChosen.tool = FALLBACK;
       this.leftChosen.open = true;
       return;
@@ -77,7 +78,7 @@ class Shell {
     const lens = lensOnSelect(this.left.tool, tool);
     if (tool !== COMMITS) this.leftChosen.tool = tool;
     this.leftChosen.open = true;
-    if (lens !== undefined) void changeset.showLens(lens);
+    if (lens !== undefined) void opened.session?.showLens(lens);
   }
 
   /** Whether the changeset on view is reviewed by commit; the lens and the commit count say so. */

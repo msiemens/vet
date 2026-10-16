@@ -1,7 +1,7 @@
 // Showing a tool window and moving the focus into it, and leaving the narrowed scope on Escape.
 
 import { tick } from "svelte";
-import { changeset } from "../../state/changeset.svelte";
+import { opened } from "../../state/opened.svelte";
 import { headerFacts } from "./headerFacts.svelte";
 import { shell } from "./shell.svelte";
 import { TOOLS } from "./tools";
@@ -37,5 +37,5 @@ export function leaveScope(e: KeyboardEvent) {
   const at = e.target instanceof Element ? e.target : undefined;
   if (at && at !== document.body && !at.closest("[data-escapes-scope]")) return;
   e.preventDefault();
-  void changeset.showWhole();
+  void opened.session?.showWhole();
 }

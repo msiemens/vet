@@ -40,6 +40,7 @@
   import Toast from "../lib/ui/Toast.svelte";
   import { changeGate } from "../lib/ui/changeGate";
   import { changeset } from "../state/changeset.svelte";
+  import { CommitList } from "../state/commitList";
   import { checks } from "../state/checks.svelte";
   import { canRestartBackend, hasNativeDialogs, hasNativeMenu } from "../state/host";
   import { commands } from "../state/commands";
@@ -47,9 +48,11 @@
   import { findSets } from "../state/findSets.svelte";
   import { mainMenu } from "../state/mainMenu.svelte";
   import { notices } from "../state/notices.svelte";
+  import { opened } from "../state/opened.svelte";
   import { platform } from "../state/platform.svelte";
   import { problems } from "../state/problems.svelte";
   import { progress as backgroundTasks } from "../state/progress.svelte";
+  import { setFilter, setProjectTrusted, trustPullRequest } from "../state/projectRequests";
   import { queue } from "../state/queue.svelte";
   import { recent } from "../state/recent.svelte";
   import { semantic } from "../state/semantic.svelte";
@@ -58,7 +61,7 @@
   import { serverLine } from "../state/serverStatus";
   import { session } from "../state/session.svelte";
   import { threads } from "../state/threads.svelte";
-  import { defaultRange } from "../state/timelineRange";
+  import { defaultRange, rangeView } from "../state/timelineRange";
   import { versions } from "../state/versions.svelte";
   import { softWrapPreference, themePreference } from "./appPreferences.svelte";
   import { appState } from "./appState.svelte";
@@ -78,14 +81,14 @@
 
   const headLook = $derived(
     headChecksLook(
-      checks.of(changeset.headCommit),
+      checks.of(opened.session?.headCommit),
       platform.status,
       platform.signedOut,
       checks.limitedUntil,
       checks.loadedAt,
     ),
   );
-  const pipelineRail = $derived(pipelineBadge(checks.of(changeset.headCommit), platform.signedOut));
+  const pipelineRail = $derived(pipelineBadge(checks.of(opened.session?.headCommit), platform.signedOut));
 
   /** The Comments tool window is on screen. */
   const commentsShown = $derived(shell.screen === "review" && shell.left.open && shell.left.tool === "comments");
@@ -102,12 +105,18 @@
   const unreadComments = $derived(commentsShown ? 0 : platform.unreadCount);
 
   const semanticSummary = $derived(semantic.summary(appState.controller?.semanticPath));
-  const range = $derived(changeset.range);
+  const range = $derived(opened.session?.range);
   const rangeFiles = $derived<RangeFile[]>(
-    range ? (changeset.layout?.files ?? []).map((f) => ({ path: f.path, delta: f.delta, mode: modeChange(f) })) : [],
+    range
+      ? (opened.session?.layout?.files ?? []).map((f) => ({ path: f.path, delta: f.delta, mode: modeChange(f) }))
+      : [],
   );
+  const shownCommit = $derived(opened.session?.shownCommit);
+  const pipelineCommit = $derived(opened.session?.pipelineCommit);
+  /** Stands in for the commits of a changeset while none is on view. */
+  const idleCommits = new CommitList(() => session.connected().commits());
   const footer = $derived({
-    commit: changeset.shownCommit === undefined ? undefined : `${changeset.shownCommit + 1} / ${changeset.commitCount}`,
+    commit: shownCommit === undefined ? undefined : `${shownCommit + 1} / ${opened.session?.commitCount ?? 0}`,
     languageServer: serverLine(
       appState.controller?.semanticPath,
       appState.controller?.semanticPath === undefined ? undefined : servedBy.of(appState.controller.semanticPath),
@@ -186,7 +195,7 @@
       disabled={!commands.isEnabled("review.reconfirmAll")}
       onclick={() => commands.run("review.reconfirmAll")}>{commands.label("review.reconfirmAll")}</button
     >
-    <button class="ctl" type="button" title="Show all changes again" onclick={() => changeset.showAll()}
+    <button class="ctl" type="button" title="Show all changes again" onclick={() => opened.session?.showAll()}
       >Back to all changes</button
     >
   {/snippet}
@@ -203,7 +212,7 @@
   {/snippet}
   {#snippet outgoingComments()}
     <!-- A changeset that is no pull request has nowhere to post to. -->
-    {#if changeset.headCommit !== undefined}<OutgoingButton onopen={openThread} />{/if}
+    {#if opened.session?.headCommit !== undefined}<OutgoingButton onopen={openThread} />{/if}
   {/snippet}
   {#snippet projectSwitcher()}
     {#if session.repo}
@@ -217,7 +226,7 @@
     {/if}
   {/snippet}
   {#snippet changesetSwitcher()}
-    {@const target = changeset.facts?.target}
+    {@const target = opened.session?.facts?.target}
     <ChangesetSwitcher
       label={target && targetLabel(target)}
       draft={target?.draft}
@@ -232,21 +241,21 @@
     baseNote={headerFacts.note}
     scope={headerFacts.scope}
     onscope={versions.items.length ? () => void focusTimeline() : undefined}
-    onwhole={() => void changeset.showWhole()}
-    filtered={changeset.baseChanged ? baseChangedActions : undefined}
+    onwhole={() => void opened.session?.showWhole()}
+    filtered={opened.session?.baseChanged ? baseChangedActions : undefined}
     checks={headChecks}
     outgoing={outgoingComments}
-    review={changeset.facts?.review}
-    completion={changeset.shownCompletion}
+    review={opened.session?.facts?.review}
+    completion={opened.session?.shownCompletion}
     refreshing={queue.refreshing}
   />
 
   <Banners
-    degraded={changeset.layout?.degraded}
-    failures={changeset.restoreFailures}
-    offBase={changeset.facts?.base.headOffBase ? changeset.facts.base.commit.shortId : undefined}
-    pullRequest={changeset.facts?.trust.pullRequest}
-    ontrust={() => void changeset.trustPullRequest()}
+    degraded={opened.session?.layout?.degraded}
+    failures={opened.session?.restoreFailures ?? []}
+    offBase={opened.session?.facts?.base.headOffBase ? opened.session.facts.base.commit.shortId : undefined}
+    pullRequest={opened.session?.facts?.trust.pullRequest}
+    ontrust={() => void trustPullRequest()}
     ontrustproject={() => appState.showDialog("settings", "trust")}
   />
 
@@ -294,12 +303,12 @@
             {#if shell.bottom === "timeline"}
               <TimelinePanel
                 versions={versions.items}
-                base={changeset.facts?.base.commit}
+                base={opened.session?.facts?.base.commit}
                 {range}
-                byCommit={changeset.shownCommit !== undefined}
+                byCommit={shownCommit !== undefined}
                 files={rangeFiles}
                 {selected}
-                onrange={(r) => void changeset.setRange(r)}
+                onrange={(r) => void opened.session?.setRange(r)}
                 onselect={select}
                 onclose={() => shell.hideBottom()}
               />
@@ -322,8 +331,8 @@
               />
             {:else if shell.bottom === "pipelines"}
               <PipelinesPanel
-                checks={changeset.pipelineCommit === undefined ? undefined : checks.of(changeset.pipelineCommit)}
-                commit={changeset.pipelineCommit}
+                checks={pipelineCommit === undefined ? undefined : checks.of(pipelineCommit)}
+                commit={pipelineCommit}
                 onlog={(job, run) => void appState.controller?.openLog(job, logKey(job, run))}
                 onbrowser={showInBrowser}
                 onsignin={() => appState.showDialog("settings", "accounts")}
@@ -372,17 +381,17 @@
     onsoftwrap={setSoftWrap}
     onclose={() => appState.closeDialog()}
     project={session.repo ? repoName(session.repo) : undefined}
-    filter={session.repo ? changeset.facts?.filter : undefined}
-    excluded={{ lines: changeset.layout?.excludedLines ?? 0, items: changeset.layout?.excludedItems ?? 0 }}
-    onfilter={(f) => changeset.setFilter(f)}
-    trusted={session.repo ? changeset.facts?.trust.project : undefined}
-    ontrusted={(trusted) => void changeset.setProjectTrusted(trusted)}
+    filter={session.repo ? opened.session?.facts?.filter : undefined}
+    excluded={{ lines: opened.session?.layout?.excludedLines ?? 0, items: opened.session?.layout?.excludedItems ?? 0 }}
+    onfilter={(f) => setFilter(f)}
+    trusted={session.repo ? opened.session?.facts?.trust.project : undefined}
+    ontrusted={(trusted) => void setProjectTrusted(trusted)}
   />
 {:else if appState.dialog === "about"}
   <AboutDialog onclose={() => appState.closeDialog()} />
 {:else if appState.dialog === "finish"}
   <FinishDialog
-    flagged={changeset.facts?.completion.flaggedHunks ?? 0}
+    flagged={opened.session?.facts?.completion.flaggedHunks ?? 0}
     ongoto={() => {
       appState.closeDialog();
       void goToFirstFlagged();
@@ -390,7 +399,7 @@
     onclose={() => appState.closeDialog()}
     onfinish={() => {
       appState.closeDialog();
-      void changeset.finishReview();
+      void opened.session?.finishReview();
     }}
   />
 {:else if appState.dialog === "pullRequest"}
@@ -399,7 +408,7 @@
     onclose={() => appState.closeDialog()}
     onopen={(remote, number) => {
       appState.closeDialog();
-      void changeset.openChangeset({ type: "pullRequest", remote, number });
+      void opened.open({ type: "pullRequest", remote, number });
     }}
   />
 {/if}
@@ -414,11 +423,11 @@
 {#if findInFiles.open && session.backend && session.repo}
   <FindInFilesDialog
     backend={session.backend}
-    view={changeset.view}
-    files={changeset.facts?.files ?? 0}
-    range={changeset.range ?? defaultRange(versions.items)}
-    revision={changeset.layout?.shown.revision ?? 0}
-    commitList={changeset.commitList}
+    view={opened.session?.view ?? rangeView(undefined)}
+    files={opened.session?.facts?.files ?? 0}
+    range={opened.session?.range ?? defaultRange(versions.items)}
+    revision={opened.session?.layout?.shown.revision ?? 0}
+    commitList={opened.session?.commitList ?? idleCommits}
     onopen={(result) => {
       shell.show("review");
       appState.whenReview((c) => void c.openFound(result));
@@ -429,7 +438,7 @@
 
 <LocationPicker
   statusOf={(path) => {
-    const file = changeset.layoutOf(path);
+    const file = opened.session?.layoutOf(path);
     return file && letterOfStatus(file.status);
   }}
   onsettings={() => appState.showDialog("settings", "servers")}
