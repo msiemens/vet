@@ -79,6 +79,15 @@ void test("a failed sync or checks refresh stays until a task of its kind finish
   assert.deepEqual(ids(board.failed()), [2, 5], "a newer failure of a kind replaces the older");
 });
 
+void test("clearing the failures keeps the running tasks", () => {
+  const board = new TaskBoard();
+  board.apply(task(1, { type: "failed", message: "offline" }, "Pull request sync", "sync"), 0, 0);
+  board.apply(task(2), 0, 0);
+  board.clearFailures();
+  assert.deepEqual(board.failed(), []);
+  assert.deepEqual(ids(board.shown(0)), [2]);
+});
+
 void test("a failed task of another kind is not kept", () => {
   const board = new TaskBoard();
   board.apply(task(1, { type: "failed", message: "gone" }, "Fetching", "fetch"), 0, 0);

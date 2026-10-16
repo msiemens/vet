@@ -49,6 +49,11 @@ export class TaskBoard {
     this.failures.clear();
   }
 
+  /** Drops the failures that stay shown; the running tasks go on. */
+  clearFailures() {
+    this.failures.clear();
+  }
+
   /** The failures that stay shown, oldest first. */
   failed(): Task[] {
     return [...this.failures.values()].sort((a, b) => a.id - b.id);

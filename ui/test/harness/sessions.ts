@@ -4,6 +4,7 @@
 import type { ChangesetKey } from "../../src/generated/ChangesetKey.ts";
 import type { CommitChecks } from "../../src/generated/CommitChecks.ts";
 import type { PullRequestInfo } from "../../src/generated/PullRequestInfo.ts";
+import type { ServerMessage } from "../../src/generated/ServerMessage.ts";
 import type { SymbolInfo } from "../../src/generated/SymbolInfo.ts";
 import type { View } from "../../src/generated/View.ts";
 import type { Request } from "../../src/generated/Request.ts";
@@ -22,6 +23,7 @@ import { platform } from "../../src/state/platform.svelte.ts";
 import { shell } from "../../src/features/chrome/shell.svelte.ts";
 import { preferences } from "../../src/lib/preferences.svelte.ts";
 import { problems } from "../../src/state/problems.svelte.ts";
+import { progress } from "../../src/state/progress.svelte.ts";
 import { session } from "../../src/state/session.svelte.ts";
 import { structure } from "../../src/state/structure.svelte.ts";
 import { queue } from "../../src/state/queue.svelte.ts";
@@ -801,6 +803,22 @@ export const sessions: Record<SessionName, (h: Harness) => Promise<void>> = {
       held.drafts.set("reply:1", "a half-written reply");
       held.changesetComment.composing = true;
       held.changesetComment.body = "a word on the whole";
+      // A failed pull request sync is announced as the backend would; the footer keeps it.
+      const backend = session.connected();
+      const conn = (backend as unknown as { conn: { onMessage(m: ServerMessage): void } }).conn;
+      const event: SessionEvent = {
+        type: "task",
+        project: backend.project ?? -1,
+        id: 9_000,
+        kind: "sync",
+        title: "Pull request sync",
+        done: null,
+        total: null,
+        detail: null,
+        state: { type: "failed", message: "offline" },
+      };
+      conn.onMessage({ type: "event", event });
+      if (progress.failed.length !== 1) throw new Error("the footer holds no failure");
       if (held.unsentComments() !== 2) throw new Error(`${held.unsentComments()} boxes hold text, not 2`);
       if (!held.findSets.sets.length) throw new Error("the find set was not placed");
     });
@@ -841,6 +859,7 @@ export const sessions: Record<SessionName, (h: Harness) => Promise<void>> = {
       if (next.drafts.count() || next.changesetComment.body || next.changesetComment.composing)
         throw new Error("a comment box came along");
       if (next.unsentComments() !== 0) throw new Error("the next changeset has unsent comments");
+      if (progress.failed.length) throw new Error("a failure of the changeset left stays in the footer");
     });
   },
 

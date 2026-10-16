@@ -37,6 +37,11 @@ class ProgressStore {
       this.board.clear();
       this.publish();
     });
+    // A failure belongs to the pull request it happened on.
+    opened.onSession(() => {
+      this.board.clearFailures();
+      this.publish();
+    });
   }
 
   /** Replaces the tasks with those the backend has running. */
