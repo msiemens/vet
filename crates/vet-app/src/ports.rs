@@ -410,6 +410,16 @@ pub trait Fetcher {
     fn delete_refs(&self, names: Vec<String>) -> impl Future<Output = Result<(), GitError>> + Send;
 }
 
+/// A ref under `refs/vet/changesets/<changeset>/` that keeps a version's commit alive.
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub struct ChangesetRef {
+    /// 1-based, per changeset.
+    pub version: u32,
+    /// `base` or `tip`.
+    pub name: String,
+    pub commit: CommitId,
+}
+
 /// The refs that keep a changeset's commits alive.
 pub trait ChangesetRefs {
     /// Points `refs/vet/changesets/<changeset>/<version>/<name>` at `commit` so
@@ -421,6 +431,11 @@ pub trait ChangesetRefs {
         name: &str,
         commit: &CommitId,
     ) -> impl Future<Output = Result<(), GitError>> + Send;
+    /// The refs `set_changeset_ref` holds, so that a resumption writes none that is there.
+    fn changeset_refs(
+        &self,
+        changeset: ChangesetId,
+    ) -> impl Future<Output = Result<Vec<ChangesetRef>, GitError>> + Send;
     /// Deletes every `refs/vet/changesets/<changeset>/*`.
     fn delete_changeset_refs(&self, changeset: ChangesetId) -> impl Future<Output = Result<(), GitError>> + Send;
 }

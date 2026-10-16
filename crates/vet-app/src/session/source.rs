@@ -143,14 +143,18 @@ impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> L
             return self.observe_on_view(&mut st).await;
         }
         let writes = st.writes();
-        let was_parked = st.parked().contains_key(&source);
-        let mut incoming = match st.parked().remove(&source) {
-            Some(state) => state,
+        // Only the working tree is kept off view, for its settle loop; a branch or pull request
+        // is dropped and rebuilt by `enter` when it comes back.
+        let keep_tree = source == Source::WorkingTree;
+        let was_parked = keep_tree && st.parked().tree().is_some();
+        let parked = if keep_tree { st.parked().take() } else { None };
+        let mut incoming = match parked {
+            Some(tree) => tree,
             None => Arc::new(self.enter(&writes, &source, st.project_filter()).await?),
         };
         if let Err(e) = self.observe_in(&writes, Arc::make_mut(&mut incoming)).await {
             if was_parked {
-                st.parked().insert(source, incoming);
+                st.parked().keep(incoming);
             }
             return Err(e);
         }
@@ -161,19 +165,17 @@ impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> L
         tree.project = None;
         tree.revision = st.revision.max(tree.revision) + 1;
         let mut outgoing = st.replace(incoming);
-        // What is parked is not shown: its diff and the snapshots beside it are dropped, and
-        // whatever comes back for them is rebuilt on the first request for its revision.
-        let parked = Arc::make_mut(&mut outgoing);
-        parked.changes = None;
-        parked.known.clear();
-        st.parked().insert(outgoing.source.clone(), outgoing);
+        // What is not on view is not shown: the working tree keeps only what its settle loop
+        // needs, and every other changeset is let go.
+        if outgoing.source == Source::WorkingTree {
+            let tree = Arc::make_mut(&mut outgoing);
+            tree.changes = None;
+            tree.known.clear();
+            st.parked().keep(outgoing);
+        }
         // The settle loop works on the working tree only while it is on view or its review is
         // open; another changeset on view parks an unreviewed one, which is then left alone.
-        let wanted = st.source == Source::WorkingTree
-            || st
-                .parked()
-                .get(&Source::WorkingTree)
-                .is_some_and(|tree| tree.review.is_some());
+        let wanted = st.source == Source::WorkingTree || st.parked().review_open();
         st.publish();
         self.settle_wanted.set(wanted);
         self.revisions.advance(st.revision);

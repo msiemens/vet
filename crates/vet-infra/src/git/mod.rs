@@ -23,9 +23,9 @@ use std::sync::{Arc, OnceLock};
 use gix::bstr::ByteSlice;
 use vet_app::changeset::{ChangesetId, CommitId};
 use vet_app::ports::{
-    Attributes, BlobJob, BlobRead, BlobReader, BlobSession, BranchInfo, ChangesetRefs, Checkout, CheckoutError,
-    CommitDetail, CommitInfo, Differ, Dirty, FetchAuth, Fetcher, GitError, History, IgnoreRules, RefTip, RefUpdate,
-    Remerged, RemoteInfo, Scan, Scanner, Store, TextDiff,
+    Attributes, BlobJob, BlobRead, BlobReader, BlobSession, BranchInfo, ChangesetRef, ChangesetRefs, Checkout,
+    CheckoutError, CommitDetail, CommitInfo, Differ, Dirty, FetchAuth, Fetcher, GitError, History, IgnoreRules, RefTip,
+    RefUpdate, Remerged, RemoteInfo, Scan, Scanner, Store, TextDiff,
 };
 use vet_core::classify::{changes, text_blobs};
 use vet_core::content::{BlobId, EntryKind, RepoPath, Snapshot};
@@ -447,6 +447,23 @@ impl ChangesetRefs for GixRepo {
             Ok(())
         })
         .await
+    }
+
+    async fn changeset_refs(&self, changeset: ChangesetId) -> Result<Vec<ChangesetRef>, GitError> {
+        let prefix = changeset_ref_prefix(changeset);
+        let wanted = prefix.clone();
+        let refs = self.blocking(move |i| fetch::refs_below(&i.open()?, &wanted)).await?;
+        Ok(refs
+            .into_iter()
+            .filter_map(|r| {
+                let (version, name) = r.name.strip_prefix(&prefix)?.split_once('/')?;
+                Some(ChangesetRef {
+                    version: version.parse().ok()?,
+                    name: name.to_owned(),
+                    commit: CommitId(r.commit),
+                })
+            })
+            .collect())
     }
 
     async fn delete_changeset_refs(&self, changeset: ChangesetId) -> Result<(), GitError> {

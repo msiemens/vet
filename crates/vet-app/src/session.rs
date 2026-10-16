@@ -462,13 +462,22 @@ impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> L
         // commits made while Vet was closed are part of what is under review,
         // and re-resolving would turn every mark against the old base into
         // `SeenAgainstOldBase`. Moving the base is the user's call (§6.5).
+        // The refs that keep the versions' commits are already in git; taking each again would
+        // write it on every return, so only what a rebuild lacks is set.
+        let existing: HashMap<(u32, String), CommitId> = acquisition
+            .git
+            .changeset_refs(changeset)
+            .await?
+            .into_iter()
+            .map(|kept| ((kept.version, kept.name), kept.commit))
+            .collect();
         for (i, version) in versions.iter().enumerate() {
             if let Some(snapshots) = version.snapshots {
                 acquisition.record_commit(snapshots.target, version.tip.clone());
                 acquisition.record_commit(snapshots.base, version.base_commit.clone());
             }
             let previous = Version::last_commits(&versions[..i]);
-            Self::keep_commits(acquisition, changeset, version, previous).await?;
+            Self::keep_commits(acquisition, changeset, version, previous, Some(&existing)).await?;
         }
         let threads = visible_threads(store.threads(changeset).await?, Some(id));
         Ok(Some(State {
@@ -513,15 +522,21 @@ impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> L
         Ok(())
     }
 
-    /// Takes the refs that keep the commits of `version` alive in git, except those
-    /// the version before it already holds, whose base commit and tip are `previous`.
+    /// Takes the refs that keep the commits of `version` alive in git, except those the version
+    /// before it already holds, whose base commit and tip are `previous`, and those `existing`
+    /// says point at the same commit already. A resumption passes what it found in git so that
+    /// coming back writes none that is still there.
     async fn keep_commits(
         acquisition: &Acquisition<G, S>,
         changeset: ChangesetId,
         version: &Version,
         previous: Option<(&CommitId, &CommitId)>,
+        existing: Option<&HashMap<(u32, String), CommitId>>,
     ) -> Result<()> {
         for (name, commit) in version.commits_to_keep(previous) {
+            if existing.is_some_and(|kept| kept.get(&(version.n, name.to_owned())) == Some(commit)) {
+                continue;
+            }
             acquisition
                 .git
                 .set_changeset_ref(changeset, version.n, name, commit)
@@ -562,7 +577,7 @@ impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> L
                 .put_snapshot(Snapshot::clone(snapshot), SnapshotStatus::clone(status), version.at)
                 .await?;
         }
-        Self::keep_commits(&self.acquisition, changeset, version, previous).await
+        Self::keep_commits(&self.acquisition, changeset, version, previous, None).await
     }
 
     /// The write token, with the state as the last command left it.
@@ -995,7 +1010,7 @@ impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> L
             let writes = held.writes();
             let tree = held
                 .parked()
-                .get_mut(&Source::WorkingTree)
+                .tree_mut()
                 .expect("the working tree is parked while another changeset is on view");
             if !settlement.fits(tree) {
                 continue;
@@ -1017,7 +1032,7 @@ impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> L
         if held.source == Source::WorkingTree {
             return held.shared();
         }
-        let tree = held.parked().get(&Source::WorkingTree);
+        let tree = held.parked().tree();
         Arc::clone(tree.expect("the working tree is parked while another changeset is on view"))
     }
 

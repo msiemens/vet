@@ -15,7 +15,8 @@ use tempfile::TempDir;
 use vet_app::acquisition::Acquisition;
 use vet_app::changeset::ChangesetId;
 use vet_app::ports::{
-    BlobRead, BlobReader, ChangesetRefs, Differ, Dirty, History, IgnoreRules, Scanner, Store, StoreError, TextDiff,
+    BlobRead, BlobReader, ChangesetRef, ChangesetRefs, Differ, Dirty, History, IgnoreRules, Scanner, Store, StoreError,
+    TextDiff,
 };
 use vet_core::content::{BlobId, EntryKind, NonTextKind, RepoPath, Snapshot, SnapshotId, SnapshotStatus};
 use vet_infra::budget::Budget;
@@ -532,6 +533,31 @@ async fn changeset_refs_are_set_per_version_and_deleted_with_the_changeset() {
              refs/vet/changesets/7/2/base {head}\nrefs/vet/changesets/8/1/base {head}\n"
         )
     );
+
+    let mut kept = repo.changeset_refs(ChangesetId(7)).await.unwrap();
+    kept.sort_by(|a, b| (a.version, &a.name).cmp(&(b.version, &b.name)));
+    assert_eq!(
+        kept,
+        [
+            ChangesetRef {
+                version: 1,
+                name: "base".into(),
+                commit: commit_id.clone()
+            },
+            ChangesetRef {
+                version: 1,
+                name: "tip".into(),
+                commit: commit_id.clone()
+            },
+            ChangesetRef {
+                version: 2,
+                name: "base".into(),
+                commit: commit_id.clone()
+            },
+        ],
+        "the refs a resumption reads are the ones set"
+    );
+    assert_eq!(repo.changeset_refs(ChangesetId(8)).await.unwrap().len(), 1);
 
     repo.delete_changeset_refs(ChangesetId(7)).await.unwrap();
     assert_eq!(refs(dir.path()), format!("refs/vet/changesets/8/1/base {head}\n"));

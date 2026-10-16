@@ -24,9 +24,9 @@ use super::*;
 use crate::changeset::{BaseChoice, ChangesetId, CommitId, Lens, RemoteKey, Source, Version, VersionOrigin};
 use crate::platform::{Discussion, FakeHosting, PullRequestHead, StoredDiscussion};
 use crate::ports::{
-    Attributes, BlobJob, BlobRead, BlobReader, BlobSession, BranchInfo, ChangesetRefs, ChangesetStore, Checkout,
-    CommitDetail, CommitInfo, Differ, Dirty, GitError, History, PreferenceStore, Remerged, ReviewRow, ReviewStore,
-    Scan, Scanner, SourceReview, Store, StoreError, TextDiff, ThreadStore,
+    Attributes, BlobJob, BlobRead, BlobReader, BlobSession, BranchInfo, ChangesetRef, ChangesetRefs, ChangesetStore,
+    Checkout, CommitDetail, CommitInfo, Differ, Dirty, GitError, History, PreferenceStore, Remerged, ReviewRow,
+    ReviewStore, Scan, Scanner, SourceReview, Store, StoreError, TextDiff, ThreadStore,
 };
 use crate::pull_request::PullRequestRefs;
 use crate::review::{ChangesetThread, NonTextAck, RecordedSpan, Review, ReviewId, ReviewSummary, SpanId, SpanOrigin};
@@ -111,6 +111,8 @@ pub(crate) struct FakeGit {
     scans: Arc<Mutex<Vec<Snapshot>>>,
     /// `<version>/<name>` of each held `refs/vet/changesets/<id>/<version>/<name>` and the commit.
     refs: Arc<Mutex<Vec<(String, CommitId)>>>,
+    /// How many changeset refs were written.
+    ref_writes: Arc<AtomicUsize>,
     /// When set, deleting the changeset refs fails.
     refs_stuck: Arc<AtomicBool>,
     /// When set, `read_blob` fails; the capped read, which looks at the cap first, does not.
@@ -444,11 +446,28 @@ impl ChangesetRefs for FakeGit {
         name: &str,
         commit: &CommitId,
     ) -> std::result::Result<(), GitError> {
+        self.ref_writes.fetch_add(1, Ordering::Relaxed);
         let name = format!("{version}/{name}");
         let mut refs = self.refs.lock().unwrap();
         refs.retain(|(n, _)| *n != name);
         refs.push((name, commit.clone()));
         Ok(())
+    }
+    async fn changeset_refs(&self, _: ChangesetId) -> std::result::Result<Vec<ChangesetRef>, GitError> {
+        Ok(self
+            .refs
+            .lock()
+            .unwrap()
+            .iter()
+            .filter_map(|(name, commit)| {
+                let (version, name) = name.split_once('/')?;
+                Some(ChangesetRef {
+                    version: version.parse().ok()?,
+                    name: name.to_owned(),
+                    commit: commit.clone(),
+                })
+            })
+            .collect())
     }
     async fn delete_changeset_refs(&self, _: ChangesetId) -> std::result::Result<(), GitError> {
         if self.refs_stuck.load(Ordering::Relaxed) {
@@ -4146,9 +4165,8 @@ async fn the_working_tree_is_found_when_it_comes_on_view_while_the_lookup_waits_
     // The lookup starts first, sees the branch on view and waits; then the tree is switched back.
     let looking = fx.session.working_tree();
     let switching = async {
-        let tree = held.parked().remove(&Source::WorkingTree).unwrap();
-        let branch = held.replace(tree);
-        held.parked().insert(branch.source.clone(), branch);
+        let tree = held.parked().take().unwrap();
+        let _branch = held.replace(tree);
         drop(held);
     };
     let (tree, ()) = tokio::join!(looking, switching);

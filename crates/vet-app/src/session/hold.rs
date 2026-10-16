@@ -6,7 +6,6 @@
 //! only ever replaced by whoever holds the token, so a reader sees the state as one command left it
 //! and never between two of its steps.
 
-use std::collections::HashMap;
 use std::ops::{Deref, DerefMut};
 use std::sync::Arc;
 
@@ -39,11 +38,11 @@ impl Published {
     }
 }
 
-/// What the write token guards: the review database's write connection, and the changesets that
-/// were on view and are not now, by source. Only a command reaches them, and only through [`Held`].
+/// What the write token guards: the review database's write connection, and the one changeset that
+/// is kept while it is not on view. Only a command reaches them, and only through [`Held`].
 pub(super) struct Writer<W> {
     writes: W,
-    parked: HashMap<Source, Arc<State>>,
+    parked: Parked,
     /// The project's change counter. Every change to a state through [`Held`] takes the next
     /// value and stamps the state with it, so that what is read from a state says which changes
     /// it reflects, whichever changeset was on view.
@@ -54,9 +53,46 @@ impl<W> Writer<W> {
     pub(super) fn new(writes: W) -> Self {
         Self {
             writes,
-            parked: HashMap::new(),
+            parked: Parked::new(),
             seq: 0,
         }
+    }
+}
+
+/// The changeset kept while it is not on view: the working tree, whose settle loop needs its state
+/// whenever the tree is not shown. A branch or pull request is rebuilt from the store by `enter`
+/// when it comes back, so it is not kept here.
+pub(super) struct Parked(Option<Arc<State>>);
+
+impl Parked {
+    pub(super) fn new() -> Self {
+        Self(None)
+    }
+
+    /// The working tree kept off view.
+    pub(super) fn tree(&self) -> Option<&Arc<State>> {
+        self.0.as_ref()
+    }
+
+    /// The working tree kept off view, to change in place.
+    pub(super) fn tree_mut(&mut self) -> Option<&mut Arc<State>> {
+        self.0.as_mut()
+    }
+
+    /// Takes the working tree kept off view.
+    pub(super) fn take(&mut self) -> Option<Arc<State>> {
+        self.0.take()
+    }
+
+    /// Keeps the working tree off view.
+    pub(super) fn keep(&mut self, tree: Arc<State>) {
+        debug_assert_eq!(tree.source, Source::WorkingTree);
+        self.0 = Some(tree);
+    }
+
+    /// Whether the working tree kept off view has an open review, which keeps it settling.
+    pub(super) fn review_open(&self) -> bool {
+        self.0.as_ref().is_some_and(|tree| tree.review.is_some())
     }
 }
 
@@ -98,7 +134,7 @@ impl<'a, W> Held<'a, W> {
         Arc::clone(&self.state)
     }
 
-    pub(super) fn parked(&mut self) -> &mut HashMap<Source, Arc<State>> {
+    pub(super) fn parked(&mut self) -> &mut Parked {
         &mut self.writer.parked
     }
 
