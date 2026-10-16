@@ -743,38 +743,6 @@ impl Orchestrator {
     }
 }
 
-/// Language servers take long to start; a new revision's first query should
-/// find them running. Starting never delays the reply of the request that
-/// changed the revision. Servers are for the review screen: while no connection
-/// shows it (`SetReviewShown`), nothing starts, and coming up starts them. The
-/// checks of the changeset on view are for both screens — the queue shows the
-/// selected pull request's checks too — so they start whatever screen shows it.
-/// The symbols and problems analysis is not started here: the supervisor's policy keeps it for the
-/// revision and screen state.
-fn start_servers_in_background(open: Arc<Open>) {
-    checks::refresh_checks_in_background(open.clone());
-    // A new revision or a change of trust can put a policy on view that a running server may not
-    // execute project code under (§7.5). Retire those whether or not the review screen is shown: a
-    // question the viewer asks can have started a server on any screen.
-    let retiring = open.clone();
-    let retire = async move {
-        if let Ok(booted) = retiring.booted().await {
-            booted.retire_disallowed_servers().await;
-        }
-    };
-    open.supervisor.start("retire", open.supervisor.track("retire", retire));
-    if !open.screens.shown() {
-        return;
-    }
-    let starting = open.clone();
-    let task = async move {
-        if let Ok(booted) = starting.booted().await {
-            booted.start_servers().await;
-        }
-    };
-    open.supervisor.start("servers", open.supervisor.track("servers", task));
-}
-
 /// Scans a project that has not scanned yet, so opening does not wait for the scan.
 fn scan_in_background(open: Arc<Open>) {
     tokio::spawn(async move {

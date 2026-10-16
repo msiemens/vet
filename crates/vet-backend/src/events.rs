@@ -7,7 +7,7 @@ use vet_app::registry::{Subscriber, Subscribers};
 use vet_protocol::{Event, ProjectId};
 use vet_transport::Events;
 
-use crate::{Open, start_servers_in_background};
+use crate::Open;
 
 /// A client connection, subscribed to the events of the projects it opened.
 #[derive(Clone)]
@@ -34,11 +34,10 @@ pub(crate) fn settled(subscribers: &Subscribers<Connection>, project: ProjectId,
     subscribers.broadcast(Event::SnapshotSettled { project, revision });
 }
 
-/// A request moved the revision for everyone: they refetch, and the language
-/// servers start for it in the background.
+/// A request moved the revision for everyone: they refetch. The background work that follows the
+/// revision is the supervisor's.
 pub(crate) fn revision_changed(open: &Arc<Open>, revision: u32) {
     settled(&open.subscribers, open.id, revision);
-    start_servers_in_background(open.clone());
 }
 
 /// Tells every subscriber whether edits of the working tree wait to settle into a snapshot.

@@ -46,7 +46,7 @@ use crate::hosting::{Announcer, Hosting, Platforms};
 use crate::mutex::lock;
 use crate::screens::ReviewScreens;
 use crate::supervisor::Policy;
-use crate::{LanguageServers, Live, Open, Orchestrator, PlatformAccounts, Semantic, start_servers_in_background};
+use crate::{LanguageServers, Live, Open, Orchestrator, PlatformAccounts, Semantic};
 
 /// The least time between two progress announcements of one task, so a step that
 /// reports per file reaches the UI a few times a second.
@@ -131,8 +131,8 @@ pub(crate) struct Wired {
     /// The project's background runs: the settle loop, the fetch timer, the feed, the analysis, the
     /// checks, the copy ahead and the server starts. They end with the project.
     pub(crate) supervisor: Supervisor,
-    /// What the supervisor keeps running for the state of the project: the analysis of the
-    /// changeset on view.
+    /// What the supervisor keeps running for the state of the project: the servers, their
+    /// retiring, the analysis and the checks of the changeset on view.
     pub(crate) policy: Policy,
     /// For tests: how many boots this project attempted and how many settle loops it started, so
     /// a failed boot can be told from a boot that never happened, and a retry from a second loop.
@@ -319,7 +319,6 @@ impl Wired {
                             settled(&subscribers, id, revision);
                             if let Some(open) = entry.get().and_then(Weak::upgrade) {
                                 open.stop_copying();
-                                start_servers_in_background(open);
                             }
                         },
                         || {

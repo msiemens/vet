@@ -9,11 +9,10 @@ use vet_app::pull_request_feed::OnView;
 use vet_mapping as mapping;
 use vet_protocol::{ChangesetKey, Event, ProjectId, Response};
 
-use crate::checks::refresh_checks_after_action;
 use crate::error::{Error, Result};
 use crate::hosting::{Held, Hosting};
 use crate::sync::sync_in_background;
-use crate::{Live, Open, Orchestrator, start_servers_in_background};
+use crate::{Live, Open, Orchestrator};
 
 /// How many rows of the queue have their lines counted at once: as many as the review lane's
 /// blocking pool runs, so the pool stays busy without rows queueing behind each other.
@@ -132,7 +131,7 @@ impl Orchestrator {
         if done.is_ok() {
             // What the platform makes of the action shows in the checks a moment later; read again
             // now and once more shortly after, without waiting for the window to ask.
-            refresh_checks_after_action(self.find(project).await?);
+            self.find(project).await?.policy.rerun_checks();
         }
         Ok(mapping::pipeline_outcome(done)?)
     }
@@ -161,7 +160,6 @@ impl Orchestrator {
                 revision,
                 changeset: mapping::changeset_key(&source),
             });
-            start_servers_in_background(open.open.clone());
         } else if renamed {
             open.subscribers.broadcast(Event::TargetChanged { project });
         }

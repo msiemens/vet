@@ -10,7 +10,7 @@ use vet_protocol::{ProjectId, Response};
 use crate::error::Result;
 use crate::events::Connection;
 use crate::mutex::lock;
-use crate::{Open, Orchestrator, start_servers_in_background};
+use crate::{Open, Orchestrator};
 
 /// The connections that show the review screen of one project.
 #[derive(Default)]
@@ -41,8 +41,8 @@ impl ReviewScreens {
 impl Orchestrator {
     /// The connection shows the review screen of the project or leaves it. The changed symbols and
     /// problems are analysed for the review screen only, which the supervisor's policy follows.
-    /// Coming up starts the servers the changeset on view needs, and copies the working tree's
-    /// dirty content ahead of a review once, since the queue copied nothing.
+    /// Coming up copies the working tree's dirty content ahead of a review once, since the queue
+    /// copied nothing.
     pub(crate) async fn set_review_shown(
         &self,
         project: ProjectId,
@@ -53,7 +53,6 @@ impl Orchestrator {
         open.screens.set(from, shown);
         open.policy.screen_changed();
         if shown {
-            start_servers_in_background(open.clone());
             // The queue copied nothing: the review screen that comes back copies the tree once.
             let copying = open.clone();
             let boot = async move {

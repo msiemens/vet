@@ -1,6 +1,6 @@
 //! Language servers run for the review screen: a changeset that comes on view while the window
 //! shows the queue starts none, and the review screen starts them. The server is a script that
-//! writes a line when it is launched and never answers.
+//! writes its process id as a line when it is launched and never answers.
 
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
@@ -9,13 +9,13 @@ use std::time::Duration;
 use vet_backend::Config;
 use vet_protocol::{ChangesetKey, ProjectId, Request};
 
-#[cfg(debug_assertions)]
-use crate::common::background_started;
 use crate::common::{Client, config, git, handler_with, repo_with, write};
+#[cfg(debug_assertions)]
+use crate::common::{background_live, background_started};
 
 const SERVER: &str = "#!/bin/sh\n\
     if [ \"$1\" = \"--version\" ]; then echo fake-server 1.0; exit 0; fi\n\
-    echo launched >> \"@LAUNCHES@\"\n\
+    echo $$ >> \"@LAUNCHES@\"\n\
     cat > /dev/null\n";
 
 pub(crate) struct Rig {
@@ -100,8 +100,26 @@ impl Rig {
             .unwrap();
     }
 
+    /// The process ids of the servers launched so far, in order.
+    fn pids(&self) -> Vec<u32> {
+        std::fs::read_to_string(&self.launches).map_or_else(
+            |_| Vec::new(),
+            |text| text.lines().map(|pid| pid.parse().unwrap()).collect(),
+        )
+    }
+
     fn launched(&self) -> usize {
-        std::fs::read_to_string(&self.launches).map_or(0, |text| text.lines().count())
+        self.pids().len()
+    }
+
+    async fn trust(&self, trusted: bool) {
+        self.client
+            .call(Request::SetProjectTrusted {
+                project: self.project,
+                trusted,
+            })
+            .await
+            .unwrap();
     }
 
     /// Waits until more servers were launched than `before`.
@@ -166,5 +184,77 @@ async fn servers_follow_the_changeset_on_view_while_the_review_screen_is_shown_a
         rig.servers_started(),
         before,
         "a server started for a changeset opened from the queue"
+    );
+}
+
+#[cfg(debug_assertions)]
+#[tokio::test]
+async fn withdrawn_trust_retires_the_executing_servers_and_analyses_again() {
+    let rig = Rig::start().await;
+    rig.branch("a", 2);
+    rig.open("a").await;
+    rig.show_review(true).await;
+    rig.launched_beyond(0).await;
+    let limited = rig.launched();
+
+    // The servers of the trusted project execute project code.
+    rig.trust(true).await;
+    rig.launched_beyond(limited).await;
+    let executing = rig.pids().split_off(limited);
+    let started = |kind| background_started(&rig.client, rig.project, kind);
+    let (retired, analyses) = (started("retire"), started("symbols"));
+
+    rig.trust(false).await;
+    // The retire and the analysis are decided before the reply goes out.
+    assert!(started("retire") > retired, "the executing servers were not retired");
+    assert!(started("symbols") > analyses, "the analysis did not start again");
+    for pid in executing {
+        assert!(crate::restart::gone(pid).await, "the executing server {pid} still runs");
+    }
+}
+
+#[cfg(debug_assertions)]
+#[tokio::test]
+async fn two_server_starts_never_run_at_once() {
+    // A clean working tree has no file to analyse, so only the starts launch servers.
+    let rig = Rig::start().await;
+    rig.show_review(true).await;
+    // The server never answers, so its start goes on.
+    rig.launched_beyond(0).await;
+    background_live(&rig.client, rig.project, "servers", 1).await;
+
+    // A new policy asks for servers of its own, which wait for the start that goes on instead of
+    // launching next to it.
+    rig.trust(true).await;
+    rig.trust(false).await;
+    rig.trust(true).await;
+    assert_eq!(rig.servers_started(), 4);
+    tokio::time::sleep(Duration::from_secs(1)).await;
+    assert_eq!(rig.launched(), 1, "a second start ran while the first went on");
+    background_live(&rig.client, rig.project, "servers", 4).await;
+}
+
+#[cfg(debug_assertions)]
+#[tokio::test]
+async fn a_closed_project_ends_its_server_starts_and_starts_no_more() {
+    let rig = Rig::start().await;
+    rig.branch("a", 2);
+    rig.open("a").await;
+    rig.show_review(true).await;
+    rig.launched_beyond(0).await;
+    rig.trust(true).await;
+    let launched = rig.launched();
+
+    rig.client
+        .call(Request::CloseProject { project: rig.project })
+        .await
+        .unwrap();
+
+    background_live(&rig.client, rig.project, "servers", 0).await;
+    tokio::time::sleep(Duration::from_millis(500)).await;
+    assert_eq!(
+        rig.launched(),
+        launched,
+        "a server was launched after the project closed"
     );
 }

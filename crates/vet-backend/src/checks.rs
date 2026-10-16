@@ -18,27 +18,18 @@ const MAX_CHECKED_VERSIONS: usize = 20;
 /// The shortest pause after a rate-limited checks refresh, however soon the platform says.
 const MIN_PACE: Duration = Duration::from_millis(50);
 
-/// Starts (or restarts) the task that keeps the checks of the changeset on view fresh. It runs
-/// while a pull request is on view — in the queue or on the review screen, both of which show its
-/// checks — and stops when another changeset comes on view or the project closes. A newer run
-/// replaces the older.
-pub(crate) fn refresh_checks_in_background(open: Arc<Open>) {
-    refresh(open, None);
-}
+/// The kind and slot of the run that keeps the checks of the changeset on view fresh.
+pub(crate) const KIND: &str = "checks";
 
-/// The same, after an action on a run: the platform shows what it made of the action a moment
-/// later, so the checks are read once more `checks_settle` after the first read.
-pub(crate) fn refresh_checks_after_action(open: Arc<Open>) {
-    let settle = open.checks_settle();
-    refresh(open, Some(settle));
-}
-
-fn refresh(open: Arc<Open>, settle: Option<Duration>) {
+/// Starts the run that keeps the checks of the pull request on view fresh, replacing an older one.
+/// The supervisor keeps it for a pull request in the queue or on the review screen, both of which
+/// show its checks. After an action on a run the platform shows what it made of the action a
+/// moment later, so the checks are read once more `checks_settle` after the first read.
+pub(crate) fn start(open: &Arc<Open>, after_action: bool) {
+    let settle = after_action.then(|| open.checks_settle());
     let pace = open.checks_pace();
-    open.supervisor.replace(
-        "checks",
-        open.supervisor.track("checks", run(open.clone(), pace, settle)),
-    );
+    open.supervisor
+        .replace(KIND, open.supervisor.track(KIND, run(open.clone(), pace, settle)));
 }
 
 /// The commits the review view shows the checks of: the changeset's commits and the newest

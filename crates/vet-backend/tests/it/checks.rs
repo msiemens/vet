@@ -16,9 +16,9 @@ use vet_protocol::{
 
 #[cfg(debug_assertions)]
 use crate::common::background_ended;
-#[cfg(debug_assertions)]
-use crate::common::background_live;
 use crate::common::{Client, handler, repo_with};
+#[cfg(debug_assertions)]
+use crate::common::{background_live, background_started};
 use crate::prefetch::{Mock, backend, backend_with, config, fixture};
 
 /// A successful check run of the head commit, as GitHub's REST API answers it.
@@ -344,6 +344,60 @@ async fn the_checks_are_read_again_shortly_after_an_action_that_the_platform_sho
         .expect("the settle read shows the new run");
     assert_eq!(fresh[0].state, Some(CiState::Pending));
     assert!(checks_calls(&mock) >= 3, "the settle read reached the new run");
+}
+
+#[tokio::test]
+async fn a_revision_move_on_a_pull_request_reads_the_checks_again() {
+    let (mock, fake, repo, _scratch) = fixture();
+    mock.lock().unwrap().check_runs = CHECKS_SUCCESS.to_owned();
+    let (_handler, mut client) = backend(repo.path(), &fake.base()).await;
+    let project = open_review(&client, repo.path()).await;
+    let _ = next_checks(&mut client.inbox, project, Duration::from_secs(5))
+        .await
+        .expect("a round");
+    assert_eq!(checks_calls(&mock), 1);
+
+    client
+        .call(Request::SetProjectFilter {
+            project,
+            filter: vet_protocol::ReviewFilter {
+                roots: vec!["a.txt".into()],
+                ..Default::default()
+            },
+        })
+        .await
+        .unwrap();
+
+    let (again, ..) = next_checks(&mut client.inbox, project, Duration::from_secs(5))
+        .await
+        .expect("the checks are read again for the new revision");
+    assert_eq!(again[0].state, Some(CiState::Success));
+}
+
+#[cfg(debug_assertions)]
+#[tokio::test]
+async fn a_working_tree_starts_no_checks_run() {
+    let repo = repo_with(&[("a.txt", "one\n")], &[("a.txt", "two\n")]);
+    let (handler, _data) = handler().await;
+    let client = Client::new(&handler);
+    let project = client.open(repo.path()).await;
+    client
+        .call(Request::SetReviewShown { project, shown: true })
+        .await
+        .unwrap();
+    client
+        .call(Request::SetProjectFilter {
+            project,
+            filter: vet_protocol::ReviewFilter {
+                roots: vec!["a.txt".into()],
+                ..Default::default()
+            },
+        })
+        .await
+        .unwrap();
+    client.call(Request::WaitForQuiet { project }).await.unwrap();
+
+    assert_eq!(background_started(&client, project, "checks"), 0);
 }
 
 #[cfg(debug_assertions)]

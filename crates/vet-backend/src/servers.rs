@@ -6,8 +6,46 @@ use vet_protocol::{Event, ProjectId, Response, Serving};
 use vet_semantic::policy::AnalysisPolicy;
 use vet_semantic::ports::BackendId;
 
+use std::sync::Arc;
+
 use crate::error::Result;
-use crate::{Open, Orchestrator, start_servers_in_background};
+use crate::{Open, Orchestrator};
+
+/// The kind of the runs that start the servers the revision on view needs.
+pub(crate) const KIND: &str = "servers";
+
+/// The kind and slot of the run that stops the servers whose policy the revision on view no longer
+/// allows.
+pub(crate) const RETIRE: &str = "retire";
+
+/// Queues a start of the servers the revision on view needs. It waits for a start that is going on
+/// instead of ending it, and is dropped if a later one is queued before its turn. A server that
+/// fails to start is reported by the query that needs it.
+pub(crate) fn start(open: &Arc<Open>) {
+    let ticket = open.policy.starts().queue();
+    let starting = open.clone();
+    let task = async move {
+        let Some(_turn) = starting.policy.starts().turn(ticket).await else {
+            return;
+        };
+        if let Ok(booted) = starting.booted().await {
+            booted.start_servers().await;
+        }
+    };
+    open.supervisor.start(KIND, open.supervisor.track(KIND, task));
+}
+
+/// Starts the run that stops the servers of the revision on view that run under a policy it does
+/// not allow (§7.5). It replaces an older run.
+pub(crate) fn retire(open: &Arc<Open>) {
+    let retiring = open.clone();
+    let task = async move {
+        if let Ok(booted) = retiring.booted().await {
+            booted.retire_disallowed_servers().await;
+        }
+    };
+    open.supervisor.replace(RETIRE, open.supervisor.track(RETIRE, task));
+}
 
 impl Orchestrator {
     pub(crate) async fn list_servers(&self, project: ProjectId) -> Result<Response> {
@@ -64,7 +102,6 @@ impl Orchestrator {
         let started = ready.restart_server(language).await;
         ready.subscribers.broadcast(Event::ServersChanged { project });
         ready.open.policy.servers_replaced();
-        start_servers_in_background(ready.open.clone());
         started?;
         self.servers_of(&ready.open).await
     }
@@ -106,7 +143,6 @@ impl Orchestrator {
         for open in self.projects.all().await {
             open.subscribers.broadcast(Event::ServersChanged { project: open.id });
             open.policy.servers_replaced();
-            start_servers_in_background(open);
         }
     }
 }

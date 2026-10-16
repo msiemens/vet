@@ -7,11 +7,12 @@ use std::sync::{Arc, Mutex, OnceLock, Weak};
 use std::time::Duration;
 
 use tokio::sync::watch;
+use vet_app::changeset::Source;
 use vet_app::supervise::Supervisor;
 
 use crate::mutex::lock;
-use crate::supervisor::{Change, Inputs, Policy};
-use crate::{Open, problems, symbols};
+use crate::supervisor::{Change, Inputs, Policy, State};
+use crate::{Open, checks, problems, servers, symbols};
 
 /// Starts the loop that reconciles the project once its first scan is done, and again whenever the
 /// revision or an input changes. `entry` is how it reaches the project without keeping it open.
@@ -28,11 +29,30 @@ pub(crate) fn attach(
 /// its turn while a run goes on.
 pub(crate) async fn reconcile(open: &Arc<Open>) {
     let mut turn = open.policy.reconciling().await;
-    let revision = match open.booted_now() {
-        Some(booted) if open.screens.shown() => Some(booted.session.revision().await),
-        _ => None,
+    let state = match open.booted_now() {
+        Some(booted) => State {
+            revision: Some(booted.session.revision().await),
+            shown: open.screens.shown(),
+            pull_request: matches!(booted.session.source().await, Source::PullRequest { .. }),
+        },
+        None => State::default(),
     };
-    let decision = turn.decide(revision);
+    let decision = turn.decide(state);
+    match decision.retire {
+        Change::Start(_) => servers::retire(open),
+        Change::Stop => open.supervisor.stop(servers::RETIRE),
+        Change::Keep => {}
+    }
+    match decision.servers {
+        Change::Start(_) => servers::start(open),
+        Change::Stop => open.policy.starts().withdraw(),
+        Change::Keep => {}
+    }
+    match decision.checks {
+        Change::Start(_) => checks::start(open, decision.checks_after_action),
+        Change::Stop => open.supervisor.stop(checks::KIND),
+        Change::Keep => {}
+    }
     match decision.symbols {
         Change::Start(revision) => symbols::start(open, revision),
         Change::Stop => open.supervisor.stop(symbols::KIND),
