@@ -12,6 +12,7 @@ import { flagPreference } from "../lib/preferences.svelte";
 import type { SymbolChange } from "../generated/SymbolChange";
 import type { SymbolInfo } from "../generated/SymbolInfo";
 import type { TabId } from "./commands";
+import { whileReview } from "./reviewFollow";
 import { reviewShown } from "./reviewShown.svelte";
 import { session } from "./session.svelte";
 import type { Shown } from "./shown";
@@ -67,22 +68,29 @@ class StructureState {
   private loadedFor?: { tab: TabId; path: string };
 
   constructor() {
-    $effect.root(() => {
-      $effect(() => {
-        const { backend } = session;
-        const target = this.wanted;
-        untrack(() => this.fetch(backend, target));
+    // The outline belongs to the review screen; the store follows the project through it, and asks
+    // nothing for a file nobody shows.
+    whileReview((backend) => {
+      const stopEffect = $effect.root(() => {
+        $effect(() => {
+          const target = this.target;
+          untrack(() => this.fetch(backend, target));
+        });
       });
+      // A server installed or reconfigured may answer for files it had no answer for.
+      const offEvents = backend.onEvent((event) => {
+        if (event.type === "serversChanged" && event.project === backend.project) this.fetch(backend, this.target);
+      });
+      return () => {
+        stopEffect();
+        offEvents();
+        this.asking?.abort();
+        this.asking = undefined;
+      };
     });
     session.onResync((backend) => {
-      if (session.backend === backend) this.reload();
+      if (session.backend === backend && reviewShown.on) this.fetch(backend, this.target);
     });
-    // A server installed or reconfigured may answer for files it had no answer for.
-    session.onConnect((backend) =>
-      backend.onEvent((event) => {
-        if (event.type === "serversChanged" && event.project === backend.project) this.reload();
-      }),
-    );
   }
 
   /** The active tab shows the file `target`, or no file. */
@@ -99,15 +107,6 @@ class StructureState {
         now.shown.revision === target.shown.revision &&
         sameView(now.shown.view, target.shown.view));
     if (!same) this.target = target;
-  }
-
-  /** The file whose outline is asked for: none while the review screen is away. */
-  private get wanted(): StructureTarget | undefined {
-    return reviewShown.on ? this.target : undefined;
-  }
-
-  private reload() {
-    this.fetch(session.backend, this.wanted);
   }
 
   private fetch(backend: typeof session.backend, target: StructureTarget | undefined) {

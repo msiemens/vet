@@ -17,3 +17,6 @@ export const sessionNames = [
 ] as const;
 
 export type SessionName = (typeof sessionNames)[number];
+
+/** The sessions that start on the queue, with the review screen not shown. */
+export const startOnQueue = new Set<SessionName>(["queue"]);

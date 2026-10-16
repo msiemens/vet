@@ -8,7 +8,7 @@ import type { SessionName } from "./sessionNames.ts";
 const name = process.argv[2] as SessionName;
 if (!Object.hasOwn(sessions, name)) throw new Error(`no session named ${name}`);
 
-const steps = await runSession(sessions[name]);
+const steps = await runSession(name, sessions[name]);
 process.stdout.write(`RESULT ${JSON.stringify(steps)}\n`);
 // The stores keep timers and sockets open.
 process.exit(0);

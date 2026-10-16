@@ -2,9 +2,11 @@
 
 import type { VersionInfo } from "../generated/VersionInfo";
 import type { Backend } from "./backend";
-import { followProject, whileOpen } from "./followProject";
+import { followProject } from "./followProject";
+import { whileReview } from "./reviewFollow";
 import { notices } from "./notices.svelte";
 import { Resource } from "./resource";
+import { session } from "./session.svelte";
 
 class VersionStore {
   /** Oldest first; none while browsing, as versions are recorded only while a review is open. */
@@ -15,7 +17,22 @@ class VersionStore {
   });
 
   constructor() {
-    whileOpen((backend) => this.start(backend));
+    whileReview((backend) => this.start(backend));
+  }
+
+  /**
+   * Reads the versions and holds them. A command that needs them opens the review screen first, whose
+   * start already reads them; this joins that read instead of asking again, and reads only when none
+   * is underway.
+   */
+  async load(): Promise<VersionInfo[]> {
+    const running = this.reads.running;
+    if (running) await running;
+    else {
+      const backend = session.backend;
+      if (backend) await this.reads.load(() => backend.versions());
+    }
+    return this.items;
   }
 
   /** Loads the versions and keeps them current; the returned function stops that. */

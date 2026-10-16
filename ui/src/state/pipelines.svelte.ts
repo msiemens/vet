@@ -7,6 +7,7 @@ import type { PipelineAction } from "../generated/PipelineAction";
 import type { PipelineStep } from "../generated/PipelineStep";
 import { errorText } from "../lib/errorText";
 import { toggleIn } from "../lib/foldKeys";
+import { whileReview } from "./reviewFollow";
 import { notices } from "./notices.svelte";
 import { Latest } from "./resource";
 import { session } from "./session.svelte";
@@ -36,6 +37,13 @@ class PipelineStore {
         this.denied.clear();
       }),
     );
+    // The steps are the review screen's; leaving it drops them and the tool reads them again.
+    whileReview(() => () => {
+      this.reads.cancel();
+      this.steps = undefined;
+      this.stepsError = undefined;
+      this.shownFor = undefined;
+    });
     session.onClose(() => {
       this.selected = undefined;
       this.steps = undefined;

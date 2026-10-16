@@ -8,12 +8,14 @@ import { Backend } from "../../src/state/backend.ts";
 import { changeset } from "../../src/state/changeset.svelte.ts";
 import { notices } from "../../src/state/notices.svelte.ts";
 import { queue } from "../../src/state/queue.svelte.ts";
+import { reviewShown } from "../../src/state/reviewShown.svelte.ts";
 import { session } from "../../src/state/session.svelte.ts";
 import "../../src/state/platform.svelte.ts";
 import "../../src/state/threads.svelte.ts";
 import "../../src/state/versions.svelte.ts";
 import { BackendProcess, Fixture, binary } from "./fixture.ts";
 import { checkInvariants, type Violation } from "./invariants.ts";
+import { type SessionName, startOnQueue } from "./sessionNames.ts";
 
 const REQUESTS_THAT_NAME_A_VIEW = new Set<Request["type"]>([
   "toggleHunk",
@@ -74,7 +76,7 @@ export interface StepResult {
 }
 
 /** Runs `script` against a fresh backend and fixture; resolves with what each step found. */
-export async function runSession(script: (h: Harness) => Promise<void>): Promise<StepResult[]> {
+export async function runSession(name: SessionName, script: (h: Harness) => Promise<void>): Promise<StepResult[]> {
   const fixture = new Fixture();
   const backend = new BackendProcess(binary(), fixture.home);
   const results: StepResult[] = [];
@@ -132,6 +134,9 @@ export async function runSession(script: (h: Harness) => Promise<void>): Promise
     await queue.loadAll();
     // The window shows the queue, which follows the events for the changeset on view.
     const stopQueue = queue.watch();
+
+    // Every session but the queue's shows the review screen: its stores follow it, as the window does.
+    if (!startOnQueue.has(name)) reviewShown.set(true);
 
     /** No request in flight and no background work left in the backend or the window. */
     const idle = async () => {

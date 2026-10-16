@@ -10,6 +10,7 @@ import type { Backend } from "../../src/state/backend.ts";
 import { keyId } from "../../src/state/changesetKey.ts";
 import { changeset } from "../../src/state/changeset.svelte.ts";
 import { queue } from "../../src/state/queue.svelte.ts";
+import { reviewShown } from "../../src/state/reviewShown.svelte.ts";
 import { rangeKey } from "../../src/state/timelineRange.ts";
 import { threads } from "../../src/state/threads.svelte.ts";
 import { versions } from "../../src/state/versions.svelte.ts";
@@ -105,18 +106,21 @@ export async function checkInvariants(other: Backend): Promise<Violation[]> {
     rowReview(rows.find((r) => keyId(r.key) === key)?.review);
   differ("queueRow", "review of the on-view row", row(queue.local), row(listed.rows));
 
+  // The versions and the per-commit list are the review screen's: while it is away its stores hold
+  // nothing, and the queue asks the backend for neither.
   differ(
     "versions",
     "the versions",
-    versions.items.map((v) => [v.n, v.reviewedHere]),
-    backendVersions.map((v) => [v.n, v.reviewedHere]),
+    reviewShown.on ? versions.items.map((v) => [v.n, v.reviewedHere]) : versions.items,
+    reviewShown.on ? backendVersions.map((v) => [v.n, v.reviewedHere]) : [],
   );
   const unit = (list: typeof commits) => list.map((c) => [c.commit.id, c.completion]);
+  const wantedCommits = reviewShown.on && facts.lens === "perCommit";
   differ(
     "commits",
     "progress of the commits",
-    facts.lens === "perCommit" ? unit(changeset.commits) : [],
-    facts.lens === "perCommit" ? unit(commits) : [],
+    wantedCommits ? unit(changeset.commits) : changeset.commits,
+    wantedCommits ? unit(commits) : [],
   );
   if (threads.revision === backendThreads.revision && threads.key === rangeKey(changeset.range)) {
     differ(

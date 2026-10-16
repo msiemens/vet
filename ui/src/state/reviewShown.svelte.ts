@@ -1,15 +1,16 @@
-// Whether the review screen is the one on show. It stays mounted behind the queue, where choosing a
-// row puts that changeset on view; the language servers of a changeset are for the review screen, so
-// the backend is told when it is shown (SPEC §7.1) and what asks them in the background waits for it.
+// Whether the review screen is the one on show. The language servers of a changeset are for the
+// review screen, so the backend is told when it is shown (SPEC §7.1), but only once the changeset it
+// will show is the one on view; what asks them in the background waits for the screen.
 
 import { untrack } from "svelte";
 import type { Backend } from "./backend";
-import { changeset } from "./changeset.svelte";
 import { ScreenReport } from "./screenReport";
 import { session } from "./session.svelte";
 
 class ReviewShown {
   on = $state(false);
+  /** Whether the changeset the window asked for is the one on view; the changeset store keeps it. */
+  onView = $state(true);
   private listeners = new Set<() => void>();
   private hiddenListeners = new Set<() => void>();
   private report = new ScreenReport((shown) => void session.backend?.setReviewShown(shown).catch(() => undefined));
@@ -20,14 +21,14 @@ class ReviewShown {
       $effect(() => {
         const { backend, repo } = session;
         const on = this.on;
-        const onView = !changeset.loading;
+        const onView = this.onView;
         untrack(() => this.tell(backend, repo, on, onView));
       });
     });
     // A backend that started anew knows nothing of what was shown.
     session.onResync(() => {
       this.report.forget();
-      this.tell(session.backend, session.repo, this.on, !changeset.loading);
+      this.tell(session.backend, session.repo, this.on, this.onView);
     });
   }
 

@@ -25,8 +25,8 @@ import { kindOf } from "../lib/requestError";
 import type { Backend } from "./backend";
 import { changeset } from "./changeset.svelte";
 import { CursorFollow } from "./cursorFollow";
+import { whileReview } from "./reviewFollow";
 import { type IsLatest, Latest } from "./resource";
-import { reviewShown } from "./reviewShown.svelte";
 import { session } from "./session.svelte";
 import { keyOf } from "./symbolKey";
 import { reconcile, type Shown } from "./symbolLoad";
@@ -76,8 +76,6 @@ class SymbolsState {
   reach = $state.raw<Load<Reachability>>();
   removal = $state.raw<Load<RemovalImpact>>();
 
-  /** Where the cursor moved while the review screen was away; followed when it comes up. */
-  private held?: CursorPlace;
   private backend?: Backend;
   private revision?: number;
   // The requests about the selected symbol; aborted when the selection moves.
@@ -102,35 +100,37 @@ class SymbolsState {
   });
 
   constructor() {
-    session.onConnect((backend) =>
-      backend.onEvent((event) => {
+    // The analysis the backend pushes is for the review screen; the store follows the project through
+    // it, and holds nothing of a changeset nobody shows.
+    whileReview((backend) => {
+      const offEvents = backend.onEvent((event) => {
         if (event.project !== backend.project) return;
         if (event.type === "fileSymbols") this.apply(backend, event.symbols, event.done, event.total);
         // A server installed or reconfigured may answer again for the selected symbol.
-        if (event.type === "serversChanged" && this.backend === backend) this.refresh();
-      }),
-    );
-    $effect.root(() => {
-      $effect(() => {
-        const { backend, repo } = session;
-        const layout = changeset.layout;
-        // The semantic layer has the changeset's snapshots: not a commit's, and not a range's.
-        const analysable = changeset.shownCommit === undefined && layout?.interdiff === undefined;
-        const revision = layout?.shown.revision;
-        const paths = layout?.files.filter((f) => f.hunks.length > 0).map((f) => f.path);
-        // The analysis is for the review screen: the backend starts it when it is shown.
-        const shown = reviewShown.on;
-        untrack(() => {
-          if (repo === undefined || revision === undefined || !analysable || !paths) this.reset();
-          else if (backend && shown) this.begin(backend, revision, paths);
+        else if (event.type === "serversChanged") this.refresh();
+      });
+      const stopEffect = $effect.root(() => {
+        $effect(() => {
+          const layout = changeset.layout;
+          // The semantic layer has the changeset's snapshots: not a commit's, and not a range's.
+          const analysable = changeset.shownCommit === undefined && layout?.interdiff === undefined;
+          const revision = layout?.shown.revision;
+          const paths = layout?.files.filter((f) => f.hunks.length > 0).map((f) => f.path);
+          untrack(() => {
+            if (revision === undefined || !analysable || !paths) this.reset();
+            else this.begin(backend, revision, paths);
+            // The screen came back: the answers for the selected symbol are read again.
+            if (this.selected !== undefined && this.signature === undefined) this.refresh();
+          });
         });
       });
+      return () => {
+        offEvents();
+        stopEffect();
+        this.suspend();
+      };
     });
-    reviewShown.onShown(() => {
-      const place = this.held;
-      this.held = undefined;
-      if (place) this.cursor.move(place);
-    });
+    session.onClose(() => this.reset());
   }
 
   private requireBackend(): Backend {
@@ -144,8 +144,19 @@ class SymbolsState {
     this.files.clear();
     this.progress = { done: 0, total: 0 };
     this.cursor.reset();
-    this.held = undefined;
     this.clearSelection();
+  }
+
+  /** The review screen went away: the analysis and the answers are dropped, the selected symbol stays. */
+  private suspend() {
+    this.asking?.abort();
+    this.asking = undefined;
+    this.details.begin();
+    this.files.clear();
+    this.progress = { done: 0, total: 0 };
+    this.cursor.reset();
+    this.signature = this.calls = this.usages = this.reach = this.removal = undefined;
+    this.unavailable = undefined;
   }
 
   /**
@@ -154,14 +165,21 @@ class SymbolsState {
    * file's mark. A revision already followed is left alone: the backend pushes its answers once.
    */
   private begin(backend: Backend, revision: number, paths: readonly string[]) {
-    if (this.backend === backend && this.revision === revision) return;
-    this.backend = backend;
-    this.revision = revision;
+    if (this.backend !== backend) {
+      // Another repository's changeset: the selected symbol is not this one's.
+      this.backend = backend;
+      this.revision = revision;
+      this.cursor.reset();
+      this.clearSelection();
+    } else if (this.revision !== revision) {
+      // The changeset moved: the selected symbol stays, and its answers are read for the new revision.
+      this.revision = revision;
+      this.signature = this.calls = this.usages = this.reach = this.removal = undefined;
+      this.unavailable = undefined;
+    } else if (this.files.size > 0) return;
     this.files.clear();
     for (const path of paths) this.files.set(path, { state: "loading" });
     this.progress = { done: 0, total: paths.length };
-    this.cursor.reset();
-    this.clearSelection();
   }
 
   /** The backend analysed one file: apply what it found. */
@@ -188,9 +206,7 @@ class SymbolsState {
 
   /** The cursor of an editor is at a position of `side`'s text of `path` as of `revision`. */
   follow(revision: number, side: Side, path: string, line: number, col: number) {
-    const place = { revision, side, path, line, col };
-    if (reviewShown.on) this.cursor.move(place);
-    else this.held = place;
+    this.cursor.move({ revision, side, path, line, col });
   }
 
   /** Puts `shown` on show, unless it is. Answers whether it was not. */

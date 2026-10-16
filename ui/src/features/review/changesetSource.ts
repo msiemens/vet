@@ -26,6 +26,7 @@ export type ChangesetSource = Pick<
   | "reconfirmFile"
   | "baseDiff"
   | "commentTarget"
+  | "frame"
   | "refresh"
   | "reportFailure"
 >;

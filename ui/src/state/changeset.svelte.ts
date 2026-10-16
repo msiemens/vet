@@ -34,7 +34,9 @@ import {
   partsOf,
 } from "./reviewModel";
 import { newReviewCells } from "./reviewCells.svelte";
+import { whileReview } from "./reviewFollow";
 import { reportFailure, reviewMarks } from "./reviewMarks";
+import { reviewShown } from "./reviewShown.svelte";
 import { type WriteListener } from "./reviewSource";
 import { session } from "./session.svelte";
 import { type Shown, isCurrent } from "./shown";
@@ -86,9 +88,11 @@ class ChangesetStore implements ViewSource {
   shownCommit = $state<number>();
   /** The commit that was on view last, which by commit shows again. */
   private lastCommit = 0;
-  /** The commits with their own progress, oldest first; loaded only while the changeset is reviewed by commit. */
+  /** The commits with their own progress, oldest first; loaded only while the review screen shows the changeset by commit. */
   commits = $state.raw<CommitUnit[]>([]);
   private commitReads = new Latest();
+  /** Whether the review screen is shown: only it reads the per-commit list. */
+  private commitsFollowed = false;
   /** A manifest is being fetched. */
   private fetching = $state(false);
   private manifestLoads = new Resource<{ manifest: Manifest; commit: number | undefined }>({
@@ -215,6 +219,15 @@ class ChangesetStore implements ViewSource {
     return untrack(() => this.facts);
   }
 
+  /**
+   * The frame on view, reading the manifest only when the store holds none: the review screen is
+   * rebuilt from the store, which keeps the manifest current for the queue too.
+   */
+  async frame(): Promise<Frame | undefined> {
+    if (this.layout && this.facts) return { layout: this.layout, facts: this.facts };
+    return this.refresh();
+  }
+
   constructor() {
     session.onConnect((backend) =>
       backend.onEvent((event) => {
@@ -234,10 +247,30 @@ class ChangesetStore implements ViewSource {
         else if (event.type === "restoreFailed") this.restoreFailures = event.failures;
       }),
     );
+    // The changeset on view is read for the queue as well: the review screen is not what loads it.
+    session.onOpen(() => void this.refresh().catch((error: unknown) => notices.report(error)));
     session.onResync(() => {
       if (this.layout) this.refresh().catch((error: unknown) => notices.report(error));
     });
     session.onClose(() => this.clear());
+    // The per-commit list is the review screen's, like the versions and the symbols: it follows the
+    // screen and owns nothing of a changeset nobody shows.
+    whileReview(() => {
+      this.commitsFollowed = true;
+      if (this.facts?.lens === "perCommit" && this.facts.commits > 1) void this.loadCommits();
+      return () => {
+        this.commitsFollowed = false;
+        this.commitReads.cancel();
+        this.commits = [];
+      };
+    });
+    // The backend is told the review screen shows only once the changeset it will show is on view.
+    $effect.root(() => {
+      $effect(() => {
+        const loading = this.loading;
+        untrack(() => (reviewShown.onView = !loading));
+      });
+    });
   }
 
   /**
@@ -334,6 +367,7 @@ class ChangesetStore implements ViewSource {
 
   /** Reads the commits again, with their progress. Only the latest reading counts. */
   async loadCommits() {
+    if (!this.commitsFollowed) return;
     const isLatest = this.commitReads.begin();
     try {
       const { commits } = await session.connected().commits();

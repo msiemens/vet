@@ -53,15 +53,22 @@ export interface ResourceEffects<T> {
 export class Resource<T> {
   private reads = new Latest();
   private latest?: Promise<T | undefined>;
+  private inFlight = 0;
   private effects: ResourceEffects<T>;
 
   constructor(effects: ResourceEffects<T>) {
     this.effects = effects;
   }
 
+  /** The read underway, for a caller that wants to join it rather than start another; none when idle. */
+  get running(): Promise<T | undefined> | undefined {
+    return this.inFlight > 0 ? this.latest : undefined;
+  }
+
   load(read: () => Promise<T>): Promise<T | undefined> {
     const isLatest = this.reads.begin();
     this.effects.busy?.(true);
+    this.inFlight++;
     const run = (async () => {
       try {
         const value = await read();
@@ -75,6 +82,8 @@ export class Resource<T> {
         if (!this.effects.failed) throw error;
         this.effects.failed(error);
         return undefined;
+      } finally {
+        this.inFlight--;
       }
     })();
     this.latest = run;
