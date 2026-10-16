@@ -130,10 +130,11 @@ impl Watcher for FsWatcher {
 /// Maps changed absolute paths to events: `Dirty` paths (root-relative, `/`-separated), empty
 /// when nothing changed that matters. Paths outside the root or `.git/HEAD` and
 /// `.git/index` (branch switches and commits change snapshot identity without
-/// touching the worktree) force `MustRescan`; a change below `.git/refs`, to
-/// `.git/packed-refs` (a commit on any branch, a fetch) or to `.git/HEAD` (a checkout, a
-/// commit on a detached HEAD) is `RefsMoved`, besides whatever else the paths say; the rest of
-/// `.git` is ignored.
+/// touching the worktree) force `MustRescan`; a change below `.git/refs` other than
+/// `.git/refs/vet/`, to `.git/packed-refs` (a commit on any branch, a fetch) or to `.git/HEAD`
+/// (a checkout, a commit on a detached HEAD) is `RefsMoved`, besides whatever else the paths
+/// say; the rest of `.git` is ignored. `.git/refs/vet/` holds only the refs Vet writes for
+/// its own bookkeeping, which never move the branch on view.
 fn dirty_events<P: AsRef<Path>>(root: &Path, paths: impl IntoIterator<Item = P>) -> Vec<WatchEvent> {
     let mut dirty = Vec::new();
     let mut refs_moved = false;
@@ -157,7 +158,14 @@ fn dirty_events<P: AsRef<Path>>(root: &Path, paths: impl IntoIterator<Item = P>)
                     rescan = true;
                     refs_moved = true;
                 }
-                Some(b"refs" | b"packed-refs") => refs_moved = true,
+                Some(b"refs") => {
+                    // Vet's own refs (changesets, fetched pull request heads) move without
+                    // moving the branch on view.
+                    if parts.next() != Some(b"vet".as_slice()) {
+                        refs_moved = true;
+                    }
+                }
+                Some(b"packed-refs") => refs_moved = true,
                 _ => {}
             }
             continue;
@@ -194,6 +202,31 @@ mod tests {
         assert_eq!(
             topology_degraded(Path::new("/mnt/data/work"), Some("6.1.0-generic")),
             None
+        );
+    }
+
+    #[test]
+    fn vet_ref_writes_do_not_move_the_branch_on_view() {
+        let root = Path::new("/work/repo");
+        for path in [
+            "/work/repo/.git/refs/vet",
+            "/work/repo/.git/refs/vet/pr/7/head",
+            "/work/repo/.git/refs/vet/changesets/1/2/tip",
+        ] {
+            assert_eq!(dirty_events(root, [path]), vec![], "{path}");
+        }
+        assert_eq!(
+            dirty_events(root, ["/work/repo/.git/refs/heads/main"]),
+            vec![WatchEvent::RefsMoved]
+        );
+    }
+
+    #[test]
+    fn a_packed_refs_rewrite_moves_refs() {
+        let root = Path::new("/work/repo");
+        assert_eq!(
+            dirty_events(root, ["/work/repo/.git/packed-refs"]),
+            vec![WatchEvent::RefsMoved]
         );
     }
 

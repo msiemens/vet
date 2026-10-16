@@ -84,6 +84,9 @@ pub struct Settler {
     all: bool,
     paths: BTreeSet<RepoPath>,
     last_change: Option<Millis>,
+    /// When a ref was last written, debounced apart from the tree: refs move without the
+    /// worktree changing, and vice versa.
+    last_refs: Option<Millis>,
 }
 
 impl Settler {
@@ -93,6 +96,7 @@ impl Settler {
             all: false,
             paths: BTreeSet::new(),
             last_change: None,
+            last_refs: None,
         }
     }
 
@@ -104,9 +108,36 @@ impl Settler {
         self.last_change = Some(now);
     }
 
+    /// A ref was written; the writes of a burst (a fetch, a rebase) settle together.
+    pub fn record_refs(&mut self, now: Millis) {
+        self.last_refs = Some(now);
+    }
+
     /// When the caller should next call [`Settler::take_settled`], if anything is pending.
     pub fn deadline(&self) -> Option<Millis> {
         self.last_change.map(|at| Millis(at.0 + self.debounce_ms))
+    }
+
+    /// When the refs' window passes, if a ref write waits to be looked at.
+    fn refs_deadline(&self) -> Option<Millis> {
+        self.last_refs.map(|at| Millis(at.0 + self.debounce_ms))
+    }
+
+    /// The earliest of the tree's and the refs' deadlines.
+    fn next_deadline(&self) -> Option<Millis> {
+        match (self.deadline(), self.refs_deadline()) {
+            (Some(tree), Some(refs)) => Some(tree.min(refs)),
+            (tree, refs) => tree.or(refs),
+        }
+    }
+
+    /// Whether refs moved and their window has passed; then they are looked at.
+    fn take_refs(&mut self, now: Millis) -> bool {
+        if self.refs_deadline().is_none_or(|at| now < at) {
+            return false;
+        }
+        self.last_refs = None;
+        true
     }
 
     /// The touched paths, once the debounce window has passed with no changes.
@@ -168,6 +199,8 @@ pub struct Settling<W, C> {
     /// Whether the settled tree is wanted; none is always. While it is not, edits mark it
     /// changed and are not reconciled until it is wanted again.
     wanted: Option<Arc<Wanted>>,
+    /// Where the settle loop reports whether a ref write waits for its window to pass.
+    refs_waiting: Option<Arc<AtomicBool>>,
     /// The tree was touched while it was not wanted, so reconciling it whole is owed.
     owed: bool,
 }
@@ -186,6 +219,7 @@ impl<W: Watcher, C: Clock> Settling<W, C> {
             edits_reported: false,
             flush: None,
             wanted: None,
+            refs_waiting: None,
             owed: false,
         }
     }
@@ -202,6 +236,19 @@ impl<W: Watcher, C: Clock> Settling<W, C> {
     pub fn wanted(mut self, wanted: Arc<Wanted>) -> Self {
         self.wanted = Some(wanted);
         self
+    }
+
+    /// Reports to `waiting` whether a ref write waits for its window to pass, so a client that
+    /// must not miss the look at the branch on view can wait for it.
+    pub fn refs_waiting(mut self, waiting: Arc<AtomicBool>) -> Self {
+        self.refs_waiting = Some(waiting);
+        self
+    }
+
+    fn set_refs_waiting(&self, waiting: bool) {
+        if let Some(flag) = &self.refs_waiting {
+            flag.store(waiting, Ordering::SeqCst);
+        }
     }
 
     /// Whether the settled tree is wanted now.
@@ -232,7 +279,7 @@ impl<W: Watcher, C: Clock> Settling<W, C> {
 
     /// When the settled tree counts as quiet, if it is owed that and nothing waits to settle.
     fn quiet_deadline(&self) -> Option<Millis> {
-        if self.settler.deadline().is_some() {
+        if self.settler.next_deadline().is_some() {
             return None;
         }
         Some(Millis(self.untouched_since?.0 + self.quiet_ms?))
@@ -242,8 +289,8 @@ impl<W: Watcher, C: Clock> Settling<W, C> {
         self.watcher.degraded()
     }
 
-    /// Resolves with the next settled scan whose snapshot differs from the previous one, or
-    /// as soon as a branch ref is written: refs are looked at as they move, not debounced.
+    /// Resolves with the next settled scan whose snapshot differs from the previous one, or with
+    /// a branch ref write once the refs have gone quiet.
     pub async fn next_settled<G: Scanner, S>(&mut self, acquisition: &Acquisition<G, S>) -> Result<Settled, GitError> {
         loop {
             let wanted = self.wanted_now();
@@ -258,7 +305,10 @@ impl<W: Watcher, C: Clock> Settling<W, C> {
             }
             match self.wake().await {
                 Wake::Wanted => {}
-                Wake::Event(WatchEvent::RefsMoved) => return Ok(Settled::RefsMoved),
+                Wake::Event(WatchEvent::RefsMoved) => {
+                    self.settler.record_refs(self.clock.now());
+                    self.set_refs_waiting(true);
+                }
                 Wake::Event(WatchEvent::Dirty(paths)) => {
                     self.touched();
                     if self.wanted_now() {
@@ -280,7 +330,15 @@ impl<W: Watcher, C: Clock> Settling<W, C> {
                     }
                 }
                 Wake::Deadline => {
-                    let Some(dirty) = self.settler.take_settled(self.clock.now()) else {
+                    let now = self.clock.now();
+                    if self.settler.take_refs(now) {
+                        self.set_refs_waiting(false);
+                        return Ok(Settled::RefsMoved);
+                    }
+                    if !self.wanted_now() {
+                        continue;
+                    }
+                    let Some(dirty) = self.settler.take_settled(now) else {
                         continue;
                     };
                     let scan = match acquisition.reconcile(dirty.clone()).await {
@@ -320,13 +378,14 @@ impl<W: Watcher, C: Clock> Settling<W, C> {
         let wanted = self.wanted_now();
         let quiet_deadline = if wanted { self.quiet_deadline() } else { None };
         let mut event = pin!(self.watcher.next());
-        let mut timer = if wanted {
-            self.settler
-                .deadline()
-                .map(|deadline| Box::pin(self.clock.sleep_until(deadline)))
+        // Refs are followed even while the settled tree is not wanted: the branch on view can
+        // move without the working tree being the one on view.
+        let deadline = if wanted {
+            self.settler.next_deadline()
         } else {
-            None
+            self.settler.refs_deadline()
         };
+        let mut timer = deadline.map(|deadline| Box::pin(self.clock.sleep_until(deadline)));
         let mut quiet = quiet_deadline.map(|deadline| Box::pin(self.clock.sleep_until(deadline)));
         let flush = self.flush.clone();
         let mut flushed = flush.as_ref().map(|flush| Box::pin(flush.notified()));
@@ -637,15 +696,15 @@ mod tests {
     }
 
     #[test]
-    fn a_ref_write_is_reported_at_once_without_a_scan() {
-        let mut h = harness(vec![(0, WatchEvent::RefsMoved)], vec![], None);
-        assert!(matches!(
-            run(h.settling.next_settled(&h.acquisition)).unwrap().unwrap(),
-            Settled::RefsMoved
-        ));
-        let sim = h.sim.lock().unwrap();
-        assert_eq!(sim.now, 0);
-        assert!(sim.scanned.is_empty());
+    fn a_ref_write_burst_is_looked_at_once_after_the_window() {
+        let script = vec![
+            (0, WatchEvent::RefsMoved),
+            (100, WatchEvent::RefsMoved),
+            (200, WatchEvent::RefsMoved),
+        ];
+        let mut h = harness(script, vec![], None);
+        assert!(matches!(next(&mut h), (Settled::RefsMoved, 1700)));
+        assert!(h.sim.lock().unwrap().scanned.is_empty());
     }
 
     #[test]

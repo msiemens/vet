@@ -197,6 +197,8 @@ pub(crate) struct Wired {
     settling: TaskSlot,
     /// Whether edits of the working tree wait to settle, as the subscribers were last told.
     edits_waiting: Arc<AtomicBool>,
+    /// Whether a ref write waits for its window before the branch on view is looked at again.
+    refs_waiting: Arc<AtomicBool>,
     fetching: TaskSlot,
     /// The copy of the working tree's content ahead of a review; a newer tree's replaces it.
     copying: TaskSlot,
@@ -248,14 +250,21 @@ impl Wired {
         self.edits_waiting.load(Ordering::SeqCst)
     }
 
+    /// Whether a ref write waits for its window before the branch on view is looked at again.
+    pub(crate) fn refs_waiting(&self) -> bool {
+        self.refs_waiting.load(Ordering::SeqCst)
+    }
+
     /// Whether the project has no background work running or pending: no task of its own, no
-    /// progress task of the session, no edit waiting to settle, no settled result the session has
-    /// yet to announce, and no reconcile a client asked for and the settle loop has not made.
+    /// progress task of the session, no edit or ref write waiting to settle, no settled result the
+    /// session has yet to announce, and no reconcile a client asked for and the settle loop has not
+    /// made.
     pub(crate) fn quiet(&self) -> bool {
         let settling = self.booted_now().is_none_or(|booted| !booted.session.settling_busy());
         !self.tasks.any_running()
             && self.background.live(self.plan.id) == 0
             && !self.edits_waiting()
+            && !self.refs_waiting()
             && settling
             && !self.settle_flush.requested()
     }
@@ -407,6 +416,7 @@ impl Wired {
         )
         .quiet_after(quiet.as_millis() as u64)
         .reporting_edits()
+        .refs_waiting(self.refs_waiting.clone())
         .flushable(self.settle_flush.clone())
         // Off view and without a review, the working tree is not scanned: an edit only marks it
         // changed, and coming on view settles it once.
@@ -667,6 +677,7 @@ impl Orchestrator {
             booted: OnceCell::new(),
             settling: TaskSlot::default(),
             edits_waiting: Arc::default(),
+            refs_waiting: Arc::default(),
             fetching: TaskSlot::default(),
             copying: TaskSlot::default(),
             prefetching: TaskSlot::default(),

@@ -22,6 +22,7 @@ use crate::checks::refresh_checks_after_action;
 use crate::error::{Error, Result};
 use crate::hosting::{Hosting, Platforms};
 use crate::open::{Ready, kind_of};
+use crate::review::revision_changed;
 use crate::sync::sync_in_background;
 use crate::{Live, Open, Orchestrator, PlatformAccounts, start_servers_in_background};
 
@@ -66,11 +67,11 @@ impl Orchestrator {
                 "not listing pull requests: no remote of the repository is a hosted repository"
             );
         }
-        let on_view = match open.session.source().await {
+        let on_view_source = match open.session.source().await {
             Source::PullRequest { remote, number } => Some((remote, number)),
             _ => None,
         };
-        let on_view = on_view.as_ref().map(|(remote, number)| (remote, *number));
+        let on_view = on_view_source.as_ref().map(|(remote, number)| (remote, *number));
         let since = open.open.fetch.mark();
         let list = pull_request::list_pull_requests(&self.platforms.hosting(PlatformKind::GitHub), &github, on_view)
             .await
@@ -85,7 +86,7 @@ impl Orchestrator {
         if let Err(error) = prune_pull_request_refs(&open, &list, since).await {
             tracing::warn!(%error, "deleting the refs of pull requests no longer listed failed");
         }
-        fetch_heads_in_background(open.open.clone(), list.clone());
+        fetch_heads_in_background(open.open.clone(), list.clone(), on_view_source);
         let prefetching = prefetch_details(
             &open.open,
             self.platforms.clone(),
@@ -386,17 +387,43 @@ fn prefetch_details(
 }
 
 /// Brings in the pull requests of `list` that are not in the repository, so the queue can count
-/// the lines of every row, and tells the subscribers when something came.
-fn fetch_heads_in_background(open: Arc<Open>, list: PullRequestList) {
+/// the lines of every row, and tells the subscribers when something came. The pull request on
+/// view, if the listing fetched its head, takes a push in as a fetch would: nothing else would
+/// look at it before the next fetch.
+fn fetch_heads_in_background(open: Arc<Open>, list: PullRequestList, on_view: Option<(RemoteKey, u64)>) {
     tokio::spawn(async move {
         match pull_request::fetch_listed_heads(&open.fetch, &Held(&open.accounts), &list).await {
-            Ok(true) => open
-                .subscribers
-                .broadcast(Event::ChangesetsChanged { project: open.id }),
+            Ok(true) => {
+                open.subscribers
+                    .broadcast(Event::ChangesetsChanged { project: open.id });
+                take_in_listed_push(&open, &list, on_view).await;
+            }
             Ok(false) => {}
             Err(error) => tracing::warn!(%error, "fetching the listed pull requests failed"),
         }
     });
+}
+
+/// Takes in a push to the pull request on view after the listing fetched the listed heads: its head
+/// moved without a ref of the user being written, so nothing else looked at it. Tells the window
+/// and starts the servers of the new revision, as a fetch does.
+async fn take_in_listed_push(open: &Arc<Open>, list: &PullRequestList, on_view: Option<(RemoteKey, u64)>) {
+    let Some((remote, number)) = on_view else {
+        return;
+    };
+    if !list
+        .rows
+        .iter()
+        .any(|listed| listed.remote == remote && listed.row.number == number)
+    {
+        return;
+    }
+    let Ok(booted) = open.booted().await else {
+        return;
+    };
+    if let Ok(Some(revision)) = booted.session.observe().await {
+        revision_changed(open, revision);
+    }
 }
 
 /// Deletes the refs of the pull requests fetched before `since` that `list` no longer has, unless
