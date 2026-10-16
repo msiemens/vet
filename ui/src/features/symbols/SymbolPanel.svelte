@@ -3,12 +3,13 @@
   import EmptyState from "../../lib/ui/EmptyState.svelte";
   import ScrollArea from "../../lib/ui/ScrollArea.svelte";
   import { keyOf } from "../../state/symbolKey";
-  import { symbols } from "../../state/symbols.svelte";
+  import { opened } from "../../state/opened.svelte";
   import SymbolDetail from "./SymbolDetail.svelte";
   import type { OpenLocation } from "./symbolDetail";
 
-  /** The panel shows what `symbols` holds; the owner says where a location opens. */
+  /** The panel shows what the changeset on view's `symbols` holds; the owner says where a location opens. */
   let { onopen }: { onopen: OpenLocation } = $props();
+  const symbols = $derived(opened.session?.symbols);
 </script>
 
 <aside aria-label="Symbol">
@@ -16,12 +17,12 @@
     <span>Symbol</span>
   </div>
   <ScrollArea>
-    {#if symbols.selected}
+    {#if symbols?.selected}
       <!-- A symbol starts with its rows shut as they begin and the lists cut. -->
       {#key `${keyOf(symbols.selected.symbol.id)}${symbols.selected.change}`}
         <SymbolDetail shown={symbols.selected} {onopen} />
       {/key}
-    {:else if symbols.unavailable}
+    {:else if symbols?.unavailable}
       <EmptyState align="start" title={symbols.unavailable.label} text={symbols.unavailable.message} />
     {:else}
       <EmptyState

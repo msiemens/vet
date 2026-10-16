@@ -451,8 +451,7 @@ export const sessions: Record<string, (d: Driver) => Promise<void>> = {
       );
     const chooseSymbol = () =>
       d.page(`(async () => {
-        const { symbols } = await import("/src/state/symbols.svelte.ts");
-        symbols.choose({ id: { path: "a.txt", name: ["foo"] }, modules: 0, kind: "function", span: { start: { line: 0, col: 0 }, end: { line: 0, col: 3 } }, at: { line: 0, col: 0 }, test: false });
+        __t.opened.session.symbols.choose({ id: { path: "a.txt", name: ["foo"] }, modules: 0, kind: "function", span: { start: { line: 0, col: 0 }, end: { line: 0, col: 3 } }, at: { line: 0, col: 0 }, test: false });
         return true;
       })()`);
     const showBottom = (tool: string) =>

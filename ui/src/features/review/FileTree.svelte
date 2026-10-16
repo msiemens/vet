@@ -31,8 +31,9 @@
   import TreeRow from "../../lib/ui/TreeRow.svelte";
   import VirtualRows from "../../lib/ui/VirtualRows.svelte";
   import { commands } from "../../state/commands";
+  import { opened } from "../../state/opened.svelte";
+  import type { RevealRequest } from "../../state/symbols.svelte";
   import { keyOf } from "../../state/symbolKey";
-  import { symbols } from "../../state/symbols.svelte";
   import { SymbolGlyph } from "../symbols";
   import { AllFiles } from "./AllFiles.svelte";
   import type { AllRow } from "./allFilesRows";
@@ -105,6 +106,10 @@
 
   const TITLES = { changes: "Changes", all: "All Files", commits: "Commits" } as const;
 
+  /** The changed symbols of the changeset on view; none while another loads. */
+  const symbols = $derived(opened.session?.symbols);
+  const progress = $derived(symbols?.progress ?? { done: 0, total: 0 });
+
   /** What a row shows of the speed search: whether it is the one Enter opens, and what matched. */
   interface Hit {
     cursor: boolean;
@@ -138,7 +143,7 @@
    */
   function pick(row: Row | AllRow) {
     if (row.kind === "file") onselect(row.path);
-    else if (row.kind === "symbol" && row.change !== undefined) symbols.choose(row.symbol, row.change);
+    else if (row.kind === "symbol" && row.change !== undefined) symbols?.choose(row.symbol, row.change);
     else toggleRow(row);
   }
   /** A double click or Enter: the file in a tab of its own, a changed symbol's definition; a folder opens or shuts. */
@@ -248,7 +253,7 @@
   const closedSymbols = new SvelteSet<string>();
 
   const loaded = (path: string) => {
-    const file = symbols.files.get(path);
+    const file = symbols?.files.get(path);
     return file?.state === "done" ? file : undefined;
   };
   const hasSymbols = (path: string) => !!loaded(path)?.symbols.length;
@@ -330,17 +335,18 @@
 
   // The cursor went into a changed symbol: its file opens and its row comes into view. The tree keeps its focus.
   $effect(() => {
-    const request = symbols.reveal;
+    const request = symbols?.reveal;
     // Also when the file's symbols arrive after the cursor was in one.
     const arrived = request && loaded(request.path);
-    if (request && arrived && tool === "changes" && request.n !== revealed)
-      untrack(() => void revealSymbol(request.path, keyOf(request.symbol.id), request.n));
+    if (request && arrived && tool === "changes" && request !== revealed) untrack(() => void revealSymbol(request));
   });
   /** The last request of the cursor that was answered, whether or not its row was found. */
-  let revealed = 0;
+  let revealed: object | undefined;
 
-  async function revealSymbol(path: string, id: string, n: number) {
-    revealed = n;
+  async function revealSymbol(request: RevealRequest) {
+    revealed = request;
+    const { path } = request;
+    const id = keyOf(request.symbol.id);
     search.clear();
     cursor = -1;
     for (let dir = dirname(path); dir; dir = dirname(dir)) collapsed.delete(dir);
@@ -482,7 +488,7 @@
   {@const file = fileOf(path)}
   {@const s = file && summarize(file)}
   {@const flagged = file?.completion.flaggedHunks ?? 0}
-  {@const analysis = tool === "changes" ? symbols.files.get(path) : undefined}
+  {@const analysis = tool === "changes" ? symbols?.files.get(path) : undefined}
   {@const open = search.active || isOpen(path)}
   <TreeRow
     {depth}
@@ -547,7 +553,7 @@
     tone={changed ? "strong" : "soft"}
     mono
     gone={r.change === "removed"}
-    on={changed && !!symbols.selected && keyOf(symbols.selected.symbol.id) === keyOf(r.symbol.id)}
+    on={changed && !!symbols?.selected && keyOf(symbols.selected.symbol.id) === keyOf(r.symbol.id)}
     cur={hit.cursor}
     title={fullName(r.symbol.id)}
     status={r.change && letterOfChange(r.change)}
@@ -567,9 +573,9 @@
     {#if tool === "changes" && narrowed}<NarrowingChip label={narrowed} {onreset} />{/if}
     <span class="grow"></span>
     {#if tool === "changes"}
-      {#if symbols.progress.done < symbols.progress.total}
+      {#if progress.done < progress.total}
         <span class="mono n" title="Files whose changed symbols are found, of the files to analyse"
-          >symbols {symbols.progress.done}/{symbols.progress.total}</span
+          >symbols {progress.done}/{progress.total}</span
         >
       {/if}
       <IconButton
@@ -593,9 +599,9 @@
       />
     {/if}
   </div>
-  {#if tool === "changes" && symbols.progress.done < symbols.progress.total}
+  {#if tool === "changes" && progress.done < progress.total}
     <div class="progress">
-      <ProgressBar fraction={symbols.progress.done / symbols.progress.total} label="Symbols found" />
+      <ProgressBar fraction={progress.done / progress.total} label="Symbols found" />
     </div>
   {/if}
   {#if tool === "commits"}

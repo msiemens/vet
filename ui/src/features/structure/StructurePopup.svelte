@@ -12,7 +12,8 @@
   import PopupShell from "../../lib/ui/PopupShell.svelte";
   import TextToggle from "../../lib/ui/TextToggle.svelte";
   import VirtualRows from "../../lib/ui/VirtualRows.svelte";
-  import { structure } from "../../state/structure.svelte";
+  import { opened } from "../../state/opened.svelte";
+  import { type OutlineLoad, structure } from "../../state/structure.svelte";
   import { structureRows, type StructureRow } from "../../state/structureRows";
   import { keyOf } from "../../state/symbolKey";
   import StructureList from "./StructureList.svelte";
@@ -33,8 +34,11 @@
   let list = $state<VirtualRows>();
   let keepFocus = $state(false);
 
-  const target = $derived(structure.target);
-  const outline = $derived(structure.load.state === "done" ? structure.load.outline : undefined);
+  const LOADING: OutlineLoad = { state: "loading" };
+  const held = $derived(opened.session?.structure);
+  const target = $derived(held?.target);
+  const load = $derived(held?.load ?? LOADING);
+  const outline = $derived(load.state === "done" ? load.outline : undefined);
   const symbols = $derived(outline?.symbols ?? []);
   const marked = $derived(symbols.some((s) => s.change !== null));
   const rows = $derived(
@@ -57,7 +61,7 @@
     }
   });
 
-  const selected = (r: StructureRow) => keyOf(r.symbol.id) === structure.selected;
+  const selected = (r: StructureRow) => keyOf(r.symbol.id) === held?.selected;
 
   function close() {
     structure.popup = false;
@@ -151,6 +155,6 @@
       onhover={(e, i) => nav.hover(e, i)}
     />
   {:else}
-    <StructureNotice load={structure.load} file={fileName} matches={rows.length} />
+    <StructureNotice {load} file={fileName} matches={rows.length} />
   {/if}
 </PopupShell>

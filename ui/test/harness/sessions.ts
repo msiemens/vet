@@ -4,6 +4,7 @@
 import type { ChangesetKey } from "../../src/generated/ChangesetKey.ts";
 import type { CommitChecks } from "../../src/generated/CommitChecks.ts";
 import type { PullRequestInfo } from "../../src/generated/PullRequestInfo.ts";
+import type { SymbolInfo } from "../../src/generated/SymbolInfo.ts";
 import type { View } from "../../src/generated/View.ts";
 import type { Request } from "../../src/generated/Request.ts";
 import { appState } from "../../src/app/appState.svelte.ts";
@@ -25,8 +26,6 @@ import { structure } from "../../src/state/structure.svelte.ts";
 import { queue } from "../../src/state/queue.svelte.ts";
 import { reviewShown } from "../../src/state/reviewShown.svelte.ts";
 import { serverList } from "../../src/state/serverList.svelte.ts";
-// Holds the changeset's symbols, which the backend pushes while it is shown.
-import { symbols } from "../../src/state/symbols.svelte.ts";
 import { defaultRange, rangeView } from "../../src/state/timelineRange.ts";
 import type { ViewChange } from "../../src/state/viewChange.ts";
 import { newScope } from "../../src/state/viewScope.svelte.ts";
@@ -568,7 +567,7 @@ export const sessions: Record<SessionName, (h: Harness) => Promise<void>> = {
       await h.until(() => told(true) === 1, "the backend to be told");
       await h.until(() => versionReads() === 1, "the versions to be read");
       // The backend analyses the file itself and pushes the answer; the store applies it.
-      const answered = () => symbols.files.get("d.rs")?.state;
+      const answered = () => onView().symbols.files.get("d.rs")?.state;
       await h.until(() => answered() === "done" || answered() === "failed", "the symbols");
     });
     await h.step("back on the queue", async () => {
@@ -757,6 +756,74 @@ export const sessions: Record<SessionName, (h: Harness) => Promise<void>> = {
         throw new Error("a comment box came along");
       if (next.unsentComments() !== 0) throw new Error("the next changeset has unsent comments");
     });
+  },
+
+  /**
+   * The changed symbols, the symbol on show and the outline belong to the changeset on view: the next one
+   * starts without them, and an answer or a push of the one left touches nothing.
+   */
+  async analysis(h) {
+    const held = onView();
+    const symbol = {
+      id: { path: "d.rs", name: ["foo"] },
+      modules: 0,
+      kind: "function",
+      span: { start: { line: 0, col: 0 }, end: { line: 0, col: 3 } },
+      at: { line: 0, col: 0 },
+      test: false,
+    } as unknown as SymbolInfo;
+    // The answers about the symbol and the outline are held back until the changeset is left.
+    const backend = session.connected();
+    const withheld = ["signature", "symbolCalls", "symbolUsages", "reachability", "fileOutline"] as const;
+    const stubs = backend as unknown as Record<(typeof withheld)[number], () => Promise<unknown>>;
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => (release = resolve));
+    let asked = 0;
+    let revision = 0;
+    for (const name of withheld)
+      stubs[name] = async () => {
+        if (name === "signature" || name === "fileOutline") asked++;
+        await gate;
+        return { symbols: [], unavailable: { message: "late" } };
+      };
+    try {
+      await h.step("the first changeset shows a symbol and an outline", async () => {
+        h.fixture.write("d.rs", "wt", [3]);
+        await h.until(() => (opened.session?.paths ?? []).includes("d.rs"), "the Rust file in the working tree");
+        const answered = () => held.symbols.files.get("d.rs")?.state;
+        await h.until(() => answered() === "done" || answered() === "failed", "the symbols");
+        revision = h.shown().revision;
+        held.symbols.choose(symbol);
+        held.structure.show({ tab: "changes", path: "d.rs", shown: h.shown(), panel: false, caret: () => undefined });
+        await h.until(() => asked === 2, "the signature and the outline to be asked for");
+      });
+      await h.step("another changeset is switched to while they are out", async () => {
+        await opened.open({ type: "branch", name: "feature" });
+        await h.until(() => opened.session?.facts?.target.changeset.type === "branch", "the branch");
+        release();
+        await sleep(100);
+        if (held.symbols.signature !== undefined) throw new Error("the answer of the ended session was taken");
+        if (held.structure.load.state !== "loading") throw new Error("the outline of the ended session was taken");
+      });
+      await h.step("the next changeset starts with none of it", () => {
+        const next = onView();
+        if (next === held) throw new Error("the session was kept");
+        if (next.symbols.selected !== undefined) throw new Error("the selected symbol came along");
+        if (next.structure.target !== undefined) throw new Error("the outline's target came along");
+        if (next.symbols.files.has("d.rs")) throw new Error("the symbols of the working tree came along");
+        const push = {
+          type: "fileSymbols",
+          project: 0,
+          symbols: { revision, path: "late.rs", symbols: [], context: [], gap: null },
+          done: 1,
+          total: 1,
+        } as unknown as SessionEvent;
+        next.hear(push);
+        if (next.symbols.files.has("late.rs")) throw new Error("a push for another revision was taken");
+      });
+    } finally {
+      for (const name of withheld) Reflect.deleteProperty(backend, name);
+    }
   },
 
   /** Closing the project, opening another and switching to another changeset wait for the answer about comment text not added. */

@@ -24,7 +24,6 @@ import { problems } from "../../state/problems.svelte";
 import { semantic } from "../../state/semantic.svelte";
 import { serverList } from "../../state/serverList.svelte";
 import type { StructureTarget } from "../../state/structure.svelte";
-import { symbols } from "../../state/symbols.svelte";
 import type { ViewSource } from "../../state/viewScope.svelte";
 import type { OpenedResult } from "../search";
 import type { ViewHooks } from "./editor/ChangesetView";
@@ -43,7 +42,10 @@ export class ViewNavigation {
   private backend: Backend;
   /** The changeset on screen as the navigation reads it: its source, plus the commit it shows, where failures are reported and how the view is switched. */
   private changeset: ViewSource &
-    Pick<ChangesetSource, "shownCommit" | "commitList" | "reportFailure" | "setRange" | "showWhole" | "findSets">;
+    Pick<
+      ChangesetSource,
+      "shownCommit" | "commitList" | "reportFailure" | "setRange" | "showWhole" | "findSets" | "symbols"
+    >;
   private tabs: Tabs;
   private scopes: ViewScopes;
   private views: ReviewViews;
@@ -54,7 +56,10 @@ export class ViewNavigation {
   constructor(
     backend: Backend,
     changeset: ViewSource &
-      Pick<ChangesetSource, "shownCommit" | "commitList" | "reportFailure" | "setRange" | "showWhole" | "findSets">,
+      Pick<
+        ChangesetSource,
+        "shownCommit" | "commitList" | "reportFailure" | "setRange" | "showWhole" | "findSets" | "symbols"
+      >,
     tabs: Tabs,
     scopes: ViewScopes,
     views: ReviewViews,
@@ -128,7 +133,7 @@ export class ViewNavigation {
       diagnostics: (revision, path) =>
         this.scopes.analysable(id, "target") ? semantic.diagnostics(revision, path) : Promise.resolve([]),
       cursor: (revision, side, path, line, col) => {
-        if (this.scopes.analysable(id, side)) symbols.follow(revision, side, path, line, col);
+        if (this.scopes.analysable(id, side)) this.changeset.symbols.follow(revision, side, path, line, col);
       },
     };
   }

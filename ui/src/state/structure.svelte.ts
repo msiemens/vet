@@ -1,6 +1,8 @@
-// The Structure tool's state: the outline of the file the active tab shows, the viewer's choices
-// (sort and changed only, which are preferences) and the symbol selected in it. The backend derives the outline (SPEC §7.3, I5); this loads and holds it. The
-// outline belongs to a tab: switching tabs starts it over, with every holder open.
+// The Structure tool's state: the outline of the file the active tab shows, and the symbol selected in
+// it, which belong to one opened changeset (`SessionStructure`); and the viewer's choices (sort and
+// changed only, which are preferences) and the popup, which are the window's (`structure`). The backend
+// derives the outline (SPEC §7.3, I5); this loads and holds it. The outline belongs to a tab: switching
+// tabs starts it over, with every holder open.
 
 import { untrack } from "svelte";
 import { SvelteSet } from "svelte/reactivity";
@@ -11,14 +13,13 @@ import { toggleIn } from "../lib/foldKeys";
 import { flagPreference } from "../lib/preferences.svelte";
 import type { SymbolChange } from "../generated/SymbolChange";
 import type { SymbolInfo } from "../generated/SymbolInfo";
+import type { SessionEvent } from "./backend";
+import type { ChangesetSession } from "./changesetSession.svelte";
 import type { TabId } from "./commands";
-import { whileReview } from "./reviewFollow";
-import { reviewShown } from "./reviewShown.svelte";
 import { session } from "./session.svelte";
 import type { Shown } from "./shown";
 import { enclosingId, holdersOf } from "./structureRows";
 import { keyOf } from "./symbolKey";
-import { symbols } from "./symbols.svelte";
 import { sameView } from "./view";
 
 export type OutlineLoad =
@@ -46,6 +47,7 @@ interface Place {
 const sortPreference = flagPreference("app", "structure.sort", false);
 const changedOnlyPreference = flagPreference("app", "structure.changedOnly", false);
 
+/** The window's choices about how the Structure tool lists symbols. */
 class StructureState {
   /** The symbols under each holder alphabetically. */
   get sort(): boolean {
@@ -54,43 +56,64 @@ class StructureState {
   get changedOnly(): boolean {
     return changedOnlyPreference.value;
   }
+  /** The popup over the editor is open. */
+  popup = $state(false);
+
+  setSort(on: boolean) {
+    sortPreference.value = on;
+  }
+
+  setChangedOnly(on: boolean) {
+    changedOnlyPreference.value = on;
+  }
+}
+
+export const structure = new StructureState();
+
+class SessionStructure {
   target = $state.raw<StructureTarget>();
   load = $state.raw<OutlineLoad>({ state: "loading" });
   /** The keys of the rows of holders that are shut. */
   closed = new SvelteSet<string>();
   /** The symbol selected, by `keyOf`. */
   selected = $state<string>();
-  /** The popup over the editor is open. */
-  popup = $state(false);
 
   private asking?: AbortController;
   /** The tab and file the outline held is of. */
   private loadedFor?: { tab: TabId; path: string };
+  private following = false;
 
-  constructor() {
-    // The outline belongs to the review screen; the store follows the project through it, and asks
-    // nothing for a file nobody shows.
-    whileReview((backend) => {
-      const stopEffect = $effect.root(() => {
-        $effect(() => {
-          const target = this.target;
-          untrack(() => this.fetch(backend, target));
-        });
+  constructor(private owner: ChangesetSession) {}
+
+  /**
+   * The review screen shows the changeset: the outline of the target is read, and again when a server
+   * is installed or reconfigured, which may answer for files it had no answer for. Returns what lets go
+   * of it when the screen goes away.
+   */
+  followReview(): () => void {
+    this.following = true;
+    const stopEffect = $effect.root(() => {
+      $effect(() => {
+        const target = this.target;
+        untrack(() => this.fetch(target));
       });
-      // A server installed or reconfigured may answer for files it had no answer for.
-      const offEvents = backend.onEvent((event) => {
-        if (event.type === "serversChanged" && event.project === backend.project) this.fetch(backend, this.target);
-      });
-      return () => {
-        stopEffect();
-        offEvents();
-        this.asking?.abort();
-        this.asking = undefined;
-      };
     });
-    session.onResync((backend) => {
-      if (session.backend === backend && reviewShown.on) this.fetch(backend, this.target);
-    });
+    return () => {
+      this.following = false;
+      stopEffect();
+      this.asking?.abort();
+      this.asking = undefined;
+    };
+  }
+
+  /** An event of the project, while the review screen is shown. */
+  hear(event: SessionEvent) {
+    if (this.following && event.type === "serversChanged") this.fetch(this.target);
+  }
+
+  /** The connection came back: the outline is read again. */
+  resync() {
+    if (this.following) this.fetch(this.target);
   }
 
   /** The active tab shows the file `target`, or no file. */
@@ -109,9 +132,9 @@ class StructureState {
     if (!same) this.target = target;
   }
 
-  private fetch(backend: typeof session.backend, target: StructureTarget | undefined) {
+  private fetch(target: StructureTarget | undefined) {
     this.asking?.abort();
-    if (!backend || !target) {
+    if (!target) {
       this.loadedFor = undefined;
       this.load = { state: "loading" };
       return;
@@ -124,14 +147,17 @@ class StructureState {
       this.selected = undefined;
     }
     const { signal } = (this.asking = new AbortController());
-    backend.fileOutline(target.shown.revision, target.shown.view, target.path, signal).then(
-      (outline) => {
-        if (!signal.aborted) this.load = { state: "done", outline };
-      },
-      (error: unknown) => {
-        if (!signal.aborted && !isAbort(error)) this.load = { state: "failed", message: errorText(error) };
-      },
-    );
+    session
+      .connected()
+      .fileOutline(target.shown.revision, target.shown.view, target.path, signal)
+      .then(
+        (outline) => {
+          if (!signal.aborted) this.load = { state: "done", outline };
+        },
+        (error: unknown) => {
+          if (!signal.aborted && !isAbort(error)) this.load = { state: "failed", message: errorText(error) };
+        },
+      );
   }
 
   /**
@@ -150,20 +176,14 @@ class StructureState {
   /** The viewer chose a row: it is selected, and put on show in the Symbol panel where that works. */
   select(symbol: SymbolInfo, change?: SymbolChange) {
     this.selected = keyOf(symbol.id);
-    if (this.target?.panel) symbols.choose(symbol, change);
+    if (this.target?.panel) this.owner.symbols.choose(symbol, change);
   }
 
   toggleFold(key: string) {
     toggleIn(this.closed, key);
   }
-
-  setSort(on: boolean) {
-    sortPreference.value = on;
-  }
-
-  setChangedOnly(on: boolean) {
-    changedOnlyPreference.value = on;
-  }
 }
 
-export const structure = new StructureState();
+export type { SessionStructure };
+
+export const newStructure = (owner: ChangesetSession): SessionStructure => new SessionStructure(owner);

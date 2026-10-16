@@ -34,7 +34,7 @@ export class ViewCommands {
   private tabs: Tabs;
   private scopes: ViewScopes;
   /** The changeset on screen as the commands read it: the commit it shows, and stepping to the next one. */
-  private changeset: Pick<ChangesetSource, "shownCommit" | "stepCommit">;
+  private changeset: Pick<ChangesetSource, "shownCommit" | "stepCommit" | "structure">;
   private views: ReviewViews;
   private nav: ViewNavigation;
   private find: FindState;
@@ -44,7 +44,7 @@ export class ViewCommands {
   constructor(
     tabs: Tabs,
     scopes: ViewScopes,
-    changeset: Pick<ChangesetSource, "shownCommit" | "stepCommit">,
+    changeset: Pick<ChangesetSource, "shownCommit" | "stepCommit" | "structure">,
     views: ReviewViews,
     nav: ViewNavigation,
     find: FindState,
@@ -130,7 +130,7 @@ export class ViewCommands {
       },
       stepCommit: (delta) => this.changeset.stepCommit(delta),
       toggleStructure: () => {
-        if (!structure.target) return false;
+        if (!this.changeset.structure.target) return false;
         structure.popup = !structure.popup;
         return true;
       },

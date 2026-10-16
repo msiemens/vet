@@ -17,7 +17,8 @@
   import SpeedSearchField from "../../lib/ui/SpeedSearchField.svelte";
   import TextToggle from "../../lib/ui/TextToggle.svelte";
   import VirtualRows from "../../lib/ui/VirtualRows.svelte";
-  import { structure } from "../../state/structure.svelte";
+  import { opened } from "../../state/opened.svelte";
+  import { type OutlineLoad, structure } from "../../state/structure.svelte";
   import { holderKeys, structureRows, type StructureRow } from "../../state/structureRows";
   import { keyOf } from "../../state/symbolKey";
   import StructureList from "./StructureList.svelte";
@@ -38,8 +39,14 @@
   let body = $state<HTMLElement>();
   let list = $state<VirtualRows>();
 
-  const target = $derived(structure.target);
-  const outline = $derived(structure.load.state === "done" ? structure.load.outline : undefined);
+  const LOADING: OutlineLoad = { state: "loading" };
+  const NONE: ReadonlySet<string> = new Set();
+  /** The outline and selection of the changeset on view; none while another loads. */
+  const held = $derived(opened.session?.structure);
+  const target = $derived(held?.target);
+  const load = $derived(held?.load ?? LOADING);
+  const closed = $derived(held?.closed ?? NONE);
+  const outline = $derived(load.state === "done" ? load.outline : undefined);
   const symbols = $derived(outline?.symbols ?? []);
   const changed = $derived(symbols.filter((s) => s.change !== null).length);
   /** The view marks changes, and this file has some. */
@@ -50,12 +57,12 @@
           sort: structure.sort,
           changedOnly: structure.changedOnly && marked,
           query: search.query,
-          closed: structure.closed,
+          closed,
         })
       : [],
   );
   const fileName = $derived(target && basename(target.path));
-  const allShut = $derived(structure.closed.size > 0);
+  const allShut = $derived(closed.size > 0);
 
   // A search belongs to the file it was typed in.
   const fileChanged = changeGate();
@@ -71,13 +78,13 @@
   // The selection moved (a reveal): its row comes into view.
   const revealed = changeGate();
   $effect(() => {
-    const id = structure.selected;
+    const id = held?.selected;
     if (id !== undefined && revealed(id, rows)) {
       untrack(() => void tick().then(() => void list?.reveal(rows.findIndex((r) => keyOf(r.symbol.id) === id))));
     }
   });
 
-  const pick = (row: StructureRow) => structure.select(row.symbol, row.change);
+  const pick = (row: StructureRow) => held?.select(row.symbol, row.change);
   const jump = (row: StructureRow) => onjump(row.symbol, row.change === "removed");
 
   const nav = new ListNav<StructureRow>({
@@ -87,7 +94,7 @@
     double: jump,
     highlight: { get: () => cursor, set: (i) => (cursor = i) },
     reveal: (i) => void list?.reveal(i),
-    start: () => rows.findIndex((r) => keyOf(r.symbol.id) === structure.selected),
+    start: () => rows.findIndex((r) => keyOf(r.symbol.id) === held?.selected),
   });
   $effect(() => () => nav.cancel());
 
@@ -96,15 +103,16 @@
     if (chevron && row?.holds && !search.active) {
       cursor = index;
       body?.focus({ preventScroll: true });
-      structure.toggleFold(row.key);
+      held?.toggleFold(row.key);
       return;
     }
     nav.click(e, index);
   }
 
   function foldAll() {
-    if (allShut) structure.closed.clear();
-    else for (const key of holderKeys(symbols)) structure.closed.add(key);
+    if (!held) return;
+    if (allShut) held.closed.clear();
+    else for (const key of holderKeys(symbols)) held.closed.add(key);
   }
 
   /** The indices of the rows the search matched. */
@@ -152,7 +160,7 @@
           if ("move" in fold) {
             cursor = fold.move;
             list?.reveal(cursor);
-          } else structure.toggleFold(fold.toggle.key);
+          } else held?.toggleFold(fold.toggle.key);
           return;
         }
       }
@@ -201,7 +209,7 @@
       disabled={!outline || !!outline.unavailable}
       size="s"
       iconSize={13}
-      onclick={() => structure.revealCaret()}
+      onclick={() => held?.revealCaret()}
     />
     <IconButton
       icon={allShut ? "expandAll" : "collapseAll"}
@@ -230,9 +238,9 @@
   <div class="body" role="presentation" bind:this={body} {onkeydown} {...nav.attributes} {...search.attributes}>
     {#if search.active}<SpeedSearchField query={search.query} found={rows.length > 0} />{/if}
     {#if rows.length}
-      <StructureList bind:list {rows} selected={structure.selected} {cursor} onclick={click} />
+      <StructureList bind:list {rows} selected={held?.selected} {cursor} onclick={click} />
     {:else}
-      <StructureNotice load={structure.load} file={fileName} matches={rows.length} />
+      <StructureNotice {load} file={fileName} matches={rows.length} />
     {/if}
   </div>
 </aside>

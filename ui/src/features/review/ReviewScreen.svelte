@@ -209,7 +209,7 @@
   $effect(() => {
     const layout = changeset?.layout;
     // No layout has no target either; reading it keeps the effect on the manifest, which `shown` alone is untracked of.
-    structure.show(layout === undefined || !controller ? undefined : controller.structureTarget());
+    changeset?.structure.show(layout === undefined || !controller ? undefined : controller.structureTarget());
   });
 
   // A controller is made for each session and ends with it; what the screen holds of the changeset starts over.

@@ -19,7 +19,6 @@ import { opened } from "../state/opened.svelte";
 import { queue } from "../state/queue.svelte";
 import { serverList } from "../state/serverList.svelte";
 import { session } from "../state/session.svelte";
-import { symbols } from "../state/symbols.svelte";
 import { defaultRange } from "../state/timelineRange";
 import { shell } from "../features/chrome";
 import { commentsUi } from "../features/comments";
@@ -153,7 +152,7 @@ export const choiceHost: ChoiceHost = {
   openUnpinned: (path, line) => appState.whenReview((c) => void c.openSource(fileTab(path), path, line)),
   revealFile: (path) => appState.whenReview((c) => void c.revealInChanges(path)),
   revealSymbol: (symbol, change) => {
-    symbols.choose(symbol, change, true);
+    opened.session?.symbols.choose(symbol, change, true);
     appState.whenReview((c) => void c.revealSymbol({ symbol, change }));
   },
   openChangeset: (id) => {

@@ -10,7 +10,6 @@
   import Icon from "../../lib/ui/Icon.svelte";
   import { opened } from "../../state/opened.svelte";
   import type { Shown } from "../../state/symbolLoad";
-  import { symbols } from "../../state/symbols.svelte";
   import SymbolGlyph from "./SymbolGlyph.svelte";
   import SymbolRoot from "./SymbolRoot.svelte";
   import { headOf, type OpenLocation } from "./symbolDetail";
@@ -26,6 +25,7 @@
 
   let { shown, onopen }: { shown: Shown; onopen: OpenLocation } = $props();
 
+  const symbols = $derived(opened.session?.symbols);
   const id = $derived(shown.symbol.id);
   const removed = $derived(shown.change === "removed");
   const where = $derived(headOf(shown.symbol));
@@ -55,7 +55,7 @@
     }
     // A changed symbol listed in the panel: shown in the tree and opened where it is.
     const { symbol, change } = target;
-    symbols.choose(symbol, change, true);
+    symbols?.choose(symbol, change, true);
     onopen(symbol.id.path, symbol.at.line, change === "removed" ? "base" : "target");
   }
 </script>
@@ -82,7 +82,7 @@
   </button>
 </div>
 
-<SymbolRoot id="signature" title="Signature" load={symbols.signature}>
+<SymbolRoot id="signature" title="Signature" load={symbols?.signature}>
   {#snippet children(signature)}
     {#if signature.signature}
       <div class="block">
@@ -95,20 +95,20 @@
 </SymbolRoot>
 
 {#if removed}
-  <SymbolRoot id="remaining" title="Remaining references" load={symbols.removal} build={removalBody} ongo={go} />
+  <SymbolRoot id="remaining" title="Remaining references" load={symbols?.removal} build={removalBody} ongo={go} />
 {:else}
   <SymbolRoot
     id="callers"
     title="Changed callers"
     hint={CALLERS_HINT}
-    load={symbols.calls}
+    load={symbols?.calls}
     build={(calls) => callersBody(calls)}
     ongo={go}
   />
   <SymbolRoot
     id="callees"
     title="Changed callees"
-    load={symbols.calls}
+    load={symbols?.calls}
     build={(calls) => calleesBody(calls.callees, calls.gaps)}
     ongo={go}
   />
@@ -118,13 +118,13 @@
       title="Possibly affected"
       hint={AFFECTED_HINT}
       warn
-      load={symbols.calls}
+      load={symbols?.calls}
       build={(calls) => affectedBody(calls.affected, calls.gaps)}
       ongo={go}
     />
   {/if}
-  <SymbolRoot id="reach" title="Reached from" load={symbols.reach} build={(r) => reachBody(r.reach)} ongo={go} />
-  <SymbolRoot id="usages" title="Usages" load={symbols.usages} build={usagesBody} ongo={go} find={FIND} />
+  <SymbolRoot id="reach" title="Reached from" load={symbols?.reach} build={(r) => reachBody(r.reach)} ongo={go} />
+  <SymbolRoot id="usages" title="Usages" load={symbols?.usages} build={usagesBody} ongo={go} find={FIND} />
 {/if}
 
 <style>

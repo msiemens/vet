@@ -32,7 +32,6 @@
   import { opened } from "../../state/opened.svelte";
   import { queue } from "../../state/queue.svelte";
   import { serverList } from "../../state/serverList.svelte";
-  import { symbols } from "../../state/symbols.svelte";
   import { labelOf, sourceText } from "../queue";
   import { SymbolGlyph } from "../symbols";
   import type { Choice } from "./choice";
@@ -92,9 +91,10 @@
       }),
     ),
   );
+  const symbols = $derived(opened.session?.symbols);
   const symbolList = $derived(
     symbolCandidates(
-      [...symbols.files].flatMap(([path, load]) =>
+      [...(symbols?.files ?? [])].flatMap(([path, load]) =>
         load.state === "done"
           ? [{ symbols: load.symbols, seen: opened.session?.reviewed(path)?.completion.seenPercent ?? 0 }]
           : [],
@@ -141,7 +141,7 @@
   const found = $derived(answer?.languages ?? []);
   /** The changed files whose changed symbols are not known: the servers' symbols in them could be changed ones. */
   const unsettled = $derived(
-    new Set((opened.session?.paths ?? []).filter((p) => symbols.files.get(p)?.state !== "done")),
+    new Set((opened.session?.paths ?? []).filter((p) => symbols?.files.get(p)?.state !== "done")),
   );
   const candidates: Candidates = $derived({
     file: palette.unchanged ? [...files, ...others] : files,

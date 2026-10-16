@@ -47,6 +47,8 @@ import { type SessionPipelines, newPipelines } from "./pipelines.svelte";
 import { type SessionVersions, newVersions } from "./versions.svelte";
 import { session } from "./session.svelte";
 import { type Shown, isCurrent } from "./shown";
+import { type SessionStructure, newStructure } from "./structure.svelte";
+import { type SessionSymbols, newSymbols } from "./symbols.svelte";
 import { type SessionThreads, newThreads } from "./threads.svelte";
 import type { ViewSource } from "./viewScope.svelte";
 import { type Range, normalised, rangeView } from "./timelineRange";
@@ -95,6 +97,10 @@ class Session implements ViewSource {
   readonly findSets: SessionFindSets = newFindSets(this);
   /** Find in Files' place searched (`scopeChoices`'s id) and chosen result, for the dialog to come back to; the other fields stay with the window. */
   readonly findInFiles = $state<{ scope?: string; selected?: string }>({});
+  /** The changed symbols of the files and the symbol on show; read while the review screen is shown. */
+  readonly symbols: SessionSymbols = newSymbols(this);
+  /** The outline of the file the active tab shows; read while the review screen is shown. */
+  readonly structure: SessionStructure = newStructure(this);
   /** What the cards' comment forms hold that was not sent. */
   readonly drafts = new CommentDrafts(() => (this.cardsHolding = this.drafts.count()));
   /** How many of the cards' forms hold text: `drafts` is not reactive itself. */
@@ -268,11 +274,6 @@ class Session implements ViewSource {
     return untrack(() => this.layout);
   }
 
-  /** What is true of the changeset as a whole, for reading at the moment of use; reads nothing reactively. */
-  currentFacts(): ChangesetFacts | undefined {
-    return untrack(() => this.facts);
-  }
-
   /**
    * The whole changeset's files and base with what is true of it, whatever range or commit the review
    * shows: what Problems and the queue panel read.
@@ -329,6 +330,7 @@ class Session implements ViewSource {
     void this.pullRequest?.reload();
     this.versions.resync();
     this.reviewChanges.resync();
+    this.structure.resync();
   }
 
   /** How many comment boxes hold text that was not added as a comment, which ending the session loses. */
@@ -343,18 +345,22 @@ class Session implements ViewSource {
 
   /**
    * What only the review screen shows is held while it is shown: the per-commit list, the range's
-   * threads, the versions and the Pipelines steps. Returns what lets go
+   * threads, the versions, the Pipelines steps, the symbols and the outline. Returns what lets go
    * of them when the screen goes away or the session ends.
    */
   private showReview(): () => void {
     this.reviewShown = true;
     this.threads.follow();
     this.versions.follow();
+    const unfollowSymbols = this.symbols.followReview();
+    const unfollowStructure = this.structure.followReview();
     if (this.facts?.lens === "perCommit" && this.facts.commits > 1) void this.loadCommits();
     return () => {
       this.reviewShown = false;
       this.threads.unfollow();
       this.versions.unfollow();
+      unfollowSymbols();
+      unfollowStructure();
       this.pipelines.hideSteps();
       this.commitReads.cancel();
       this.commits = [];
@@ -365,6 +371,8 @@ class Session implements ViewSource {
   hear(event: SessionEvent) {
     if (!this.lifetime.alive) return;
     this.versions.hear(event);
+    this.symbols.hear(event);
+    this.structure.hear(event);
     this.reviewChanges.hear(event);
     this.pullRequest?.hear(event);
     this.checks.hear(event);
