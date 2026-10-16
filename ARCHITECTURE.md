@@ -99,7 +99,7 @@ The backend is layered: `vet-core` holds the domain, `vet-protocol` the protocol
 
 1. `ListChangesets` answers locally: the working tree, every local branch, then recent remote-tracking branches, each group by last commit. A row carries what Vet has of the review (none, open, finished).
 2. `ChangesetLines` counts a row's changed lines from the changeset's own base, a few rows at a time, pushing each count as it is made.
-3. Each open project has one pull request feed (`vet-app/src/pull_request_feed/`, wired in `vet-backend/src/feed.rs`): a long task that lists the platforms, prunes the refs of pull requests no longer listed, fetches the listed heads and reads details ahead, one cycle at a time. The fetch timer, the `Fetch` request and an account change ask it to list again; requests during a cycle join it, and a `Fetch` gets a cycle of its own. A timer or account-change cycle skips an account that is rate limited. A repository whose listing fails keeps its last rows beside the error.
+3. Each open project has one pull request feed (`vet-app/src/pull_request_feed/`, wired in `vet-backend/src/feed.rs`). One cycle lists the platforms, prunes the refs of pull requests no longer listed and fetches the listed heads; the details are then read ahead. The cycles are runs of the project's supervisor, one at a time, and the head fetch and the details read ahead are child runs of it. The fetch timer, the `Fetch` request and an account change ask it to list again. The timer and the first read of an empty feed join a cycle under way. A `Fetch` or an account change during a cycle gets one more cycle after it. A changed list replaces the details read ahead; an unchanged one leaves them running. A timer or account-change cycle skips an account that is rate limited. A repository whose listing fails keeps its last rows beside the error.
 4. `ListPullRequests` answers from the feed's list, adding each row's review state and the details read ahead; only an empty feed waits for a listing. A different list is announced as `PullRequestListChanged`. The pull request on view is in the list even when the platform leaves it out: opening it hands the feed the row.
 
 ### A text search answered
@@ -118,6 +118,23 @@ The backend is layered: `vet-core` holds the domain, `vet-protocol` the protocol
 - Every way off the async threads draws on a bound (`vet-infra/src/budget.rs`): review I/O, semantic I/O, background I/O, probes, restores. A lane cannot take another's permits, so a saturated semantic lane leaves the review's reads alone; a fetch has its own budget.
 - `crates/clippy.toml` bans a bare `spawn_blocking`, `thread::spawn`, `Command::new` and a raw mutex lock; blocking work and processes go through `budget` and `exec`, the two modules that allow them, and the narrow exceptions are local (the transport's stdin thread, the host's backend child, the fake platform, each crate's lock helper, tests that build fixtures). The lint covers the workspace crates, not `ui/src-tauri`.
 - `vet-backend/tests/it/load.rs` checks that with every semantic request stuck, review requests answer.
+- Each open project's background work runs on one supervisor (`vet-app/src/supervise.rs`), which counts the runs per kind, isolates a panic to its run, and at close ends everything. The policy (`vet-backend/src/supervisor.rs`) decides what runs; `reconcile.rs` carries it out.
+- Keyed work follows the state:
+  - the analysis (symbols, problems): revision, policy, servers, a rerun, while the review screen is shown;
+  - server starts: queued, never two at once; revision, policy, servers, while the review screen is shown;
+  - retiring servers a policy no longer allows: revision, policy, on any screen;
+  - the checks: revision, an action on a run, an account change, for a pull request, on any screen;
+  - the copy ahead: asked for by a quiet tree or the screen coming up, while the review screen is shown.
+
+  A kind starts when its key changes and stops when none is wanted. An ended run is not restarted for the same key, so a failure is not retried in a loop.
+
+- Reconciling happens in a loop on the revision and the inputs, and after every request for the projects it looked up, so a request's background work is decided before its reply.
+- Triggered work merges its requests:
+  - the sync: at most one runs and one waits, and a ticket is answered only by a run that began after its request;
+  - the fetch: a request joins the fetch under way, and the stronger asker's follow-ups apply;
+  - the pull request feed: as above.
+
+  The sync, the fetch and the settle loop cooperate with closing. They are never aborted for a newer request, finish their step, and get `Config::shutdown_bound` (5 s) before they are aborted.
 
 ### Events and the protocol
 
@@ -125,7 +142,7 @@ The backend is layered: `vet-core` holds the domain, `vet-protocol` the protocol
 - The outbox holds 10 000 messages; a send that finds it full closes the connection rather than grow, and the window reconnects and resyncs. Nothing is replayed.
 - The backend pushes project events (`SnapshotMoved` (the working tree settled, the branch on view moved or a fetch brought the pull request on view a push; with the open review's version), `FilterChanged` (the filter, an excluded path or a narrowing moved the revision, no snapshot), `ReviewFinished`, `ChangesetOpened`, `ReviewChanged`, `ReviewStarted`, `LensChanged`, `TargetChanged`, `ChangesetsChanged`, `PullRequestListChanged` (the feed published a different list), `PullRequestsChanged` (sent once the prefetch or a sync read details that the platform's list leaves out, carrying what they add to the rows, so the queue patches them), `ChangesetLinesChanged`, `ThreadsChanged`, `EditsPending`, `FileSymbols`, `FileDiagnostics`, `ChecksChanged`, `RestoreFailed`, `ServersChanged`, `ServerRuntimes`, `ServerInstallOutput`, `PlatformStatus`, `Task`, `Notification`) to a project's subscribers, and process events (`CredentialsNeeded`, `AccountsChanged`, `RecentProjectsChanged`, `SettingsChanged`, `PreferenceChanged`) to every connection that asked to `Subscribe`.
 - A **revision** increases with every settled snapshot, observed move, filter change, changeset switch and finished review. A request about positions carries the revision it was made at and fails as stale otherwise, and `Revisions` lets semantic work for an older one be dropped.
-- `WaitForQuiet` answers once the project has no background work at all, ordered after the earlier events on the connection.
+- `WaitForQuiet` answers once the project has no background work at all, ordered after the earlier events on the connection: it has the settle loop look at the tree, reconciles, and waits until no run but the settle loop is alive, no progress task runs and the settle loop has nothing pending.
 
 ### Storage and retention
 
