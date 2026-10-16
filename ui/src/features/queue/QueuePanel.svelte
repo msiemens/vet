@@ -27,7 +27,6 @@
   import { opened } from "../../state/opened.svelte";
   import { platform } from "../../state/platform.svelte";
   import { reviewChanges } from "../../state/reviewChanges.svelte";
-  import { threads } from "../../state/threads.svelte";
   import ChangesetName from "./ChangesetName.svelte";
   import { metaOf, reasonOf, reviewSummary, reviewerLabel, reviewersSummary } from "./queuePanel";
   import { type QueueRow, labelOf, statusTitle } from "./queueRows";
@@ -78,7 +77,9 @@
   );
   const head = $derived(checks.of(headId));
   const kind = $derived(platform.status?.kind ?? info?.platform.kind);
-  const groups = $derived(groupThreads(threads.items));
+  // The changeset's comments, whatever range the review shows.
+  const items = $derived(opened.session?.threads.wholeItems ?? []);
+  const groups = $derived(groupThreads(items));
   const openThreads = $derived([...groups.conflicts, ...groups.open]);
   const reason = $derived(
     pull &&
@@ -256,7 +257,7 @@
             </div>
           {/if}
         {/snippet}
-        {@render section("comments", "Comments", threads.items.length, commentsBody)}
+        {@render section("comments", "Comments", items.length, commentsBody)}
 
         {#if head?.runs.length}
           {#snippet checksBody()}

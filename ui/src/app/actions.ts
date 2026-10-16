@@ -20,7 +20,6 @@ import { serverList } from "../state/serverList.svelte";
 import { session } from "../state/session.svelte";
 import { symbols } from "../state/symbols.svelte";
 import { defaultRange } from "../state/timelineRange";
-import { threads } from "../state/threads.svelte";
 import { versions } from "../state/versions.svelte";
 import { shell } from "../features/chrome";
 import { commentsUi } from "../features/comments";
@@ -160,7 +159,7 @@ export const choiceHost: ChoiceHost = {
     if (!queue.onView || keyId(queue.onView) !== id) commands.run(`changeset.open:${id}`);
   },
   openThread: (id) => {
-    const thread = threads.items.find((t) => t.id === id);
+    const thread = opened.session?.threads.items.find((t) => t.id === id);
     if (thread) openThread(thread);
   },
   run: (command) => commands.run(command),

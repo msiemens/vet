@@ -32,7 +32,6 @@
   import { opened } from "../../state/opened.svelte";
   import { queue } from "../../state/queue.svelte";
   import { serverList } from "../../state/serverList.svelte";
-  import { threads } from "../../state/threads.svelte";
   import { symbols } from "../../state/symbols.svelte";
   import { labelOf, sourceText } from "../queue";
   import { SymbolGlyph } from "../symbols";
@@ -148,7 +147,7 @@
     file: palette.unchanged ? [...files, ...others] : files,
     symbol: [...symbolList, ...serverSymbolCandidates(found, symbolList, unsettled)],
     changeset: changesets,
-    thread: threadCandidates(threads.items),
+    thread: threadCandidates(opened.session?.threads.items ?? []),
     action: actions,
   });
 

@@ -18,8 +18,6 @@
   import { excludePath, listDirectory } from "../../state/projectRequests";
   import { session } from "../../state/session.svelte";
   import { structure } from "../../state/structure.svelte";
-  import { threads } from "../../state/threads.svelte";
-  import { rangeKey } from "../../state/timelineRange";
   import { versions } from "../../state/versions.svelte";
   import { CommentsPanel } from "../comments";
   import { copyText } from "../platform";
@@ -137,7 +135,10 @@
       commits: changeset.commits,
       commitIndex: changeset.shownCommit,
       pullRequest: platform.info,
-      threads: { total: threads.items.length, open: threads.items.filter((t) => t.status === "open").length },
+      threads: {
+        total: changeset.threads.items.length,
+        open: changeset.threads.items.filter((t) => t.status === "open").length,
+      },
       now: minute.now,
     });
   });
@@ -263,12 +264,6 @@
 
   const range = $derived(changeset?.layout?.interdiff);
   const readOnly = $derived(range?.markable === false);
-  // A range shows the threads of its new side: they are read again for each range.
-  const viewChanged = changeGate();
-  $effect(() => {
-    if (viewChanged(changeset?.viewKey ?? rangeKey(undefined))) untrack(() => void threads.reload());
-  });
-
   // The open tabs, the active one or a view mode changed: the tabs are remembered.
   const tabsChanged = changeGate();
   $effect(() => {

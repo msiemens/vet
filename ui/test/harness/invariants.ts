@@ -5,6 +5,7 @@
 import type { Base } from "../../src/generated/Base.ts";
 import type { Manifest } from "../../src/generated/Manifest.ts";
 import type { RowReview } from "../../src/generated/RowReview.ts";
+import type { Thread } from "../../src/generated/Thread.ts";
 import type { View } from "../../src/generated/View.ts";
 import type { Backend } from "../../src/state/backend.ts";
 import { keyId } from "../../src/state/changesetKey.ts";
@@ -12,8 +13,6 @@ import { opened } from "../../src/state/opened.svelte.ts";
 import { changesOf, reviewedOf } from "../../src/state/queueEntries.ts";
 import { queue } from "../../src/state/queue.svelte.ts";
 import { reviewShown } from "../../src/state/reviewShown.svelte.ts";
-import { rangeKey } from "../../src/state/timelineRange.ts";
-import { threads } from "../../src/state/threads.svelte.ts";
 import { versions } from "../../src/state/versions.svelte.ts";
 import { CHANGESET } from "../../src/state/view.ts";
 
@@ -56,13 +55,14 @@ export async function checkInvariants(other: Backend): Promise<Violation[]> {
     if (!same(ui, backend)) found.push({ invariant, view: view.type, what, ui, backend });
   };
 
-  const [fresh, whole, listed, backendVersions, commits, backendThreads] = await Promise.all([
+  const [fresh, whole, listed, backendVersions, commits, backendWhole, backendRange] = await Promise.all([
     other.manifest(view),
     other.manifest(CHANGESET),
     other.listChangesets(),
     other.versions(),
     other.commits().then((r) => r.commits),
-    other.threads(current.range ? view : CHANGESET),
+    other.threads(CHANGESET),
+    current.range ? other.threads(view) : undefined,
   ]);
 
   differ("shownView", "the view the layout is of", layout.shown.view, view);
@@ -141,14 +141,26 @@ export async function checkInvariants(other: Backend): Promise<Violation[]> {
     wantedCommits ? unit(current.commits) : current.commits,
     wantedCommits ? unit(commits) : [],
   );
-  if (threads.revision === backendThreads.revision && threads.key === rangeKey(current.range)) {
+  // The queue panel lists the whole changeset's threads, whatever range the review shows; the range's own
+  // are held only while the review screen shows that range.
+  const threadsOf = (list: readonly Thread[]) => list.map((t) => [t.id, t.status, t.messages.length]);
+  const threads = current.threads;
+  if (threads.whole?.revision === backendWhole.revision) {
     differ(
-      "threads",
-      "the threads",
-      threads.items.map((t) => [t.id, t.status, t.messages.length]),
-      backendThreads.threads.map((t) => [t.id, t.status, t.messages.length]),
+      "wholeThreads",
+      "the threads the queue panel lists",
+      threadsOf(threads.wholeItems),
+      threadsOf(backendWhole.threads),
     );
-  } else differ("threads", "the revision the threads were read at", threads.revision, backendThreads.revision);
+  } else
+    differ("wholeThreads", "the revision the threads were read at", threads.whole?.revision, backendWhole.revision);
+  if (backendRange && reviewShown.on) {
+    const held = threads.of(current.range);
+    if (held?.revision === backendRange.revision) {
+      differ("rangeThreads", "the threads of the range", threadsOf(held.items), threadsOf(backendRange.threads));
+    } else
+      differ("rangeThreads", "the revision the range's threads were read at", held?.revision, backendRange.revision);
+  } else differ("rangeThreads", "the threads of a range that is not on view", threads.range?.key, undefined);
   return found;
 }
 

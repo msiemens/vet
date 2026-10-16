@@ -712,20 +712,15 @@ export const sessions: Record<string, (d: Driver) => Promise<void>> = {
     await d.until(`!!__t.opened.session?.layout`, "the changeset");
     const revision = (await d.page(`__t.opened.session?.layout.shown.revision`)) as number;
     await d.page(`(async () => {
-      const { threads } = await import("/src/state/threads.svelte.ts");
-      await threads.create({ revision: ${revision}, view: { type: "changeset" } }, { type: "file", side: "target", path: "a.txt" }, "a note on the file");
+      await __t.opened.session.threads.create({ revision: ${revision}, view: { type: "changeset" } }, { type: "file", side: "target", path: "a.txt" }, "a note on the file");
       return true;
     })()`);
-    await d.until(
-      `(async () => { const { threads } = await import("/src/state/threads.svelte.ts"); return threads.items.some((t) => t.path === "a.txt"); })()`,
-      "the file's thread",
-    );
+    await d.until(`__t.opened.session.threads.items.some((t) => t.path === "a.txt")`, "the file's thread");
 
     // 1. Opening a thread from the queue shows the review at it.
     await d.page(`(async () => {
       const { openThread } = await import("/src/app/actions.ts");
-      const { threads } = await import("/src/state/threads.svelte.ts");
-      openThread(threads.items.find((t) => t.path === "a.txt"));
+      openThread(__t.opened.session.threads.items.find((t) => t.path === "a.txt"));
       return true;
     })()`);
     await d.until(`document.querySelector(".review") !== null`, "the review screen the thread opened");

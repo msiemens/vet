@@ -10,7 +10,7 @@
   import { verdictOf } from "../../lib/verdicts";
   import { commands } from "../../state/commands";
   import { platform } from "../../state/platform.svelte";
-  import { threads } from "../../state/threads.svelte";
+  import { opened } from "../../state/opened.svelte";
   import { commentsUi } from "./commentsUi.svelte";
   import { firstLine } from "./groups";
   import {
@@ -37,7 +37,7 @@
   // The list is open in the store, so the Post Comments command can open it.
   onDestroy(() => commentsUi.closeOutgoing());
   const info = $derived(platform.info);
-  const list = $derived(outgoingComments(threads.items));
+  const list = $derived(outgoingComments(opened.session?.threads.items ?? []));
   const vote = $derived(info?.pendingVote ?? null);
   const summary = $derived(info?.outgoing ?? NOTHING_OUTGOING);
   const busy = $derived(commentsUi.sending || summary.posting);
@@ -127,7 +127,7 @@
                   class="ctl small"
                   type="button"
                   disabled={busy}
-                  onclick={() => void threads.removeMessage(message.id)}>Discard draft</button
+                  onclick={() => void opened.session?.threads.removeMessage(message.id)}>Discard draft</button
                 >
                 <button
                   class="ctl small"

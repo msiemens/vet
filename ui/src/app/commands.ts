@@ -21,7 +21,6 @@ import { platform } from "../state/platform.svelte";
 import { problems } from "../state/problems.svelte";
 import { queue } from "../state/queue.svelte";
 import { session } from "../state/session.svelte";
-import { threads } from "../state/threads.svelte";
 import { softWrapPreference, themePreference } from "./appPreferences.svelte";
 import { appState } from "./appState.svelte";
 import {
@@ -102,8 +101,8 @@ export function registerCommands(): () => void {
     ...viewCommands(reviewActions),
     ...fileCommands(reviewActions),
     ...threadCommands({
-      attach: (thread, at) => void threads.attach(thread, at),
-      remove: (thread) => void threads.remove(thread),
+      attach: (thread, at) => void opened.session?.threads.attach(thread, at),
+      remove: (thread) => void opened.session?.threads.remove(thread),
     }),
     ...paletteCommands({ show: (tab) => palette.show(tab) }),
   );

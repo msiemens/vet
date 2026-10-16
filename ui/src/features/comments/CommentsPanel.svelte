@@ -11,7 +11,6 @@
   import { commands } from "../../state/commands";
   import { contextMenus } from "../../state/contextMenu.svelte";
   import { opened } from "../../state/opened.svelte";
-  import { threads } from "../../state/threads.svelte";
   import PanelTabs from "../../lib/ui/PanelTabs.svelte";
   import { platform } from "../../state/platform.svelte";
   import { attachMenu } from "./commentCommands";
@@ -34,11 +33,12 @@
   } = $props();
 
   const info = $derived(platform.info);
-  const listed = $derived(reviewThreads(threads.items));
+  const items = $derived(opened.session?.threads.items ?? []);
+  const listed = $derived(reviewThreads(items));
   const groups = $derived(groupThreads(listed));
   const empty = $derived(listed.length === 0);
-  const drafts = $derived(draftComments(threads.items));
-  const onWhole = $derived(changesetThreads(threads.items));
+  const drafts = $derived(draftComments(items));
+  const onWhole = $derived(changesetThreads(items));
   const conversationCount = $derived(
     info?.traits.conversationFeed ? info.conversation.length + drafts.length : onWhole.length,
   );
@@ -59,10 +59,11 @@
 
   async function post() {
     // The panel is no view of files: it comments on the changeset as the manifest on screen is of.
-    const onScreen = opened.session?.currentShown();
-    if (!onScreen || !canSubmit(draft.body, sending)) return;
+    const owner = opened.session;
+    const onScreen = owner?.currentShown();
+    if (!owner || !onScreen || !canSubmit(draft.body, sending)) return;
     sending = true;
-    const sent = await threads.create(onScreen, { type: "changeset" }, draft.body.trim());
+    const sent = await owner.threads.create(onScreen, { type: "changeset" }, draft.body.trim());
     sending = false;
     if (sent) commentsUi.sentChangesetComment();
   }
@@ -108,7 +109,9 @@
     <div class="actions">
       <span class="badge badge-moved" title={movedTitle(thread)}>{movedLabel(thread)}</span>
       <span class="grow"></span>
-      <button class="ctl small" type="button" onclick={() => void threads.confirm(thread.id)}>Confirm</button>
+      <button class="ctl small" type="button" onclick={() => void opened.session?.threads.confirm(thread.id)}
+        >Confirm</button
+      >
     </div>
   {:else if thread.anchor?.type === "ambiguous" || thread.anchor?.type === "stale"}
     <div class="actions">

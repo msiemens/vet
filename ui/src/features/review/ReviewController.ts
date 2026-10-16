@@ -24,7 +24,6 @@ import type { ViewChange } from "../../state/viewChange";
 import { semantic } from "../../state/semantic.svelte";
 import { session } from "../../state/session.svelte";
 import { isCurrent } from "../../state/shown";
-import { threads } from "../../state/threads.svelte";
 import { type ViewSource, newScope } from "../../state/viewScope.svelte";
 import type { OpenedResult } from "../search";
 import { type FilePositions, type SavedView, restoredTabs } from "./changesetViews";
@@ -99,14 +98,23 @@ export class ReviewController {
         return path === undefined ? [] : [path];
       },
     });
-    this.views = new ReviewViews(backend, changeset, this.tabs, this.scopes, this.findControl, this.persistence, {
-      softWrap: () => this.softWrap,
-      key: () => this.key,
-      hooks: (id) => this.nav.hooks(id),
-      openSource: (id, path, line) => void this.nav.openSource(id, path, line),
-      fileMenu: this.fileMenu,
-      scheduleSave: this.scheduleSave,
-    });
+    this.views = new ReviewViews(
+      backend,
+      changeset,
+      changeset.threads,
+      this.tabs,
+      this.scopes,
+      this.findControl,
+      this.persistence,
+      {
+        softWrap: () => this.softWrap,
+        key: () => this.key,
+        hooks: (id) => this.nav.hooks(id),
+        openSource: (id, path, line) => void this.nav.openSource(id, path, line),
+        fileMenu: this.fileMenu,
+        scheduleSave: this.scheduleSave,
+      },
+    );
     this.nav = new ViewNavigation(backend, changeset, this.tabs, this.scopes, this.views, this.findControl);
     this.commands = new ViewCommands(
       this.tabs,
@@ -120,7 +128,7 @@ export class ReviewController {
     );
 
     const offReview = changeset.subscribe((paths) => this.views.refreshReview(paths));
-    const offThreads = threads.onChange(() => this.views.showThreads());
+    const offThreads = changeset.threads.onChange(() => this.views.showThreads());
     const offCommands = provideActions(this.commands.viewActions());
     const offContext = commands.provide(() => this.commands.facts());
     const offResync = session.onResync(() => this.scopes.reload());

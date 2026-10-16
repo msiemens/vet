@@ -6,7 +6,7 @@
   import IconButton from "../../lib/ui/IconButton.svelte";
   import { minute } from "../../state/minute.svelte";
   import { platform } from "../../state/platform.svelte";
-  import { threads } from "../../state/threads.svelte";
+  import { opened } from "../../state/opened.svelte";
   import { type DraftComment, isOwnComment, verdictChip } from "./conversation";
 
   /** The platform's feed, oldest first, and the viewer's comments that wait for Submit review, which follow it. */
@@ -115,13 +115,13 @@
                 label="Discard the draft"
                 size="xs"
                 iconSize={11}
-                onclick={() => void threads.removeMessage(message.id)}
+                onclick={() => void opened.session?.threads.removeMessage(message.id)}
               />
             {/if}
           {/if}
         </div>
         {#if editing === key}
-          {@render form((body) => threads.editMessage(message.id, body))}
+          {@render form((body) => opened.session?.threads.editMessage(message.id, body) ?? Promise.resolve(false))}
         {:else}
           <div class="body selectable draft">{message.body}</div>
         {/if}

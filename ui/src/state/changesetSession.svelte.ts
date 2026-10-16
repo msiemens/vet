@@ -39,8 +39,9 @@ import { reportFailure, reviewMarks } from "./reviewMarks";
 import { type WriteListener } from "./reviewSource";
 import { session } from "./session.svelte";
 import { type Shown, isCurrent } from "./shown";
+import { type SessionThreads, newThreads } from "./threads.svelte";
 import type { ViewSource } from "./viewScope.svelte";
-import { type Range, normalised, rangeKey, rangeView } from "./timelineRange";
+import { type Range, normalised, rangeView } from "./timelineRange";
 import { commitView } from "./view";
 import { type ViewChange, type ViewPoint, viewChange, viewPoint } from "./viewChange";
 import { refetchesWhole } from "./wholeFetch";
@@ -73,6 +74,8 @@ class Session implements ViewSource {
   readonly whole: WholeView = newWhole(() => !this.lifetime.alive);
   /** The whole-changeset view was fed by the refresh underway; it needs no read of its own then. */
   private fed = false;
+  /** The comment threads, one list per view: the changeset's and the range on view. */
+  readonly threads: SessionThreads;
   /** How far the view's files are reviewed. */
   viewCompletion = $state.raw<Completion>();
   /** Dependency restores that failed: the analysis of those projects is limited. Pushed as they happen. */
@@ -114,7 +117,7 @@ class Session implements ViewSource {
   readonly commitList = new CommitList(() => session.connected().commits());
   /** The per-commit reads the store started; only the latest may set the list it shows. */
   private commitReads = new Latest();
-  /** Whether the review screen is shown: only it reads the per-commit list. */
+  /** Whether the review screen is shown: only it reads the per-commit list and the range's threads. */
   private commitsFollowed: boolean;
   /** A manifest is being fetched. */
   private fetching = $state(false);
@@ -133,6 +136,7 @@ class Session implements ViewSource {
       this.viewCompletion = newer.completion && this.viewCompletion ? this.viewCompletion : parts.completion;
       this.facts = newer.changeset && heldFacts ? { ...parts.facts, completion: heldFacts.completion } : parts.facts;
       this.shownCommit = commit;
+      this.threads.viewed(parts.layout.interdiff);
       this.restoreFailures = manifest.restoreFailures;
       this.cells.replace(parts.states, newer);
       if (parts.facts.lens === "perCommit" && parts.facts.commits > 1) void this.loadCommits();
@@ -144,8 +148,6 @@ class Session implements ViewSource {
   get view(): View {
     return this.range || this.commitIndex === undefined ? rangeView(this.range) : commitView(this.commitIndex);
   }
-  /** The range or commit the layout is of, as a string; empty for the changeset. */
-  viewKey = $derived(rangeKey(this.layout?.interdiff) + (this.shownCommit === undefined ? "" : `c${this.shownCommit}`));
 
   /**
    * While the review view shows only the files that had hunks seen against an old base when it was
@@ -269,6 +271,15 @@ class Session implements ViewSource {
     this.seed = start.manifest;
     this.viewed = start.viewed;
     this.commitsFollowed = start.reviewShown;
+    this.threads = newThreads(
+      {
+        backend: () => session.connected(),
+        ended: () => !this.lifetime.alive,
+        admit: (shown) => this.admit(shown),
+        reportFailure: (error, sent) => this.reportFailure(error, sent),
+      },
+      start.reviewShown,
+    );
     this.lifetime.add(() => {
       this.clear();
       this.viewListeners.clear();
@@ -278,12 +289,14 @@ class Session implements ViewSource {
   /** The changeset is on view: the manifest is read, for the queue as well as the review screen. `revision` is the one the backend announced, if it did. */
   start(revision?: number) {
     void this.reread(revision);
+    void this.threads.reload();
   }
 
   /** The connection came back: everything is read again. `manifest` is the changeset's, if the opener read it already. */
   resync(manifest?: Manifest) {
     this.seed = manifest;
     void this.reread(undefined);
+    void this.threads.reload();
   }
 
   /** Ends the session: what it started counts for nothing from now on. */
@@ -294,12 +307,14 @@ class Session implements ViewSource {
   /** The review screen came up: the per-commit list is read from now on. */
   followCommits() {
     this.commitsFollowed = true;
+    this.threads.follow();
     if (this.facts?.lens === "perCommit" && this.facts.commits > 1) void this.loadCommits();
   }
 
   /** The review screen went away. */
   unfollowCommits() {
     this.commitsFollowed = false;
+    this.threads.unfollow();
     this.commitReads.cancel();
     this.commits = [];
   }
@@ -307,7 +322,10 @@ class Session implements ViewSource {
   /** An event of the project, other than the announcement of a changeset. */
   hear(event: SessionEvent) {
     if (!this.lifetime.alive) return;
-    if (event.type === "snapshotSettled") void this.reread(event.revision);
+    if (event.type === "snapshotSettled") {
+      void this.reread(event.revision);
+      void this.threads.reload();
+    } else if (event.type === "threadsChanged") void this.threads.reload();
     else if (event.type === "targetChanged") void this.reread(undefined);
     else if (event.type === "lensChanged") void this.followLens(event.lens);
     // A mark made in a range or a commit is announced as that of the changeset's file, which they do not show.
@@ -335,6 +353,7 @@ class Session implements ViewSource {
     this.restoreFailures = [];
     this.cells.reset();
     this.whole.clear();
+    this.threads.clear();
   }
 
   /** The first manifest of the changeset is being fetched: nothing of it is known yet. */

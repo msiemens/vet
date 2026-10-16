@@ -11,7 +11,6 @@ import { queue } from "../../src/state/queue.svelte.ts";
 import { reviewShown } from "../../src/state/reviewShown.svelte.ts";
 import { session } from "../../src/state/session.svelte.ts";
 import "../../src/state/platform.svelte.ts";
-import "../../src/state/threads.svelte.ts";
 import "../../src/state/versions.svelte.ts";
 import { BackendProcess, Fixture, binary } from "./fixture.ts";
 import { checkInvariants, type Violation } from "./invariants.ts";

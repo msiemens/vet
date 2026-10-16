@@ -59,7 +59,6 @@
   import { serverList } from "../state/serverList.svelte";
   import { serverLine } from "../state/serverStatus";
   import { session } from "../state/session.svelte";
-  import { threads } from "../state/threads.svelte";
   import { defaultRange, rangeView } from "../state/timelineRange";
   import { versions } from "../state/versions.svelte";
   import { softWrapPreference, themePreference } from "./appPreferences.svelte";
@@ -96,7 +95,7 @@
   // arrive while it is open, so the backend moves the seen time past them.
   const commentsChanged = changeGate();
   $effect(() => {
-    if (commentsChanged(commentsShown, platform.info, threads.items) && commentsShown) {
+    if (commentsChanged(commentsShown, platform.info, opened.session?.threads.items) && commentsShown) {
       untrack(() => void platform.markCommentsSeen());
     }
   });

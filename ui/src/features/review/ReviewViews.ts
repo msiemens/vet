@@ -21,9 +21,9 @@ import { platform } from "../../state/platform.svelte";
 import type { FileLayout, ViewLayout } from "../../state/reviewModel";
 import type { ViewSource } from "../../state/viewScope.svelte";
 import { type Shown, isCurrent } from "../../state/shown";
-import { rangeKey } from "../../state/timelineRange";
+import type { ThreadCell } from "../../state/threadCells";
+import type { SessionThreads } from "../../state/threads.svelte";
 import { sameView } from "../../state/view";
-import { threads } from "../../state/threads.svelte";
 import { threadMenu } from "../comments";
 import { ChangesetView, type Listeners, type ViewHooks } from "./editor/ChangesetView";
 import { fileSource } from "./editor/fileSource";
@@ -74,6 +74,7 @@ export class ReviewViews {
   private textRoots = new Map<TabId, HTMLElement>();
 
   private backend: Backend;
+  private threads: SessionThreads;
   /** The changeset on screen as the views read it: its source, plus the files it is narrowed to and where failures are reported. */
   private changeset: ViewSource & Pick<ChangesetSource, "baseChanged" | "reportFailure">;
   private tabs: Tabs;
@@ -85,6 +86,7 @@ export class ReviewViews {
   constructor(
     backend: Backend,
     changeset: ViewSource & Pick<ChangesetSource, "baseChanged" | "reportFailure">,
+    threads: SessionThreads,
     tabs: Tabs,
     scopes: ViewScopes,
     find: FindControl,
@@ -93,6 +95,7 @@ export class ReviewViews {
   ) {
     this.backend = backend;
     this.changeset = changeset;
+    this.threads = threads;
     this.tabs = tabs;
     this.scopes = scopes;
     this.find = find;
@@ -191,14 +194,15 @@ export class ReviewViews {
 
   /** Gives every view the threads, if they are of the view's revision and range. */
   showThreads() {
-    const revision = threads.revision;
-    if (revision === undefined) return;
-    const fits = (id: TabId) => {
-      const layout = this.scopes.sourceOf(id).currentLayout();
-      return layout !== undefined && this.threadsFit(layout);
-    };
-    for (const [id, view] of this.views) if (fits(id)) view.setThreads(this.shownThreads(id), revision);
-    for (const [id, text] of this.texts) if (fits(id)) text.setThreads(this.shownThreads(id), revision);
+    const cellOf = (id: TabId) => this.threadsFor(id, this.scopes.sourceOf(id).currentLayout());
+    for (const [id, view] of this.views) {
+      const cell = cellOf(id);
+      if (cell) view.setThreads(cell.items, cell.revision);
+    }
+    for (const [id, text] of this.texts) {
+      const cell = cellOf(id);
+      if (cell) text.setThreads(cell.items, cell.revision);
+    }
   }
 
   /**
@@ -412,7 +416,8 @@ export class ReviewViews {
       id === CHANGES, // only the Changes tab collapses unchanged regions
     );
     this.views.set(id, view);
-    if (this.threadsFit(layout)) view.setThreads(this.shownThreads(id), shown.revision);
+    const cell = this.threadsFor(id, layout);
+    if (cell) view.setThreads(cell.items, cell.revision);
     view.scrollTo(top);
     view.keepCurrent(anchor);
     if (seen) view.eager(seen);
@@ -454,7 +459,8 @@ export class ReviewViews {
     if (this.find.isOpen(id)) this.find.apply(id);
     const at = this.persistence.takePending(id, "text") ?? place;
     if (at) text.showLines(at);
-    if (this.threadsFit(layout)) text.setThreads(this.shownThreads(id), shown.revision);
+    const cell = this.threadsFor(id, layout);
+    if (cell) text.setThreads(cell.items, cell.revision);
   }
 
   private buildLog(id: TabId, root: HTMLElement) {
@@ -524,7 +530,7 @@ export class ReviewViews {
       create: (shown, target, body) =>
         this.editing(
           source,
-          () => threads.create(shown, target, body, (sent) => source.admit(sent)),
+          () => this.threads.create(shown, target, body, (sent) => source.admit(sent)),
           () => false,
         ),
       commentTarget: (shown, path, at) =>
@@ -535,16 +541,16 @@ export class ReviewViews {
             throw new Error(READ_ONLY_NOTE);
           },
         ),
-      reply: (thread, body) => threads.reply(thread, body),
-      setStatus: (thread, status) => threads.setStatus(thread, status),
-      remove: (thread) => threads.remove(thread),
-      editMessage: (message, body) => threads.editMessage(message, body),
-      removeMessage: (message) => threads.removeMessage(message),
-      keepEdit: (message, keep) => threads.keepEdit(message, keep),
+      reply: (thread, body) => this.threads.reply(thread, body),
+      setStatus: (thread, status) => this.threads.setStatus(thread, status),
+      remove: (thread) => this.threads.remove(thread),
+      editMessage: (message, body) => this.threads.editMessage(message, body),
+      removeMessage: (message) => this.threads.removeMessage(message),
+      keepEdit: (message, keep) => this.threads.keepEdit(message, keep),
       platformName: () => (platform.status ? platformName(platform.status.kind) : "the platform"),
-      confirm: (thread) => threads.confirm(thread),
+      confirm: (thread) => this.threads.confirm(thread),
       menu: (thread, x, y) => {
-        const subject = threads.items.find((t) => t.id === thread);
+        const subject = this.threads.items.find((t) => t.id === thread);
         if (subject) void contextMenus.open(threadMenu, x, y, { thread: subject });
       },
       openLink: browse,
@@ -571,13 +577,14 @@ export class ReviewViews {
     };
   }
 
-  /** The threads the tab shows: those of the changeset, and none in a commit, where they would sit in the wrong place. */
-  private shownThreads(id: TabId): Thread[] {
-    return this.scopes.showsCommit(id) ? [] : threads.items;
-  }
-
-  /** The threads were read for the revision and the range `layout` is of. */
-  private threadsFit(layout: ViewLayout): boolean {
-    return threads.revision === layout.shown.revision && threads.key === rangeKey(layout.interdiff);
+  /**
+   * The threads the tab shows, once they are those of its view at its revision: the changeset's, a range's
+   * for a range, and none in a commit, where they would sit in the wrong place.
+   */
+  private threadsFor(id: TabId, layout: ViewLayout | undefined): ThreadCell | undefined {
+    if (!layout) return undefined;
+    const cell = this.threads.of(layout.interdiff);
+    if (cell?.revision !== layout.shown.revision) return undefined;
+    return this.scopes.showsCommit(id) ? { ...cell, items: [] } : cell;
   }
 }

@@ -20,8 +20,7 @@ import { reviewShown } from "../../src/state/reviewShown.svelte.ts";
 import { serverList } from "../../src/state/serverList.svelte.ts";
 // Holds the changeset's symbols, which the backend pushes while it is shown.
 import { symbols } from "../../src/state/symbols.svelte.ts";
-import { threads } from "../../src/state/threads.svelte.ts";
-import { defaultRange } from "../../src/state/timelineRange.ts";
+import { defaultRange, rangeView } from "../../src/state/timelineRange.ts";
 import type { ViewChange } from "../../src/state/viewChange.ts";
 import { versions } from "../../src/state/versions.svelte.ts";
 import { newScope } from "../../src/state/viewScope.svelte.ts";
@@ -94,7 +93,8 @@ export const sessions: Record<SessionName, (h: Harness) => Promise<void>> = {
     await h.step("folder unseen", () => directory(h, "src", false), ONE);
     await h.step(
       "thread opened",
-      () => h.asElement(() => threads.create(h.shown(), { type: "changeset" }, "a note on the whole changeset")),
+      () =>
+        h.asElement(() => onView().threads.create(h.shown(), { type: "changeset" }, "a note on the whole changeset")),
       ONE,
     );
   },
@@ -116,6 +116,15 @@ export const sessions: Record<SessionName, (h: Harness) => Promise<void>> = {
     const heard = listenForViewChanges();
     await h.step("hunk seen", () => hunk(h, "b.txt", 0), ONE);
     heard();
+    // A thread on a file the range does not touch: the changeset has it, the range does not.
+    await h.step(
+      "thread opened on a file",
+      () =>
+        h.asElement(() =>
+          onView().threads.create(h.shown(), { type: "file", side: "target", path: "a.txt" }, "a note on a.txt"),
+        ),
+      ONE,
+    );
     await h.step("version settled", async () => {
       await settleVersion(h);
       const changes = heard();
@@ -125,6 +134,11 @@ export const sessions: Record<SessionName, (h: Harness) => Promise<void>> = {
     await h.step("range shown", async () => {
       await onView().setRange(defaultRange(versions.items));
       expectChanges(heard(), ["start"]);
+      // The invariants tell the changeset's threads from the range's only if the backend does.
+      const range = onView().range;
+      const [inChangeset, inRange] = await Promise.all([h.other.threads(CHANGESET), h.other.threads(rangeView(range))]);
+      if (inChangeset.threads.length === inRange.threads.length)
+        throw new Error("the range lists the changeset's threads: the step cannot tell them apart");
     });
     await h.step("flagged in range", () => flag(h, first(), 0), ONE);
     await h.step("seen in range", () => hunk(h, first(), 1), ONE);
@@ -390,7 +404,7 @@ export const sessions: Record<SessionName, (h: Harness) => Promise<void>> = {
         if (!shown) throw new Error("the whole changeset has not read");
         const target = { type: "file", side: "target", path: "a.txt" } as const;
         const sent = await h.asElement(
-          () => threads.create(shown, target, "a file note", (s) => whole.admit(s)),
+          () => onView().threads.create(shown, target, "a file note", (s) => whole.admit(s)),
           shown,
         );
         if (!sent) throw new Error("the comment was refused");
@@ -647,7 +661,8 @@ export const sessions: Record<SessionName, (h: Harness) => Promise<void>> = {
     await h.step(
       "a comment on a changeset that is switched away from is not sent",
       async () => {
-        const shown = opened.session?.currentShown();
+        const owner = onView();
+        const shown = owner.currentShown();
         if (!shown) throw new Error("no changeset is on view");
         const backend = session.connected();
         const create = backend.createThread.bind(backend);
@@ -658,7 +673,7 @@ export const sessions: Record<SessionName, (h: Harness) => Promise<void>> = {
         };
         const switching = opened.open({ type: "branch", name: "feature" });
         if (opened.session) throw new Error("the session outlived the request for another changeset");
-        const created = await threads.create(shown, { type: "changeset" }, "late");
+        const created = await owner.threads.create(shown, { type: "changeset" }, "late");
         await switching;
         backend.createThread = create;
         if (created || sent) throw new Error("a comment was sent while no changeset was on view");

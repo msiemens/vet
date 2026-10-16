@@ -15,9 +15,9 @@ import { AccountResync } from "./accountResync";
 import type { Backend } from "./backend";
 import { followProject, whileOpen } from "./followProject";
 import { notices } from "./notices.svelte";
+import { opened } from "./opened.svelte";
 import { queue } from "./queue.svelte";
 import { Resource } from "./resource";
-import { threads } from "./threads.svelte";
 
 /** How long a card of a notification that needs no answer stays in the corner. */
 const CARD_MS = 12_000;
@@ -115,7 +115,7 @@ class PlatformStore {
       notices.failed("Could not submit the review", error);
       return undefined;
     }
-    await threads.reload();
+    await opened.session?.threads.reload();
     return submitted;
   }
 
@@ -128,7 +128,7 @@ class PlatformStore {
       notices.failed("Could not post the comments", error);
       return undefined;
     }
-    await threads.reload();
+    await opened.session?.threads.reload();
     return posted;
   }
 
