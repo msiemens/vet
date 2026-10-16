@@ -45,7 +45,7 @@ pub(crate) fn fetches(supervisor: &Supervisor, entry: Arc<OnceLock<Weak<Open>>>)
 
 /// Fetches the remotes, then tells every subscriber that the branches may have moved, follows the
 /// pull request on view for a push, and syncs its threads. A remote that failed is named by the
-/// failed task, where the footer shows it; what the others brought counts. A timer fetch that
+/// failed task; what the others brought counts. A timer fetch that
 /// moved no ref skips the announcement and the follow but still syncs the threads, which change
 /// without a push, and has the feed list again. Cooperates with the project closing: it ends
 /// before its next step instead.
