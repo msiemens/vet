@@ -783,6 +783,79 @@ export const sessions: Record<string, (d: Driver) => Promise<void>> = {
       if (!shown.includes(path)) throw new Error(`Problems does not list ${path} while a commit is on view:\n${shown}`);
   },
 
+  /**
+   * The Changes tab starts at the top when another range or commit is shown, and keeps its place when
+   * a new revision of the same view arrives. The views are long, so a tab that kept its place by mistake
+   * would not be at the top.
+   */
+  async viewStart(d) {
+    const TOTAL = 120;
+    interface Place {
+      path: string;
+      y: number;
+      scrollTop: number;
+    }
+    const place = () =>
+      d.page(`(() => {
+        const scroller = document.querySelector(".pane.active .scroll");
+        const top = scroller.getBoundingClientRect().top;
+        for (const s of scroller.querySelectorAll("section.file")) {
+          const at = s.getBoundingClientRect();
+          if (at.bottom > top + 1) return { path: s.querySelector(".path").textContent, y: Math.round(at.top - top), scrollTop: scroller.scrollTop };
+        }
+      })()`) as Promise<Place>;
+    const first = () => d.page(`__t.changeset.shownFiles[0].path`) as Promise<string>;
+    const scrolledAway = async (): Promise<Place> => {
+      await d.page(
+        `(() => { const s = document.querySelector(".pane.active .scroll"); s.scrollTop = s.scrollHeight / 2; })()`,
+      );
+      await d.sleep(500);
+      const at = await place();
+      if (at.scrollTop < 400 || at.path === (await first()))
+        throw new Error(`the Changes tab did not scroll: ${JSON.stringify(at)}`);
+      return at;
+    };
+    const atTop = async (what: string) => {
+      const at = await place();
+      if (at.scrollTop > 2 || at.path !== (await first()))
+        throw new Error(`${what}: the Changes tab is at ${JSON.stringify(at)}, not at the top`);
+    };
+    const keeps = async (what: string, before: Place) => {
+      await d.sleep(500);
+      const at = await place();
+      if (at.path !== before.path || Math.abs(at.y - before.y) > 2 || at.scrollTop < 400)
+        throw new Error(`${what}: the Changes tab was at ${JSON.stringify(before)} and is at ${JSON.stringify(at)}`);
+    };
+
+    await d.manyFiles(TOTAL);
+    await d.step("a hunk is seen", () => d.page(call("toggleHunk", "b.txt", 0)), ONE);
+    await d.until(`__t.versions.items.length >= 1`, "the first version");
+    const all = await scrolledAway();
+    await d.step("every file changes: a new revision", () => d.manyFiles(TOTAL, "v2"));
+    await keeps("a new revision of All changes", all);
+    await d.until(`__t.versions.items.length >= 2`, "the second version");
+
+    await scrolledAway();
+    await d.step("a push is chosen", () => d.page(`__t.changeset.setRange({ from: 1, to: 2 })`));
+    await atTop("a range is shown");
+    const range = await scrolledAway();
+    await d.step("every file changes again: a new revision of the range", () => d.manyFiles(TOTAL, "v3"));
+    await keeps("a new revision of a range", range);
+    await d.step("all changes again", () => d.page(`__t.changeset.showWhole()`));
+    await atTop("all changes after the range");
+
+    await d.openBranch();
+    await d.step("a push adds the files", () => d.pushManyFiles(TOTAL, "v4"));
+    await d.step("a push changes every file", () => d.pushManyFiles(TOTAL, "v5"));
+    await d.page(`__t.changeset.showLens("perCommit")`);
+    await d.step("a long commit is shown", () => d.page(`__t.changeset.showCommit(4)`));
+    await d.until(`__t.changeset.shownCommit === 4 && __t.changeset.shownFiles.length > 100`, "the long commit");
+    await scrolledAway();
+    await d.step("another long commit is shown", () => d.page(`__t.changeset.showCommit(5)`));
+    await d.until(`__t.changeset.shownCommit === 5 && __t.changeset.shownFiles.length > 100`, "the next long commit");
+    await atTop("another commit is shown");
+  },
+
   /** Changes since the last review, run from the queue, reads the versions the screen's start makes, once. */
   async sinceLast(d) {
     await d.page(`__t.commands.run("view.review")`);

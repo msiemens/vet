@@ -43,6 +43,7 @@ import { type Shown, isCurrent } from "./shown";
 import type { ViewSource } from "./viewScope.svelte";
 import { type Range, normalised, rangeKey, rangeView } from "./timelineRange";
 import { commitView } from "./view";
+import { type ViewChange, type ViewPoint, viewChange, viewPoint } from "./viewChange";
 import { refetchesWhole } from "./wholeFetch";
 import { type WholeView, newWhole } from "./wholeView.svelte";
 
@@ -123,6 +124,7 @@ class ChangesetStore implements ViewSource {
       this.cells.replace(parts.states, newer);
       if (parts.facts.lens === "perCommit" && parts.facts.commits > 1) void this.loadCommits();
       else this.commits = [];
+      this.announce();
     },
   });
   /** Another changeset was asked for and is not announced yet. */
@@ -140,7 +142,14 @@ class ChangesetStore implements ViewSource {
    * While the review view shows only the files that had hunks seen against an old base when it was
    * asked for: their paths. Re-confirming does not shrink it, so the view stays as it is.
    */
-  baseChanged = $state.raw<ReadonlySet<string>>();
+  private limitedTo = $state.raw<ReadonlySet<string>>();
+  get baseChanged(): ReadonlySet<string> | undefined {
+    return this.limitedTo;
+  }
+
+  /** What the views last told about, which the next change is told against; kept while the next changeset loads. */
+  private viewed?: ViewPoint;
+  private viewListeners = new Set<(frame: Frame, change: ViewChange) => void>();
 
   /** Same array while only review state changes. */
   paths = $derived(this.layout?.paths ?? NO_PATHS);
@@ -272,7 +281,10 @@ class ChangesetStore implements ViewSource {
     session.onResync(() => {
       if (this.layout) void this.reread(undefined);
     });
-    session.onClose(() => this.clear());
+    session.onClose(() => {
+      this.clear();
+      this.viewed = undefined;
+    });
     // The per-commit list is the review screen's, like the versions and the symbols: it follows the
     // screen and owns nothing of a changeset nobody shows.
     whileReview(() => {
@@ -301,7 +313,7 @@ class ChangesetStore implements ViewSource {
     this.manifestLoads.cancel();
     this.layout = this.facts = this.viewCompletion = undefined;
     this.range = undefined;
-    this.baseChanged = undefined;
+    this.limitedTo = undefined;
     this.commitIndex = this.shownCommit = undefined;
     this.lastCommit = 0;
     this.commits = [];
@@ -337,6 +349,31 @@ class ChangesetStore implements ViewSource {
 
   private notifyOpening(opening: Opening) {
     for (const listener of this.openingListeners) listener(opening);
+  }
+
+  /**
+   * Called with the frame on view when the views it shows changed: a newer revision, another range or
+   * commit, or another filter. The listener is told which (see `viewChange`). Returns the unsubscribe function.
+   */
+  onViewChange(listener: (frame: Frame, change: ViewChange) => void): () => void {
+    this.viewListeners.add(listener);
+    return () => this.viewListeners.delete(listener);
+  }
+
+  /** Tells the listeners what changed about the frame on view since the last time. */
+  private announce() {
+    const { layout, facts } = this;
+    if (!layout || !facts) return;
+    const point = viewPoint(layout, this.shownCommit, this.limitedTo);
+    const change = viewChange(this.viewed, point);
+    this.viewed = point;
+    if (change === "none") return;
+    for (const listener of this.viewListeners) listener({ layout, facts }, change);
+  }
+
+  private limit(files: ReadonlySet<string> | undefined) {
+    this.limitedTo = files;
+    this.announce();
   }
 
   /**
@@ -495,7 +532,7 @@ class ChangesetStore implements ViewSource {
    */
   async setRange(range: Range | undefined) {
     const leavingCommits = this.facts?.lens === "perCommit";
-    if (range) this.baseChanged = undefined;
+    if (range) this.limit(undefined);
     this.range = range;
     if (range) this.commitIndex = undefined;
     // With the range set, the lens change it causes shows nothing new and loads nothing.
@@ -563,12 +600,12 @@ class ChangesetStore implements ViewSource {
   /** Shows only the files with hunks seen against an old base in the review view, which then shows the changeset. */
   async showBaseChanged() {
     if (this.range) await this.setRange(undefined);
-    this.baseChanged = new Set(this.baseChangedFiles());
+    this.limit(new Set(this.baseChangedFiles()));
   }
 
   /** Shows every file again. */
   showAll() {
-    this.baseChanged = undefined;
+    this.limit(undefined);
   }
 
   /** Re-confirms every hunk seen against an old base of the changeset. */

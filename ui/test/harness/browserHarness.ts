@@ -33,8 +33,8 @@ export interface Driver {
   step(name: string, run: () => Promise<unknown>, expected?: { marks?: number; stale?: boolean }): Promise<void>;
   /** Double-clicks the row of `path` in the file tree and waits for its text. */
   openText(path: string): Promise<void>;
-  /** Writes `count` new files into the working tree and waits until the page has them in the changeset. */
-  manyFiles(count: number): Promise<void>;
+  /** Writes `count` files into the working tree, new or changed by another `tag`, and waits until the page has a newer revision with them in the changeset. */
+  manyFiles(count: number, tag?: string): Promise<void>;
   /** Another window comments on the changeset `count` times, each comment long enough to fill a side panel. */
   manyThreads(count: number): Promise<void>;
   /** An agent edits a file of the working tree; resolves once the page has a version for it. */
@@ -43,6 +43,8 @@ export interface Driver {
   revise(path: string, tag: string, edited: number[]): Promise<void>;
   /** A push to the branch on view: a commit of `path`; resolves once the page has a new revision. */
   pushBranch(path: string, tag: string, edited: number[]): Promise<void>;
+  /** A push to the branch on view that changes the `count` files of `manyFiles` by another `tag`; resolves once the page has a new revision. */
+  pushManyFiles(count: number, tag: string): Promise<void>;
   /** An agent moves `HEAD` to `ref` and keeps the files; resolves once the page says it left the base. */
   leaveBase(ref: string): Promise<void>;
   /** The working tree is committed and the page opens the branch, reviewed by its four commits. */
@@ -249,9 +251,13 @@ export async function runBrowserSession(
       process.stderr.write(`  ${stepName}: ${differences.length ? `${differences.length} differences` : "ok"}\n`);
       results.push({ step: stepName, differences });
     },
-    async manyFiles(count) {
-      fixture.manyFiles(count);
-      await until(`__t.changeset.paths.length >= ${count}`, "the many files in the changeset");
+    async manyFiles(count, tag) {
+      const before = (await evaluate(`__t.changeset.layout?.shown.revision ?? -1`)) as number;
+      fixture.manyFiles(count, tag);
+      await until(
+        `__t.changeset.paths.length >= ${count} && (__t.changeset.layout?.shown.revision ?? -1) > ${before}`,
+        "the many files in the changeset",
+      );
     },
     async manyThreads(count) {
       const body = Array.from({ length: 12 }, (_, i) => `Line ${i} of a long comment that wraps in a narrow panel.`);
@@ -275,6 +281,11 @@ export async function runBrowserSession(
     async pushBranch(path, tag, edited) {
       const before = (await evaluate(`__t.changeset.layout?.shown.revision ?? -1`)) as number;
       fixture.push(path, tag, edited);
+      await until(`(__t.changeset.layout?.shown.revision ?? -1) > ${before}`, "a revision for the push");
+    },
+    async pushManyFiles(count, tag) {
+      const before = (await evaluate(`__t.changeset.layout?.shown.revision ?? -1`)) as number;
+      fixture.pushMany(count, tag);
       await until(`(__t.changeset.layout?.shown.revision ?? -1) > ${before}`, "a revision for the push");
     },
     async leaveBase(ref) {

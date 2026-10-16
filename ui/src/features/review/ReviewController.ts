@@ -18,6 +18,7 @@ import { keyId } from "../../state/changesetKey";
 import { commands } from "../../state/commands";
 import type { TabId } from "../../state/commands";
 import { type Frame, type ViewLayout } from "../../state/reviewModel";
+import type { ViewChange } from "../../state/viewChange";
 import { semantic } from "../../state/semantic.svelte";
 import { session } from "../../state/session.svelte";
 import { isCurrent } from "../../state/shown";
@@ -62,16 +63,10 @@ export class ReviewController {
 
   /** The changeset on view, by `keyId`; unknown before the first manifest. */
   private key?: string;
-  /** The range the views show, if they show one. */
-  private shown?: { from: number; to: number; revision: number };
-  /** The files the Changes tab was limited to when it was built, if it was. */
-  private filtered?: ReadonlySet<string>;
-  /** The commit the views show, if they show one. */
-  private shownCommit?: number;
+  /** The views built last show the changeset's own files, not those of a range or a commit. */
+  private plain = true;
   /** The Changes tab of the views built last going to its first hunk. */
   private arriving: Promise<void> = Promise.resolve();
-  /** The saved view of the changeset on view, which the Changes tab's first draw goes back to. */
-  private saved?: SavedView;
   private unsubscribe: () => void;
   private unsubscribeEvents: () => void;
 
@@ -134,7 +129,9 @@ export class ReviewController {
         this.scopes.reload();
       }
     });
+    const offViewChange = changeset.onViewChange((frame, change) => this.viewChanged(frame, change));
     this.unsubscribe = () => {
+      offViewChange();
       offReview();
       offThreads();
       offCommands();
@@ -357,7 +354,7 @@ export class ReviewController {
   private capture(key: string): SavedView {
     const before = this.persistence.stored(key);
     // A range or a commit shows other files than the changeset's own: the positions of what it shows are not kept.
-    const plain = !this.shown && this.shownCommit === undefined;
+    const plain = this.plain;
     const panes = new Map<TabId, FilePositions>();
     for (const id of this.tabs.open) {
       if (pathOf(id) === undefined) continue;
@@ -393,11 +390,12 @@ export class ReviewController {
   };
 
   /**
-   * A refetched manifest may be of a newer revision than the views; rebuild them then. A manifest of
-   * another changeset first remembers the tabs and positions of the one that was on view, and
-   * brings back those of the new one, if it was on view before.
+   * The store says the views changed: a newer revision, or another range, commit or filter, which
+   * start the Changes tab at the top. A manifest of another changeset first remembers the tabs and
+   * positions of the one that was on view, and brings back those of the new one, if it was on view
+   * before.
    */
-  update({ layout, facts }: Frame) {
+  private viewChanged({ layout, facts }: Frame, change: ViewChange) {
     const key = keyId(facts.target.changeset);
     const switching = this.key !== undefined && key !== this.key;
     if (this.scopes.isFrozen) {
@@ -405,57 +403,22 @@ export class ReviewController {
       if (!switching) this.scopes.reload(); // the scopes made meanwhile have read nothing
     }
     const brought = switching ? this.switchTo(key) : undefined;
-    if (switching) this.saved = brought;
     if (!switching) this.tabs.dropStale((id, path) => this.scopes.stillChanged(id, path));
     this.key = key;
-    const commitChanged = this.commitChanged();
-    const rangeChanged = this.rangeChanged(layout) || commitChanged;
-    const filterChanged = this.filtered !== this.changeset.baseChanged;
-    this.filtered = this.changeset.baseChanged;
-    const view = this.views.diff(CHANGES);
-    if (!view || (!switching && view.revision === layout.shown.revision && !rangeChanged && !filterChanged)) return;
-    this.drawUpdate(layout, switching, rangeChanged, filterChanged, brought);
+    this.plain = !layout.interdiff && this.changeset.shownCommit === undefined;
+    if (!this.views.diff(CHANGES)) return;
+    this.drawUpdate(layout, switching || change === "start", switching, brought);
   }
 
-  /** Rebuilds the views on the manifest move `update` found. */
-  private drawUpdate(
-    layout: ViewLayout,
-    switching: boolean,
-    rangeChanged: boolean,
-    filterChanged: boolean,
-    brought?: SavedView,
-  ): void {
-    // Another range or commit is another set of files: the Changes tab starts at the top, and so does
-    // the filtered one. A file's tab keeps its lines (`build`).
-    if ((rangeChanged || filterChanged) && !switching) {
-      this.persistence.beginRestore([CHANGES]);
-    }
+  /** Rebuilds the views; where `top`, the Changes tab starts at the top. */
+  private drawUpdate(layout: ViewLayout, top: boolean, switching: boolean, brought?: SavedView): void {
+    // Another range, commit or filter is another set of files. A file's tab keeps its lines (`build`).
+    if (top && !switching) this.persistence.beginRestore([CHANGES]);
     this.views.show();
     const restored = switching && this.restoreChanges(brought, layout);
-    if (!restored && (switching || rangeChanged || filterChanged)) this.arriving = this.views.changes.goToHunk(0);
+    if (!restored && top) this.arriving = this.views.changes.goToHunk(0);
     // The new views load what is in view and the margin; the rest trickles while the reviewer is idle.
     this.views.startTrickle();
-  }
-
-  /**
-   * Whether `layout` shows another range than the last one did: no range and a range differ, and
-   * so do ranges that start at another version. A range whose end moved with a new revision is the
-   * same range.
-   */
-  private rangeChanged(layout: ViewLayout): boolean {
-    const now = layout.interdiff;
-    const was = this.shown;
-    this.shown = now && { from: now.from, to: now.to, revision: layout.shown.revision };
-    if (!now || !was) return !now !== !was;
-    return now.from !== was.from || (now.to !== was.to && layout.shown.revision === was.revision);
-  }
-
-  /** Whether the views show another commit than they did, or one where there was none or none where there was one. */
-  private commitChanged(): boolean {
-    const now = this.changeset.shownCommit;
-    const was = this.shownCommit;
-    this.shownCommit = now;
-    return now !== was;
   }
 
   /** Remembers the changeset on view and brings back the tabs of `next`; answers what was remembered of it. */
@@ -502,11 +465,9 @@ export class ReviewController {
     if (!frame) return false; // the project was closed meanwhile
     const { layout, facts } = frame;
     this.key = keyId(facts.target.changeset);
-    this.saved = this.bringBack(this.key);
-    this.rangeChanged(layout);
-    this.filtered = this.changeset.baseChanged;
-    this.commitChanged();
-    await this.drawOpen(this.saved);
+    const saved = this.bringBack(this.key);
+    this.plain = !layout.interdiff && this.changeset.shownCommit === undefined;
+    await this.drawOpen(saved);
     return true;
   }
 

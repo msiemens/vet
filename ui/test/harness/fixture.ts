@@ -51,10 +51,11 @@ export class Fixture {
   /**
    * Writes `count` new files under `many/`, each a 40-line text file with one line changed, so a
    * changeset of many files has to be scrolled and loaded. The extension is not prose, so the lines
-   * do not wrap and a section's height comes from the manifest alone.
+   * do not wrap and a section's height comes from the manifest alone. Writing them again with another
+   * `tag` changes every one of them.
    */
-  manyFiles(count: number) {
-    for (let i = 0; i < count; i++) this.write(`many/f${String(i).padStart(3, "0")}.dat`, `m${i}`, [20]);
+  manyFiles(count: number, tag = "m") {
+    for (let i = 0; i < count; i++) this.write(`many/f${String(i).padStart(3, "0")}.dat`, `${tag}${i}`, [20]);
   }
 
   /** Moves `HEAD` to `ref` and leaves the files as they are. */
@@ -84,6 +85,13 @@ export class Fixture {
   push(path: string, tag: string, edited: number[]) {
     this.write(path, tag, edited);
     this.git(this.repo, "commit", "-qam", `push: ${path}`);
+  }
+
+  /** The branch on view is pushed to: the files of `manyFiles`, new or changed by another `tag`, committed on `feature`. */
+  pushMany(count: number, tag: string) {
+    this.manyFiles(count, tag);
+    this.git(this.repo, "add", ".");
+    this.git(this.repo, "commit", "-qm", `push: ${count} files`);
   }
 
   private git(cwd: string, ...args: string[]) {

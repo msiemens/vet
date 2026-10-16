@@ -275,19 +275,6 @@
     }
   });
 
-  // A settled snapshot moved the changeset to a new revision, another changeset is on view, or
-  // the review view shows another range.
-  const shownChanged = changeGate();
-  $effect(() => {
-    if (shownChanged(revision, changeset.viewKey, changeset.baseChanged)) {
-      untrack(() => {
-        const layout = changeset.currentLayout();
-        const facts = changeset.currentFacts();
-        if (layout && facts) controller.update({ layout, facts });
-      });
-    }
-  });
-
   /** Shows the file in the Changes tab; an unchanged file is only selected. */
   function select(path: string) {
     selected = picked = path;

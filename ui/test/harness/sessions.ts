@@ -18,6 +18,7 @@ import { serverList } from "../../src/state/serverList.svelte.ts";
 import { symbols } from "../../src/state/symbols.svelte.ts";
 import { threads } from "../../src/state/threads.svelte.ts";
 import { defaultRange } from "../../src/state/timelineRange.ts";
+import type { ViewChange } from "../../src/state/viewChange.ts";
 import { versions } from "../../src/state/versions.svelte.ts";
 import { newScope } from "../../src/state/viewScope.svelte.ts";
 import type { Harness } from "./harness.ts";
@@ -50,6 +51,19 @@ async function reviewByCommit(h: Harness) {
   await h.until(() => changeset.facts?.target.changeset.type === "branch", "the branch");
   await changeset.showLens("perCommit");
   await h.until(() => changeset.shownCommit !== undefined, "the first commit");
+}
+
+/** Records what the store tells the review screen changed about the view; `heard` takes what came since it was last asked. */
+function listenForViewChanges() {
+  const heard: ViewChange[] = [];
+  changeset.onViewChange((_, change) => heard.push(change));
+  return () => heard.splice(0);
+}
+
+/** Throws unless `heard` is exactly `expected`. */
+function expectChanges(heard: ViewChange[], expected: ViewChange[]) {
+  if (JSON.stringify(heard) !== JSON.stringify(expected))
+    throw new Error(`the view changes were ${JSON.stringify(heard)}, not ${JSON.stringify(expected)}`);
 }
 
 /** A new version of the working tree, as an edit on disk makes it. */
@@ -89,13 +103,27 @@ export const sessions: Record<SessionName, (h: Harness) => Promise<void>> = {
 
   /** A new version, the range since the last review, marks in it, and back. */
   async range(h) {
+    const heard = listenForViewChanges();
     await h.step("hunk seen", () => hunk(h, "b.txt", 0), ONE);
-    await h.step("version settled", () => settleVersion(h));
-    await h.step("range shown", () => changeset.setRange(defaultRange(versions.items)));
+    heard();
+    await h.step("version settled", async () => {
+      await settleVersion(h);
+      const changes = heard();
+      if (!changes.includes("revision") || changes.includes("start"))
+        throw new Error(`a new version told ${JSON.stringify(changes)}, not a newer revision`);
+    });
+    await h.step("range shown", async () => {
+      await changeset.setRange(defaultRange(versions.items));
+      expectChanges(heard(), ["start"]);
+    });
     await h.step("flagged in range", () => flag(h, first(), 0), ONE);
     await h.step("seen in range", () => hunk(h, first(), 1), ONE);
     await h.step("unseen in range", () => hunk(h, first(), 1), ONE);
-    await h.step("back to the changeset", () => changeset.setRange(undefined));
+    expectChanges(heard(), []);
+    await h.step("back to the changeset", async () => {
+      await changeset.setRange(undefined);
+      expectChanges(heard(), ["start"]);
+    });
     await h.step("seen in the new version", () => hunk(h, "b.txt", 2), ONE);
     await h.step(
       "a range of versions that are gone gives way to the changeset",
@@ -155,9 +183,18 @@ export const sessions: Record<SessionName, (h: Harness) => Promise<void>> = {
 
   /** The changeset reviewed by commit: marks, stepping, and the lens back. The store reads the commits again on each mark and view change. */
   async commits(h) {
+    const heard = listenForViewChanges();
     await h.step("opened the branch by commit", () => reviewByCommit(h), { commits: 1 });
+    heard();
     await h.step("seen in a commit", () => hunk(h, first(), 0), { ...ONE, commits: 2 });
-    await h.step("next commit", () => changeset.showCommit(1), { commits: 1 });
+    await h.step(
+      "next commit",
+      async () => {
+        await changeset.showCommit(1);
+        expectChanges(heard(), ["start"]);
+      },
+      { commits: 1 },
+    );
     await h.step("flagged in a commit", () => flag(h, first(), 0), { ...ONE, commits: 2 });
     await h.step("file seen in a commit", () => file(h, first()), { ...ONE, commits: 2 });
     await h.step("last commit", () => changeset.showCommit(2), { commits: 1 });
