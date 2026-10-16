@@ -121,12 +121,12 @@ The backend is layered: `vet-core` holds the domain, `vet-protocol` the protocol
 - Each open project's background work runs on one supervisor (`vet-app/src/supervise.rs`), which counts the runs per kind, isolates a panic to its run, and at close ends everything. The policy (`vet-backend/src/supervisor.rs`) decides what runs; `reconcile.rs` carries it out.
 - Keyed work follows the state:
   - the analysis (symbols, problems): revision, policy, servers, a rerun, while the review screen is shown;
-  - server starts: queued, never two at once; revision, policy, servers, while the review screen is shown;
-  - retiring servers a policy no longer allows: revision, policy, on any screen;
-  - the checks: revision, an action on a run, an account change, for a pull request, on any screen;
+  - server starts: queued, never two at once; the snapshots, policy, servers, while the review screen is shown;
+  - retiring servers a policy no longer allows: the snapshots, policy, on any screen;
+  - the checks: the snapshots, an action on a run, an account change, for a pull request, on any screen;
   - the copy ahead: asked for by a quiet tree or the screen coming up, while the review screen is shown.
 
-  A kind starts when its key changes and stops when none is wanted. An ended run is not restarted for the same key, so a failure is not retried in a loop.
+  "The snapshots" is a count of snapshot moves kept beside the revision and read with it (`LiveSession::position`). A filter change moves the revision but not the snapshots, so it restarts only the analysis, whose files the filter decides. A kind starts when its key changes and stops when none is wanted. An ended run is not restarted for the same key, so a failure is not retried in a loop.
 
 - Reconciling happens in a loop on the revision and the inputs, and after every request for the projects it looked up, so a request's background work is decided before its reply.
 - Triggered work merges its requests:
