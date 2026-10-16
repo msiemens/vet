@@ -15,6 +15,8 @@ const SHOWN_AFTER_MS = 400;
 class ProgressStore {
   /** The running tasks to show, oldest first. */
   tasks = $state.raw<Task[]>([]);
+  /** The failed tasks that stay shown until the next success of their kind. */
+  failed = $state.raw<Task[]>([]);
   private board = new TaskBoard();
   private timer = new Debounced();
 
@@ -57,6 +59,7 @@ class ProgressStore {
     this.timer.cancel();
     const now = performance.now();
     this.tasks = this.board.shown(now);
+    this.failed = this.board.failed();
     const wait = this.board.nextShown(now);
     if (wait !== undefined) this.timer.schedule(wait, () => this.publish());
   }

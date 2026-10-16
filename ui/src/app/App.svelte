@@ -486,7 +486,8 @@
     shell.showBottom("problems");
   }}
 >
-  {#snippet progress()}<TaskProgress tasks={backgroundTasks.tasks} /><PlatformFooter />{/snippet}
+  {#snippet progress()}<TaskProgress tasks={backgroundTasks.tasks} failed={backgroundTasks.failed} /><PlatformFooter
+    />{/snippet}
 </StatusFooter>
 
 <style>

@@ -9,16 +9,25 @@ interface Entry {
   shownFrom: number;
 }
 
+/** The kinds whose last failure stays shown until a task of the kind finishes. */
+const LASTING: readonly Task["kind"][] = ["sync", "checks"];
+
 export class TaskBoard {
   private entries = new Map<number, Entry>();
+  private failures = new Map<Task["kind"], Task>();
 
   /**
    * A task was announced at `now`. A new task is shown from `now + delay`; a running one keeps
-   * the time it was first shown from. An ended task is dropped.
+   * the time it was first shown from. An ended task is dropped; a failed one of a lasting kind is
+   * kept as a failure until a task of its kind finishes.
    */
   apply(task: Task, now: number, delay: number) {
     if (task.state.type !== "running") {
       this.entries.delete(task.id);
+      if (LASTING.includes(task.kind)) {
+        if (task.state.type === "failed") this.failures.set(task.kind, task);
+        else this.failures.delete(task.kind);
+      }
       return;
     }
     const shownFrom = this.entries.get(task.id)?.shownFrom ?? now + delay;
@@ -37,6 +46,12 @@ export class TaskBoard {
 
   clear() {
     this.entries.clear();
+    this.failures.clear();
+  }
+
+  /** The failures that stay shown, oldest first. */
+  failed(): Task[] {
+    return [...this.failures.values()].sort((a, b) => a.id - b.id);
   }
 
   /** The tasks to show at `now`, oldest first. */

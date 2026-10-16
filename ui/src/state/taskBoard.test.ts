@@ -3,8 +3,13 @@ import { test } from "node:test";
 import type { Task } from "../generated/Task.ts";
 import { TaskBoard } from "./taskBoard.ts";
 
-function task(id: number, state: Task["state"] = { type: "running" }, title = `task ${id}`): Task {
-  return { project: 1, id, kind: "scan", title, done: null, total: null, detail: null, state };
+function task(
+  id: number,
+  state: Task["state"] = { type: "running" },
+  title = `task ${id}`,
+  kind: Task["kind"] = "scan",
+): Task {
+  return { project: 1, id, kind, title, done: null, total: null, detail: null, state };
 }
 
 const ids = (tasks: Task[]) => tasks.map((t) => t.id);
@@ -55,4 +60,27 @@ void test("the backend's list replaces what was known and keeps the time of task
   board.replace([task(2), task(4)], 400, 300);
   assert.deepEqual(ids(board.shown(300)), [2]);
   assert.deepEqual(ids(board.shown(700)), [2, 4]);
+});
+
+void test("a failed sync or checks refresh stays until a task of its kind finishes", () => {
+  const board = new TaskBoard();
+  const failed = { type: "failed", message: "offline" } as const;
+  board.apply(task(1, failed, "Pull request sync", "sync"), 0, 0);
+  board.apply(task(2, failed, "Checks refresh", "checks"), 0, 0);
+  assert.deepEqual(ids(board.failed()), [1, 2]);
+  assert.deepEqual(ids(board.shown(10_000)), []);
+
+  board.apply(task(3, { type: "running" }, "Pull request sync", "sync"), 10, 0);
+  board.apply(task(3, { type: "finished" }, "Pull request sync", "sync"), 11, 0);
+  assert.deepEqual(ids(board.failed()), [2]);
+
+  board.apply(task(4, failed, "Pull request sync", "sync"), 20, 0);
+  board.apply(task(5, failed, "Pull request sync", "sync"), 30, 0);
+  assert.deepEqual(ids(board.failed()), [2, 5], "a newer failure of a kind replaces the older");
+});
+
+void test("a failed task of another kind is not kept", () => {
+  const board = new TaskBoard();
+  board.apply(task(1, { type: "failed", message: "gone" }, "Fetching", "fetch"), 0, 0);
+  assert.deepEqual(board.failed(), []);
 });

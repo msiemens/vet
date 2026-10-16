@@ -2,10 +2,14 @@
   import type { Task } from "../../generated/Task";
   import Popover from "../../lib/ui/Popover.svelte";
   import ProgressBar from "../../lib/ui/ProgressBar.svelte";
+  import StatusDot from "../../lib/ui/StatusDot.svelte";
   import { fractionOf, headline } from "../../state/taskHeadline";
 
-  /** The running background tasks worth showing, oldest first. Nothing is drawn without any. */
-  let { tasks }: { tasks: readonly Task[] } = $props();
+  /**
+   * The running background tasks worth showing, oldest first, and the failed ones that stay until
+   * the next success of their kind. Nothing is drawn without any.
+   */
+  let { tasks, failed }: { tasks: readonly Task[]; failed: readonly Task[] } = $props();
 
   const head = $derived(headline(tasks));
   const newestFirst = $derived([...tasks].reverse());
@@ -17,6 +21,11 @@
   });
 </script>
 
+{#each failed as task (task.id)}
+  <span class="footer-item" title={task.state.type === "failed" ? task.state.message : undefined}>
+    <StatusDot tone="warn" />{task.title} failed
+  </span>
+{/each}
 {#if head}
   <Popover bind:open above align="right">
     {#snippet trigger(toggle)}
