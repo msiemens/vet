@@ -212,6 +212,12 @@ fn is_pull_request(request: &Seen) -> bool {
     request.body.contains("baseRefOid")
 }
 
+/// A read of the project's pull request list, which the feed makes on every tick.
+#[cfg(debug_assertions)]
+fn is_listing(request: &Seen) -> bool {
+    request.path.starts_with("/repos/acme/app/pulls") || request.body.contains("search(query:")
+}
+
 /// A read of the pull request's discussion, which the comment sync makes.
 #[cfg(debug_assertions)]
 fn is_discussion(request: &Seen) -> bool {
@@ -481,7 +487,7 @@ async fn settle(client: &mut Client, fake: &Fake, project: ProjectId, checks: bo
 }
 
 /// A tick that moved no ref announces nothing and does not follow the pull request on view, but
-/// still syncs its comments, which change without a push.
+/// still syncs its comments, which change without a push, and has the feed list again.
 #[cfg(debug_assertions)]
 #[tokio::test]
 async fn a_periodic_fetch_that_moved_no_ref_syncs_only_the_comments() {
@@ -498,6 +504,7 @@ async fn a_periodic_fetch_that_moved_no_ref_syncs_only_the_comments() {
 
     let before = calls(&fake);
     next_tick(&client, project).await;
+    client.call(Request::WaitForQuiet { project }).await.unwrap();
     let heard = pending(&mut client);
     let asked = since(&fake, before);
 
@@ -510,20 +517,25 @@ async fn a_periodic_fetch_that_moved_no_ref_syncs_only_the_comments() {
         "a tick with no ref moved still looked at the pull request: {asked:#?}"
     );
     assert!(
-        !asked.is_empty(),
+        asked.iter().any(is_discussion),
         "a tick with no ref moved did not sync the comments: {heard:#?}"
+    );
+    assert!(
+        asked.iter().any(is_listing),
+        "a tick did not have the feed list again: {asked:#?}"
     );
     assert_eq!(
         asked.len(),
-        asked.iter().filter(|r| is_discussion(r)).count(),
-        "a tick with no ref moved asked the platform for more than the comments: {asked:#?}"
+        asked.iter().filter(|r| is_discussion(r) || is_listing(r)).count(),
+        "a tick with no ref moved asked the platform for more than the comments and the list: {asked:#?}"
     );
 }
 
-/// A tick that moved no ref with no pull request on view has nothing to do at all.
+/// A tick that moved no ref with no pull request on view asks the platform for the list only, and
+/// announces a list that did not change no more than a recount.
 #[cfg(debug_assertions)]
 #[tokio::test]
-async fn a_periodic_fetch_that_moved_no_ref_without_a_pull_request_asks_no_platform() {
+async fn a_periodic_fetch_that_moved_no_ref_without_a_pull_request_asks_only_for_the_list() {
     let (_mock, fake, repo, _scratch) = crate::prefetch::fixture();
     let data = tempfile::tempdir().unwrap();
     let config = Config {
@@ -536,16 +548,50 @@ async fn a_periodic_fetch_that_moved_no_ref_without_a_pull_request_asks_no_platf
 
     let before = calls(&fake);
     next_tick(&client, project).await;
+    client.call(Request::WaitForQuiet { project }).await.unwrap();
     let heard = pending(&mut client);
+    let asked = since(&fake, before);
 
     assert!(
         !heard.iter().any(|e| matches!(e, Event::ChangesetsChanged { .. })),
         "a tick with no ref moved recounted the queue: {heard:#?}"
     );
+    assert!(
+        !heard.iter().any(|e| matches!(e, Event::PullRequestListChanged { .. })),
+        "a tick that found the same list announced it: {heard:#?}"
+    );
+    assert!(
+        !asked.is_empty() && asked.iter().all(is_listing),
+        "a tick with no pull request on view asked for more than the list: {asked:#?}"
+    );
+}
+
+/// A tick lists again, and a list that changed meanwhile is announced.
+#[cfg(debug_assertions)]
+#[tokio::test]
+async fn a_periodic_tick_announces_the_list_when_it_changed() {
+    let (mock, fake, repo, _scratch) = crate::prefetch::fixture();
+    let data = tempfile::tempdir().unwrap();
+    let config = Config {
+        fetch_interval: Duration::from_millis(1500),
+        ..crate::prefetch::config()
+    };
+    let (_backend, mut client) = crate::prefetch::backend_with(data.path(), &fake.base(), config).await;
+    let project = client.open(repo.path()).await;
+    settle(&mut client, &fake, project, false).await;
+
+    crate::prefetch::add_ninth(&mock);
+    next_tick(&client, project).await;
+    client.call(Request::WaitForQuiet { project }).await.unwrap();
+
+    let heard = pending(&mut client);
     assert_eq!(
-        before,
-        calls(&fake),
-        "a tick with no pull request on view asked the platform"
+        heard
+            .iter()
+            .filter(|e| matches!(e, Event::PullRequestListChanged { .. }))
+            .count(),
+        1,
+        "{heard:#?}"
     );
 }
 

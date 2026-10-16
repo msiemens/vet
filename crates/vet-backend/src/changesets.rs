@@ -1,27 +1,18 @@
 //! Requests about which changeset is on view and which there are.
 
-use std::sync::Arc;
-
 use futures::StreamExt;
 use futures::stream::FuturesOrdered;
 use vet_app::changeset::{RemoteKey, Source};
-use vet_app::fetch::{Credentials, Fetch};
-use vet_app::platform::{Platform, PlatformError, PlatformKind, PullRequestCache, Standing, commits_checks};
+use vet_app::platform::{Platform, PlatformError, commits_checks};
 use vet_app::pull_request::{self, FetchError, PullRequestList};
-use vet_app::pull_request_feed::{self, Background, FeedEvent, Hostings, Prefetch, Project};
-use vet_app::session::SessionError;
-use vet_infra::clock::unix_now;
-use vet_infra::git::GixRepo;
 use vet_mapping as mapping;
 use vet_protocol::{ChangesetKey, Event, ProjectId, Response};
 
-use crate::accounts::Held;
 use crate::checks::refresh_checks_after_action;
 use crate::error::{Error, Result};
-use crate::hosting::{Hosting, Platforms};
-use crate::review::revision_changed;
+use crate::hosting::{Held, Hosting};
 use crate::sync::sync_in_background;
-use crate::{Live, Open, Orchestrator, PlatformAccounts, start_servers_in_background};
+use crate::{Live, Open, Orchestrator, start_servers_in_background};
 
 /// How many rows of the queue have their lines counted at once: as many as the review lane's
 /// blocking pool runs, so the pool stays busy without rows queueing behind each other.
@@ -35,34 +26,16 @@ impl Orchestrator {
 
     pub(crate) async fn list_pull_requests(&self, project: ProjectId) -> Result<Response> {
         let open = self.ready(project).await?;
-        let platforms = FeedPlatforms {
-            platforms: self.platforms.clone(),
-            accounts: self.accounts.clone(),
-            open: open.open.clone(),
-        };
-        let list = pull_request_feed::refresh(
-            &platforms,
-            self.store.clone(),
-            &FeedProject(open.open.clone()),
-            &FeedBackground(open.open.clone()),
-            unix_now,
-            Prefetch {
-                pace: self.config.prefetch_pace,
-                announce: self.config.prefetch_announce,
-            },
-        )
-        .await?;
-        for source in &list.sources {
-            if let Some(error) = &source.error {
-                // The client told of a rate limit once, when it began.
-                if matches!(error, PlatformError::RateLimited { .. }) {
-                    tracing::debug!(repository = %source.remote, %error, "listing the pull requests failed");
-                } else {
-                    tracing::warn!(repository = %source.remote, %error, "listing the pull requests failed");
-                }
-            } else {
-                let listed = list.rows.iter().filter(|r| r.remote == source.remote).count();
-                tracing::debug!(repository = %source.remote, listed, truncated = source.truncated, "listed pull requests");
+        // The feed keeps the list; a read adds only what a kept list lacks and what changes without
+        // a listing: each row's review state from the store, and what the details last read add.
+        let mut list = open.open.feed().list().await?;
+        log_sources(&list);
+        let known = self.platforms.known();
+        for listed in &mut list.rows {
+            if let Some(added) = known.added(&listed.remote, listed.row.number) {
+                listed.row.status = added.status;
+                listed.row.unresolved_threads = added.unresolved_threads;
+                listed.row.changes_requested = added.changes_requested;
             }
         }
         let sources: Vec<_> = list
@@ -190,123 +163,20 @@ impl Orchestrator {
     }
 }
 
-/// The platform side of the pull request cycle, as the backend has it: the platform clients and
-/// their health, the accounts, and the project's refs.
-#[derive(Clone)]
-struct FeedPlatforms {
-    platforms: Arc<Platforms>,
-    accounts: Arc<PlatformAccounts>,
-    open: Arc<Open>,
-}
-
-impl Hostings for FeedPlatforms {
-    type Fetcher = GixRepo;
-
-    fn hosting(&self, kind: PlatformKind) -> impl Platform + Send {
-        self.platforms.hosting(kind)
-    }
-
-    async fn has_account(&self, host: &str) -> bool {
-        self.accounts.has_account(host, unix_now()).await
-    }
-
-    fn standing(&self, account: &str) -> Option<Standing> {
-        self.platforms.standing(account)
-    }
-
-    fn known(&self) -> Arc<PullRequestCache> {
-        self.platforms.known()
-    }
-
-    fn fetch(&self) -> &Fetch<GixRepo> {
-        &self.open.fetch
-    }
-
-    fn credentials(&self) -> impl Credentials + Send + Sync + '_ {
-        Held(&self.accounts)
-    }
-}
-
-/// The project side of the pull request cycle, as the backend has it: the review session on view
-/// and the window it tells.
-#[derive(Clone)]
-struct FeedProject(Arc<Open>);
-
-impl Project for FeedProject {
-    async fn on_view(&self) -> Option<(RemoteKey, u64)> {
-        let booted = self.0.booted().await.ok()?;
-        match booted.session.source().await {
-            Source::PullRequest { remote, number } => Some((remote, number)),
-            _ => None,
-        }
-    }
-
-    async fn prunable(
-        &self,
-        unlisted: Vec<(RemoteKey, u64)>,
-    ) -> std::result::Result<Vec<(RemoteKey, u64)>, SessionError> {
-        // The request that listed the pull requests booted the session, so this cannot fail.
-        let Ok(booted) = self.0.booted().await else {
-            return Ok(Vec::new());
-        };
-        booted.session.prunable(unlisted).await
-    }
-
-    async fn heads_fetched(&self, list: &PullRequestList) {
-        let Some((remote, number)) = self.on_view().await else {
-            return;
-        };
-        if !list
-            .rows
-            .iter()
-            .any(|listed| listed.remote == remote && listed.row.number == number)
-        {
-            return;
-        }
-        let Ok(booted) = self.0.booted().await else {
-            return;
-        };
-        if let Ok(Some(revision)) = booted.session.observe().await {
-            revision_changed(&self.0, revision);
-        }
-    }
-
-    fn announce(&self, event: FeedEvent) {
-        match event {
-            FeedEvent::ChangesetsChanged => {
-                self.0
-                    .subscribers
-                    .broadcast(Event::ChangesetsChanged { project: self.0.id });
+/// The log lines of a listing: a repository that failed, or the rows it listed.
+fn log_sources(list: &PullRequestList) {
+    for source in &list.sources {
+        if let Some(error) = &source.error {
+            // The client told of a rate limit once, when it began.
+            if matches!(error, PlatformError::RateLimited { .. }) {
+                tracing::debug!(repository = %source.remote, %error, "listing the pull requests failed");
+            } else {
+                tracing::warn!(repository = %source.remote, %error, "listing the pull requests failed");
             }
-            FeedEvent::PullRequestsChanged(changed) => {
-                let changed = changed
-                    .into_iter()
-                    .map(|c| mapping::pull_request_update(&c.remote, c.number, &c.added))
-                    .collect();
-                self.0.subscribers.broadcast(Event::PullRequestsChanged {
-                    project: self.0.id,
-                    changed,
-                });
-            }
-            // The per-request listing answers its own caller, so it never publishes a whole list.
-            FeedEvent::ListChanged => {}
+        } else {
+            let listed = list.rows.iter().filter(|r| r.remote == source.remote).count();
+            tracing::debug!(repository = %source.remote, listed, truncated = source.truncated, "listed pull requests");
         }
-    }
-}
-
-/// Where the pull request cycle starts its background work, as the backend starts it: the listed
-/// heads as a bare task, the details fetched ahead as the project's replaceable prefetch.
-#[derive(Clone)]
-struct FeedBackground(Arc<Open>);
-
-impl Background for FeedBackground {
-    fn fetch_heads(&self, work: impl Future<Output = ()> + Send + 'static) {
-        tokio::spawn(work);
-    }
-
-    fn prefetch(&self, work: impl Future<Output = ()> + Send + 'static) {
-        let task = tokio::spawn(crate::open::tracked(&self.0, "prefetch", work));
-        self.0.keep_prefetching(task.abort_handle());
     }
 }
 

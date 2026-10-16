@@ -1,6 +1,5 @@
 //! The cycle over the ports, with a platform that lists and discusses, git remotes that record
-//! what they were asked, a session that records what the cycle did to it, and a background that
-//! notes when the two phases that continue after the list are started.
+//! what they were asked, and a session that records what the cycle did to it.
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
@@ -259,6 +258,10 @@ impl Fetcher for Readable {
             .collect())
     }
 
+    async fn descends_from(&self, descendant: &str, ancestor: &str) -> Result<bool, GitError> {
+        Ok(descendant == ancestor)
+    }
+
     async fn delete_refs(&self, names: Vec<String>) -> Result<(), GitError> {
         self.refs.lock().unwrap().retain(|r| !names.contains(&r.name));
         Ok(())
@@ -273,6 +276,10 @@ struct ProjectFake {
 }
 
 impl Project for ProjectFake {
+    type Activity = ();
+
+    fn activity(&self, _: &'static str) {}
+
     async fn on_view(&self) -> Option<(RemoteKey, u64)> {
         self.on_view.clone()
     }
@@ -293,25 +300,6 @@ impl Project for ProjectFake {
             FeedEvent::ListChanged => "list_changed",
         };
         self.log.lock().unwrap().push(name.to_owned());
-    }
-}
-
-/// The background of the ports: it records when each phase is started and drops its work, so the
-/// order of the starts is what the log shows.
-#[derive(Clone, Default)]
-struct BackgroundFake {
-    log: Log,
-}
-
-impl Background for BackgroundFake {
-    fn fetch_heads(&self, work: impl Future<Output = ()> + Send + 'static) {
-        self.log.lock().unwrap().push("heads".to_owned());
-        drop(work);
-    }
-
-    fn prefetch(&self, work: impl Future<Output = ()> + Send + 'static) {
-        self.log.lock().unwrap().push("prefetch".to_owned());
-        drop(work);
     }
 }
 
@@ -375,23 +363,30 @@ async fn the_cycle_lists_prunes_fetches_heads_and_prefetches_in_order() {
         log: log.clone(),
         on_view: None,
     };
-    let background = BackgroundFake { log: log.clone() };
-
-    refresh(
-        &side,
+    let feed = PullRequestFeed::new(
+        side,
         MemStore::default(),
-        &project,
-        &background,
+        project,
         || 1_000,
         Prefetch {
             pace: Duration::ZERO,
             announce: Duration::ZERO,
         },
-    )
-    .await
-    .unwrap();
+    );
+    let _run = tokio::spawn(feed.clone().run());
 
-    assert_eq!(recorded(&log), ["list", "prune", "heads", "prefetch"]);
+    feed.manual().await;
+    // The prefetch runs after the cycle the manual request waited for; wait for it to reach a row.
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(10);
+    while discussions(&log) == 0 && tokio::time::Instant::now() < deadline {
+        tokio::time::sleep(Duration::from_millis(5)).await;
+    }
+
+    let phases: Vec<String> = recorded(&log)
+        .into_iter()
+        .filter(|entry| matches!(entry.as_str(), "list" | "prune" | "heads_fetched") || entry.starts_with("discussion"))
+        .collect();
+    assert_eq!(phases, ["list", "prune", "heads_fetched", "discussion 7"]);
 }
 
 #[tokio::test]
@@ -824,6 +819,46 @@ async fn an_unchanged_list_announces_nothing_and_keeps_a_running_prefetch_a_chan
         discussions(&log),
         2,
         "the changed list starts the details fetched ahead again"
+    );
+}
+
+#[tokio::test]
+async fn the_first_list_is_announced_only_to_a_reader_that_was_told_of_a_failure() {
+    let log = Log::default();
+    let app = github("acme/app");
+    let platform = listing(&log, vec![(app.clone(), vec![7])]);
+    let (feed, refs) = feed_of(
+        platform,
+        project(&log),
+        vec![info("origin", "https://github.com/acme/app")],
+        zero(),
+    );
+    let _run = tokio::spawn(feed.clone().run());
+
+    refs.break_remotes();
+    assert!(feed.list().await.is_err());
+    refs.mend_remotes();
+    feed.manual().await;
+    assert_eq!(
+        counting(&log, "list_changed"),
+        1,
+        "the reader that got the failure is told of the list"
+    );
+
+    let log = Log::default();
+    let platform = listing(&log, vec![(app, vec![7])]);
+    let (feed, _) = feed_of(
+        platform,
+        project(&log),
+        vec![info("origin", "https://github.com/acme/app")],
+        zero(),
+    );
+    let _run = tokio::spawn(feed.clone().run());
+    feed.list().await.unwrap();
+    assert_eq!(
+        counting(&log, "list_changed"),
+        0,
+        "a reader that waited for the first list reads it from the answer"
     );
 }
 

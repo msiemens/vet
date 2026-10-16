@@ -288,6 +288,39 @@ async fn a_force_pushed_pull_request_moves_its_ref_to_the_new_head() {
 }
 
 #[tokio::test]
+async fn a_commit_descends_from_itself_and_its_ancestors_and_not_from_a_rewritten_sibling() {
+    let fx = Fixture::new();
+    let first = fx.open_pull_request(7, "pr.txt", "p1");
+    let repo = GixRepo::for_test(&fx.clone);
+    repo.fetch_refs("origin", vec![update("refs/pull/7/head", "refs/vet/pr/7/head")], None)
+        .await
+        .unwrap();
+    let rewritten = fx.open_pull_request(8, "pr.txt", "p1 rewritten");
+    repo.fetch_refs("origin", vec![update("refs/pull/8/head", "refs/vet/pr/8/head")], None)
+        .await
+        .unwrap();
+    let child = git(
+        &fx.clone,
+        &["commit-tree", &format!("{first}^{{tree}}"), "-p", &first, "-m", "p2"],
+    );
+
+    assert!(repo.descends_from(&child, &first).await.unwrap(), "a push on top");
+    assert!(repo.descends_from(&first, &first).await.unwrap(), "itself");
+    assert!(
+        !repo.descends_from(&first, &child).await.unwrap(),
+        "an ancestor is not ahead of its descendant"
+    );
+    assert!(
+        !repo.descends_from(&rewritten, &first).await.unwrap(),
+        "a force-pushed head does not have the old one in its history"
+    );
+    assert!(
+        !repo.descends_from(&child, &"0".repeat(40)).await.unwrap(),
+        "a commit the repository lacks is no ancestor"
+    );
+}
+
+#[tokio::test]
 async fn refs_outside_vets_namespace_are_refused_and_so_is_a_ref_the_remote_lacks() {
     let fx = Fixture::new();
     fx.open_pull_request(7, "pr.txt", "p1");

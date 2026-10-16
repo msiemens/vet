@@ -1,9 +1,13 @@
 //! The connection type that receives a project's protocol events, and the event
 //! every part of the backend sends.
 
+use std::sync::Arc;
+
 use vet_app::registry::{Subscriber, Subscribers};
 use vet_protocol::{Event, ProjectId};
 use vet_transport::Events;
+
+use crate::{Open, start_servers_in_background};
 
 /// A client connection, subscribed to the events of the projects it opened.
 #[derive(Clone)]
@@ -28,6 +32,13 @@ impl Subscriber for Connection {
 /// Tells every subscriber that the project's snapshot is a new `revision`.
 pub(crate) fn settled(subscribers: &Subscribers<Connection>, project: ProjectId, revision: u32) {
     subscribers.broadcast(Event::SnapshotSettled { project, revision });
+}
+
+/// A request moved the revision for everyone: they refetch, and the language
+/// servers start for it in the background.
+pub(crate) fn revision_changed(open: &Arc<Open>, revision: u32) {
+    settled(&open.subscribers, open.id, revision);
+    start_servers_in_background(open.clone());
 }
 
 /// Tells every subscriber whether edits of the working tree wait to settle into a snapshot.

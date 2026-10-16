@@ -7,19 +7,21 @@ use std::time::Duration;
 use vet_app::changeset::Source;
 use vet_protocol::{Event, ProjectId, Response};
 
-use crate::accounts::Held;
 use crate::changesets::bring_in;
 use crate::error::Result;
+use crate::events::revision_changed;
+use crate::hosting::Held;
 use crate::open::Booted;
-use crate::review::revision_changed;
 use crate::sync::sync_pull_request;
 use crate::{Open, Orchestrator};
 
 impl Orchestrator {
-    /// Fetches now. A fetch that fails fails its task and not this request.
+    /// Fetches now, then waits for the pull request feed to list again. A fetch that fails fails
+    /// its task and not this request.
     pub(crate) async fn fetch(&self, id: ProjectId) -> Result<Response> {
         let open = self.find(id).await?;
         fetch_and_report(&open, Asked::Viewer).await;
+        open.feed().manual().await;
         Ok(Response::Done)
     }
 }
@@ -78,7 +80,8 @@ async fn follow_pull_request(open: &Arc<Open>, booted: &Booted) {
     }
 }
 
-/// Fetches now and then every `interval`, for as long as the session is open.
+/// Fetches now and then every `interval`, for as long as the session is open. After each fetch the
+/// pull request feed is asked to list again, whatever screen shows.
 pub(crate) fn fetch_periodically(open: &Arc<Open>, interval: Duration) {
     let session = Arc::downgrade(open);
     // One tick's work is the background task, not the loop that waits between ticks: a client
@@ -87,7 +90,8 @@ pub(crate) fn fetch_periodically(open: &Arc<Open>, interval: Duration) {
         let session = session.clone();
         async move {
             if let Some(open) = session.upgrade() {
-                crate::open::tracked(&open, "fetch", fetch_and_report(&open, Asked::Timer)).await;
+                crate::background::tracked(&open, "fetch", fetch_and_report(&open, Asked::Timer)).await;
+                open.feed().timer();
             }
         }
     });

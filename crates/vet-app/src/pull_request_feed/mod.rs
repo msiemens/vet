@@ -2,7 +2,8 @@
 //! refs of the ones a listing no longer has, fetching the listed heads and prefetching the
 //! details. It works over two ports: the platform side, which reaches the hosting platforms and
 //! the project's refs, and the project side, which is the session on view and the window it tells.
-//! The phases that must not delay the list are handed to [`Background`].
+//! The cycle tells the project it is busy ([`Project::activity`]), so a client waiting for quiet
+//! waits for the head fetch and the details read ahead.
 
 use std::collections::HashSet;
 use std::future::Future;
@@ -38,6 +39,11 @@ pub struct Prefetch {
     /// How long between two announcements that the details changed the list.
     pub announce: Duration,
 }
+
+/// The work a feed is doing while it holds a [`Project::activity`] guard, as the backend counts it.
+/// One cycle, listing through the head fetch, is `LISTING`; the details read ahead are `PREFETCH`.
+pub const LISTING: &str = "pull requests";
+pub const PREFETCH: &str = "prefetch";
 
 /// A pull request whose details, read again, changed what its row of the queue shows.
 #[derive(Clone, Debug)]
@@ -96,6 +102,12 @@ pub trait Hostings {
 
 /// The project side of the feed: the review session on view and the window it tells.
 pub trait Project {
+    /// A guard that says the feed is busy with `kind` until it is dropped, so a client waiting for
+    /// quiet sees the work. `kind` is one of [`LISTING`] and [`PREFETCH`].
+    type Activity: Send + 'static;
+
+    /// Takes a guard for the work of `kind` the feed is about to do.
+    fn activity(&self, kind: &'static str) -> Self::Activity;
     /// The pull request on view, if the changeset on view is one.
     fn on_view(&self) -> impl Future<Output = Option<(RemoteKey, u64)>> + Send;
     /// Of `unlisted` (the refs of pull requests a listing no longer has), those whose refs may be
@@ -109,51 +121,6 @@ pub trait Project {
     fn heads_fetched(&self, list: &PullRequestList) -> impl Future<Output = ()> + Send;
     /// Tells the project's window of a change the cycle made.
     fn announce(&self, event: FeedEvent);
-}
-
-/// Where the cycle starts the work that must not delay the list it answers: the heads of the
-/// listed pull requests, and the details fetched ahead.
-pub trait Background {
-    /// Runs `work` for the listed heads, which nothing waits for. An earlier run is not stopped.
-    fn fetch_heads(&self, work: impl Future<Output = ()> + Send + 'static);
-    /// Runs `work` for the details fetched ahead, replacing an earlier run.
-    fn prefetch(&self, work: impl Future<Output = ()> + Send + 'static);
-}
-
-/// One pass of the feed's cycle over the ports, in order: list the repositories' pull requests,
-/// prune the refs of the ones no longer listed, fetch the listed heads and prefetch the details.
-/// The two phases that must not delay the list are handed to `background`. Answers with the list.
-pub async fn refresh<H, S, P, B>(
-    platforms: &H,
-    store: S,
-    project: &P,
-    background: &B,
-    now: UnixClock,
-    timing: Prefetch,
-) -> Result<PullRequestList, SessionError>
-where
-    H: Hostings + Clone + Send + Sync + 'static,
-    S: LiveStore + Clone + Send + Sync + 'static,
-    P: Project + Clone + Send + Sync + 'static,
-    B: Background + Sync,
-{
-    let (list, since) = listed(platforms, project).await?;
-    if let Err(error) = prune(platforms, project, &list, since).await {
-        tracing::warn!(%error, "deleting the refs of pull requests no longer listed failed");
-    }
-    background.fetch_heads({
-        let platforms = platforms.clone();
-        let project = project.clone();
-        let list = list.clone();
-        async move { fetch_heads(&platforms, &project, &list).await }
-    });
-    background.prefetch({
-        let platforms = platforms.clone();
-        let project = project.clone();
-        let list = list.clone();
-        async move { prefetch(&platforms, &store, &project, list, now, timing).await }
-    });
-    Ok(list)
 }
 
 /// Asks the platforms for the project's repositories' open pull requests, the one on view among
@@ -214,27 +181,29 @@ async fn listed<H: Hostings, P: Project>(
 /// The feed of a project: the last listing, the requests to list again, and the cycles they run.
 /// A cloneable handle whose [`PullRequestFeed::run`] the owner spawns once; the handle answers the
 /// readers from the list it keeps and coalesces the requests into as few cycles as they allow.
-pub struct PullRequestFeed<H, S, P> {
+pub struct PullRequestFeed<H, S, P: Project> {
     inner: Arc<Feed<H, S, P>>,
 }
 
 /// What a [`PullRequestFeed`] and its run loop share.
-struct Feed<H, S, P> {
+struct Feed<H, S, P: Project> {
     platforms: H,
     store: S,
     project: P,
     now: UnixClock,
     timing: Prefetch,
     /// The last listing, the requests, and what the cycles have covered.
-    state: Mutex<State>,
+    state: Mutex<State<P::Activity>>,
     /// Wakes the run loop when a request arrives.
     wake: Notify,
     /// Wakes the callers waiting for a cycle to finish.
     done: Notify,
 }
 
-#[derive(Default)]
-struct State {
+struct State<A> {
+    /// Held from a request until the run loop has nothing left to do, so a client waiting for
+    /// quiet cannot slip between a request and the cycle that serves it.
+    busy: Option<A>,
     /// Every request a cycle joins, by generation: Initial, Timer and Accounts.
     joins: u64,
     /// Every Manual request; a cycle covers only those made before it started.
@@ -265,7 +234,21 @@ enum Cycle {
     Failed(SessionError),
 }
 
-impl<H, S, P> Clone for PullRequestFeed<H, S, P> {
+impl<A> Default for State<A> {
+    fn default() -> Self {
+        Self {
+            busy: None,
+            joins: 0,
+            manuals: 0,
+            joins_done: 0,
+            manuals_done: 0,
+            listed: None,
+            error: None,
+        }
+    }
+}
+
+impl<H, S, P: Project> Clone for PullRequestFeed<H, S, P> {
     fn clone(&self) -> Self {
         Self {
             inner: self.inner.clone(),
@@ -329,10 +312,11 @@ where
         self.request(Refresh::Accounts);
     }
 
-    /// Lists again and again as the requests come, one cycle at a time. The details fetched ahead
-    /// are the one phase a request interrupts: the loop races it against the next request, and a
-    /// cycle that finds the list unchanged keeps it, so a stream of requests does not start it
-    /// over.
+    /// Lists again and again as the requests come, one cycle at a time. From a request until it
+    /// has nothing left to do the feed holds a [`Project::activity`] guard, so a client waiting for
+    /// quiet waits for it. The details fetched ahead are the one phase a request interrupts: the
+    /// loop races them against the next request, and a cycle that finds the list unchanged keeps
+    /// them, so a stream of requests does not start them over.
     pub async fn run(self) {
         let mut prefetch: Option<Pin<Box<dyn Future<Output = ()> + Send>>> = None;
         loop {
@@ -351,7 +335,9 @@ where
                 continue;
             }
             let Some(running) = prefetch.take() else {
-                self.inner.wake.notified().await;
+                if self.idle() {
+                    self.inner.wake.notified().await;
+                }
                 continue;
             };
             let told = Box::pin(self.inner.wake.notified());
@@ -368,11 +354,22 @@ where
         (state.joins_done < state.joins || state.manuals_done < state.manuals).then_some(state.manuals)
     }
 
+    /// Lets go of the busy guard, unless a request arrived meanwhile. Answers whether it did.
+    fn idle(&self) -> bool {
+        let mut state = lock(&self.inner.state);
+        if state.joins_done < state.joins || state.manuals_done < state.manuals {
+            return false;
+        }
+        state.busy = None;
+        true
+    }
+
     /// Registers a request and wakes the run loop. A Manual request gets a generation of its own,
     /// which only a cycle started after it covers; the others join whichever cycle is next.
     fn request(&self, kind: Refresh) -> u64 {
         let generation = {
             let mut state = lock(&self.inner.state);
+            state.busy.get_or_insert_with(|| self.inner.project.activity(LISTING));
             match kind {
                 Refresh::Manual => {
                     state.manuals += 1;
@@ -409,20 +406,23 @@ where
             Err(error) => return Cycle::Failed(error),
         };
         let merged = self.keep_failed_repositories(fresh);
-        let changed = {
+        let (changed, announce) = {
             let mut state = lock(&self.inner.state);
             let changed = state.listed.as_ref() != Some(&merged);
+            // A read waits for the first listing, so only a reader that was told of a failure or
+            // holds an older list has anything to read again.
+            let announce = changed && (state.listed.is_some() || state.error.is_some());
             if changed {
                 state.listed = Some(merged.clone());
                 state.error = None;
             }
-            changed
+            (changed, announce)
         };
-        if changed {
+        if announce {
             self.inner.project.announce(FeedEvent::ListChanged);
-            if let Err(error) = prune(&self.inner.platforms, &self.inner.project, &merged, since).await {
-                tracing::warn!(%error, "deleting the refs of pull requests no longer listed failed");
-            }
+        }
+        if changed && let Err(error) = prune(&self.inner.platforms, &self.inner.project, &merged, since).await {
+            tracing::warn!(%error, "deleting the refs of pull requests no longer listed failed");
         }
         fetch_heads(&self.inner.platforms, &self.inner.project, &merged).await;
         if changed {
@@ -470,18 +470,22 @@ where
     }
 
     /// The details fetched ahead for `list`, as one future the run loop races against the next
-    /// request.
+    /// request. It holds the busy guard of [`PREFETCH`] for as long as it runs.
     fn prefetch_work(&self, list: PullRequestList) -> Pin<Box<dyn Future<Output = ()> + Send>> {
+        let busy = self.inner.project.activity(PREFETCH);
         let platforms = self.inner.platforms.clone();
         let store = self.inner.store.clone();
         let project = self.inner.project.clone();
         let now = self.inner.now;
         let timing = self.inner.timing;
-        Box::pin(async move { prefetch(&platforms, &store, &project, list, now, timing).await })
+        Box::pin(async move {
+            let _busy = busy;
+            prefetch(&platforms, &store, &project, list, now, timing).await
+        })
     }
 }
 
-impl<H, S, P> Feed<H, S, P> {
+impl<H, S, P: Project> Feed<H, S, P> {
     /// Waits until a cycle has covered the joining generation `generation`.
     async fn wait_for_join(&self, generation: u64) {
         loop {

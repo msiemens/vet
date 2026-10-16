@@ -20,7 +20,7 @@ const AT_ONCE: usize = 4;
 /// Starts (or restarts) the task that analyses the changeset's changed symbols. A newer run
 /// replaces the older; the review screen going away or the project closing stops it.
 pub(crate) fn refresh_symbols_in_background(open: Arc<Open>) {
-    let task = tokio::spawn(crate::open::tracked(&open, "symbols", run(open.clone())));
+    let task = tokio::spawn(crate::background::tracked(&open, "symbols", run(open.clone())));
     open.keep_symbols(task.abort_handle());
 }
 

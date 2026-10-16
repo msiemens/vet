@@ -13,8 +13,8 @@ use vet_protocol::{Event, ProjectId, Response};
 
 use crate::announce::{announce_start, review_changed};
 use crate::error::{Error, Result};
-use crate::events::settled;
-use crate::{Live, Open, Orchestrator, start_servers_in_background};
+use crate::events::revision_changed;
+use crate::{Live, Orchestrator};
 
 impl Orchestrator {
     pub(crate) async fn finish_review(&self, project: ProjectId) -> Result<Response> {
@@ -336,11 +336,4 @@ impl Orchestrator {
             .await?;
         Ok(Response::TargetLine { revision, line })
     }
-}
-
-/// A request moved the revision for everyone: they refetch, and the language
-/// servers start for it in the background.
-pub(crate) fn revision_changed(open: &Arc<Open>, revision: u32) {
-    settled(&open.subscribers, open.id, revision);
-    start_servers_in_background(open.clone());
 }

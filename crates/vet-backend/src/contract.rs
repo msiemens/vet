@@ -25,6 +25,7 @@ pub enum Kind {
     LensChanged,
     TargetChanged,
     ChangesetsChanged,
+    PullRequestListChanged,
     PullRequestsChanged,
     ReviewStarted,
     ThreadsChanged,
@@ -56,6 +57,7 @@ impl Kind {
             Event::LensChanged { .. } => Self::LensChanged,
             Event::TargetChanged { .. } => Self::TargetChanged,
             Event::ChangesetsChanged { .. } => Self::ChangesetsChanged,
+            Event::PullRequestListChanged { .. } => Self::PullRequestListChanged,
             Event::PullRequestsChanged { .. } => Self::PullRequestsChanged,
             Event::ReviewStarted { .. } => Self::ReviewStarted,
             Event::ThreadsChanged { .. } => Self::ThreadsChanged,
@@ -121,9 +123,8 @@ pub fn effect(request: &Request) -> Effect {
         | Request::LogDirectory
         | Request::OpenProject { .. }
         | Request::ListChangesets { .. }
-        // Also deletes the refs of pull requests no longer listed, which nothing shows, and reads
-        // their details in the background, which announces `PullRequestsChanged` when the list
-        // shows something of them.
+        // Reads the feed's list; the feed lists, prunes refs and reads details on its own, and
+        // announces `PullRequestListChanged` and `PullRequestsChanged` for what it finds.
         | Request::ListPullRequests { .. }
         | Request::ChangesetLines { .. }
         | Request::Checks { .. }

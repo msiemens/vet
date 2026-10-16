@@ -430,7 +430,9 @@ const LISTED_FETCHED: usize = 50;
 /// Fetches the newest [`LISTED_FETCHED`] pull requests of `list` whose refs are not in the
 /// repository yet or whose head ref is not at the head the list names (it was pushed to since), so
 /// every such row of the queue has current commits to count lines from. Does not touch a pull
-/// request that is there and current. A batch the remote refuses (a branch deleted since the
+/// request that is there and current, nor one whose head ref is ahead of the list (its commit has
+/// the listed head in its history), which a list that lags leaves behind; a force-pushed head is
+/// fetched. A batch the remote refuses (a branch deleted since the
 /// listing) is fetched one pull request at a time, so one cannot hold back the rest. A second call
 /// meanwhile waits and then fetches what the first did not. Answers whether anything was brought in.
 pub async fn fetch_listed_heads<G: Fetcher>(
@@ -451,23 +453,22 @@ pub async fn fetch_listed_heads<G: Fetcher>(
             continue;
         };
         let have = fetch.refs_below(&PullRequestRefs::of_repository(repository)).await?;
-        let missing: Vec<Vec<RefUpdate>> = newest
-            .iter()
-            .filter(|listed| listed.remote == *repository)
-            .filter(|listed| {
-                let refs = PullRequestRefs::of(repository, listed.row.number);
-                let at = |name: &str| have.iter().find(|tip| tip.name == name).map(|tip| tip.commit.as_str());
-                at(&refs.head) != Some(listed.row.head.as_str()) || at(&refs.target).is_none()
-            })
-            .map(|listed| {
-                let number = listed.row.number;
-                PullRequestRefs::of(repository, number).updates(
-                    PlatformKind::of_account(&repository.host),
-                    number,
-                    (&listed.row).into(),
-                )
-            })
-            .collect();
+        let mut missing: Vec<Vec<RefUpdate>> = Vec::new();
+        for listed in newest.iter().filter(|listed| listed.remote == *repository) {
+            let number = listed.row.number;
+            let refs = PullRequestRefs::of(repository, number);
+            let at = |name: &str| have.iter().find(|tip| tip.name == name).map(|tip| tip.commit.as_str());
+            let head_current = match at(&refs.head) {
+                Some(held) if held == listed.row.head => true,
+                // The list lags behind a head that was brought in from a newer source (the pull
+                // request's own detail, or its newest push): the ref is kept.
+                Some(held) => fetch.descends_from(held, &listed.row.head).await.unwrap_or(false),
+                None => false,
+            };
+            if !head_current || at(&refs.target).is_none() {
+                missing.push(refs.updates(PlatformKind::of_account(&repository.host), number, (&listed.row).into()));
+            }
+        }
         for batch in missing.chunks(HEADS_PER_FETCH) {
             let title = format!("Fetching {} pull requests", batch.len());
             let together = batch.concat();
@@ -715,6 +716,8 @@ pub(crate) mod tests {
         served: Served,
         /// Sources the remote does not have: a fetch asking for one fails.
         gone: Vec<String>,
+        /// Which commit has which in its history, as (descendant, ancestor).
+        history: Vec<(String, String)>,
     }
 
     impl Fetcher for Remotes {
@@ -761,6 +764,10 @@ pub(crate) mod tests {
             Ok(refs.iter().filter(|r| r.name.starts_with(prefix)).cloned().collect())
         }
 
+        async fn descends_from(&self, descendant: &str, ancestor: &str) -> Result<bool, GitError> {
+            Ok(descendant == ancestor || self.history.iter().any(|(d, a)| d == descendant && a == ancestor))
+        }
+
         async fn delete_refs(&self, names: Vec<String>) -> Result<(), GitError> {
             assert!(names.iter().all(|n| n.starts_with("refs/vet/pr/")), "{names:?}");
             self.refs.lock().unwrap().retain(|r| !names.contains(&r.name));
@@ -801,6 +808,16 @@ pub(crate) mod tests {
         refs: Vec<RefTip>,
         gone: &[&str],
     ) -> (Fetch<Remotes>, Fetched, Refs, Served) {
+        fetching_with_history(remotes, refs, gone, &[])
+    }
+
+    /// As [`fetching_with`], with commits that have others in their history, as (descendant, ancestor).
+    fn fetching_with_history(
+        remotes: Vec<RemoteInfo>,
+        refs: Vec<RefTip>,
+        gone: &[&str],
+        history: &[(&str, &str)],
+    ) -> (Fetch<Remotes>, Fetched, Refs, Served) {
         let fetched = Arc::default();
         let refs: Refs = Arc::new(Mutex::new(refs));
         let served = Served::default();
@@ -810,6 +827,10 @@ pub(crate) mod tests {
             refs: Arc::clone(&refs),
             served: Arc::clone(&served),
             gone: gone.iter().map(|g| (*g).to_owned()).collect(),
+            history: history
+                .iter()
+                .map(|(d, a)| ((*d).to_owned(), (*a).to_owned()))
+                .collect(),
         };
         (Fetch::new(git, Tasks::default()), fetched, refs, served)
     }
@@ -1356,6 +1377,30 @@ pub(crate) mod tests {
         assert_eq!(head.commit, "c2-pushed");
         assert!(!fetch_listed_heads(&fetch, &Anonymous, &list).await.unwrap());
         assert_eq!(fetched.lock().unwrap().len(), 1, "the head is current now");
+    }
+
+    #[tokio::test]
+    async fn a_head_ref_ahead_of_a_lagging_list_is_kept_and_a_force_pushed_one_is_fetched() {
+        let list = listed_ado(&[1, 2]);
+        let remote = list.sources[0].remote.clone();
+        let mut refs: Vec<RefTip> = [1, 2].iter().flat_map(|n| fetched_refs(&list, *n)).collect();
+        // #1's ref is at a newer push than the list names; #2's was force-pushed to a commit that
+        // does not have the listed head in its history.
+        for tip in &mut refs {
+            if tip.name == PullRequestRefs::of(&remote, 1).head {
+                tip.commit = "c1-newer".to_owned();
+            }
+            if tip.name == PullRequestRefs::of(&remote, 2).head {
+                tip.commit = "c2-other".to_owned();
+            }
+        }
+        let (fetch, fetched, _, served) = fetching_with_history(vec![ado_remote()], refs, &[], &[("c1-newer", "c1")]);
+        serve_heads(&served, &list);
+
+        assert!(fetch_listed_heads(&fetch, &Anonymous, &list).await.unwrap());
+
+        let of = PullRequestRefs::of(&remote, 2);
+        assert_eq!(destinations(&fetched), [of.head, of.target]);
     }
 
     #[tokio::test]

@@ -9,6 +9,7 @@ use vet_protocol::{Event, ProjectId};
 
 use crate::error::{Error, Result};
 use crate::events::Connection;
+use crate::feed::run_feed;
 use crate::fetch::fetch_periodically;
 use crate::{Open, Orchestrator, scan_in_background};
 
@@ -39,6 +40,7 @@ impl Orchestrator {
             tokio::spawn(async move { projects.reap(id, grace, &TokioClock::new()).await });
             scan_in_background(open.clone());
             fetch_periodically(&open, self.config.fetch_interval);
+            run_feed(&open);
         }
         Ok((open.id, root))
     }

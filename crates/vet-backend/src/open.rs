@@ -11,8 +11,6 @@ use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, OnceLock, Weak};
 use std::time::{Duration, SystemTime};
 
-use std::collections::HashMap;
-
 use tokio::sync::OnceCell;
 use tokio::task::AbortHandle;
 use vet_app::changeset::{RemoteKey, Source};
@@ -40,9 +38,11 @@ use vet_protocol::{Event, ProjectId, Response};
 use vet_semantic::pool::Supervision;
 use vet_semantic::ports::Backend;
 
+use crate::background::Background;
 use crate::caches::PersistentAnswers;
 use crate::error::{Error, Result};
 use crate::events::{Connection, edits_pending, settled};
+use crate::feed::Feed;
 use crate::hosting::{Announcer, Hosting, Platforms};
 use crate::mutex::lock;
 use crate::screens::ReviewScreens;
@@ -110,80 +110,12 @@ impl TaskSlot {
     }
 }
 
-type Counts = HashMap<(ProjectId, &'static str), (usize, usize)>;
-
-/// How often each background task of each project was started, and how many of them are running
-/// now. The live count is what `Request::WaitForQuiet` waits on; the started count is for the
-/// tests that watch one kind end.
-#[derive(Default)]
-pub(crate) struct Background(Mutex<Counts>);
-
-impl Background {
-    /// Counts a task of `kind` that is starting; dropping the guard says it ended, whether it
-    /// returned or was aborted.
-    pub(crate) fn start(self: &Arc<Self>, project: ProjectId, kind: &'static str) -> LiveTask {
-        {
-            let mut all = lock(&self.0);
-            let counts = all.entry((project, kind)).or_default();
-            counts.0 += 1;
-            counts.1 += 1;
-        }
-        LiveTask {
-            background: self.clone(),
-            project,
-            kind,
-        }
-    }
-
-    /// How many background tasks of the project are running now.
-    pub(crate) fn live(&self, project: ProjectId) -> usize {
-        lock(&self.0)
-            .iter()
-            .filter(|((at, _), _)| *at == project)
-            .map(|(_, (_, live))| live)
-            .sum()
-    }
-
-    /// How often the task was started and how many are running now. For tests only.
-    #[cfg(debug_assertions)]
-    pub(crate) fn counts(&self, project: ProjectId, kind: &'static str) -> (usize, usize) {
-        lock(&self.0).get(&(project, kind)).copied().unwrap_or_default()
-    }
-}
-
-/// The end of one counted background task.
-pub(crate) struct LiveTask {
-    background: Arc<Background>,
-    project: ProjectId,
-    kind: &'static str,
-}
-
-impl Drop for LiveTask {
-    fn drop(&mut self) {
-        if let Some(counts) = lock(&self.background.0).get_mut(&(self.project, self.kind)) {
-            counts.1 = counts.1.saturating_sub(1);
-        }
-    }
-}
-
-/// `fut` as a background task of `kind` that `Request::WaitForQuiet`, and the tests, can see end.
-pub(crate) fn tracked<F: std::future::Future>(
-    open: &Arc<Open>,
-    kind: &'static str,
-    fut: F,
-) -> impl std::future::Future<Output = F::Output> + use<F> {
-    let live = open.background.start(open.id, kind);
-    async move {
-        let _live = live;
-        fut.await
-    }
-}
-
 /// What one open project runs on.
 pub(crate) struct Wired {
     /// The background work of the project, announced to its subscribers.
     pub tasks: Tasks,
-    pub fetch: Fetch<GixRepo>,
+    /// The project's refs, shared with the pull request feed.
+    pub fetch: Arc<Fetch<GixRepo>>,
     /// Where `fetch` finds the credentials of the hosting platforms.
     pub accounts: Arc<PlatformAccounts>,
     /// Where pull requests are asked for.
@@ -202,8 +134,10 @@ pub(crate) struct Wired {
     fetching: TaskSlot,
     /// The copy of the working tree's content ahead of a review; a newer tree's replaces it.
     copying: TaskSlot,
-    /// The details of the queue's pull requests fetched ahead; a newer list's replaces it.
-    prefetching: TaskSlot,
+    /// The pull request feed: the last listing, and the cycle that keeps it. Its run ends with the
+    /// session.
+    feed: Feed,
+    feeding: TaskSlot,
     /// The checks of the changeset on view, refreshed while the review screen shows it; a newer
     /// run replaces the older, and the project closing stops it.
     checking: TaskSlot,
@@ -299,10 +233,14 @@ impl Wired {
         self.fetching.keep(task);
     }
 
-    /// Hands over the details fetched ahead of the queue; a newer list's replaces it, and it ends
-    /// with the session.
-    pub(crate) fn keep_prefetching(&self, task: AbortHandle) {
-        self.prefetching.keep(task);
+    /// The project's pull request feed, keeping the last listing.
+    pub(crate) fn feed(&self) -> &Feed {
+        &self.feed
+    }
+
+    /// Hands over the task that runs the pull request feed, which ends with the session.
+    pub(crate) fn keep_feeding(&self, task: AbortHandle) {
+        self.feeding.keep(task);
     }
 
     /// Hands over the task that refreshes the changeset's checks; a newer run replaces it, and it
@@ -536,9 +474,9 @@ impl Resident for Wired {
     async fn shut(&self) {
         self.closed.store(true, Ordering::SeqCst);
         self.fetching.stop();
+        self.feeding.stop();
         self.settling.stop();
         self.copying.stop();
-        self.prefetching.stop();
         self.checking.stop();
         self.symbols.stop();
         self.problems.stop();
@@ -659,10 +597,14 @@ impl Orchestrator {
             subscribers: subscribers.clone(),
         });
         self.platforms.tell(&announcer);
+        // A fetch holds its thread for as long as the network takes, so it has a budget of
+        // its own: it must not take the review's threads, nor the semantic lane's. The pull
+        // request feed shares it, over the platforms and the refs.
+        let fetch = Arc::new(Fetch::new(GixRepo::new(&repo, Budget::new(FETCH_IO)), tasks.clone()));
+        let feed = self.pull_request_feed(id, fetch.clone(), entry.clone());
         Ok(Wired {
-            // A fetch holds its thread for as long as the network takes, so it has a budget of
-            // its own: it must not take the review's threads, nor the semantic lane's.
-            fetch: Fetch::new(GixRepo::new(&repo, Budget::new(FETCH_IO)), tasks.clone()),
+            fetch,
+            feed,
             accounts: self.accounts.clone(),
             platforms: self.platforms.clone(),
             _announcer: announcer,
@@ -688,7 +630,7 @@ impl Orchestrator {
             refs_waiting: Arc::default(),
             fetching: TaskSlot::default(),
             copying: TaskSlot::default(),
-            prefetching: TaskSlot::default(),
+            feeding: TaskSlot::default(),
             checking: TaskSlot::default(),
             checks_pace: self.config.checks_pace,
             checks_settle: self.config.checks_settle,

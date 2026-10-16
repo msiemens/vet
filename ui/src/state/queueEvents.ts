@@ -38,6 +38,9 @@ export function queueEvent(event: SessionEvent, actions: QueueActions): void {
     case "threadsChanged":
       actions.load(false);
       return;
+    case "pullRequestListChanged":
+      actions.loadPullRequests();
+      return;
     case "pullRequestsChanged":
       actions.takeDetails(event.changed);
       return;

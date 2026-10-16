@@ -600,13 +600,20 @@ async fn azure_backend(data: &Path, base: &str) -> (Arc<Orchestrator>, Client) {
     (orchestrator, client)
 }
 
-async fn list(client: &Client, project: ProjectId) {
+pub(crate) async fn list(client: &Client, project: ProjectId) {
     let answer = client.call(Request::ListPullRequests { project }).await.unwrap();
     assert!(matches!(answer, Response::PullRequests { .. }), "{answer:?}");
 }
 
+/// Has the feed list again, as the refresh button does, and waits until the feed has nothing left
+/// to do.
+pub(crate) async fn refresh(client: &Client, project: ProjectId) {
+    client.call(Request::Fetch { project }).await.unwrap();
+    client.call(Request::WaitForQuiet { project }).await.unwrap();
+}
+
 /// The rows the list answers with, by pull request number.
-async fn rows(client: &Client, project: ProjectId) -> Vec<(u64, PullRequestRow)> {
+pub(crate) async fn rows(client: &Client, project: ProjectId) -> Vec<(u64, PullRequestRow)> {
     match client.call(Request::ListPullRequests { project }).await.unwrap() {
         Response::PullRequests { rows, .. } => rows
             .into_iter()
@@ -658,7 +665,7 @@ pub(crate) fn remote() -> RemoteKey {
 }
 
 /// How many discussions the fake answered.
-fn answered(mock: &Mutex<Mock>) -> usize {
+pub(crate) fn answered(mock: &Mutex<Mock>) -> usize {
     mock.lock().unwrap().discussions
 }
 
@@ -779,19 +786,17 @@ async fn the_details_of_a_listed_pull_request_are_fetched_ahead_and_a_changed_on
     assert_eq!(stored_description(repo.path(), 8).await.as_deref(), Some("second"));
     assert_eq!(answered(&mock), 2, "both are new");
 
-    // Nothing about #7 or #8 changed: neither is asked for again. The prefetch this listing
-    // started has ended, and made no call.
-    list(&client, project).await;
-    background_ended(&client, project, "prefetch").await;
+    // Nothing about #7 or #8 changed: a refresh lists again, and neither is asked for again.
+    refresh(&client, project).await;
     assert_eq!(answered(&mock), 2, "an unchanged pull request costs no call");
 
-    // #7 changed: it alone is fetched again.
+    // #7 changed: a refresh fetches it alone again.
     {
         let mut mock = mock.lock().unwrap();
         mock.prs[0].updated_at = "2024-05-03T12:00:00Z".to_owned();
         mock.prs[0].description = "third".to_owned();
     }
-    list(&client, project).await;
+    refresh(&client, project).await;
     assert_eq!(stored_description(repo.path(), 7).await.as_deref(), Some("third"));
     assert_eq!(answered(&mock), 3, "a changed pull request is fetched");
 }
@@ -826,20 +831,9 @@ async fn a_row_is_listed_without_its_threads_and_has_them_once_its_details_are_f
     }
 
     // The prefetch reads the details, and says that the list shows more of them now.
-    tokio::time::timeout(Duration::from_secs(30), async {
-        loop {
-            if let Some(ServerMessage::Event {
-                event: Event::PullRequestsChanged { .. },
-            }) = client.inbox.recv().await
-            {
-                break;
-            }
-        }
-    })
-    .await
-    .expect("the list was not announced to have changed");
+    announced_changes(&mut client, &[7, 8]).await;
 
-    // A fresh list, as the client would ask for after the announcement, is filled from what the
+    // A fresh read, as the client would make after the announcement, is filled from what the
     // details last read.
     for (number, row) in rows(&client, project).await {
         assert_eq!(row.unresolved_threads, 2, "#{number}");
@@ -1134,9 +1128,21 @@ async fn the_details_are_shown_from_the_store_after_a_restart_and_refreshed_afte
     assert_eq!(refreshed, "second", "the platform's answer replaces the stored copy");
 }
 
+/// Adds pull request 9 to what the fake lists.
+pub(crate) fn add_ninth(mock: &Mutex<Mock>) {
+    let mut mock = mock.lock().unwrap();
+    let head = mock.prs[0].head.clone();
+    mock.prs.push(Pr {
+        number: 9,
+        updated_at: "2024-05-04T12:00:00Z".to_owned(),
+        description: "ninth".to_owned(),
+        head,
+    });
+}
+
 /// Replaces the mock's list with `count` pull requests from 7 on, so a listing longer than the
 /// prefetch limit can be made.
-fn many_prs(mock: &Mutex<Mock>, count: u64) {
+pub(crate) fn many_prs(mock: &Mutex<Mock>, count: u64) {
     let mut mock = mock.lock().unwrap();
     let head = mock.prs[0].head.clone();
     mock.prs = (0..count)

@@ -175,6 +175,24 @@ pub(super) fn refs_below(repo: &gix::Repository, prefix: &str) -> Result<Vec<Ref
     Ok(tips)
 }
 
+/// Whether `descendant` is `ancestor` or has it in its history; false when either is not in the
+/// repository or is no commit id.
+pub(super) fn descends_from(repo: &gix::Repository, descendant: &str, ancestor: &str) -> Result<bool, GitError> {
+    let (Ok(descendant), Ok(ancestor)) = (
+        gix::ObjectId::from_hex(descendant.as_bytes()),
+        gix::ObjectId::from_hex(ancestor.as_bytes()),
+    ) else {
+        return Ok(false);
+    };
+    if !repo.has_object(descendant) || !repo.has_object(ancestor) {
+        return Ok(false);
+    }
+    match repo.merge_base(descendant, ancestor) {
+        Ok(base) => Ok(base.detach() == ancestor),
+        Err(_) => Ok(false),
+    }
+}
+
 /// Deletes the refs `names` that exist, all or none if one is outside [`DELETABLE`].
 pub(super) fn delete_refs(repo: &gix::Repository, names: &[String]) -> Result<(), GitError> {
     if let Some(outside) = names.iter().find(|n| !n.starts_with(DELETABLE) || n.contains("..")) {

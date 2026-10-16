@@ -119,9 +119,12 @@ pub enum Request {
         project: ProjectId,
     },
     /// The open pull requests of the project's GitHub and Azure DevOps remotes, most recently
-    /// updated first. Asks the platform, so it takes a moment and is
-    /// separate from `ListChangesets`; a repository the platform cannot answer for is named in
-    /// `sources` with the reason, a missing credential also as `CredentialsNeeded`, and the other
+    /// updated first, as the project's pull request feed keeps them. Answers at once while the
+    /// feed has a list; only a feed with none asks the platforms, and then waits for that listing.
+    /// Every row carries the review state Vet knows and what the details last read add to it, so a
+    /// read after `PullRequestsChanged` shows the same rows. A different list arrives as
+    /// `PullRequestListChanged`. A repository the platform cannot answer for is named in `sources`
+    /// with the reason, a missing credential also as `CredentialsNeeded`, and the other
     /// repositories still list. Answers with `Response::PullRequests`.
     ListPullRequests {
         project: ProjectId,

@@ -2,24 +2,14 @@
 //! and not to a session.
 
 use vet_app::changeset::Source;
-use vet_app::fetch::Credentials;
-use vet_app::platform::{Credential, normalize_host};
+use vet_app::platform::normalize_host;
 use vet_infra::clock::unix_now;
 use vet_mapping as mapping;
 use vet_protocol::{Event, Response, Secret};
 
+use crate::Orchestrator;
 use crate::error::Result;
 use crate::sync::sync_in_background;
-use crate::{Orchestrator, PlatformAccounts};
-
-/// The accounts the process holds, as the credentials a fetch uses.
-pub(crate) struct Held<'a>(pub(crate) &'a PlatformAccounts);
-
-impl Credentials for Held<'_> {
-    async fn credential(&self, host: &str) -> Option<Credential> {
-        self.0.credential(host, unix_now()).await
-    }
-}
 
 impl Orchestrator {
     /// The accounts.
@@ -54,11 +44,13 @@ impl Orchestrator {
         })
     }
 
-    /// The credential of `host` changed: the connections of the process are told, and the open
-    /// pull requests of the host are synced again with it.
+    /// The credential of `host` changed: the connections of the process are told, every open
+    /// project's pull request feed lists again, and the open pull requests of the host are synced
+    /// again with it.
     async fn accounts_changed(&self, host: &str) {
         self.process_subscribers.broadcast(Event::AccountsChanged);
         for open in self.projects.all().await {
+            open.feed().accounts();
             let Some(booted) = open.booted_now() else {
                 continue;
             };

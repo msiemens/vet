@@ -65,6 +65,11 @@ impl<G: Fetcher> Fetch<G> {
         self.git.refs_below(prefix).await
     }
 
+    /// Whether the commit `descendant` is `ancestor` or has it in its history.
+    pub async fn descends_from(&self, descendant: &str, ancestor: &str) -> Result<bool, GitError> {
+        self.git.descends_from(descendant, ancestor).await
+    }
+
     /// Held while the pull requests of a listing are brought in: a second listing waits, and then
     /// finds what the first fetched instead of fetching it again.
     pub async fn listed_heads(&self) -> tokio::sync::MutexGuard<'_, ()> {
@@ -305,6 +310,10 @@ mod tests {
 
         async fn refs_below(&self, _: &str) -> Result<Vec<RefTip>, GitError> {
             unreachable!("nothing is deleted")
+        }
+
+        async fn descends_from(&self, _: &str, _: &str) -> Result<bool, GitError> {
+            unreachable!("no history is read")
         }
 
         async fn delete_refs(&self, _: Vec<String>) -> Result<(), GitError> {

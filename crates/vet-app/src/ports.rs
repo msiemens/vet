@@ -404,6 +404,9 @@ pub trait Fetcher {
     ) -> impl Future<Output = Result<(), GitError>> + Send;
     /// The refs whose names start with `prefix`, each with the commit it points to.
     fn refs_below(&self, prefix: &str) -> impl Future<Output = Result<Vec<RefTip>, GitError>> + Send;
+    /// Whether the commit `descendant` is `ancestor` or has it in its history. False when either
+    /// commit is not in the repository.
+    fn descends_from(&self, descendant: &str, ancestor: &str) -> impl Future<Output = Result<bool, GitError>> + Send;
     /// Deletes the refs `names`, which must all be below `refs/vet/pr/`, where the refs of fetched
     /// pull requests are kept. Fails, deleting nothing, if one is not; a ref that is not there is
     /// left out.

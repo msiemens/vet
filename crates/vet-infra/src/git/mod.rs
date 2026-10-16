@@ -424,6 +424,12 @@ impl Fetcher for GixRepo {
         self.blocking(move |i| fetch::refs_below(&i.open()?, &prefix)).await
     }
 
+    async fn descends_from(&self, descendant: &str, ancestor: &str) -> Result<bool, GitError> {
+        let (descendant, ancestor) = (descendant.to_owned(), ancestor.to_owned());
+        self.blocking(move |i| fetch::descends_from(&i.open()?, &descendant, &ancestor))
+            .await
+    }
+
     async fn delete_refs(&self, names: Vec<String>) -> Result<(), GitError> {
         self.blocking(move |i| fetch::delete_refs(&i.open()?, &names)).await
     }

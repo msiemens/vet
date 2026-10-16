@@ -439,6 +439,39 @@ async fn a_fork_push_the_platform_names_an_old_head_for_is_taken_in() {
     push_case(&mock, &fake, repo, scratch, &served, push_branch_with_a_stale_detail).await;
 }
 
+/// The feed lists again on every fetch and tick, and the platform's list still names the old head:
+/// the newer head a push brought in stays where it is.
+#[tokio::test]
+async fn a_feed_cycle_leaves_a_head_newer_than_the_platforms_list_in_place() {
+    let (mock, fake, repo, scratch, served) = fixture();
+    mock.lock().unwrap().fork = true;
+    let rig = Rig::start(&fake, repo, scratch).await;
+    rig.open().await;
+    rig.toggle_file("a.txt").await;
+
+    push_branch_with_a_stale_detail(&mock, &served);
+    rig.fetch().await;
+    assert_eq!(hunks(&rig.manifest().await, "a.txt").len(), 3, "the push is taken in");
+
+    rig.fetch().await;
+    rig.client
+        .call(Request::WaitForQuiet { project: rig.project })
+        .await
+        .unwrap();
+
+    let refs = git(
+        rig._repo.path(),
+        &["for-each-ref", "--format=%(refname) %(objectname)", "refs/vet/pr/"],
+    );
+    let held = refs
+        .lines()
+        .filter_map(|line| line.split_once(' '))
+        .find_map(|(name, commit)| name.ends_with("/7/head").then_some(commit))
+        .unwrap_or_else(|| panic!("no head ref of #7 in {refs}"));
+    assert_eq!(held, served.head2, "the ref is still at the newest push");
+    assert_eq!(hunks(&rig.manifest().await, "a.txt").len(), 3);
+}
+
 /// The same, with every changed file marked seen in one bulk request rather than one by one.
 #[tokio::test]
 async fn a_push_after_marking_everything_seen_leaves_the_changed_lines_unseen() {
@@ -543,10 +576,10 @@ fn push_branch(served: &Served) {
 }
 
 #[tokio::test]
-async fn a_push_noticed_by_the_queue_listing_leaves_the_changed_lines_unseen() {
+async fn a_push_noticed_by_the_feed_listing_leaves_the_changed_lines_unseen() {
     let (mock, fake, repo, scratch, served) = fixture();
     let rig = Rig::start(&fake, repo, scratch).await;
-    // The queue lists the pull request, which fetches its head; opening it shows the first push.
+    // The feed lists the pull request, which fetches its head; opening it shows the first push.
     rig.client
         .call(Request::ListPullRequests { project: rig.project })
         .await
@@ -558,10 +591,15 @@ async fn a_push_noticed_by_the_queue_listing_leaves_the_changed_lines_unseen() {
         [HunkState::Seen, HunkState::Seen]
     );
 
-    // The author pushes; the queue lists again, which fetches the new head.
+    // The author pushes; a new token for the account has the feed list again, which fetches the
+    // new head (no git fetch of the remotes is made).
     push_again(&mock, &served);
     rig.client
-        .call(Request::ListPullRequests { project: rig.project })
+        .call(Request::SetCredentials {
+            host: "dev.azure.com/contoso".into(),
+            token: Secret("pat_secret_2".into()),
+            validate: false,
+        })
         .await
         .unwrap();
 

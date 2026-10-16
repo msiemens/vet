@@ -6,6 +6,7 @@ mod caches;
 mod cancel;
 mod checks;
 mod common;
+mod feed;
 mod fetch;
 mod load;
 mod preferences;

@@ -22,8 +22,9 @@ pub enum Event {
     CredentialsNeeded { host: String },
     /// A credential was given (`SetCredentials`, unless the token is the one held already
     /// and was not to be checked) or removed (`RemoveCredentials`): what `Accounts` says, and
-    /// which pull requests `ListPullRequests` finds, may have changed. Sent to every
-    /// connection that asked to `Subscribe`. The open pull requests of the
+    /// which pull requests the feed of each open project finds, may have changed. Sent to every
+    /// connection that asked to `Subscribe`. Every open project's pull request feed lists again,
+    /// and announces a different list as `PullRequestListChanged`; the open pull requests of the
     /// host are synced again, which they announce as usual.
     AccountsChanged,
     /// The recent list changed (`RecordRecentProject`, `ForgetRecentProject`): ask for
@@ -68,9 +69,13 @@ pub enum Event {
     /// fetch of it found, or what analysis may execute (`SetProjectTrusted`,
     /// `TrustPullRequest`). Fetch the manifest again.
     TargetChanged { project: ProjectId },
-    /// What `ListChangesets` and `ListPullRequests` list may have changed: a fetch moved
-    /// branches or pull request heads, or a review finished. List again.
+    /// What `ListChangesets` lists, or the lines of the queue's rows, may have changed: a fetch
+    /// moved branches, the pull request feed brought in pull request heads, or a review finished.
+    /// The feed announces a different list as `PullRequestListChanged`. List the changesets again.
     ChangesetsChanged { project: ProjectId },
+    /// The pull request feed published a different list. Read `ListPullRequests` again; it answers
+    /// from the feed and asks no platform while the list is kept.
+    PullRequestListChanged { project: ProjectId },
     /// What `ListPullRequests` lists of some pull requests changed because their details were
     /// read, which the platform's list leaves out. `changed` carries, for each, what its details
     /// add to its row; patch those rows, do not list again.

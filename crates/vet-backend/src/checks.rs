@@ -35,7 +35,11 @@ pub(crate) fn refresh_checks_after_action(open: Arc<Open>) {
 
 fn refresh(open: Arc<Open>, settle: Option<Duration>) {
     let pace = open.checks_pace();
-    let task = tokio::spawn(crate::open::tracked(&open, "checks", run(open.clone(), pace, settle)));
+    let task = tokio::spawn(crate::background::tracked(
+        &open,
+        "checks",
+        run(open.clone(), pace, settle),
+    ));
     open.keep_checking(task.abort_handle());
 }
 

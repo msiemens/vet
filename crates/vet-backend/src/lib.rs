@@ -8,6 +8,7 @@
 mod accounts;
 mod analysis;
 mod announce;
+mod background;
 mod caches;
 mod changesets;
 mod checks;
@@ -15,6 +16,7 @@ mod checks;
 mod contract;
 mod error;
 mod events;
+mod feed;
 mod fetch;
 mod highlight;
 mod hosting;
@@ -160,7 +162,7 @@ pub struct Orchestrator {
     analysis_failures: Arc<analysis::Failures>,
     /// How often each project's background tasks were started and how many run now: what
     /// `Request::WaitForQuiet` waits on, and what the tests watch.
-    background: Arc<open::Background>,
+    background: Arc<background::Background>,
 }
 
 #[cfg(debug_assertions)]
@@ -753,7 +755,7 @@ fn start_servers_in_background(open: Arc<Open>) {
             booted.retire_disallowed_servers().await;
         }
     };
-    tokio::spawn(crate::open::tracked(&open, "retire", retire));
+    tokio::spawn(crate::background::tracked(&open, "retire", retire));
     if !open.screens.shown() {
         return;
     }
@@ -765,7 +767,7 @@ fn start_servers_in_background(open: Arc<Open>) {
             booted.start_servers().await;
         }
     };
-    let task = crate::open::tracked(&open, "servers", task);
+    let task = crate::background::tracked(&open, "servers", task);
     tokio::spawn(task);
 }
 

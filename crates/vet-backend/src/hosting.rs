@@ -5,19 +5,30 @@
 
 use std::sync::{Arc, Mutex, Weak};
 
+use vet_app::fetch::Credentials;
 use vet_app::platform::{
-    CheckLog, CommentRef, CommitChecks, Discussion, Health, Outcome, PipelineAction, Platform, PlatformComment,
-    PlatformError, PlatformKind, PlatformTraits, PullRequestCache, PullRequestDetail, PullRequestListing,
-    PullRequestQuery, RemoteKey, Standing, Step, Submission, Submitted, Viewer, Watched,
+    CheckLog, CommentRef, CommitChecks, Credential, Discussion, Health, Outcome, PipelineAction, Platform,
+    PlatformComment, PlatformError, PlatformKind, PlatformTraits, PullRequestCache, PullRequestDetail,
+    PullRequestListing, PullRequestQuery, RemoteKey, Standing, Step, Submission, Submitted, Viewer, Watched,
 };
 use vet_app::registry::Subscribers;
 use vet_core::review::Verdict;
+use vet_infra::clock::unix_now;
 use vet_mapping as mapping;
 use vet_protocol::{Event, Notification, PlatformConnection, ProjectId, SyncStopReason};
 
 use crate::events::Connection;
 use crate::mutex::lock;
-use crate::{AzureDevOps, GitHub};
+use crate::{AzureDevOps, GitHub, PlatformAccounts};
+
+/// The accounts the process holds, as the credentials a fetch uses.
+pub(crate) struct Held<'a>(pub(crate) &'a PlatformAccounts);
+
+impl Credentials for Held<'_> {
+    async fn credential(&self, host: &str) -> Option<Credential> {
+        self.0.credential(host, unix_now()).await
+    }
+}
 
 /// An open project, which hears of the platforms' standing.
 pub(crate) struct Announcer {
