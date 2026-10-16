@@ -6,11 +6,13 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 
-#[cfg(debug_assertions)]
-use crate::common::background_ended;
 use crate::common::{Client, config, git, init, write};
+#[cfg(debug_assertions)]
+use crate::common::{background_ended, background_live, background_started};
 use tempfile::TempDir;
 use vet_backend::{Config, Orchestrator, open_store};
+#[cfg(debug_assertions)]
+use vet_infra::platform::fake::{Fake, Seen};
 use vet_protocol::{
     ChangesetKey, Event, Manifest, ProjectId, Request, Response, ServerMessage, TaskKind, TaskState, VersionInfo, View,
 };
@@ -165,6 +167,11 @@ fn fetched(event: &Event) -> Option<()> {
     matches!(event, Event::ChangesetsChanged { .. }).then_some(())
 }
 
+/// A fetch ended: the timer's fetch at open, or one the viewer asked for.
+fn fetch_finished(event: &Event) -> Option<()> {
+    matches!(event, Event::Task(t) if t.kind == TaskKind::Fetch && t.state == TaskState::Finished).then_some(())
+}
+
 fn fetch_task_states(seen: &[Event]) -> Vec<TaskState> {
     seen.iter()
         .filter_map(|e| match e {
@@ -174,6 +181,70 @@ fn fetch_task_states(seen: &[Event]) -> Vec<TaskState> {
         .collect()
 }
 
+/// Everything the client has heard and not yet read.
+#[cfg(debug_assertions)]
+fn pending(client: &mut Client) -> Vec<Event> {
+    let mut events = Vec::new();
+    while let Ok(message) = client.inbox.try_recv() {
+        if let ServerMessage::Event { event } = message {
+            events.push(event);
+        }
+    }
+    events
+}
+
+/// The HTTP requests the platform fake has answered.
+#[cfg(debug_assertions)]
+fn calls(fake: &Fake) -> usize {
+    fake.requests().len()
+}
+
+/// The requests the fake answered after the first `before`.
+#[cfg(debug_assertions)]
+fn since(fake: &Fake, before: usize) -> Vec<Seen> {
+    fake.requests().split_off(before)
+}
+
+/// A read of the pull request's own detail, which `follow_pull_request` makes: a push is looked
+/// for there, not in the discussion.
+#[cfg(debug_assertions)]
+fn is_pull_request(request: &Seen) -> bool {
+    request.body.contains("baseRefOid")
+}
+
+/// A read of the pull request's discussion, which the comment sync makes.
+#[cfg(debug_assertions)]
+fn is_discussion(request: &Seen) -> bool {
+    request.body.contains("body isDraft state")
+}
+
+/// Waits until the fake has seen no new request for long enough that the work of opening the
+/// project, its pull request's own sync and its checks is over.
+#[cfg(debug_assertions)]
+async fn at_rest(fake: &Fake) {
+    let mut last = calls(fake);
+    for _ in 0..100 {
+        tokio::time::sleep(Duration::from_millis(200)).await;
+        let now = calls(fake);
+        if now == last {
+            return;
+        }
+        last = now;
+    }
+    panic!("the platform was still being asked");
+}
+
+/// Waits for one periodic fetch to run and end; its announcement and its platform calls are part
+/// of it, so once it has ended they have happened.
+#[cfg(debug_assertions)]
+async fn next_tick(client: &Client, project: ProjectId) {
+    let before = background_started(client, project, "fetch");
+    while background_started(client, project, "fetch") <= before {
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+    background_live(client, project, "fetch", 0).await;
+}
+
 #[tokio::test]
 async fn a_fetch_on_demand_brings_the_remote_commits_and_tells_the_subscribers() {
     let remote = Remote::new();
@@ -181,7 +252,7 @@ async fn a_fetch_on_demand_brings_the_remote_commits_and_tells_the_subscribers()
     let mut client = Client::new(&handler);
     let project = client.open(&remote.project).await;
     let mut seen = Vec::new();
-    until(&mut client, &mut seen, fetched).await;
+    until(&mut client, &mut seen, fetch_finished).await;
     let (main, head) = (remote.rev("refs/heads/main"), remote.rev("HEAD"));
 
     remote.push_commit("one");
@@ -363,7 +434,7 @@ async fn the_periodic_fetch_fires_on_its_interval() {
     let mut client = Client::new(&handler);
     client.open(&remote.project).await;
     let mut seen = Vec::new();
-    until(&mut client, &mut seen, fetched).await;
+    until(&mut client, &mut seen, fetch_finished).await;
 
     remote.push_commit("one");
 
@@ -379,6 +450,150 @@ async fn the_periodic_fetch_fires_on_its_interval() {
     assert!(finished >= 2, "fetched at open and again: {seen:#?}");
 }
 
+/// Opens pull request 7 of the fake platform on view.
+#[cfg(debug_assertions)]
+async fn open_pr(client: &Client, project: ProjectId) {
+    client
+        .call(Request::OpenChangeset {
+            project,
+            changeset: ChangesetKey::PullRequest {
+                remote: crate::prefetch::remote().to_string(),
+                number: 7,
+            },
+        })
+        .await
+        .unwrap();
+}
+
+/// Waits for what opening the project and its pull request left running: the fetch at open, the
+/// pull request's own sync and, when there is one, its checks. Then nothing but a periodic tick
+/// asks the platform.
+#[cfg(debug_assertions)]
+async fn settle(client: &mut Client, fake: &Fake, project: ProjectId, checks: bool) {
+    let mut seen = Vec::new();
+    until(client, &mut seen, fetched).await;
+    background_live(client, project, "fetch", 0).await;
+    if checks {
+        background_ended(client, project, "checks").await;
+    }
+    at_rest(fake).await;
+    pending(client);
+}
+
+/// A tick that moved no ref announces nothing and does not follow the pull request on view, but
+/// still syncs its comments, which change without a push.
+#[cfg(debug_assertions)]
+#[tokio::test]
+async fn a_periodic_fetch_that_moved_no_ref_syncs_only_the_comments() {
+    let (_mock, fake, repo, _scratch) = crate::prefetch::fixture();
+    let data = tempfile::tempdir().unwrap();
+    let config = Config {
+        fetch_interval: Duration::from_millis(1500),
+        ..crate::prefetch::config()
+    };
+    let (_backend, mut client) = crate::prefetch::backend_with(data.path(), &fake.base(), config).await;
+    let project = client.open(repo.path()).await;
+    open_pr(&client, project).await;
+    settle(&mut client, &fake, project, true).await;
+
+    let before = calls(&fake);
+    next_tick(&client, project).await;
+    let heard = pending(&mut client);
+    let asked = since(&fake, before);
+
+    assert!(
+        !heard.iter().any(|e| matches!(e, Event::ChangesetsChanged { .. })),
+        "a tick with no ref moved recounted the queue: {heard:#?}"
+    );
+    assert!(
+        !asked.iter().any(is_pull_request),
+        "a tick with no ref moved still looked at the pull request: {asked:#?}"
+    );
+    assert!(
+        !asked.is_empty(),
+        "a tick with no ref moved did not sync the comments: {heard:#?}"
+    );
+    assert_eq!(
+        asked.len(),
+        asked.iter().filter(|r| is_discussion(r)).count(),
+        "a tick with no ref moved asked the platform for more than the comments: {asked:#?}"
+    );
+}
+
+/// A tick that moved no ref with no pull request on view has nothing to do at all.
+#[cfg(debug_assertions)]
+#[tokio::test]
+async fn a_periodic_fetch_that_moved_no_ref_without_a_pull_request_asks_no_platform() {
+    let (_mock, fake, repo, _scratch) = crate::prefetch::fixture();
+    let data = tempfile::tempdir().unwrap();
+    let config = Config {
+        fetch_interval: Duration::from_millis(1500),
+        ..crate::prefetch::config()
+    };
+    let (_backend, mut client) = crate::prefetch::backend_with(data.path(), &fake.base(), config).await;
+    let project = client.open(repo.path()).await;
+    settle(&mut client, &fake, project, false).await;
+
+    let before = calls(&fake);
+    next_tick(&client, project).await;
+    let heard = pending(&mut client);
+
+    assert!(
+        !heard.iter().any(|e| matches!(e, Event::ChangesetsChanged { .. })),
+        "a tick with no ref moved recounted the queue: {heard:#?}"
+    );
+    assert_eq!(
+        before,
+        calls(&fake),
+        "a tick with no pull request on view asked the platform"
+    );
+}
+
+/// A tick that moved a ref announces it, follows the pull request on view and syncs its comments.
+#[cfg(debug_assertions)]
+#[tokio::test]
+async fn a_periodic_fetch_that_moved_a_ref_announces_follows_and_syncs() {
+    let (_mock, fake, repo, scratch) = crate::prefetch::fixture();
+    let data = tempfile::tempdir().unwrap();
+    let config = Config {
+        fetch_interval: Duration::from_millis(1500),
+        ..crate::prefetch::config()
+    };
+    let (_backend, mut client) = crate::prefetch::backend_with(data.path(), &fake.base(), config).await;
+    let project = client.open(repo.path()).await;
+    open_pr(&client, project).await;
+    settle(&mut client, &fake, project, true).await;
+
+    // The remote's `main` moves on, as a push to the repository does.
+    git(
+        &scratch.path().join("work"),
+        &[
+            "push",
+            "-q",
+            scratch.path().join("served.git").to_str().unwrap(),
+            "feature:refs/heads/main",
+        ],
+    );
+
+    let before = calls(&fake);
+    next_tick(&client, project).await;
+    let heard = pending(&mut client);
+    let asked = since(&fake, before);
+
+    assert!(
+        heard.iter().any(|e| matches!(e, Event::ChangesetsChanged { .. })),
+        "a tick that moved a ref did not recount the queue: {heard:#?}"
+    );
+    assert!(
+        asked.iter().any(is_pull_request),
+        "a tick that moved a ref did not look at the pull request: {asked:#?}"
+    );
+    assert!(
+        asked.iter().any(is_discussion),
+        "a tick that moved a ref did not sync the comments: {asked:#?}"
+    );
+}
+
 #[cfg(debug_assertions)]
 #[tokio::test]
 async fn a_closed_project_stops_fetching() {
@@ -387,7 +602,7 @@ async fn a_closed_project_stops_fetching() {
     let mut client = Client::new(&handler);
     let project = client.open(&remote.project).await;
     let mut seen = Vec::new();
-    until(&mut client, &mut seen, fetched).await;
+    until(&mut client, &mut seen, fetch_finished).await;
     client.call(Request::CloseProject { project }).await.unwrap();
     // The periodic task ends with the project: it cannot fetch again.
     background_ended(&client, project, "fetch").await;

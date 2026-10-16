@@ -170,29 +170,39 @@ impl<G: Fetcher> Fetch<G> {
         if remotes.is_empty() {
             return Ok(Ran {
                 fetched: 0,
+                updated: 0,
                 failure: None,
             });
         }
         let task = self.tasks.start(TaskKind::Fetch, title(&remotes));
         let total = remotes.len() as u32;
         let mut failures = Vec::new();
+        let mut updated = 0;
         for (done, remote) in remotes.iter().enumerate() {
             task.report(Some((done as u32, total)), Some(remote.name.clone()));
             let auth = authentication(credentials, remote).await;
-            if let Err(e) = self.git.fetch(&remote.name, auth).await {
-                tracing::warn!(remote = %remote.name, error = %e, "fetch failed");
-                failures.push(format!("{}: {e}", remote.name));
+            match self.git.fetch(&remote.name, auth).await {
+                Ok(refs) => updated += refs,
+                Err(e) => {
+                    tracing::warn!(remote = %remote.name, error = %e, "fetch failed");
+                    failures.push(format!("{}: {e}", remote.name));
+                }
             }
         }
         let fetched = remotes.len() - failures.len();
         if failures.is_empty() {
             task.finish();
-            return Ok(Ran { fetched, failure: None });
+            return Ok(Ran {
+                fetched,
+                updated,
+                failure: None,
+            });
         }
         let message = failures.join("; ");
         task.fail(message.clone());
         Ok(Ran {
             fetched,
+            updated,
             failure: Some(message),
         })
     }
@@ -203,6 +213,8 @@ impl<G: Fetcher> Fetch<G> {
 pub struct Ran {
     /// How many remotes were fetched.
     pub fetched: usize,
+    /// How many refs the fetched remotes updated.
+    pub updated: usize,
     /// Why the others were not, as the task failed with it, naming each remote.
     pub failure: Option<String>,
 }
@@ -254,6 +266,8 @@ mod tests {
     struct Remotes {
         remotes: Vec<RemoteInfo>,
         failing: Vec<&'static str>,
+        /// How many refs each successful remote reports it updated.
+        updated: usize,
         fetched: Fetched,
     }
 
@@ -268,7 +282,7 @@ mod tests {
             if self.failing.contains(&remote) {
                 return Err(GitError::Remote("connection refused".into()));
             }
-            Ok(1)
+            Ok(self.updated)
         }
 
         async fn fetch_refs(
@@ -322,6 +336,15 @@ mod tests {
         remotes: Vec<RemoteInfo>,
         failing: Vec<&'static str>,
     ) -> (Fetch<Remotes>, Arc<StdMutex<Vec<Task>>>, Fetched) {
+        fetching_updating(remotes, failing, 1)
+    }
+
+    /// [`fetching`] with the remotes that fetch reporting `updated` refs each.
+    fn fetching_updating(
+        remotes: Vec<RemoteInfo>,
+        failing: Vec<&'static str>,
+        updated: usize,
+    ) -> (Fetch<Remotes>, Arc<StdMutex<Vec<Task>>>, Fetched) {
         let heard = Arc::new(StdMutex::new(Vec::new()));
         let sink = heard.clone();
         let tasks = Tasks::new(Duration::ZERO, Box::new(move |t| sink.lock().unwrap().push(t)));
@@ -329,6 +352,7 @@ mod tests {
         let git = Remotes {
             remotes,
             failing,
+            updated,
             fetched: fetched.clone(),
         };
         (Fetch::new(git, tasks), heard, fetched)
@@ -344,6 +368,7 @@ mod tests {
             result,
             Ok(Ran {
                 fetched: 1,
+                updated: 1,
                 failure: Some("origin: connection refused".into())
             })
         );
@@ -371,6 +396,7 @@ mod tests {
             result,
             Ok(Ran {
                 fetched: 3,
+                updated: 3,
                 failure: None
             })
         );
@@ -438,9 +464,35 @@ mod tests {
             fetch.run(&GitHubOnly).await,
             Ok(Ran {
                 fetched: 0,
+                updated: 0,
                 failure: None
             })
         );
         assert!(heard.lock().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn what_the_remotes_updated_is_reported_apart_from_how_many_were_reached() {
+        let (quiet, _, _) = fetching_updating(vec![remote("origin", None), remote("backup", None)], vec![], 0);
+        let (busy, _, _) = fetching_updating(vec![remote("origin", None)], vec![], 4);
+
+        assert_eq!(
+            quiet.run(&GitHubOnly).await,
+            Ok(Ran {
+                fetched: 2,
+                updated: 0,
+                failure: None
+            }),
+            "both remotes answered, neither moved a ref"
+        );
+        assert_eq!(
+            busy.run(&GitHubOnly).await,
+            Ok(Ran {
+                fetched: 1,
+                updated: 4,
+                failure: None
+            }),
+            "the reference count, not the remote count"
+        );
     }
 }

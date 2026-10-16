@@ -19,27 +19,45 @@ impl Orchestrator {
     /// Fetches now. A fetch that fails fails its task and not this request.
     pub(crate) async fn fetch(&self, id: ProjectId) -> Result<Response> {
         let open = self.find(id).await?;
-        fetch_and_report(&open).await;
+        fetch_and_report(&open, Asked::Viewer).await;
         Ok(Response::Done)
     }
 }
 
-/// Fetches the remotes, then tells every subscriber that the branches may have moved, and looks
-/// at the pull request on view for a push. A remote that
-/// failed is named by the failed task, where the footer shows it; what the others brought counts.
-async fn fetch_and_report(open: &Arc<Open>) {
+/// Who asked for a fetch: what its follow-ups still do when no ref moved.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Asked {
+    /// The viewer, through `Request::Fetch`: the fetch is reported whenever a remote was reached.
+    Viewer,
+    /// The timer: a fetch that moved a ref is announced and followed; either way the comments of
+    /// the pull request on view are synced, which change without a push.
+    Timer,
+}
+
+/// Fetches the remotes, then tells every subscriber that the branches may have moved, follows the
+/// pull request on view for a push, and syncs its threads. A remote that failed is named by the
+/// failed task, where the footer shows it; what the others brought counts. A timer fetch that
+/// moved no ref skips the announcement and the follow but still syncs the threads, which change
+/// without a push.
+async fn fetch_and_report(open: &Arc<Open>, asked: Asked) {
     let Ok(ran) = open.fetch.run(&Held(&open.accounts)).await else {
         return;
     };
-    if ran.fetched == 0 {
+    let moved = match asked {
+        Asked::Viewer => ran.fetched > 0,
+        Asked::Timer => ran.updated > 0,
+    };
+    if !moved && asked == Asked::Viewer {
         return;
     }
     let Ok(booted) = open.booted().await else {
         return;
     };
-    open.subscribers
-        .broadcast(Event::ChangesetsChanged { project: open.id });
-    follow_pull_request(open, booted).await;
+    if moved {
+        open.subscribers
+            .broadcast(Event::ChangesetsChanged { project: open.id });
+        follow_pull_request(open, booted).await;
+    }
     sync_pull_request(open, booted).await;
 }
 
@@ -69,7 +87,7 @@ pub(crate) fn fetch_periodically(open: &Arc<Open>, interval: Duration) {
         let session = session.clone();
         async move {
             if let Some(open) = session.upgrade() {
-                crate::open::tracked(&open, "fetch", fetch_and_report(&open)).await;
+                crate::open::tracked(&open, "fetch", fetch_and_report(&open, Asked::Timer)).await;
             }
         }
     });
