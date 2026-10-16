@@ -26,7 +26,7 @@ const REQUESTS_THAT_NAME_A_VIEW = new Set<Request["type"]>([
   "createThread",
 ]);
 
-/** The requests that change review state or add comments: a step says how many of them it sends. */
+/** The requests that change review state or add comments: a step that does not name them sends none. */
 const MARKS = new Set<Request["type"]>([
   "toggleHunk",
   "toggleFlag",
@@ -38,8 +38,17 @@ const MARKS = new Set<Request["type"]>([
 
 const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
 
-/** A request that reads the whole changeset: a manifest of the changeset view. */
-const isWholeFetch = (r: Request) => r.type === "manifest" && r.view.type === "changeset";
+/** How many requests of each kind a step sent. A manifest is told by its view: `manifest(commit)`. */
+export type RequestMap = Record<string, number>;
+
+const kindOf = (r: Request) => (r.type === "manifest" ? `manifest(${r.view.type})` : r.type);
+
+/** The kinds of `requests` with their counts; `waitForQuiet`, which the harness itself sends, is left out. */
+function requestMap(requests: readonly Request[]): RequestMap {
+  const map: RequestMap = {};
+  for (const r of requests) if (r.type !== "waitForQuiet") map[kindOf(r)] = (map[kindOf(r)] ?? 0) + 1;
+  return map;
+}
 
 export interface Harness {
   readonly fixture: Fixture;
@@ -49,21 +58,20 @@ export interface Harness {
   readonly sent: Request[];
   /**
    * Runs `run`, waits until the window has settled, then compares the stores with the backend. The step
-   * also fails unless the window sent `marks` review requests (default none), the backend answered every
-   * request, and the window's notice is `notice` (default none). With `listings` it also fails unless the
-   * window asked for the pull requests that many times, or unless the backend rejected `rejected`
-   * requests (default none).
+   * also fails unless the backend answered every request, the window's notice is `notice` (default none)
+   * and the backend rejected `rejected` requests (default none). It fails unless the window sent
+   * `sent`: how many requests of each kind (a manifest is told by its view, `manifest(commit)`). Kinds
+   * `sent` leaves out are free, except the review requests, which are none unless named; with `exact`
+   * no other kind is sent at all.
    */
   step(
     name: string,
     run: () => unknown,
     expected?: {
-      marks?: number;
+      sent?: RequestMap;
+      exact?: boolean;
       notice?: string;
-      listings?: number;
       rejected?: number;
-      commits?: number;
-      whole?: number;
     },
   ): Promise<void>;
   /** Resolves when `condition` holds; fails after a while. */
@@ -157,7 +165,7 @@ export async function runSession(name: SessionName, script: (h: Harness) => Prom
         // the stores have seen everything the backend did.
         await app.waitForQuiet();
         // The window reacts to those messages with reads of its own, some debounced.
-        if (inFlight === 0 && !queue.settling) return;
+        if (inFlight === 0 && !queue.settling && !opened.session?.settling) return;
         if (Date.now() - start > 30_000) throw new Error("the window did not settle");
       }
     };
@@ -167,10 +175,7 @@ export async function runSession(name: SessionName, script: (h: Harness) => Prom
       other,
       sent,
       async step(name, run, expected = {}) {
-        const marksBefore = sent.filter((r) => MARKS.has(r.type)).length;
-        const listingsBefore = sent.filter((r) => r.type === "listPullRequests").length;
-        const commitsBefore = sent.filter((r) => r.type === "commits").length;
-        const wholeBefore = sent.filter(isWholeFetch).length;
+        const before = sent.length;
         failed.length = 0;
         notices.close();
         await run();
@@ -179,18 +184,12 @@ export async function runSession(name: SessionName, script: (h: Harness) => Prom
         const violations = [...wrongViews.splice(0), ...(await checkInvariants(other))];
         const step = (what: string, ui: unknown, backend: unknown) =>
           violations.push({ invariant: "step", view: onView().view.type, what, ui, backend });
-        const marks = sent.filter((r) => MARKS.has(r.type)).length - marksBefore;
-        const wantMarks = expected.marks ?? 0;
-        if (marks !== wantMarks) step("the number of review requests the step sent", marks, wantMarks);
-        const listings = sent.filter((r) => r.type === "listPullRequests").length - listingsBefore;
-        if (expected.listings !== undefined && listings !== expected.listings)
-          step("the number of times the step asked for the pull requests", listings, expected.listings);
-        const commits = sent.filter((r) => r.type === "commits").length - commitsBefore;
-        if (expected.commits !== undefined && commits !== expected.commits)
-          step("the number of times the step asked for the commits", commits, expected.commits);
-        const whole = sent.filter(isWholeFetch).length - wholeBefore;
-        if (expected.whole !== undefined && whole !== expected.whole)
-          step("the number of times the step read the whole changeset", whole, expected.whole);
+        const got = requestMap(sent.slice(before));
+        const want = expected.sent ?? {};
+        const kinds = new Set([...Object.keys(want), ...Object.keys(got)]);
+        const checked = (kind: string) => expected.exact === true || (MARKS as Set<string>).has(kind) || kind in want;
+        const wrong = [...kinds].filter((kind) => checked(kind) && (got[kind] ?? 0) !== (want[kind] ?? 0));
+        if (wrong.length) step("the requests the step sent", got, want);
         if (failed.length !== (expected.rejected ?? 0)) step("requests the backend rejected", failed.slice(), []);
         if (notices.text !== expected.notice) step("the notice after the step", notices.text, expected.notice);
         results.push({ name, violations });

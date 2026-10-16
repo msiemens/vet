@@ -17,6 +17,7 @@ import type { SessionEvent } from "../../src/state/backend.ts";
 import { newSession } from "../../src/state/changesetSession.svelte.ts";
 import type { UsagesSpec } from "../../src/state/findSets.svelte.ts";
 import { opened } from "../../src/state/opened.svelte.ts";
+import { excludePath } from "../../src/state/projectRequests.ts";
 import { platform } from "../../src/state/platform.svelte.ts";
 import { shell } from "../../src/features/chrome/shell.svelte.ts";
 import { preferences } from "../../src/lib/preferences.svelte.ts";
@@ -29,7 +30,7 @@ import { serverList } from "../../src/state/serverList.svelte.ts";
 import { defaultRange, rangeView } from "../../src/state/timelineRange.ts";
 import type { ViewChange } from "../../src/state/viewChange.ts";
 import { newScope } from "../../src/state/viewScope.svelte.ts";
-import type { Harness } from "./harness.ts";
+import type { Harness, RequestMap } from "./harness.ts";
 import { onView } from "./onView.ts";
 import { type SessionName } from "./sessionNames.ts";
 
@@ -43,8 +44,8 @@ const REVIEW_ONLY = new Set<Request["type"]>(["versions", "commits", "pipelineSt
 
 const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
 
-/** A step that sends one review request. */
-const ONE = { marks: 1 };
+/** A step that sends one request of `type` and no other review request. */
+const once = (type: Request["type"], more: RequestMap = {}) => ({ sent: { [type]: 1, ...more } });
 
 /** Marks or flags as a click in the views on screen does, or in the ones built for `from`. */
 const hunk = (h: Harness, path: string, index: number, from = h.shown()) =>
@@ -93,17 +94,17 @@ export const sessions: Record<SessionName, (h: Harness) => Promise<void>> = {
   /** Marks, flags and unmarks in the changeset view. */
   async changeset(h) {
     await h.step("opened", () => undefined);
-    await h.step("hunk seen", () => hunk(h, "b.txt", 0), ONE);
-    await h.step("hunk flagged", () => flag(h, "b.txt", 1), ONE);
-    await h.step("hunk unseen", () => hunk(h, "b.txt", 0), ONE);
-    await h.step("file seen", () => file(h, "a.txt"), ONE);
-    await h.step("folder seen", () => directory(h, "src", true), ONE);
-    await h.step("folder unseen", () => directory(h, "src", false), ONE);
+    await h.step("hunk seen", () => hunk(h, "b.txt", 0), once("toggleHunk"));
+    await h.step("hunk flagged", () => flag(h, "b.txt", 1), once("toggleFlag"));
+    await h.step("hunk unseen", () => hunk(h, "b.txt", 0), once("toggleHunk"));
+    await h.step("file seen", () => file(h, "a.txt"), once("toggleFileSeen"));
+    await h.step("folder seen", () => directory(h, "src", true), once("setFilesSeen"));
+    await h.step("folder unseen", () => directory(h, "src", false), once("setFilesSeen"));
     await h.step(
       "thread opened",
       () =>
         h.asElement(() => onView().threads.create(h.shown(), { type: "changeset" }, "a note on the whole changeset")),
-      ONE,
+      once("createThread"),
     );
   },
 
@@ -111,7 +112,7 @@ export const sessions: Record<SessionName, (h: Harness) => Promise<void>> = {
   async push(h) {
     await opened.open({ type: "branch", name: "feature" });
     await h.until(() => opened.session?.facts?.target.changeset.type === "branch", "the branch");
-    await h.step("a file seen before the push", () => file(h, "a.txt"), ONE);
+    await h.step("a file seen before the push", () => file(h, "a.txt"), once("toggleFileSeen"));
     await h.step("the branch is pushed to", async () => {
       const before = opened.session?.layout?.shown.revision ?? -1;
       h.fixture.push("a.txt", "p1", [2, 10]);
@@ -122,7 +123,7 @@ export const sessions: Record<SessionName, (h: Harness) => Promise<void>> = {
   /** A new version, the range since the last review, marks in it, and back. */
   async range(h) {
     const heard = listenForViewChanges();
-    await h.step("hunk seen", () => hunk(h, "b.txt", 0), ONE);
+    await h.step("hunk seen", () => hunk(h, "b.txt", 0), once("toggleHunk"));
     heard();
     // A thread on a file the range does not touch: the changeset has it, the range does not.
     await h.step(
@@ -131,7 +132,7 @@ export const sessions: Record<SessionName, (h: Harness) => Promise<void>> = {
         h.asElement(() =>
           onView().threads.create(h.shown(), { type: "file", side: "target", path: "a.txt" }, "a note on a.txt"),
         ),
-      ONE,
+      once("createThread"),
     );
     await h.step("version settled", async () => {
       await settleVersion(h);
@@ -148,15 +149,15 @@ export const sessions: Record<SessionName, (h: Harness) => Promise<void>> = {
       if (inChangeset.threads.length === inRange.threads.length)
         throw new Error("the range lists the changeset's threads: the step cannot tell them apart");
     });
-    await h.step("flagged in range", () => flag(h, first(), 0), ONE);
-    await h.step("seen in range", () => hunk(h, first(), 1), ONE);
-    await h.step("unseen in range", () => hunk(h, first(), 1), ONE);
+    await h.step("flagged in range", () => flag(h, first(), 0), once("toggleFlag"));
+    await h.step("seen in range", () => hunk(h, first(), 1), once("toggleHunk"));
+    await h.step("unseen in range", () => hunk(h, first(), 1), once("toggleHunk"));
     expectChanges(heard(), []);
     await h.step("back to the changeset", async () => {
       await onView().setRange(undefined);
       expectChanges(heard(), ["start"]);
     });
-    await h.step("seen in the new version", () => hunk(h, "b.txt", 2), ONE);
+    await h.step("seen in the new version", () => hunk(h, "b.txt", 2), once("toggleHunk"));
     await h.step(
       "a range of versions that are gone gives way to the changeset",
       async () => {
@@ -182,7 +183,7 @@ export const sessions: Record<SessionName, (h: Harness) => Promise<void>> = {
    * nothing of it, and a settle reads it once.
    */
   async whole(h) {
-    await h.step("hunk seen", () => hunk(h, "b.txt", 0), ONE);
+    await h.step("hunk seen", () => hunk(h, "b.txt", 0), once("toggleHunk"));
     await h.step("version settled", () => settleVersion(h));
     await h.step("a range is shown", () => onView().setRange(defaultRange(onView().versions.items)));
     await h.step(
@@ -191,16 +192,16 @@ export const sessions: Record<SessionName, (h: Harness) => Promise<void>> = {
         void hunk(h, first(), 0);
         void hunk(h, first(), 1);
       },
-      { marks: 2, whole: 0 },
+      { sent: { toggleHunk: 2, "manifest(changeset)": 0 } },
     );
-    await h.step("opened the branch by commit", () => reviewByCommit(h), { commits: 1 });
+    await h.step("opened the branch by commit", () => reviewByCommit(h), { sent: { commits: 1 } });
     await h.step(
       "a burst of marks in a commit sends no whole-changeset fetch",
       () => {
         void hunk(h, first(), 0);
         void flag(h, first(), 1);
       },
-      { marks: 2, whole: 0 },
+      { sent: { toggleHunk: 1, toggleFlag: 1, "manifest(changeset)": 0 } },
     );
     await h.step(
       "a settle sends one whole-changeset fetch",
@@ -209,30 +210,111 @@ export const sessions: Record<SessionName, (h: Harness) => Promise<void>> = {
         h.fixture.push("a.txt", "p9", [2, 10, 30]);
         await h.until(() => (opened.session?.layout?.shown.revision ?? -1) > before, "the new revision");
       },
-      { whole: 1 },
+      { sent: { "manifest(changeset)": 1 } },
     );
   },
 
   /** The changeset reviewed by commit: marks, stepping, and the lens back. The store reads the commits again on each mark and view change. */
   async commits(h) {
     const heard = listenForViewChanges();
-    await h.step("opened the branch by commit", () => reviewByCommit(h), { commits: 1 });
+    await h.step("opened the branch by commit", () => reviewByCommit(h), { sent: { commits: 1 } });
     heard();
-    await h.step("seen in a commit", () => hunk(h, first(), 0), { ...ONE, commits: 2 });
+    await h.step("seen in a commit", () => hunk(h, first(), 0), once("toggleHunk", { commits: 1 }));
     await h.step(
       "next commit",
       async () => {
         await onView().showCommit(1);
         expectChanges(heard(), ["start"]);
       },
-      { commits: 1 },
+      { sent: { commits: 1 } },
     );
-    await h.step("flagged in a commit", () => flag(h, first(), 0), { ...ONE, commits: 2 });
-    await h.step("file seen in a commit", () => file(h, first()), { ...ONE, commits: 2 });
-    await h.step("last commit", () => onView().showCommit(2), { commits: 1 });
-    await h.step("lens back to the whole", () => onView().showLens("squash"), { commits: 0 });
-    await h.step("seen in the changeset", () => hunk(h, "a.txt", 0), { ...ONE, commits: 0 });
-    await h.step("by commit again", () => onView().showLens("perCommit"), { commits: 1 });
+    await h.step("flagged in a commit", () => flag(h, first(), 0), once("toggleFlag", { commits: 1 }));
+    await h.step("file seen in a commit", () => file(h, first()), once("toggleFileSeen", { commits: 1 }));
+    await h.step("last commit", () => onView().showCommit(2), { sent: { commits: 1 } });
+    await h.step("lens back to the whole", () => onView().showLens("squash"), { sent: { commits: 0 } });
+    await h.step("seen in the changeset", () => hunk(h, "a.txt", 0), once("toggleHunk", { commits: 0 }));
+    await h.step("by commit again", () => onView().showLens("perCommit"), { sent: { commits: 1 } });
+  },
+
+  /**
+   * The requests the window sends after each kind of change, pinned exactly: what a mark, a settle, a
+   * narrowing, an excluded path and the end of a review cost, in the changeset view and by commit. The
+   * first mark of a review starts it and is not pinned.
+   */
+  async requests(h) {
+    await h.step("the review is started", () => hunk(h, "b.txt", 0), once("toggleHunk"));
+    // What a change of the files in view makes the window read, in the changeset view.
+    const moved = { "manifest(changeset)": 1, threads: 1, versions: 1, listChangesets: 1 };
+    // And by commit: the commit's manifest, the commits' progress and the changeset's manifest too.
+    const movedByCommit = { ...moved, "manifest(commit)": 1, commits: 1 };
+    const finishedNotice = "Review finished with unseen changes left";
+    await h.step("a mark in the changeset view", () => hunk(h, "b.txt", 1), {
+      sent: { toggleHunk: 1, versions: 1, listChangesets: 1 },
+      exact: true,
+    });
+    await h.step(
+      "a thread in the changeset view",
+      () => h.asElement(() => onView().threads.create(h.shown(), { type: "changeset" }, "a note")),
+      { sent: { createThread: 1, threads: 1, listChangesets: 1 }, exact: true },
+    );
+    await h.step("a settle in the changeset view", () => settleVersion(h), { sent: moved, exact: true });
+    await h.step("a narrowing in the changeset view", () => onView().reviewOnly("src"), {
+      sent: { narrowReview: 1, ...moved },
+      exact: true,
+    });
+    await h.step("the narrowing ended", () => onView().narrow(undefined), {
+      sent: { narrowReview: 1, ...moved },
+      exact: true,
+    });
+    await h.step("a path excluded in the changeset view", () => excludePath("src/c.txt", false), {
+      sent: { excludePath: 1, ...moved },
+      exact: true,
+    });
+    await h.step("the review is finished in the changeset view", () => onView().finishReview(), {
+      sent: {
+        finishReview: 1,
+        "manifest(changeset)": 1,
+        threads: 1,
+        versions: 1,
+        listChangesets: 2,
+        changesetLines: 1,
+      },
+      exact: true,
+      notice: finishedNotice,
+    });
+    await h.step("the branch is opened by commit", () => reviewByCommit(h));
+    await h.step("the review by commit is started", () => hunk(h, first(), 0), once("toggleHunk"));
+    await h.step("a mark by commit", () => hunk(h, first(), 1), {
+      sent: { toggleHunk: 1, versions: 1, commits: 1, listChangesets: 1 },
+      exact: true,
+    });
+    await h.step(
+      "a settle by commit",
+      async () => {
+        const before = opened.session?.layout?.shown.revision ?? -1;
+        h.fixture.push("a.txt", "p9", [2, 10, 30]);
+        await h.until(() => (opened.session?.layout?.shown.revision ?? -1) > before, "the new revision");
+      },
+      { sent: { ...movedByCommit, changesetLines: 1 }, exact: true },
+    );
+    await h.step("a path excluded by commit", () => excludePath("b.txt", false), {
+      sent: { excludePath: 1, ...movedByCommit },
+      exact: true,
+    });
+    await h.step("the review is finished by commit", () => onView().finishReview(), {
+      sent: {
+        finishReview: 1,
+        "manifest(commit)": 1,
+        "manifest(changeset)": 1,
+        commits: 1,
+        threads: 1,
+        versions: 1,
+        listChangesets: 2,
+        changesetLines: 1,
+      },
+      exact: true,
+      notice: finishedNotice,
+    });
   },
 
   /**
@@ -319,7 +401,7 @@ export const sessions: Record<SessionName, (h: Harness) => Promise<void>> = {
 
   /** A scope of a commit that is not the one on screen has that commit's files and marks, and keeps them while the window moves on. Its commits come from the store's list, not a read of its own. */
   async pinned(h) {
-    await h.step("opened the branch by commit", () => reviewByCommit(h), { commits: 1 });
+    await h.step("opened the branch by commit", () => reviewByCommit(h), { sent: { commits: 1 } });
     const commit = (index: number): View => ({ type: "commit", index });
     const id = (opened.session?.commits ?? [])[0].commit.id;
     const scope = newScope(
@@ -351,7 +433,7 @@ export const sessions: Record<SessionName, (h: Harness) => Promise<void>> = {
         if (missing.content.type !== "noText" || missing.content.reason !== "absent")
           throw new Error("a file the commit lacks is not answered as absent");
       },
-      { commits: 1 },
+      { sent: { commits: 1 } },
     );
     await h.step(
       "a mark in the scope",
@@ -365,7 +447,7 @@ export const sessions: Record<SessionName, (h: Harness) => Promise<void>> = {
         if (held?.[0] !== "seen" || JSON.stringify(held) !== JSON.stringify(real))
           throw new Error("the scope does not hold the mark");
       },
-      { commits: 1 },
+      { sent: { commits: 1 } },
     );
     await h.step(
       "a mark made elsewhere is read once, its echo is not read again",
@@ -389,7 +471,7 @@ export const sessions: Record<SessionName, (h: Harness) => Promise<void>> = {
         if (reads !== afterMark || afterMark !== 1) throw new Error(`the scope read ${reads} times for one mark`);
         h.other.manifest = manifest;
       },
-      { commits: 1 },
+      { sent: { commits: 1 } },
     );
     await h.step(
       "the whole-changeset view takes a mark of its file as the store does",
@@ -401,7 +483,7 @@ export const sessions: Record<SessionName, (h: Harness) => Promise<void>> = {
         if (whole.state("b.txt")?.review.hunks[0] !== "seen")
           throw new Error("the whole-changeset view did not follow");
       },
-      { commits: 1 },
+      { sent: { commits: 1 } },
     );
     // A tab on the changeset while a commit is on screen comments through the whole view, not the one on screen.
     await h.step(
@@ -417,7 +499,7 @@ export const sessions: Record<SessionName, (h: Harness) => Promise<void>> = {
         );
         if (!sent) throw new Error("the comment was refused");
       },
-      { ...ONE, commits: 0 },
+      once("createThread", { commits: 0 }),
     );
     // A background read that races the changeset moving on keeps the scope and says nothing; the
     // store's reload reads the newer revision and brings the scope up to date then.
@@ -456,7 +538,7 @@ export const sessions: Record<SessionName, (h: Harness) => Promise<void>> = {
         void hunk(h, "a.txt", 1, from);
         void onView().showCommit(2);
       },
-      ONE,
+      once("toggleHunk"),
     );
     await h.step(
       "flag while stepping back",
@@ -465,7 +547,7 @@ export const sessions: Record<SessionName, (h: Harness) => Promise<void>> = {
         void flag(h, "a.txt", 0, from);
         void onView().showCommit(0);
       },
-      ONE,
+      once("toggleFlag"),
     );
     // Once the next commit is asked for, a request built for the one on screen is refused.
     await h.step(
@@ -502,14 +584,14 @@ export const sessions: Record<SessionName, (h: Harness) => Promise<void>> = {
 
   /** The socket drops while another window marks; the window connects again and reads anew. */
   async reconnect(h) {
-    await h.step("hunk seen", () => hunk(h, "b.txt", 0), ONE);
+    await h.step("hunk seen", () => hunk(h, "b.txt", 0), once("toggleHunk"));
     await h.step("other marks while the socket is down", async () => {
       const back = h.dropSocket();
       const { revision } = await h.other.manifest(CHANGESET);
       await h.other.toggleHunk(revision, "b.txt", 1, CHANGESET);
       await back;
     });
-    await h.step("seen after reconnecting", () => hunk(h, "b.txt", 1), ONE);
+    await h.step("seen after reconnecting", () => hunk(h, "b.txt", 1), once("toggleHunk"));
   },
 
   /**
@@ -517,14 +599,14 @@ export const sessions: Record<SessionName, (h: Harness) => Promise<void>> = {
    * changeset or starting a review.
    */
   async listings(h) {
-    await h.step("the queue is shown", () => queue.show(), { listings: 1 });
+    await h.step("the queue is shown", () => queue.show(), { sent: { listPullRequests: 1 } });
     await h.step(
       "a changeset is opened",
       async () => {
         await opened.open({ type: "branch", name: "feature" });
         await h.until(() => opened.session?.facts?.target.changeset.type === "branch", "the branch");
       },
-      { listings: 0 },
+      { sent: { listPullRequests: 0 } },
     );
     await h.step(
       "a review is started",
@@ -533,9 +615,9 @@ export const sessions: Record<SessionName, (h: Harness) => Promise<void>> = {
         await hunk(h, first(), 0);
         await h.until(() => opened.session?.facts?.review.state === "open", "the review to start");
       },
-      { marks: 1, listings: 0 },
+      once("toggleHunk", { listPullRequests: 0 }),
     );
-    await h.step("the queue is refreshed", () => queue.refresh(), { listings: 1 });
+    await h.step("the queue is refreshed", () => queue.refresh(), { sent: { listPullRequests: 1 } });
   },
 
   /**
@@ -585,7 +667,7 @@ export const sessions: Record<SessionName, (h: Harness) => Promise<void>> = {
   /** The Pipelines choice and folds last as long as the session, through the review screen coming and going, and end with it. */
   async pipelines(h) {
     const held = onView();
-    await h.step("a review is started", () => hunk(h, "b.txt", 0), ONE);
+    await h.step("a review is started", () => hunk(h, "b.txt", 0), once("toggleHunk"));
     await h.step("a job is chosen and a run folded", () => {
       held.pipelines.selected = "job-1";
       held.pipelines.toggle("run-1");
@@ -904,7 +986,7 @@ export const sessions: Record<SessionName, (h: Harness) => Promise<void>> = {
       () => {
         for (let i = 0; i < 20; i++) void hunk(h, "b.txt", 0);
       },
-      { marks: 20 },
+      { sent: { toggleHunk: 20 } },
     );
     await h.step(
       "toggles across files",
@@ -919,7 +1001,7 @@ export const sessions: Record<SessionName, (h: Harness) => Promise<void>> = {
           void flag(h, path, index);
         }
       },
-      { marks: 8 },
+      { sent: { toggleHunk: 4, toggleFlag: 4 } },
     );
     await h.step("changesets asked for one after another without waiting", async () => {
       const feature: ChangesetKey = { type: "branch", name: "feature" };
@@ -956,7 +1038,7 @@ export const sessions: Record<SessionName, (h: Harness) => Promise<void>> = {
         await marking;
         backend.toggleHunk = toggle;
       },
-      ONE,
+      once("toggleHunk"),
     );
     // The viewer is told the view is gone; the harness checks the notice.
     await h.step(
