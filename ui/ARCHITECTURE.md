@@ -68,8 +68,8 @@ Each store follows the events of what it shows:
   - `threadsChanged`: threads and the pull request info.
   - `platformStatus`: the pull request info.
   - `reviewStarted`: versions, changes since.
-  - `reviewChanged`: versions, changes since, and the commits when they show its progress.
-- `queue.svelte.ts` — `changesetOpened`, `reviewStarted`, `changesetsChanged`: lists the local changesets again; `threadsChanged`: lists them without recounting; `pullRequestListChanged`: reads the pull requests again; `pullRequestsChanged`: patches the rows it names; `changesetLinesChanged`: the counts pushed so far; `snapshotSettled`, `reviewChanged`: follows the row on view.
+  - `reviewChanged`: versions and changes since only when its `reviewedAt` says the mark moved where the review last was (the first seen-mark of a version), and the commits when they show its progress.
+- `queue.svelte.ts` — `changesetOpened`, `reviewStarted`, `changesetsChanged`: lists the local changesets again; `threadsChanged`: lists them without recounting; `pullRequestListChanged`: reads the pull requests again; `pullRequestsChanged`: patches the rows it names; `changesetLinesChanged`: the counts pushed so far; `snapshotSettled`, and `reviewChanged` with `reviewedAt`: follows the row on view.
 - `versions.svelte.ts` (a session's versions, while the review screen is shown), `reviewChanges.svelte.ts` (a session's changes since a version, for its whole life, as the queue panel shows them), `pullRequest.svelte.ts` (only a pull request's session has one) and `threads.svelte.ts` (the changeset's threads and, while the review screen shows a range, the range's) — read when the session's flush says so, and when the session starts or resyncs.
 - `pipelines.svelte.ts` (a session's chosen run, job and folds) — `accountsChanged`: forgets which accounts were refused; the steps drop when the review screen hides.
 - `checks.svelte.ts` (a session's checks) — `checksChanged`: takes the checks.

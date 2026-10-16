@@ -66,7 +66,7 @@ The backend is layered: `vet-core` holds the domain, `vet-protocol` the protocol
 
 ### A review action reaching the store and every window
 
-1. The request's handler calls a session command; the first action starts the review at version 1 (`ReviewStarted`), later ones change it (`ReviewChanged`).
+1. The request's handler calls a session command; the first action starts the review at version 1 (`ReviewStarted`), later ones change it (`ReviewChanged`, whose `reviewed_at` says when the mark moved where the review last was, so a window reads the versions again only then).
 2. The command takes the write token (`LiveSession::hold`, FIFO) and gets a `Held`: the token and a copy-on-write state. Reading is free; the first change copies, cheaply, because snapshots and spans sit behind `Arc`s; publishing or dropping the hold makes the copy the state readers see.
 3. Writes go only through `ReviewWrites` with the store's write connection, which the token guards; reads use a pool and never wait.
 4. The command announces its own events. `vet-backend/src/contract.rs` classifies every request as a query, unannounced (with the reason), or a mutation with its events, exhaustively, and its test drives every mutation with two connections.
