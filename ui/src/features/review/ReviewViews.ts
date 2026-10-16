@@ -22,7 +22,6 @@ import type { FileLayout, ViewLayout } from "../../state/reviewModel";
 import type { ViewSource } from "../../state/viewScope.svelte";
 import { type Shown, isCurrent } from "../../state/shown";
 import { rangeKey } from "../../state/timelineRange";
-import { reviewShown } from "../../state/reviewShown.svelte";
 import { sameView } from "../../state/view";
 import { threads } from "../../state/threads.svelte";
 import { threadMenu } from "../comments";
@@ -192,12 +191,7 @@ export class ReviewViews {
 
   /** Starts the Changes tab loading the rest of its files a few at a time while the reviewer is idle. */
   startTrickle() {
-    if (reviewShown.on) this.views.get(CHANGES)?.startTrickle();
-  }
-
-  /** Stops the Changes tab's background loading: the review screen went away. */
-  stopTrickle() {
-    this.views.get(CHANGES)?.stopTrickle();
+    this.views.get(CHANGES)?.startTrickle();
   }
 
   /** Gives every view the threads, if they are of the view's revision and range. */
@@ -326,13 +320,14 @@ export class ReviewViews {
     this.roots.set(id, root);
     // Registered before the view is, so it hears the scroll that the view's own listener stops.
     root.addEventListener("scroll", this.host.scheduleSave, { passive: true });
-    // The Changes tab is built by `open`, which fetches the manifest first. The review screen being
-    // away leaves the pane for `show`, so a tab nobody sees loads nothing.
+    // The Changes tab is built by `open`, which reads the manifest first.
     if (kindOf(id) === "log") this.buildLog(id, root);
     // Untracked: the pane is not torn down when the state the view reads changes, `show` rebuilds it.
-    else if (id !== CHANGES && reviewShown.on) untrack(() => this.build(id));
+    else if (id !== CHANGES) untrack(() => this.build(id));
     return () => {
       root.removeEventListener("scroll", this.host.scheduleSave);
+      // The screen is going away: where the pane was is kept for its rebuild.
+      this.persistence.keepPlace(id, "diff", this.views.get(id)?.lines());
       this.views.get(id)?.destroy();
       this.views.delete(id);
       this.logViews.get(id)?.destroy();
@@ -346,9 +341,10 @@ export class ReviewViews {
     this.textRoots.set(id, root);
     // The text view's own scroller does not bubble its scrolls.
     root.addEventListener("scroll", this.host.scheduleSave, { passive: true, capture: true });
-    if (this.tabs.modes.get(id) === "file" && reviewShown.on) this.ensureText(id);
+    if (this.tabs.modes.get(id) === "file") this.ensureText(id);
     return () => {
       root.removeEventListener("scroll", this.host.scheduleSave, { capture: true });
+      this.persistence.keepPlace(id, "text", this.texts.get(id)?.lines());
       this.texts.get(id)?.destroy();
       this.texts.delete(id);
       this.textRoots.delete(id);
@@ -430,16 +426,12 @@ export class ReviewViews {
     // A file tab shows its one file at once; the Changes tab loads sections as they come near.
     // A stale revision is replaced by the next build.
     if (path === undefined) return;
-    // A file tab nobody sees loads nothing; the review screen's return builds it.
-    if (!reviewShown.on) return;
     const at = this.persistence.takePending(id, "diff") ?? place;
     (at ? view.showLines(at) : view.load(0)).catch(() => undefined);
   }
 
   /** Builds a file tab's text view in its root, replacing the one it had. */
   buildText(id: TabId, root: HTMLElement, force = false) {
-    // A text view nobody sees loads nothing; the review screen's return builds it.
-    if (!reviewShown.on) return;
     const path = pathOf(id);
     if (path === undefined) return;
     const source = this.scopes.sourceOf(id);

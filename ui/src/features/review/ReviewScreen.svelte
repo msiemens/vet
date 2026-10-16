@@ -240,11 +240,13 @@
         return true;
       },
     });
+    let live = true;
     controller.open().then(
-      (opened) => opened && onready(controller),
-      (e: unknown) => void session.abandon(e),
+      (opened) => live && opened && onready(controller),
+      (e: unknown) => live && void session.abandon(e),
     );
     return () => {
+      live = false;
       stopCommands();
       stopHook();
       controller.destroy();

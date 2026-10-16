@@ -75,8 +75,8 @@ const NO_DIFF = "Open the Changes tab or a changed file";
 const NOT_BY_COMMIT = "The changeset is not reviewed by commit";
 const QUEUE_SHOWN = "Open the Review screen first";
 
-/** The commands, available only on the Review screen: the queue covers the review's views and tabs, whose keys it must not take. */
-const onReviewScreen = (commands: Command<CommandContext>[]): Command<CommandContext>[] =>
+/** The commands, available only on the Review screen: the queue shows instead of it, and takes its keys. */
+export const onReviewScreen = (commands: Command<CommandContext>[]): Command<CommandContext>[] =>
   commands.map((command) => ({
     ...command,
     enabled: (c, arg) => !c.queueShown && (command.enabled?.(c, arg) ?? true),

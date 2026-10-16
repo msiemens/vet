@@ -241,6 +241,28 @@ void test("a submenu is disabled when none of its items is enabled, and commands
   assert.equal(resolveMenu(r, spec, { open: true })[0].enabled, undefined);
 });
 
+void test("an item that names another screen is left out of a menu built for this one", () => {
+  const r = registry();
+  r.register(
+    next(() => undefined),
+    { id: "reviewOnly", label: "Review only", run: () => undefined },
+  );
+  const spec: MenuSpec = [{ command: "next" }, { command: "reviewOnly", screen: "review" }];
+  assert.deepEqual(
+    resolveMenu(r, spec, r.context(), false, "queue").map((i) => i.id),
+    ["next"],
+  );
+  assert.deepEqual(
+    resolveMenu(r, spec, r.context(), false, "review").map((i) => i.id),
+    ["next", "reviewOnly"],
+  );
+  assert.deepEqual(
+    resolveMenu(r, spec, r.context()).map((i) => i.id),
+    ["next", "reviewOnly"],
+    "without a screen, nothing is left out",
+  );
+});
+
 void test("a command may have another default key on macOS, and a binding set as data still replaces it", () => {
   const tabs = (mod: "Ctrl" | "Meta") => {
     const r = registry(mod);

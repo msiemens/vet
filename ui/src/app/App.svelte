@@ -52,7 +52,6 @@
   import { problems } from "../state/problems.svelte";
   import { progress as backgroundTasks } from "../state/progress.svelte";
   import { queue } from "../state/queue.svelte";
-  import { reviewShown } from "../state/reviewShown.svelte";
   import { recent } from "../state/recent.svelte";
   import { semantic } from "../state/semantic.svelte";
   import { servedBy } from "../state/servedBy.svelte";
@@ -64,7 +63,7 @@
   import { versions } from "../state/versions.svelte";
   import { softWrapPreference, themePreference } from "./appPreferences.svelte";
   import { appState } from "./appState.svelte";
-  import { choiceHost, goToFirstFlagged, openPlace, openThread, showInBrowser } from "./actions";
+  import { choiceHost, goToFirstFlagged, openCheckLog, openPlace, openThread, showInBrowser } from "./actions";
   import { registerCommands } from "./commands";
   import { installWindow } from "./window";
   import ConnectionNotice from "./ConnectionNotice.svelte";
@@ -134,8 +133,7 @@
     range ? (changeset.layout?.files ?? []).map((f) => ({ path: f.path, delta: f.delta, mode: modeChange(f) })) : [],
   );
   const footer = $derived({
-    commit:
-      changeset.shownCommit === undefined ? undefined : `${changeset.shownCommit + 1} / ${changeset.commits.length}`,
+    commit: changeset.shownCommit === undefined ? undefined : `${changeset.shownCommit + 1} / ${changeset.commitCount}`,
     languageServer: serverLine(
       appState.controller?.semanticPath,
       appState.controller?.semanticPath === undefined ? undefined : servedBy.of(appState.controller.semanticPath),
@@ -154,7 +152,7 @@
   // The changed files the window has open, so the backend's background analysis reads them first.
   $effect(() => {
     const backend = session.backend;
-    const paths = reviewShown.on ? [...(appState.controller?.openPaths ?? [])] : [];
+    const paths = [...(appState.controller?.openPaths ?? [])];
     if (backend) untrack(() => void backend.setOpenFiles(paths).catch(() => undefined));
   });
 
@@ -286,96 +284,90 @@
 
   <div class="body">
     {#if shell.screen === "queue"}
-      <QueueScreen
-        onopen={() => shell.show("review")}
-        onopenthread={openThread}
-        onopenlog={(run) => {
-          shell.show("review");
-          void appState.controller?.openLog(run, logKey(run, undefined));
-        }}
-      />
+      <QueueScreen onopen={() => shell.show("review")} onopenthread={openThread} onopenlog={openCheckLog} />
+    {:else}
+      <div class="review">
+        <ToolRail
+          active={shell.left.tool}
+          open={shell.left.open}
+          badges={{
+            comments: { count: unreadComments, text: `${unreadComments} new` },
+            problems: { count: problems.summary?.badge ?? 0, text: problems.summary?.badgeText ?? "" },
+            pipelines: pipelineRail,
+          }}
+          bottom={shell.bottom ?? null}
+        />
+        <ReviewScreen
+          backend={session.backend}
+          {changeset}
+          leftTool={shell.left.tool}
+          leftOpen={shell.left.open}
+          rightTool={shell.right.tool}
+          rightOpen={shell.right.open}
+          {softWrap}
+          bottomOpen={shell.bottom !== undefined}
+          onfilter={() => appState.showDialog("settings", "filter")}
+          ontool={showTool}
+          scope={headerFacts.scope?.label ?? "All changes"}
+          onready={(c) => appState.setController(c)}
+          onclose={() => appState.clearController()}
+        >
+          {#snippet side(tool)}
+            {#if tool === "symbol"}
+              <SymbolPanel onopen={openLocation} />
+            {:else if tool === "structure"}
+              <StructurePanel
+                onjump={(symbol, removed) => void appState.controller?.jumpToOutlineSymbol(symbol, removed)}
+                oneditor={() => appState.controller?.focusEditor()}
+              />
+            {/if}
+          {/snippet}
+          {#snippet bottom({ selected, select })}
+            {#if shell.bottom === "timeline"}
+              <TimelinePanel
+                versions={versions.items}
+                base={changeset.facts?.base.commit}
+                {range}
+                byCommit={changeset.shownCommit !== undefined}
+                files={rangeFiles}
+                {selected}
+                onrange={(r) => void changeset.setRange(r)}
+                onselect={select}
+                onclose={() => shell.hideBottom()}
+              />
+            {:else if shell.bottom === "problems"}
+              <ProblemsPanel
+                openFiles={appState.controller?.openPaths ?? []}
+                currentFile={appState.controller?.problemFile}
+                onshow={(p, jump) => void appState.controller?.showProblem(p.path, p.line, jump)}
+                onfile={(path) => void appState.controller?.revealFileInChanges(path)}
+                oneditor={() => appState.controller?.focusEditor()}
+                oninstall={() => appState.showDialog("settings", "servers")}
+                onclose={() => shell.hideBottom()}
+              />
+            {:else if shell.bottom === "find" && session.backend}
+              <FindPanel
+                backend={session.backend}
+                onopen={openPlace}
+                onclose={() => shell.hideBottom()}
+                oneditor={() => appState.controller?.focusEditor()}
+              />
+            {:else if shell.bottom === "pipelines"}
+              <PipelinesPanel
+                checks={changeset.pipelineCommit === undefined ? undefined : checks.of(changeset.pipelineCommit)}
+                commit={changeset.pipelineCommit}
+                onlog={(job, run) => void appState.controller?.openLog(job, logKey(job, run))}
+                onbrowser={showInBrowser}
+                onsignin={() => appState.showDialog("settings", "accounts")}
+                oneditor={() => appState.controller?.focusEditor()}
+                onclose={() => shell.hideBottom()}
+              />
+            {/if}
+          {/snippet}
+        </ReviewScreen>
+        <ToolRail side="right" active={shell.right.tool} open={shell.right.open} />
+      </div>
     {/if}
-    <div class="review" class:away={shell.screen !== "review"} inert={shell.screen !== "review"}>
-      <ToolRail
-        active={shell.left.tool}
-        open={shell.left.open}
-        badges={{
-          comments: { count: unreadComments, text: `${unreadComments} new` },
-          problems: { count: problems.summary?.badge ?? 0, text: problems.summary?.badgeText ?? "" },
-          pipelines: pipelineRail,
-        }}
-        bottom={shell.bottom ?? null}
-      />
-      <ReviewScreen
-        backend={session.backend}
-        {changeset}
-        leftTool={shell.left.tool}
-        leftOpen={shell.left.open}
-        rightTool={shell.right.tool}
-        rightOpen={shell.right.open}
-        {softWrap}
-        bottomOpen={shell.bottom !== undefined}
-        onfilter={() => appState.showDialog("settings", "filter")}
-        ontool={showTool}
-        scope={headerFacts.scope?.label ?? "All changes"}
-        onready={(c) => void (appState.controller = c)}
-        onclose={() => (appState.controller = undefined)}
-      >
-        {#snippet side(tool)}
-          {#if tool === "symbol"}
-            <SymbolPanel onopen={openLocation} />
-          {:else if tool === "structure"}
-            <StructurePanel
-              onjump={(symbol, removed) => void appState.controller?.jumpToOutlineSymbol(symbol, removed)}
-              oneditor={() => appState.controller?.focusEditor()}
-            />
-          {/if}
-        {/snippet}
-        {#snippet bottom({ selected, select })}
-          {#if shell.bottom === "timeline"}
-            <TimelinePanel
-              versions={versions.items}
-              base={changeset.facts?.base.commit}
-              {range}
-              byCommit={changeset.shownCommit !== undefined}
-              files={rangeFiles}
-              {selected}
-              onrange={(r) => void changeset.setRange(r)}
-              onselect={select}
-              onclose={() => shell.hideBottom()}
-            />
-          {:else if shell.bottom === "problems"}
-            <ProblemsPanel
-              openFiles={appState.controller?.openPaths ?? []}
-              currentFile={appState.controller?.problemFile}
-              onshow={(p, jump) => void appState.controller?.showProblem(p.path, p.line, jump)}
-              onfile={(path) => void appState.controller?.revealFileInChanges(path)}
-              oneditor={() => appState.controller?.focusEditor()}
-              oninstall={() => appState.showDialog("settings", "servers")}
-              onclose={() => shell.hideBottom()}
-            />
-          {:else if shell.bottom === "find" && session.backend}
-            <FindPanel
-              backend={session.backend}
-              onopen={openPlace}
-              onclose={() => shell.hideBottom()}
-              oneditor={() => appState.controller?.focusEditor()}
-            />
-          {:else if shell.bottom === "pipelines"}
-            <PipelinesPanel
-              checks={changeset.pipelineCommit === undefined ? undefined : checks.of(changeset.pipelineCommit)}
-              commit={changeset.pipelineCommit}
-              onlog={(job, run) => void appState.controller?.openLog(job, logKey(job, run))}
-              onbrowser={showInBrowser}
-              onsignin={() => appState.showDialog("settings", "accounts")}
-              oneditor={() => appState.controller?.focusEditor()}
-              onclose={() => shell.hideBottom()}
-            />
-          {/if}
-        {/snippet}
-      </ReviewScreen>
-      <ToolRail side="right" active={shell.right.tool} open={shell.right.open} />
-    </div>
   </div>
 {:else if session.backend}
   {#snippet mainMenuButton()}<MainMenuButton />{/snippet}
@@ -460,7 +452,7 @@
     revision={changeset.layout?.shown.revision ?? 0}
     onopen={(result) => {
       shell.show("review");
-      void appState.controller?.openFound(result);
+      appState.whenReview((c) => void c.openFound(result));
     }}
     onkeep={(kept) => findSets.keepSearch(kept)}
   />
@@ -507,12 +499,6 @@
     flex: 1;
     min-width: 0;
     display: flex;
-  }
-  /* Laid out but not seen, so the editors keep their size and scroll positions behind the queue. */
-  .review.away {
-    position: absolute;
-    inset: 0;
-    visibility: hidden;
   }
   .message {
     flex: 1;

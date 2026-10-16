@@ -21,6 +21,8 @@ export type MenuSpecEntry =
       radio?: boolean;
       /** Disables the item whatever the command says, for this reason. */
       disabled?: string;
+      /** The screen the item belongs to; left out of a menu built for another one. */
+      screen?: string;
     }
   | {
       /** An item the host builds from the OS's definition. */
@@ -34,8 +36,9 @@ export type MenuSpecEntry =
     };
 
 /**
- * The items of `spec` for `context`. A command that is not registered is left out, and so are
- * the separators that would then lead, trail or double up.
+ * The items of `spec` for `context`. A command that is not registered is left out, and so is an item
+ * that belongs to another screen (`screen` names the one it belongs to), and the separators that
+ * would then lead, trail or double up.
  */
 export function resolveMenu<C extends object>(
   registry: CommandRegistry<C>,
@@ -43,6 +46,8 @@ export function resolveMenu<C extends object>(
   context: C,
   /** The host draws the menu bar: an item with a native accelerator carries it instead of the window's binding as text. */
   native = false,
+  /** The screen the menu is built for; an item naming another one is left out. */
+  screen?: string,
 ): MenuItem[] {
   const items: MenuItem[] = [];
   for (const entry of spec) {
@@ -51,10 +56,11 @@ export function resolveMenu<C extends object>(
     } else if ("predefined" in entry) {
       items.push({ id: `predefined.${entry.predefined}`, label: "", predefined: entry.predefined });
     } else if ("items" in entry) {
-      const children = resolveMenu(registry, entry.items, context, native);
+      const children = resolveMenu(registry, entry.items, context, native, screen);
       const enabled = children.some((c) => !c.separator && c.enabled !== false);
       items.push({ id: entry.id, label: entry.label, ...(enabled ? {} : { enabled: false }), children });
     } else {
+      if (entry.screen !== undefined && screen !== undefined && entry.screen !== screen) continue;
       const command = registry.find(entry.command);
       if (!command) continue;
       const id = entry.arg === undefined ? command.id : `${command.id}:${entry.arg}`;

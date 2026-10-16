@@ -7,7 +7,7 @@ import { commentsUi, threadCommands, voteBlocked } from "../features/comments";
 import { palette, paletteCommands } from "../features/palette";
 import { copyText } from "../features/platform";
 import { queueCommands } from "../features/queue";
-import { fileCommands, reviewActions, viewCommands } from "../features/review";
+import { fileCommands, onReviewScreen, reviewActions, viewCommands } from "../features/review";
 import { searchCommands } from "../features/search";
 import { recentCommands } from "../features/welcome";
 import { appCommands } from "../state/appCommands";
@@ -68,7 +68,7 @@ export function registerCommands(): () => void {
         else if (bottom === "find") void focusFind();
         else if (bottom === "pipelines") void focusPipelines();
       },
-      stepProblem: (delta) => void appState.controller?.stepProblem(delta),
+      stepProblem: (delta) => appState.whenReview((c) => void c.stepProblem(delta)),
       setTheme: (t) => (themePreference.value = t),
       commentOnChangeset,
       postComments: () => {
@@ -98,7 +98,7 @@ export function registerCommands(): () => void {
       },
       forget: (path) => void session.forget(path),
     }),
-    ...searchCommands(() => appState.controller?.find.options.text),
+    ...onReviewScreen(searchCommands(() => appState.controller?.find.options.text)),
     ...viewCommands(reviewActions),
     ...fileCommands(reviewActions),
     ...threadCommands({
@@ -113,6 +113,7 @@ export function registerCommands(): () => void {
     shell.showBottom("find");
     if (focus) void focusFind();
   };
+
   session.onOpen(() => shell.show("queue"));
   session.onClose(() => {
     palette.close();

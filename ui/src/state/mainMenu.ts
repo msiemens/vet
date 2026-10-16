@@ -152,7 +152,7 @@ export function mainMenuSpec(s: MenuState): MenuSpec {
     { command: "find.open" },
     { command: "find.next" },
     { command: "find.previous" },
-    { command: "find.inFiles" },
+    { command: "find.inFiles", screen: "review" },
     "-",
     { command: "review.nextHunk" },
     { command: "review.previousHunk" },

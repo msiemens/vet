@@ -41,7 +41,7 @@ export interface CommandContext {
   /** A review has started and can be finished. */
   reviewOpen: boolean;
   canQuit: boolean;
-  /** The queue screen covers the review, whose views and tabs stay mounted behind it. */
+  /** The queue screen shows instead of the review screen. */
   queueShown?: boolean;
   /** Search Everywhere is open and takes the keys of the window. */
   paletteOpen?: boolean;
@@ -109,5 +109,6 @@ export const commands = new CommandRegistry<CommandContext>(NONE, isMac ? "Meta"
  */
 export function menuFor(spec: MenuSpec, extra?: Partial<CommandContext>) {
   const context = commands.context(extra);
-  return { items: resolveMenu(commands, spec, context), context };
+  const screen = context.queueShown ? "queue" : "review";
+  return { items: resolveMenu(commands, spec, context, false, screen), context };
 }

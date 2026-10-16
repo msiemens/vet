@@ -35,7 +35,6 @@
   import { threads } from "../../state/threads.svelte";
   import { symbols } from "../../state/symbols.svelte";
   import { queueRows, labelOf, reviewedOf, sourceText } from "../queue";
-  import { openFindInFiles } from "../search";
   import { SymbolGlyph } from "../symbols";
   import type { Choice } from "./choice";
   import { tabStep } from "./tabKey";
@@ -152,10 +151,17 @@
   });
 
   const built = $derived(
-    build(palette.tab, palette.query, candidates, palette.recent, {
-      files: palette.unchanged && palette.listing && !palette.files,
-      symbols: asksServers && !answer,
-    }),
+    build(
+      palette.tab,
+      palette.query,
+      candidates,
+      palette.recent,
+      {
+        files: palette.unchanged && palette.listing && !palette.files,
+        symbols: asksServers && !answer,
+      },
+      commands.isEnabled(FIND_IN_FILES),
+    ),
   );
   const failed = $derived(failedServers(found, serverList.servers));
   const indexing = $derived(indexingNotes(found, serverList.servers, serverList.runtimes));
@@ -239,8 +245,9 @@
       return;
     }
     if (entry.type === "find") {
-      if (!commands.isEnabled(FIND_IN_FILES)) return;
-      finish(() => openFindInFiles({ query: palette.query.trim() || undefined }));
+      // Run the command, so the row follows its availability; the query is its argument.
+      const query = entry.query;
+      finish(() => commands.run(query ? `${FIND_IN_FILES}:${query}` : FIND_IN_FILES));
       return;
     }
     const { item, line } = entry.row;
@@ -515,16 +522,17 @@
                 >Include unchanged files</button
               >
             {/if}
-            <button
-              class="ctl"
-              type="button"
-              tabindex="-1"
-              disabled={!commands.isEnabled(FIND_IN_FILES)}
-              title={findOff}
-              onclick={() => choose({ type: "find", query: palette.query.trim() }, false)}
-              >Find “{palette.query.trim()}” in files…
-              <Kbd keys={commands.binding(FIND_IN_FILES)?.label ?? ""} /></button
-            >
+            {#if commands.isEnabled(FIND_IN_FILES)}
+              <button
+                class="ctl"
+                type="button"
+                tabindex="-1"
+                title={findOff}
+                onclick={() => choose({ type: "find", query: palette.query.trim() }, false)}
+                >Find “{palette.query.trim()}” in files…
+                <Kbd keys={commands.binding(FIND_IN_FILES)?.label ?? ""} /></button
+              >
+            {/if}
           {/snippet}
         </EmptyState>
       {:else}

@@ -6,7 +6,7 @@ import { type Screen, TOOLS } from "./tools";
 import { type ToolWindow, toggleBottom, toggleTool } from "./toggleTool";
 
 class Shell {
-  /** The queue is the project's home; the review screen stays mounted behind it, so its views survive. */
+  /** The queue is the project's home; the review screen is mounted only while it shows. */
   screen = $state<Screen>("queue");
   /** The selected tool of each rail, and whether its sidebar is shown. */
   left = $state<ToolWindow>({ tool: "changes", open: true });

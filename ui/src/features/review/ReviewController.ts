@@ -18,7 +18,6 @@ import { keyId } from "../../state/changesetKey";
 import { commands } from "../../state/commands";
 import type { TabId } from "../../state/commands";
 import { type Frame, type ViewLayout } from "../../state/reviewModel";
-import { reviewShown } from "../../state/reviewShown.svelte";
 import { semantic } from "../../state/semantic.svelte";
 import { session } from "../../state/session.svelte";
 import { isCurrent } from "../../state/shown";
@@ -29,7 +28,7 @@ import { type ChangesetSource } from "./changesetSource";
 import { type FilePositions, type SavedView, restoredTabs } from "./changesetViews";
 import { type FindOptions } from "./editor/findMatches";
 import { FindControl } from "./FindControl";
-import { FindState } from "./FindState.svelte";
+import { reviewFind } from "./FindState.svelte";
 import { provideActions } from "./reviewActions";
 import { CHANGES, type Origin, pathOf } from "./tabModel";
 import { Tabs } from "./Tabs.svelte";
@@ -47,22 +46,10 @@ const projectViews = {
   write: (value: string | undefined) => preferences.write("project", "tabs", value),
 };
 
-/** The draw the review screen's return has to make, kept while the screen was away. */
-type Away =
-  | {
-      kind: "update";
-      layout: ViewLayout;
-      switching: boolean;
-      rangeChanged: boolean;
-      filterChanged: boolean;
-      brought?: SavedView;
-    }
-  | { kind: "reload" };
-
 export class ReviewController {
   readonly tabs = new Tabs("unified");
   /** The find bar: the window's query, the tabs it is open in, and what the active tab's view found. */
-  readonly find = new FindState();
+  readonly find = reviewFind;
   /** Which files the views wrap the long lines of. */
   softWrap: SoftWrap = "prose";
 
@@ -85,15 +72,6 @@ export class ReviewController {
   private arriving: Promise<void> = Promise.resolve();
   /** The saved view of the changeset on view, which the Changes tab's first draw goes back to. */
   private saved?: SavedView;
-  /** `open` has read the manifest and restored the tabs. */
-  private opened = false;
-  /** The Changes tab has been drawn for the current changeset. */
-  private drawn = false;
-  /**
-   * The review screen was away when the views would have been drawn: the manifest move is kept, and
-   * the draw that only drawing needs waits for the screen (nothing loads for a view nobody sees).
-   */
-  private away?: Away;
   private unsubscribe: () => void;
   private unsubscribeEvents: () => void;
 
@@ -145,8 +123,6 @@ export class ReviewController {
     const offContext = commands.provide(() => this.commands.facts());
     const offResync = session.onResync(() => this.scopes.reload());
     const offOrigins = semantic.onOrigins((path) => this.views.refreshDiagnostics(path));
-    const offShown = reviewShown.onShown(() => void this.screenShown());
-    const offHidden = reviewShown.onHidden(() => this.views.stopTrickle());
     // The open tabs are the old changeset's until the new one's manifest has come and brought its tabs back.
     const offOpening = changeset.onOpening((opening) => {
       if (opening.type === "requested") {
@@ -164,8 +140,6 @@ export class ReviewController {
       offContext();
       offResync();
       offOrigins();
-      offShown();
-      offHidden();
       offOpening();
     };
     this.unsubscribeEvents = backend.onEvent((event) => {
@@ -195,11 +169,11 @@ export class ReviewController {
     for (const id of this.scopes.tabsOf(scope)) {
       const view = this.views.diff(id);
       if (view && isCurrent(view.shown, layout.shown)) view.refreshReview(paths);
-      else if (reviewShown.on && this.views.root(id)) this.views.build(id, view);
+      else if (this.views.root(id)) this.views.build(id, view);
       const text = this.views.text(id);
       const root = this.views.textRoot(id);
       if (text?.isFor(layout.shown)) text.refreshReview(paths);
-      else if (reviewShown.on && root && (text || this.tabs.modes.get(id) === "file")) this.views.buildText(id, root);
+      else if (root && (text || this.tabs.modes.get(id) === "file")) this.views.buildText(id, root);
     }
   }
 
@@ -438,20 +412,11 @@ export class ReviewController {
     this.filtered = this.changeset.baseChanged;
     const view = this.views.diff(CHANGES);
     if (!view || (!switching && view.revision === layout.shown.revision && !rangeChanged && !filterChanged)) return;
-    if (!reviewShown.on) {
-      // The review screen is away: the draw waits for it, so nothing loads for a view nobody sees.
-      this.away = { kind: "update", layout, switching, rangeChanged, filterChanged, brought };
-      return;
-    }
-    this.drawUpdate(false, layout, switching, rangeChanged, filterChanged, brought);
+    this.drawUpdate(layout, switching, rangeChanged, filterChanged, brought);
   }
 
-  /**
-   * Rebuilds the views on the manifest move `update` found. `force` also rebuilds the tabs whose own view
-   * did not move, which the review screen was away for.
-   */
+  /** Rebuilds the views on the manifest move `update` found. */
   private drawUpdate(
-    force: boolean,
     layout: ViewLayout,
     switching: boolean,
     rangeChanged: boolean,
@@ -463,8 +428,7 @@ export class ReviewController {
     if ((rangeChanged || filterChanged) && !switching) {
       this.persistence.beginRestore([CHANGES]);
     }
-    this.drawn = true;
-    this.views.show(force);
+    this.views.show();
     const restored = switching && this.restoreChanges(brought, layout);
     if (!restored && (switching || rangeChanged || filterChanged)) this.arriving = this.views.changes.goToHunk(0);
     // The new views load what is in view and the margin; the rest trickles while the reviewer is idle.
@@ -529,10 +493,10 @@ export class ReviewController {
     return true;
   }
 
-  /** Fetches the manifest and renders it, answering whether it did (not when the project was closed). */
+  /** Takes the manifest the store holds and renders it, answering whether it did (not when the project was closed). */
   async open(): Promise<boolean> {
     this.views.destroyDiff(CHANGES);
-    const frame = await this.changeset.refresh();
+    const frame = await this.changeset.frame();
     if (!frame) return false; // the project was closed meanwhile
     const { layout, facts } = frame;
     this.key = keyId(facts.target.changeset);
@@ -540,16 +504,13 @@ export class ReviewController {
     this.rangeChanged(layout);
     this.filtered = this.changeset.baseChanged;
     this.commitChanged();
-    this.opened = true;
-    // The review screen being away leaves the draw for its return, so nothing loads for a view nobody sees.
-    if (reviewShown.on) await this.drawOpen(this.saved);
+    await this.drawOpen(this.saved);
     return true;
   }
 
-  /** Builds the Changes tab and starts loading its files, the draw the review screen's return waits for. */
+  /** Builds the Changes tab and starts loading its files. The panes that attached already built themselves. */
   private async drawOpen(saved: SavedView | undefined): Promise<void> {
-    this.drawn = true;
-    this.views.show(true);
+    this.views.show();
     const view = this.views.changes;
     const layout = this.changeset.currentLayout();
     if (layout && !this.restoreChanges(saved, layout)) await view.goToHunk(0);
@@ -557,28 +518,10 @@ export class ReviewController {
     this.views.startTrickle();
   }
 
-  /** The review screen came up: the draw the views waited for runs, and the screen's own load starts. */
-  private async screenShown(): Promise<void> {
-    this.views.refreshDiagnostics();
-    const away = this.away;
-    this.away = undefined;
-    if (!this.drawn && this.opened) await this.drawOpen(this.saved);
-    else if (away?.kind === "update")
-      this.drawUpdate(true, away.layout, away.switching, away.rangeChanged, away.filterChanged, away.brought);
-    else if (away?.kind === "reload") this.reloadDrawn();
-  }
-
-  /** Loads what the views show again, after the setting they are drawn with changed while the screen was away. */
-  private reloadDrawn(): void {
-    this.views.show(true);
-    this.views.startTrickle();
-  }
-
   /** Builds the views anew with the setting, keeping their scroll positions and current hunks. */
   setSoftWrap(wrap: SoftWrap) {
     if (wrap === this.softWrap) return;
     this.softWrap = wrap;
-    if (reviewShown.on) this.views.show(true);
-    else this.away ??= { kind: "reload" };
+    this.views.show(true);
   }
 }

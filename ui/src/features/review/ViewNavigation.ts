@@ -22,7 +22,6 @@ import { LocationSearch } from "../../state/locationSearch";
 import { notices } from "../../state/notices.svelte";
 import { stepInFile } from "../../state/problemRows";
 import { problems } from "../../state/problems.svelte";
-import { reviewShown } from "../../state/reviewShown.svelte";
 import { semantic } from "../../state/semantic.svelte";
 import { serverList } from "../../state/serverList.svelte";
 import type { StructureTarget } from "../../state/structure.svelte";
@@ -121,11 +120,8 @@ export class ViewNavigation {
         if (this.scopes.analysable(id, side))
           findSets.findUsages({ type: "usages", symbol: subject.name, side, path, ...at });
       },
-      // Asked again for the mounted editors when the review screen comes up.
       diagnostics: (revision, path) =>
-        reviewShown.on && this.scopes.analysable(id, "target")
-          ? semantic.diagnostics(revision, path)
-          : Promise.resolve([]),
+        this.scopes.analysable(id, "target") ? semantic.diagnostics(revision, path) : Promise.resolve([]),
       cursor: (revision, side, path, line, col) => {
         if (this.scopes.analysable(id, side)) symbols.follow(revision, side, path, line, col);
       },

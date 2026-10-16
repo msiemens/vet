@@ -21,7 +21,8 @@ export function searchCommands(windowQuery: () => string | undefined): Command<C
       inFields: true,
       enabled: (c) => !!c.changesetOpen,
       disabledReason: () => "Open a changeset first",
-      run: (c) => openFindInFiles({ query: oneLine(c.editor?.selectedText()) ?? oneLine(windowQuery()) }),
+      run: (c, arg) =>
+        openFindInFiles({ query: oneLine(arg) ?? oneLine(c.editor?.selectedText()) ?? oneLine(windowQuery()) }),
     },
   ];
 }

@@ -31,7 +31,6 @@
   import TreeRow from "../../lib/ui/TreeRow.svelte";
   import VirtualRows from "../../lib/ui/VirtualRows.svelte";
   import { commands } from "../../state/commands";
-  import { reviewShown } from "../../state/reviewShown.svelte";
   import { keyOf } from "../../state/symbolKey";
   import { symbols } from "../../state/symbols.svelte";
   import { SymbolGlyph } from "../symbols";
@@ -320,14 +319,11 @@
     untrack(() => revealPath(path));
   });
 
-  // The manifest revision moved: the All files tree lists the snapshot anew. While the review screen
-  // is away the listing waits for its return (a revision it missed is listed then, once), so nothing
-  // is asked of the backend for a tree nobody sees.
+  // The manifest revision moved: the All files tree lists the snapshot anew.
   let listed: number | undefined;
   $effect(() => {
     const rev = revision;
-    const shown = reviewShown.on;
-    if (scope !== "all" || rev === undefined || !shown || listed === rev) return;
+    if (scope !== "all" || rev === undefined || listed === rev) return;
     listed = rev;
     untrack(() => all.reset(rev));
   });

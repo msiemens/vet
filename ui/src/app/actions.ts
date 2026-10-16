@@ -24,6 +24,8 @@ import { threads } from "../state/threads.svelte";
 import { versions } from "../state/versions.svelte";
 import { shell } from "../features/chrome";
 import { commentsUi } from "../features/comments";
+import { logKey } from "../features/pipelines";
+import type { CheckRun } from "../generated/CheckRun";
 import { appState } from "./appState.svelte";
 
 /** Opens the folder of the log files in the file manager; a plain browser says where it is. */
@@ -66,7 +68,9 @@ export async function pickProject() {
 
 /** The review view compares the last reviewed version with the latest; with nothing after it, the changeset shows. */
 export async function showChangesSinceReview() {
-  const since = defaultRange(versions.items);
+  // The versions are the review screen's; showing it brings them, and reading them hands them over.
+  shell.show("review");
+  const since = defaultRange(await versions.load());
   if (!since) notices.show("Nothing has changed since your last review");
   await changeset.setRange(since);
 }
@@ -95,9 +99,18 @@ export function commentOnChangeset() {
 /** Shows a thread where it is: at its code, or in the Comments tool window's Conversation tab. */
 export function openThread(thread: Thread) {
   shell.show("review");
-  if (thread.kind !== "changeset") return void appState.controller?.goToThread(thread);
+  if (thread.kind !== "changeset") {
+    appState.whenReview((c) => void c.goToThread(thread));
+    return;
+  }
   shell.showLeft("comments");
   commentsUi.showConversation();
+}
+
+/** Shows the log of a finished check run in a tab of its own, opening the review screen for it. */
+export function openCheckLog(run: CheckRun) {
+  shell.show("review");
+  appState.whenReview((c) => void c.openLog(run, logKey(run, undefined)));
 }
 
 /** Opens a place of a result set where it was found. */
@@ -106,21 +119,26 @@ export function openPlace(set: FindSet, place: Place, ownTab: boolean) {
   const { spec } = set;
   if (spec.type === "usages") {
     const { file, side, line, col, width } = place;
-    void appState.controller?.openUsage({ path: file.path, side, line, col, width, external: file.external }, ownTab);
+    appState.whenReview(
+      (c) => void c.openUsage({ path: file.path, side, line, col, width, external: file.external }, ownTab),
+    );
     return;
   }
-  void appState.controller?.openFound({
-    path: place.file.path,
-    hunks: place.file.hunks,
-    kind: place.kind,
-    line: place.line,
-    col: place.col,
-    width: place.width,
-    scope: spec.request.scope,
-    commit: spec.scope.commit?.id,
-    ownTab,
-    options: spec.options,
-  });
+  appState.whenReview(
+    (c) =>
+      void c.openFound({
+        path: place.file.path,
+        hunks: place.file.hunks,
+        kind: place.kind,
+        line: place.line,
+        col: place.col,
+        width: place.width,
+        scope: spec.request.scope,
+        commit: spec.scope.commit?.id,
+        ownTab,
+        options: spec.options,
+      }),
+  );
 }
 
 /** Does what was chosen in Search Everywhere, which has closed and given the focus back. */
@@ -131,12 +149,12 @@ export const choiceHost: ChoiceHost = {
     await changeset.showWhole();
     await tick();
   },
-  openOnScreen: (path, line) => void appState.controller?.openSource(ON_SCREEN, path, line),
-  openUnpinned: (path, line) => void appState.controller?.openSource(fileTab(path), path, line),
-  revealFile: (path) => void appState.controller?.revealInChanges(path),
+  openOnScreen: (path, line) => appState.whenReview((c) => void c.openSource(ON_SCREEN, path, line)),
+  openUnpinned: (path, line) => appState.whenReview((c) => void c.openSource(fileTab(path), path, line)),
+  revealFile: (path) => appState.whenReview((c) => void c.revealInChanges(path)),
   revealSymbol: (symbol, change) => {
     symbols.choose(symbol, change, true);
-    void appState.controller?.revealSymbol({ symbol, change });
+    appState.whenReview((c) => void c.revealSymbol({ symbol, change }));
   },
   openChangeset: (id) => {
     if (!queue.onView || keyId(queue.onView) !== id) commands.run(`changeset.open:${id}`);

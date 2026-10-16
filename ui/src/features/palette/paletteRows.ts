@@ -442,8 +442,9 @@ export interface Waiting {
  * What a tab lists for `query`. All shows each kind's best few, the kinds ordered by their best
  * result, each ending in the way to its tab; nothing typed shows the recent results and the changed
  * files least seen. A kind's own tab lists all its results, grouped where that says something. With a
- * query the lists end in the way on to Find in Files. A group still waiting for an answer says so.
- * A query ranks only the rows a tab can draw (the best few), the files' changed and unchanged apart.
+ * query the lists end in the way on to Find in Files, where that is available. A group still waiting
+ * for an answer says so. A query ranks only the rows a tab can draw (the best few), the files'
+ * changed and unchanged apart.
  */
 export function build(
   tab: PaletteTab,
@@ -451,6 +452,8 @@ export function build(
   candidates: Candidates,
   recent: readonly string[],
   waiting: Waiting = {},
+  /** Whether Find in Files is available here; without it the lists end in no way on to it. */
+  findable = true,
 ): Built {
   const q = query.trim();
   // A file query may be only a line, `:12`, which matches everything: then the order is the sources', not a label's.
@@ -496,7 +499,7 @@ export function build(
     groups.push(...kinds.map((k) => k.group));
     if (waiting.symbols && !ranked.symbol.count) groups.push({ label: TITLES.symbol, loading: ASKING, entries: [] });
     if (waiting.files) groups.push(LISTING);
-    if (groups.length) groups.push(find);
+    if (findable && groups.length) groups.push(find);
     return { groups, counts: counts(ranked) };
   }
 
@@ -548,7 +551,7 @@ export function build(
   }
   const shown = groups.filter((g) => g.entries.length || g.loading);
   if (waiting.files && tab === "file") shown.push(LISTING);
-  if (q && tab !== "action" && shown.length) shown.push(find);
+  if (findable && q && tab !== "action" && shown.length) shown.push(find);
   return { groups: shown, counts: q ? counts(ranked) : undefined };
 }
 

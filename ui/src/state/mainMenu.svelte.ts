@@ -20,7 +20,7 @@ class MainMenu {
    * what it writes.
    */
   update(state: MenuState) {
-    const items = resolveMenu(commands, mainMenuSpec(state), commands.context(), this.native);
+    const items = resolveMenu(commands, mainMenuSpec(state), commands.context(), this.native, state.screen);
     this.items = items;
     if (!this.native) return;
     const json = JSON.stringify(items);
