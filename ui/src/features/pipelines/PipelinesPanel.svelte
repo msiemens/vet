@@ -135,12 +135,11 @@
   });
   $effect(() => () => nav.cancel());
 
-  // The chosen job's steps; a job that runs is read again whenever the checks were.
+  // The chosen job's steps; a job that runs is read again whenever the checks bring a new record of it.
   $effect(() => {
-    const id = job;
-    const over = chosen !== undefined && finished(chosen.phase);
-    const stamp = loadedAt;
-    untrack(() => void pipelines.showSteps(id, over, stamp));
+    const run = chosen;
+    const over = run !== undefined && finished(run.phase);
+    untrack(() => void pipelines.showSteps(run, over));
   });
 
   function onkeydown(e: KeyboardEvent) {

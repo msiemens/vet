@@ -4,6 +4,7 @@
 // long as the session; the steps are the review screen's and go when it does.
 
 import { SvelteSet } from "svelte/reactivity";
+import type { CheckRun } from "../generated/CheckRun";
 import type { PipelineAction } from "../generated/PipelineAction";
 import type { PipelineStep } from "../generated/PipelineStep";
 import { errorText } from "../lib/errorText";
@@ -11,6 +12,7 @@ import { toggleIn } from "../lib/foldKeys";
 import type { Backend } from "./backend";
 import { notices } from "./notices.svelte";
 import { Latest } from "./resource";
+import { type StepsRead, readSteps } from "./stepReads";
 
 /** What `act` says to the viewer when the platform took a cancel. */
 const CANCELLING = "Cancelling. The run stops once the platform has stopped its jobs.";
@@ -29,7 +31,7 @@ class Pipelines {
   /** The accounts whose token the platform said may not change runs, until the credentials change. */
   private denied = new SvelteSet<string>();
   private reads = new Latest();
-  private shownFor?: { job: string; stamp: number | undefined };
+  private shownFor?: StepsRead;
   private backend: () => Backend | undefined;
 
   constructor(backend: () => Backend | undefined) {
@@ -59,19 +61,19 @@ class Pipelines {
   }
 
   /**
-   * Loads the steps of `job` (none clears them). A job that is over is read once; one that runs is
-   * read again whenever the checks were (`stamp`), since its steps move on.
+   * Loads the steps of the job `run` is the record of (none clears them). A job that is over is read
+   * once; one that runs is read again for every record of it the checks bring.
    */
-  async showSteps(job: string | undefined, over: boolean, stamp: number | undefined) {
+  async showSteps(run: CheckRun | undefined, over: boolean) {
     const backend = this.backend();
-    if (job === undefined || !backend) {
+    if (run === undefined || !backend) {
       this.hideSteps();
       return;
     }
-    const known = this.shownFor;
-    if (known?.job === job && (over || known.stamp === stamp) && this.stepsError === undefined) return;
+    if (!readSteps(this.shownFor, run, over, this.stepsError !== undefined)) return;
     const isLatest = this.reads.begin();
-    this.shownFor = { job, stamp };
+    const job = run.id;
+    this.shownFor = { job, run };
     if (this.steps?.job !== job) this.steps = undefined;
     try {
       const steps = await backend.pipelineSteps(job);
