@@ -24,8 +24,8 @@ use gix::bstr::ByteSlice;
 use vet_app::changeset::{ChangesetId, CommitId};
 use vet_app::ports::{
     Attributes, BlobJob, BlobRead, BlobReader, BlobSession, BranchInfo, ChangesetRef, ChangesetRefs, Checkout,
-    CheckoutError, CommitDetail, CommitInfo, Differ, Dirty, FetchAuth, Fetcher, GitError, History, IgnoreRules, RefTip,
-    RefUpdate, Remerged, RemoteInfo, Scan, Scanner, Store, TextDiff,
+    CheckoutError, CommitDetail, CommitInfo, Differ, Dirty, Fetcher, GitError, History, IgnoreRules, RefTip, RefUpdate,
+    Remerged, RemoteInfo, Scan, Scanner, Store, TextDiff, Via,
 };
 use vet_core::classify::{changes, text_blobs};
 use vet_core::content::{BlobId, EntryKind, RepoPath, Snapshot};
@@ -113,6 +113,8 @@ struct Inner {
     opened: OnceLock<gix::ThreadSafeRepository>,
     /// Whether the user's and the system's git configuration and the environment are ignored.
     isolated: bool,
+    /// Whether a platform fetch is served from the directory `vet.servedPlatforms` names.
+    served: bool,
 }
 
 /// Who a reflog entry is written as when no git identity is configured. Git itself guesses
@@ -122,7 +124,7 @@ const FALLBACK_EMAIL: &str = "vet@localhost";
 
 impl Inner {
     /// A repository with caches of its own.
-    fn new(root: PathBuf, cap: u64, isolated: bool) -> Self {
+    fn new(root: PathBuf, cap: u64, isolated: bool, served: bool) -> Self {
         Self {
             root,
             cap,
@@ -130,6 +132,7 @@ impl Inner {
             stats: StatCache::default(),
             opened: OnceLock::new(),
             isolated,
+            served,
         }
     }
 }
@@ -138,7 +141,7 @@ impl GixRepo {
     /// A repository whose blocking work draws on `io`. The budget is required, so a caller
     /// cannot end up on a private pool of its own by forgetting [`GixRepo::budgeted`].
     pub fn new(root: impl Into<PathBuf>, io: Budget) -> Self {
-        Self(Arc::new(Inner::new(root.into(), DEFAULT_CAP, false)), io)
+        Self(Arc::new(Inner::new(root.into(), DEFAULT_CAP, false, false)), io)
     }
 
     /// A repository with a budget of its own, for tests and one-off tools.
@@ -148,13 +151,22 @@ impl GixRepo {
     }
 
     pub fn with_cap(self, cap: u64) -> Self {
-        Self(Arc::new(Inner::new(self.0.root.clone(), cap, self.0.isolated)), self.1)
+        let inner = Inner::new(self.0.root.clone(), cap, self.0.isolated, self.0.served);
+        Self(Arc::new(inner), self.1)
     }
 
     /// The same repository read without the user's and the system's git configuration and
     /// without git's environment variables: only the repository's own configuration counts.
     pub fn isolated(self) -> Self {
-        Self(Arc::new(Inner::new(self.0.root.clone(), self.0.cap, true)), self.1)
+        let inner = Inner::new(self.0.root.clone(), self.0.cap, true, self.0.served);
+        Self(Arc::new(inner), self.1)
+    }
+
+    /// For tests: a platform fetch is served from the directory the repository's
+    /// `vet.servedPlatforms` names.
+    pub fn serving_platforms(self) -> Self {
+        let inner = Inner::new(self.0.root.clone(), self.0.cap, self.0.isolated, true);
+        Self(Arc::new(inner), self.1)
     }
 
     /// The same repository, with its caches, drawing on `io`.
@@ -412,14 +424,15 @@ impl Fetcher for GixRepo {
         self.blocking(|i| fetch::remotes(&i.open()?)).await
     }
 
-    async fn fetch(&self, remote: &str, auth: Option<FetchAuth>) -> Result<usize, GitError> {
+    async fn fetch(&self, remote: &str, via: Via) -> Result<usize, GitError> {
         let remote = remote.to_owned();
-        self.blocking(move |i| fetch::fetch(i.open()?, &remote, auth)).await
+        self.blocking(move |i| fetch::fetch(i.open()?, &remote, via, i.served))
+            .await
     }
 
-    async fn fetch_refs(&self, remote: &str, updates: Vec<RefUpdate>, auth: Option<FetchAuth>) -> Result<(), GitError> {
+    async fn fetch_refs(&self, remote: &str, updates: Vec<RefUpdate>, via: Via) -> Result<(), GitError> {
         let remote = remote.to_owned();
-        self.blocking(move |i| fetch::fetch_refs(i.open()?, &remote, updates, auth))
+        self.blocking(move |i| fetch::fetch_refs(i.open()?, &remote, updates, via, i.served))
             .await
     }
 

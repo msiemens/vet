@@ -524,7 +524,7 @@ pub(crate) mod tests {
         CheckLog, CommitChecks, Credential, PullRequest, PullRequestDetail, PullRequestListing, ReviewRequest, Viewer,
         pr, viewer,
     };
-    use crate::ports::{FetchAuth, GitError, RefTip};
+    use crate::ports::{GitError, RefTip, Via};
     use crate::progress::Tasks;
 
     pub(crate) fn github(path: &str) -> RemoteKey {
@@ -752,16 +752,11 @@ pub(crate) mod tests {
             Ok(self.remotes.clone())
         }
 
-        async fn fetch(&self, _: &str, _: Option<FetchAuth>) -> Result<usize, GitError> {
+        async fn fetch(&self, _: &str, _: Via) -> Result<usize, GitError> {
             unreachable!("only refs are fetched")
         }
 
-        async fn fetch_refs(
-            &self,
-            remote: &str,
-            updates: Vec<RefUpdate>,
-            _: Option<FetchAuth>,
-        ) -> Result<(), GitError> {
+        async fn fetch_refs(&self, remote: &str, updates: Vec<RefUpdate>, _: Via) -> Result<(), GitError> {
             self.fetched.lock().unwrap().push((remote.to_owned(), updates.clone()));
             if let Some(lacking) = updates.iter().find(|u| self.gone.contains(&u.source)) {
                 return Err(GitError::Remote(format!("{} is not on the remote", lacking.source)));

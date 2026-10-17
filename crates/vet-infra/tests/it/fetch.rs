@@ -8,7 +8,8 @@ use std::process::Command;
 
 use tempfile::TempDir;
 use vet_app::changeset::{ChangesetId, CommitId};
-use vet_app::ports::{ChangesetRefs, Fetcher, GitError, History, RefUpdate};
+use vet_app::platform::{Credential, CredentialSource, PlatformKind, Token};
+use vet_app::ports::{ChangesetRefs, FetchAuth, Fetcher, GitError, History, RefUpdate, Via};
 use vet_infra::git::GixRepo;
 
 fn git(dir: &Path, args: &[&str]) -> String {
@@ -128,7 +129,7 @@ async fn a_fetch_brings_new_remote_commits_and_moves_only_remote_tracking_refs()
     git(&fx.upstream_work, &["push", "-q", "origin", "extra"]);
     let repo = GixRepo::for_test(&fx.clone);
 
-    let updated = repo.fetch("origin", None).await.unwrap();
+    let updated = repo.fetch("origin", Via::Configured(None)).await.unwrap();
 
     assert_eq!(updated, 2, "main moved, extra is new");
     assert_ne!(old_main, new_main);
@@ -157,7 +158,7 @@ async fn a_fetch_follows_the_refspecs_of_the_remote() {
     let new_main = fx.advance_remote("m2");
     let repo = GixRepo::for_test(&fx.clone);
 
-    repo.fetch("origin", None).await.unwrap();
+    repo.fetch("origin", Via::Configured(None)).await.unwrap();
 
     assert_eq!(fx.remote_ref("main"), new_main);
     let refs = git(&fx.clone, &["for-each-ref", "--format=%(refname)", "refs/remotes/"]);
@@ -180,7 +181,7 @@ async fn a_refspec_that_would_write_a_local_branch_is_refused() {
     fx.advance_remote("m2");
     let repo = GixRepo::for_test(&fx.clone);
 
-    let error = repo.fetch("origin", None).await.unwrap_err();
+    let error = repo.fetch("origin", Via::Configured(None)).await.unwrap_err();
 
     assert_eq!(error.message(), "origin has no refspec that fetches into refs/remotes");
     assert_eq!(fx.outside_remotes(), before);
@@ -241,7 +242,7 @@ async fn a_pull_requests_head_and_target_are_fetched_into_refs_of_vet_and_nothin
             update("refs/pull/7/head", "refs/vet/pr/7/head"),
             update("refs/heads/feature", "refs/vet/pr/7/target"),
         ],
-        None,
+        Via::Configured(None),
     )
     .await
     .unwrap();
@@ -272,13 +273,15 @@ async fn a_force_pushed_pull_request_moves_its_ref_to_the_new_head() {
     let first = fx.open_pull_request(7, "pr.txt", "p1");
     let repo = GixRepo::for_test(&fx.clone);
     let updates = vec![update("refs/pull/7/head", "refs/vet/pr/7/head")];
-    repo.fetch_refs("origin", updates.clone(), None).await.unwrap();
+    repo.fetch_refs("origin", updates.clone(), Via::Configured(None))
+        .await
+        .unwrap();
     assert_eq!(fx.rev("refs/vet/pr/7/head"), Some(first.clone()));
 
     // A different commit on the same parent, not a descendant of the first.
     let rewritten = fx.open_pull_request(7, "pr.txt", "p1 rewritten");
     assert_ne!(rewritten, first);
-    repo.fetch_refs("origin", updates, None).await.unwrap();
+    repo.fetch_refs("origin", updates, Via::Configured(None)).await.unwrap();
 
     assert_eq!(fx.rev("refs/vet/pr/7/head"), Some(rewritten));
     assert!(
@@ -292,13 +295,21 @@ async fn a_commit_descends_from_itself_and_its_ancestors_and_not_from_a_rewritte
     let fx = Fixture::new();
     let first = fx.open_pull_request(7, "pr.txt", "p1");
     let repo = GixRepo::for_test(&fx.clone);
-    repo.fetch_refs("origin", vec![update("refs/pull/7/head", "refs/vet/pr/7/head")], None)
-        .await
-        .unwrap();
+    repo.fetch_refs(
+        "origin",
+        vec![update("refs/pull/7/head", "refs/vet/pr/7/head")],
+        Via::Configured(None),
+    )
+    .await
+    .unwrap();
     let rewritten = fx.open_pull_request(8, "pr.txt", "p1 rewritten");
-    repo.fetch_refs("origin", vec![update("refs/pull/8/head", "refs/vet/pr/8/head")], None)
-        .await
-        .unwrap();
+    repo.fetch_refs(
+        "origin",
+        vec![update("refs/pull/8/head", "refs/vet/pr/8/head")],
+        Via::Configured(None),
+    )
+    .await
+    .unwrap();
     let child = git(
         &fx.clone,
         &["commit-tree", &format!("{first}^{{tree}}"), "-p", &first, "-m", "p2"],
@@ -328,11 +339,19 @@ async fn refs_outside_vets_namespace_are_refused_and_so_is_a_ref_the_remote_lack
     let repo = GixRepo::for_test(&fx.clone);
 
     let local_branch = repo
-        .fetch_refs("origin", vec![update("refs/pull/7/head", "refs/heads/pr-7")], None)
+        .fetch_refs(
+            "origin",
+            vec![update("refs/pull/7/head", "refs/heads/pr-7")],
+            Via::Configured(None),
+        )
         .await
         .unwrap_err();
     let missing = repo
-        .fetch_refs("origin", vec![update("refs/pull/8/head", "refs/vet/pr/8/head")], None)
+        .fetch_refs(
+            "origin",
+            vec![update("refs/pull/8/head", "refs/vet/pr/8/head")],
+            Via::Configured(None),
+        )
         .await
         .unwrap_err();
 
@@ -357,7 +376,7 @@ async fn the_refs_of_fetched_pull_requests_are_listed_and_deleted_and_no_other_r
             update("refs/heads/feature", "refs/vet/pr/github_com/acme/app/7/target"),
             update("refs/heads/feature", "refs/vet/pr/github_com/acme/lib/7/target"),
         ],
-        None,
+        Via::Configured(None),
     )
     .await
     .unwrap();
@@ -437,7 +456,7 @@ async fn a_remote_that_cannot_be_reached_fails_with_a_message_and_changes_nothin
     std::fs::remove_dir_all(&fx.remote).unwrap();
     let repo = GixRepo::for_test(&fx.clone);
 
-    let error = repo.fetch("origin", None).await.unwrap_err();
+    let error = repo.fetch("origin", Via::Configured(None)).await.unwrap_err();
 
     assert!(
         error.message().contains("origin.git"),
@@ -472,14 +491,163 @@ async fn an_ssh_remote_that_refuses_the_key_says_so_in_every_kind_of_fetch() {
                     If your key has a passphrase, add it to an agent (ssh-add) or use an agent such as \
                     1Password's; Vet runs ssh without prompting.";
 
-    let configured = repo.fetch("hosted", None).await.unwrap_err();
+    let configured = repo.fetch("hosted", Via::Configured(None)).await.unwrap_err();
     let refs = repo
-        .fetch_refs("hosted", vec![update("refs/pull/7/head", "refs/vet/pr/7/head")], None)
+        .fetch_refs(
+            "hosted",
+            vec![update("refs/pull/7/head", "refs/vet/pr/7/head")],
+            Via::Configured(None),
+        )
         .await
         .unwrap_err();
 
     assert_eq!(configured, GitError::Remote(expected.into()));
     assert_eq!(refs, GitError::Remote(expected.into()));
+}
+
+fn auth(host: &str) -> FetchAuth {
+    FetchAuth {
+        host: host.to_owned(),
+        kind: PlatformKind::GitHub,
+        credential: Credential {
+            token: Token::new("t").unwrap(),
+            source: CredentialSource::Pat,
+        },
+    }
+}
+
+#[cfg(unix)]
+impl Fixture {
+    /// Makes `ssh` a script that records that it ran, in `ssh-runs`, and fails.
+    fn tripwire(&self) {
+        use std::os::unix::fs::PermissionsExt;
+
+        let script = self._dir.path().join("tripwire.sh");
+        let runs = self._dir.path().join("ssh-runs");
+        std::fs::write(
+            &script,
+            format!("#!/bin/sh\necho run >> '{}'\nexit 1\n", runs.display()),
+        )
+        .unwrap();
+        std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
+        git(&self.clone, &["config", "core.sshCommand", script.to_str().unwrap()]);
+        git(&self.clone, &["config", "ssh.variant", "ssh"]);
+    }
+
+    fn ssh_ran(&self) -> bool {
+        self._dir.path().join("ssh-runs").exists()
+    }
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn a_platform_fetch_of_an_ssh_remote_is_served_from_the_https_url_and_never_runs_ssh() {
+    let fx = Fixture::new();
+    let dir = fx._dir.path();
+    git(
+        &fx.clone,
+        &["remote", "add", "hosted", "ssh://git@github.com/acme/app.git"],
+    );
+    git(
+        dir,
+        &[
+            "clone",
+            "-q",
+            "--bare",
+            fx.remote.to_str().unwrap(),
+            dir.join("github.com/acme/app.git").to_str().unwrap(),
+        ],
+    );
+    git(&fx.clone, &["config", "vet.servedPlatforms", dir.to_str().unwrap()]);
+    fx.tripwire();
+    let repo = GixRepo::for_test(&fx.clone).serving_platforms();
+    let via = || Via::Platform {
+        url: "https://github.com/acme/app.git".to_owned(),
+        auth: auth("github.com"),
+    };
+
+    let updated = repo.fetch("hosted", via()).await.unwrap();
+    repo.fetch_refs(
+        "hosted",
+        vec![update("refs/heads/feature", "refs/vet/pr/7/target")],
+        via(),
+    )
+    .await
+    .unwrap();
+
+    assert!(updated >= 1);
+    assert_eq!(
+        git(&fx.clone, &["rev-parse", "refs/remotes/hosted/main"]),
+        fx.remote_ref("main")
+    );
+    assert!(fx.rev("refs/vet/pr/7/target").is_some());
+    assert!(!fx.ssh_ran());
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn a_platform_url_that_is_not_https_is_refused_before_connecting() {
+    let fx = Fixture::new();
+    git(
+        &fx.clone,
+        &["remote", "add", "hosted", "ssh://git@github.com/acme/app.git"],
+    );
+    fx.tripwire();
+    let repo = GixRepo::for_test(&fx.clone).serving_platforms();
+
+    for url in [
+        "ssh://git@github.com/acme/app.git".to_owned(),
+        format!("file://{}", fx.remote.display()),
+    ] {
+        let error = repo
+            .fetch(
+                "hosted",
+                Via::Platform {
+                    url: url.clone(),
+                    auth: auth("github.com"),
+                },
+            )
+            .await
+            .unwrap_err();
+
+        assert_eq!(
+            error,
+            GitError::Remote(format!(
+                "hosted: {url} is not an https URL; a platform remote is fetched only over HTTPS"
+            ))
+        );
+    }
+    assert!(!fx.ssh_ran());
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn a_rewrite_rule_does_not_turn_a_platform_fetch_into_ssh() {
+    let fx = Fixture::new();
+    git(
+        &fx.clone,
+        &["remote", "add", "hosted", "ssh://git@github.com/acme/app.git"],
+    );
+    git(
+        &fx.clone,
+        &["config", "url.ssh://git@github.com/.insteadOf", "https://127.0.0.1:1/"],
+    );
+    fx.tripwire();
+    let repo = GixRepo::for_test(&fx.clone);
+
+    let error = repo
+        .fetch(
+            "hosted",
+            Via::Platform {
+                url: "https://127.0.0.1:1/acme/app.git".to_owned(),
+                auth: auth("127.0.0.1:1"),
+            },
+        )
+        .await
+        .unwrap_err();
+
+    assert!(error.message().contains("127.0.0.1"), "{error}");
+    assert!(!fx.ssh_ran());
 }
 
 impl Fixture {
@@ -498,10 +666,14 @@ async fn ref_updates_succeed_without_a_git_identity_and_the_reflog_names_the_fal
     let pr = fx.open_pull_request(7, "pr.txt", "p1");
     let repo = GixRepo::for_test(&fx.clone).isolated();
 
-    repo.fetch("origin", None).await.unwrap();
-    repo.fetch_refs("origin", vec![update("refs/pull/7/head", "refs/vet/pr/7/head")], None)
-        .await
-        .unwrap();
+    repo.fetch("origin", Via::Configured(None)).await.unwrap();
+    repo.fetch_refs(
+        "origin",
+        vec![update("refs/pull/7/head", "refs/vet/pr/7/head")],
+        Via::Configured(None),
+    )
+    .await
+    .unwrap();
     repo.set_changeset_ref(ChangesetId(1), 1, "target", &CommitId(new_main.clone()))
         .await
         .unwrap();
@@ -520,7 +692,7 @@ async fn a_configured_identity_writes_the_reflog_and_the_fallback_does_not_repla
     fx.advance_remote("m2");
     let repo = GixRepo::for_test(&fx.clone).isolated();
 
-    repo.fetch("origin", None).await.unwrap();
+    repo.fetch("origin", Via::Configured(None)).await.unwrap();
 
     assert_eq!(fx.reflog_writer("refs/remotes/origin/main"), "Rae <rae@example.org>");
 }

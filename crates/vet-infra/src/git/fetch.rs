@@ -3,9 +3,12 @@
 //! index and the worktree are never touched, whatever the remote's refspecs say.
 //! The refs of fetched pull requests, below `refs/vet/pr/`, are the only ones deleted.
 //!
-//! HTTPS authenticates with the platform credential for the remote's host when
-//! one is given, else with git's credential helpers, else anonymously. SSH runs
-//! the system `ssh`. Nothing is ever prompted for: Vet has no terminal to ask on.
+//! A platform fetch (`Via::Platform`) is HTTPS only and authenticates with the platform credential
+//! alone: it never runs `ssh` and never asks a credential helper. Any other fetch
+//! (`Via::Configured`) goes to the remote's own URL: HTTPS authenticates with the platform
+//! credential for the remote's host when one is given, else with git's credential helpers, else
+//! anonymously, and SSH runs the system `ssh`. Nothing is ever prompted for: Vet has no terminal
+//! to ask on.
 
 use std::sync::atomic::AtomicBool;
 
@@ -19,7 +22,7 @@ use gix::remote::fetch::refs::update::Mode;
 use gix::remote::fetch::{Status, Tags};
 use gix::sec::identity::Account;
 use vet_app::platform::{CredentialSource, PlatformKind};
-use vet_app::ports::{FetchAuth, GitError, RefTip, RefUpdate, RemoteInfo};
+use vet_app::ports::{GitError, RefTip, RefUpdate, RemoteInfo, Via};
 
 use super::{chained, redact};
 use crate::http::install_tls_provider;
@@ -135,8 +138,8 @@ enum Specs {
 }
 
 /// Fetches `remote` as its configured refspecs say. Returns how many refs were updated.
-pub(super) fn fetch(repo: gix::Repository, name: &str, auth: Option<FetchAuth>) -> Result<usize, GitError> {
-    run(repo, name, auth, Specs::Configured)
+pub(super) fn fetch(repo: gix::Repository, name: &str, via: Via, served: bool) -> Result<usize, GitError> {
+    run(repo, name, via, served, Specs::Configured)
 }
 
 /// Fetches the refs `updates` name. The refs below `refs/vet/` they are kept under move even if
@@ -145,7 +148,8 @@ pub(super) fn fetch_refs(
     repo: gix::Repository,
     name: &str,
     updates: Vec<RefUpdate>,
-    auth: Option<FetchAuth>,
+    via: Via,
+    served: bool,
 ) -> Result<(), GitError> {
     if let Some(outside) = updates.iter().find(|u| !u.destination.starts_with("refs/vet/")) {
         return Err(GitError::failed(format!(
@@ -153,7 +157,7 @@ pub(super) fn fetch_refs(
             outside.destination
         )));
     }
-    run(repo, name, auth, Specs::Refs(updates)).map(drop)
+    run(repo, name, via, served, Specs::Refs(updates)).map(drop)
 }
 
 /// Where the refs of fetched pull requests are kept: the only refs a fetch may delete.
@@ -208,10 +212,35 @@ pub(super) fn delete_refs(repo: &gix::Repository, names: &[String]) -> Result<()
     Ok(())
 }
 
-fn run(repo: gix::Repository, name: &str, auth: Option<FetchAuth>, specs: Specs) -> Result<usize, GitError> {
+/// The directory of the repository's `vet.servedPlatforms`, where tests keep what the platforms serve.
+const SERVED_PLATFORMS: &str = "vet.servedPlatforms";
+
+/// The URL a platform fetch connects to: `url`, or in tests the directory that stands in for it.
+fn platform_url(repo: &gix::Repository, url: &str, served: bool) -> String {
+    let dir = served
+        .then(|| repo.config_snapshot().string(SERVED_PLATFORMS))
+        .flatten();
+    match (dir, url.strip_prefix("https://")) {
+        (Some(dir), Some(path)) => format!("file://{}/{path}", dir.to_str_lossy()),
+        _ => url.to_owned(),
+    }
+}
+
+fn run(repo: gix::Repository, name: &str, via: Via, served: bool, specs: Specs) -> Result<usize, GitError> {
     install_tls_provider();
 
     let mut repo = headless(repo)?;
+    let (auth, connect_to, only_auth) = match via {
+        Via::Configured(auth) => (auth, None, false),
+        Via::Platform { url, auth } => {
+            if !url.starts_with("https://") {
+                return Err(GitError::Remote(format!(
+                    "{name}: {url} is not an https URL; a platform remote is fetched only over HTTPS"
+                )));
+            }
+            (Some(auth), Some(platform_url(&repo, &url, served)), true)
+        }
+    };
     // Azure DevOps takes the Entra token of the `az` CLI as a bearer token, not as a password.
     let password = match auth {
         Some(a) if a.kind == PlatformKind::AzureDevOps && a.credential.source == CredentialSource::Cli => {
@@ -225,6 +254,10 @@ fn run(repo: gix::Repository, name: &str, auth: Option<FetchAuth>, specs: Specs)
     };
 
     let mut remote = repo.find_remote(name).map_err(chained)?.with_fetch_tags(Tags::None);
+    if let Some(url) = connect_to {
+        // An `insteadOf` rule must not turn the HTTPS URL back into SSH.
+        remote = remote.with_url_without_url_rewrite(url.as_str()).map_err(chained)?;
+    }
     let specs: Vec<gix::bstr::BString> = match specs {
         Specs::Configured => remote
             .refspecs(Direction::Fetch)
@@ -265,8 +298,9 @@ fn run(repo: gix::Repository, name: &str, auth: Option<FetchAuth>, specs: Specs)
                 }));
             }
         }
-        // Whether our token was taken or refused is not for the user's credential helpers to store or erase.
-        if offered && !matches!(action, Action::Get(_)) {
+        // A platform fetch never asks a credential helper. Whether our token was taken or refused is
+        // not for the user's credential helpers to store or erase.
+        if only_auth || (offered && !matches!(action, Action::Get(_))) {
             return Ok(None);
         }
         configured(action)

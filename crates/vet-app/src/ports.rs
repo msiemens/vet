@@ -367,6 +367,16 @@ pub struct FetchAuth {
     pub credential: Credential,
 }
 
+/// How a fetch reaches a remote.
+#[derive(Clone, Debug)]
+pub enum Via {
+    /// The remote's own URL: SSH runs `ssh`, HTTPS may ask git's credential helpers, with
+    /// `FetchAuth` offered first where its host matches. Only for fetches the user starts.
+    Configured(Option<FetchAuth>),
+    /// `url`, which must be https, with `auth` alone: never `ssh`, never a credential helper.
+    Platform { url: String, auth: FetchAuth },
+}
+
 /// A ref of the repository and the commit it points to.
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub struct RefTip {
@@ -391,19 +401,18 @@ pub struct RefUpdate {
 pub trait Fetcher {
     /// The remotes that have a fetch URL.
     fn remotes(&self) -> impl Future<Output = Result<Vec<RemoteInfo>, GitError>> + Send;
-    /// Fetches `remote` as its refspecs say, authenticating with `auth` where the host matches;
-    /// otherwise with git's credential helpers, else anonymously. Never prompts. Answers with how
-    /// many refs were updated. The error is fit to show.
-    fn fetch(&self, remote: &str, auth: Option<FetchAuth>) -> impl Future<Output = Result<usize, GitError>> + Send;
+    /// Fetches `remote` as its refspecs say, reaching it as `via` says. Never prompts. Answers with
+    /// how many refs were updated. The error is fit to show.
+    fn fetch(&self, remote: &str, via: Via) -> impl Future<Output = Result<usize, GitError>> + Send;
     /// Fetches exactly the refs of `updates` from `remote` and moves the refs below `refs/vet/`
-    /// they name, even when that is not a fast-forward (a force-pushed branch). Authenticates as
-    /// `fetch` does. Fails, fetching nothing, if a destination is not below `refs/vet/`. A ref the
+    /// they name, even when that is not a fast-forward (a force-pushed branch). Reaches the remote
+    /// as `fetch` does. Fails, fetching nothing, if a destination is not below `refs/vet/`. A ref the
     /// remote lacks fails the fetch. The error is fit to show.
     fn fetch_refs(
         &self,
         remote: &str,
         updates: Vec<RefUpdate>,
-        auth: Option<FetchAuth>,
+        via: Via,
     ) -> impl Future<Output = Result<(), GitError>> + Send;
     /// The refs whose names start with `prefix`, each with the commit it points to.
     fn refs_below(&self, prefix: &str) -> impl Future<Output = Result<Vec<RefTip>, GitError>> + Send;

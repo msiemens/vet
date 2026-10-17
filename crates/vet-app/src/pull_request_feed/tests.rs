@@ -13,7 +13,7 @@ use crate::platform::{
     CheckLog, CommitChecks, Discussion, FakeHosting, Health, PlatformError, PlatformTraits, PullRequest,
     PullRequestDetail, PullRequestListing, PullRequestQuery, QueueTab, Viewer, Watched, pr, rows, viewer,
 };
-use crate::ports::{FetchAuth, GitError, RefTip, RefUpdate, RemoteInfo};
+use crate::ports::{GitError, RefTip, RefUpdate, RemoteInfo, Via};
 use crate::progress::Tasks;
 use crate::pull_request::tests::{Anonymous, Remotes, fetching, fetching_into, github, info, names};
 use crate::pull_request::{ListedPullRequest, PullRequestRefs, RepositoryStatus};
@@ -229,11 +229,11 @@ impl Fetcher for Readable {
         Ok(self.remotes.lock().unwrap().clone())
     }
 
-    async fn fetch(&self, _: &str, _: Option<FetchAuth>) -> Result<usize, GitError> {
+    async fn fetch(&self, _: &str, _: Via) -> Result<usize, GitError> {
         unreachable!("the cycle fetches refs, not whole remotes")
     }
 
-    async fn fetch_refs(&self, _: &str, updates: Vec<RefUpdate>, _: Option<FetchAuth>) -> Result<(), GitError> {
+    async fn fetch_refs(&self, _: &str, updates: Vec<RefUpdate>, _: Via) -> Result<(), GitError> {
         if self.refused.load(Ordering::SeqCst) {
             return Err(GitError::Remote("the refs were refused".to_owned()));
         }

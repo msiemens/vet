@@ -11,7 +11,7 @@ use tokio::sync::Mutex;
 
 use crate::mutex::lock;
 use crate::platform::{Credential, PlatformKind, parse_remote};
-use crate::ports::{FetchAuth, Fetcher, GitError, RefTip, RefUpdate, RemoteInfo};
+use crate::ports::{FetchAuth, Fetcher, GitError, RefTip, RefUpdate, RemoteInfo, Via};
 use crate::progress::{TaskKind, Tasks};
 
 /// How often a project's remotes are fetched while it is open.
@@ -115,8 +115,8 @@ impl<G: Fetcher> Fetch<G> {
         let _only_one = self.running.lock().await;
         self.note_fetching(&updates);
         let task = self.tasks.start(TaskKind::Fetch, title);
-        let auth = authentication(credentials, remote).await;
-        match self.git.fetch_refs(&remote.name, updates, auth).await {
+        let via = Via::Configured(authentication(credentials, remote).await);
+        match self.git.fetch_refs(&remote.name, updates, via).await {
             Ok(()) => {
                 task.finish();
                 Ok(())
@@ -140,9 +140,9 @@ impl<G: Fetcher> Fetch<G> {
     ) -> Result<(), GitError> {
         let _only_one = self.running.lock().await;
         self.note_fetching(&updates);
-        let auth = authentication(credentials, remote).await;
+        let via = Via::Configured(authentication(credentials, remote).await);
         self.git
-            .fetch_refs(&remote.name, updates, auth)
+            .fetch_refs(&remote.name, updates, via)
             .await
             .map_err(|e| GitError::Remote(format!("{}: {e}", remote.name)))
     }
@@ -185,8 +185,8 @@ impl<G: Fetcher> Fetch<G> {
         let mut updated = 0;
         for (done, remote) in remotes.iter().enumerate() {
             task.report(Some((done as u32, total)), Some(remote.name.clone()));
-            let auth = authentication(credentials, remote).await;
-            match self.git.fetch(&remote.name, auth).await {
+            let via = Via::Configured(authentication(credentials, remote).await);
+            match self.git.fetch(&remote.name, via).await {
                 Ok(refs) => updated += refs,
                 Err(e) => {
                     tracing::warn!(remote = %remote.name, error = %e, "fetch failed");
@@ -259,6 +259,13 @@ mod tests {
     /// The remotes fetched so far, each with the token it was fetched with.
     type Fetched = Arc<StdMutex<Vec<(String, Option<String>)>>>;
 
+    fn token_of(via: Via) -> Option<String> {
+        match via {
+            Via::Configured(auth) => auth.map(|a| a.credential.token.expose().to_owned()),
+            Via::Platform { auth, .. } => Some(auth.credential.token.expose().to_owned()),
+        }
+    }
+
     /// Remotes that fetch, except the ones named in `failing`.
     struct Remotes {
         remotes: Vec<RemoteInfo>,
@@ -273,8 +280,8 @@ mod tests {
             Ok(self.remotes.clone())
         }
 
-        async fn fetch(&self, remote: &str, auth: Option<FetchAuth>) -> Result<usize, GitError> {
-            let token = auth.map(|a| a.credential.token.expose().to_owned());
+        async fn fetch(&self, remote: &str, via: Via) -> Result<usize, GitError> {
+            let token = token_of(via);
             self.fetched.lock().unwrap().push((remote.to_owned(), token));
             if self.failing.contains(&remote) {
                 return Err(GitError::Remote("connection refused".into()));
@@ -282,13 +289,8 @@ mod tests {
             Ok(self.updated)
         }
 
-        async fn fetch_refs(
-            &self,
-            remote: &str,
-            updates: Vec<RefUpdate>,
-            auth: Option<FetchAuth>,
-        ) -> Result<(), GitError> {
-            let token = auth.map(|a| a.credential.token.expose().to_owned());
+        async fn fetch_refs(&self, remote: &str, updates: Vec<RefUpdate>, via: Via) -> Result<(), GitError> {
+            let token = token_of(via);
             let wanted: Vec<_> = updates.iter().map(|u| u.source.as_str()).collect();
             self.fetched
                 .lock()
