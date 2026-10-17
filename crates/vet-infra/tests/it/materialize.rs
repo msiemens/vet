@@ -3,17 +3,17 @@
 
 #![allow(clippy::disallowed_methods)]
 
-use std::collections::{BTreeMap, HashMap, HashSet};
+use std::collections::HashSet;
 use std::os::unix::fs::PermissionsExt;
 use std::path::Path;
 use std::process::Command;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 
-use crate::common;
+use crate::common::{self, MemStore};
 use tempfile::TempDir;
 use vet_app::acquisition::Acquisition;
-use vet_app::ports::{Checkout, CheckoutError, History, Scanner, Store, StoreError, StoredBlob};
-use vet_core::content::{BlobId, EntryKind, FileEntry, RepoPath, Snapshot, SnapshotId, SnapshotStatus, keeps_bytes};
+use vet_app::ports::{Checkout, CheckoutError, History, Scanner, Store, StoredBlob};
+use vet_core::content::{BlobId, EntryKind, FileEntry, RepoPath, Snapshot, SnapshotId};
 use vet_core::merkle;
 use vet_infra::git::GixRepo;
 use vet_infra::materialize::Materialize;
@@ -48,57 +48,6 @@ fn write(dir: &Path, name: &str, content: &[u8]) {
 
 fn path(s: &str) -> RepoPath {
     RepoPath(s.as_bytes().to_vec())
-}
-
-#[derive(Default)]
-struct MemStore {
-    blobs: Mutex<HashMap<BlobId, StoredBlob>>,
-    snapshots: Mutex<HashMap<SnapshotId, (Snapshot, SnapshotStatus)>>,
-}
-
-impl Store for MemStore {
-    async fn put_blobs(&self, blobs: Vec<Vec<u8>>) -> Result<Vec<BlobId>, StoreError> {
-        let mut held = self.blobs.lock().unwrap();
-        Ok(blobs
-            .into_iter()
-            .map(|bytes| {
-                let id = BlobId::of(&bytes);
-                let kept = if keeps_bytes(&bytes) {
-                    StoredBlob::Bytes(bytes)
-                } else {
-                    StoredBlob::Binary {
-                        size: bytes.len() as u64,
-                    }
-                };
-                held.insert(id, kept);
-                id
-            })
-            .collect())
-    }
-    async fn missing_blobs(&self, ids: Vec<BlobId>) -> Result<Vec<BlobId>, StoreError> {
-        let held = self.blobs.lock().unwrap();
-        Ok(ids.into_iter().filter(|id| !held.contains_key(id)).collect())
-    }
-    async fn blob(&self, id: BlobId) -> Result<Option<StoredBlob>, StoreError> {
-        Ok(self.blobs.lock().unwrap().get(&id).cloned())
-    }
-    async fn blobs(&self, ids: Vec<BlobId>) -> Result<BTreeMap<BlobId, StoredBlob>, StoreError> {
-        let held = self.blobs.lock().unwrap();
-        Ok(ids
-            .into_iter()
-            .filter_map(|id| Some((id, held.get(&id)?.clone())))
-            .collect())
-    }
-    async fn snapshot(&self, id: SnapshotId) -> Result<Option<(Snapshot, SnapshotStatus)>, StoreError> {
-        Ok(self.snapshots.lock().unwrap().get(&id).cloned())
-    }
-}
-
-impl MemStore {
-    /// What a review does to the store when it keeps a snapshot.
-    fn put_snapshot(&self, snapshot: Snapshot, status: SnapshotStatus) {
-        self.snapshots.lock().unwrap().insert(snapshot.id, (snapshot, status));
-    }
 }
 
 /// HEAD has a.txt, run.sh (executable), link and dir/b.txt. The worktree edits

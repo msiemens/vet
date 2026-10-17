@@ -3,22 +3,20 @@
 
 #![allow(clippy::disallowed_methods)]
 
-use std::collections::{BTreeMap, HashMap};
 use std::os::unix::fs::PermissionsExt;
 use std::path::Path;
 use std::process::Command;
-use std::sync::Mutex;
 use std::time::Duration;
 
-use crate::common;
+use crate::common::{self, MemStore};
 use tempfile::TempDir;
 use vet_app::acquisition::Acquisition;
 use vet_app::changeset::ChangesetId;
 use vet_app::ports::{
-    BlobRead, BlobReader, ChangesetRef, ChangesetRefs, Differ, Dirty, History, IgnoreRules, Scanner, Store, StoreError,
-    StoredBlob, TextDiff,
+    BlobRead, BlobReader, ChangesetRef, ChangesetRefs, Differ, Dirty, History, IgnoreRules, Scanner, Store, StoredBlob,
+    TextDiff,
 };
-use vet_core::content::{BlobId, EntryKind, NonTextKind, RepoPath, Snapshot, SnapshotId, SnapshotStatus, keeps_bytes};
+use vet_core::content::{BlobId, EntryKind, NonTextKind, RepoPath, Snapshot};
 use vet_infra::budget::Budget;
 use vet_infra::git::GixRepo;
 
@@ -80,47 +78,6 @@ async fn head_and_scan(dir: &Path, repo: &GixRepo) -> (Snapshot, vet_app::ports:
     let base = repo.commit_snapshot(&head).await.unwrap();
     let _ = dir;
     (base, repo.scan(Dirty::All).await.unwrap())
-}
-
-#[derive(Default)]
-struct MemStore(Mutex<HashMap<BlobId, StoredBlob>>);
-
-impl Store for MemStore {
-    async fn put_blobs(&self, blobs: Vec<Vec<u8>>) -> Result<Vec<BlobId>, StoreError> {
-        let mut held = self.0.lock().unwrap();
-        Ok(blobs
-            .into_iter()
-            .map(|bytes| {
-                let id = blob(&bytes);
-                let kept = if keeps_bytes(&bytes) {
-                    StoredBlob::Bytes(bytes)
-                } else {
-                    StoredBlob::Binary {
-                        size: bytes.len() as u64,
-                    }
-                };
-                held.insert(id, kept);
-                id
-            })
-            .collect())
-    }
-    async fn missing_blobs(&self, ids: Vec<BlobId>) -> Result<Vec<BlobId>, StoreError> {
-        let held = self.0.lock().unwrap();
-        Ok(ids.into_iter().filter(|id| !held.contains_key(id)).collect())
-    }
-    async fn blob(&self, id: BlobId) -> Result<Option<StoredBlob>, StoreError> {
-        Ok(self.0.lock().unwrap().get(&id).cloned())
-    }
-    async fn blobs(&self, ids: Vec<BlobId>) -> Result<BTreeMap<BlobId, StoredBlob>, StoreError> {
-        let held = self.0.lock().unwrap();
-        Ok(ids
-            .into_iter()
-            .filter_map(|id| Some((id, held.get(&id)?.clone())))
-            .collect())
-    }
-    async fn snapshot(&self, _: SnapshotId) -> Result<Option<(Snapshot, SnapshotStatus)>, StoreError> {
-        unimplemented!()
-    }
 }
 
 #[tokio::test]
