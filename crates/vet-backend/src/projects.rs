@@ -38,7 +38,9 @@ impl Orchestrator {
             tokio::spawn(async move { projects.reap(id, grace, &TokioClock::new()).await });
             let booting = open.clone();
             open.supervisor.start("boot", async move {
-                let _ = booting.booted().await;
+                // The opening's scan is background work: when another caller's scan failed first,
+                // only a request repeats it.
+                let _ = booting.booted_unless_failed().await;
             });
             // The timer is not a counted run: a client waiting for quiet must not wait for it.
             let timer = open.fetches.clone().every(self.config.fetch_interval);

@@ -792,6 +792,33 @@ mod tests {
 
         // The boot the opening started fails: the repository is gone before it runs.
         std::fs::remove_dir_all(repo.path()).unwrap();
+
+        only_a_request_boots_again(&repo, &orchestrator, project, &open).await;
+    }
+
+    /// The opening's own boot waits behind a background caller that scans first, as the fetch
+    /// the timer starts at once does when it ends before the boot is polled: the failure of that
+    /// scan is the one boot, not the first of two.
+    #[tokio::test]
+    async fn the_opening_does_not_boot_again_after_a_background_caller_failed_the_first_scan() {
+        let (repo, _texts) = edited_repo(1);
+        let (_data, orchestrator, project, open) = opened_repo(&repo).await;
+
+        // Nothing has been polled yet, so this caller is the first to scan.
+        std::fs::remove_dir_all(repo.path()).unwrap();
+        assert!(open.booted_unless_failed().await.is_err());
+
+        only_a_request_boots_again(&repo, &orchestrator, project, &open).await;
+    }
+
+    /// After one failed boot: with the repository restored, background work and the supervisor
+    /// leave the next boot to a request.
+    async fn only_a_request_boots_again(
+        repo: &tempfile::TempDir,
+        orchestrator: &Orchestrator,
+        project: ProjectId,
+        open: &Arc<Open>,
+    ) {
         while open.supervisor.counts(BOOT) != (1, 0) {
             tokio::time::sleep(Duration::from_millis(5)).await;
         }
@@ -799,7 +826,7 @@ mod tests {
         // Restored, the repository would boot: only a request may try it.
         restore_repo(repo.path());
         for _ in 0..10 {
-            crate::reconcile::reconcile(&open).await;
+            crate::reconcile::reconcile(open).await;
             tokio::time::sleep(Duration::from_millis(20)).await;
         }
         assert_eq!(open.supervisor.counts(BOOT), (1, 0), "nothing booted by itself");
