@@ -53,12 +53,18 @@ step "pnpm build"
 pnpm build
 cd ..
 
-# cargo never removes the artifacts of earlier builds; keep each target directory under a cap.
+# cargo never removes the artifacts of earlier builds. Stale incremental folders go first:
+# cargo-sweep cannot see them but counts them against its cap, and would then delete every
+# dependency build instead.
+step "prune incremental folders"
+for dir in . ui/src-tauri tools/module-cycles; do
+    ci/prune-incremental.sh "$dir/target/debug/incremental"
+done
 step "cargo sweep"
 if command -v cargo-sweep >/dev/null; then
-    cargo sweep --maxsize 10GB
-    cargo sweep --maxsize 10GB ui/src-tauri
-    cargo sweep --maxsize 10GB tools/module-cycles
+    cargo sweep --maxsize 20GB
+    cargo sweep --maxsize 20GB ui/src-tauri
+    cargo sweep --maxsize 20GB tools/module-cycles
 else
     skip "cargo sweep: cargo-sweep is not installed (cargo install cargo-sweep)"
 fi
