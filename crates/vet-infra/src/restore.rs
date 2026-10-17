@@ -440,6 +440,23 @@ fn failed(step: &Step, args: &[String], out: &crate::exec::Captured) -> String {
     )
 }
 
+/// Lines of a failure message that are logged above `debug`, and their length. The tool's
+/// output can quote code, so the rest stays in the debug log.
+const REASON_LINES: usize = 3;
+const REASON_CHARS: usize = 300;
+
+/// The command and the first lines of the excerpt of a failure message, on one line.
+fn reason(why: &str) -> String {
+    let mut lines = why.lines().filter(|l| !l.trim().is_empty());
+    let command = lines.next().unwrap_or_default();
+    let cause = lines.take(REASON_LINES).map(str::trim).collect::<Vec<_>>().join(" | ");
+    let text = format!("{command} {cause}");
+    match text.char_indices().nth(REASON_CHARS) {
+        Some((end, _)) => format!("{}…", text[..end].trim_end()),
+        None => text.trim_end().to_owned(),
+    }
+}
+
 /// The JavaScript package manager of the project in `abs`: `packageManager` in
 /// `package.json` first (what Corepack enforces), else the lockfile present.
 fn javascript_step(abs: &Path, project: &Path, executing: bool) -> Step {
@@ -620,11 +637,10 @@ impl ToolRestorer {
                     });
                 }
                 Err(why) => {
-                    // The tool's output can quote code: only its first line is logged above `debug`.
                     tracing::warn!(
                         project = %label(&step.project),
                         tool = step.program,
-                        reason = vet_log::first_line(&why),
+                        reason = %reason(&why),
                         "a restore step failed"
                     );
                     tracing::debug!(project = %label(&step.project), tool = step.program, output = %why, "the failed restore step's output");
@@ -1661,6 +1677,31 @@ mod tests {
         assert_eq!(failure.kind, RestoreFailureKind::Failed);
         assert!(failure.message.contains("cargo fetch"), "{failure:?}");
         assert!(failure.message.contains("boom"), "{failure:?}");
+    }
+
+    #[tokio::test]
+    async fn the_warning_of_a_failed_restore_says_why_in_a_bounded_reason() {
+        let dir = tree(&[("Cargo.toml", "")]);
+        let tools = Arc::new(FakeTools::default());
+        let noise = "x".repeat(2000);
+        tools.answer(
+            "cargo fetch",
+            false,
+            &format!("error: no matching package named `nope`\nlocation searched: registry\n{noise}\n"),
+        );
+        let capture = vet_log::capture::Capture::default();
+        let _guard = capture.install(vet_log::filter(None).0);
+        restorer(&tools).restore(dir.path(), &backend("rust"), NO_EXEC).await;
+        let warning = capture
+            .text()
+            .lines()
+            .find(|l| l.contains("a restore step failed"))
+            .map(str::to_owned)
+            .expect("a warning");
+        assert!(warning.contains("no matching package named `nope`"), "{warning}");
+        assert!(warning.contains("location searched"), "{warning}");
+        assert!(warning.len() < 600, "{}", warning.len());
+        assert!(!warning.contains(&noise), "{warning}");
     }
 
     const OUT_OF_SYNC: &str = "npm error code EUSAGE\nnpm error\nnpm error `npm ci` can only install packages when your package.json and package-lock.json or npm-shrinkwrap.json are in sync.\nnpm error Missing: x@1.0.0 from lock file\n";
