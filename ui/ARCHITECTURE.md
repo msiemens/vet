@@ -8,6 +8,7 @@ A rule that carries out an invariant of `SPEC.md` §2 names it; the others are a
 
 - **The window is a thin client:** it renders and sends, and review state, completion and names are the backend's. Components get data from props or stores, only `state/backend.ts` talks to the connection, and views listen to the stores, not the connection.
 - **The window holds only what the backend sent.** A store holds and distributes it and applies its events; what it derives is presentation. An answer or event is applied only if it is newer than what is held, and an action in a view being replaced never lands in the next one.
+- **A Find in Files search runs through `SearchRun`** (`state/searchRun.ts`), one per dialog and per Find set; nothing else calls `backend.search`.
 - **The window asks content-anchored questions** (I2): a position and a view, never a commit hash. An operation a server does not offer is shown as not offered, never as nothing (I3); caching (I1) and trust are the backend's.
 - **Git is read-only**: every editor is read-only and draws the backend's diff.
 - **The dependency direction is one-way**: `features` import `lib/*` and `state`; `lib/*` imports nothing from `features`, `state` or `app`; a feature imports another only through its `index.ts`; `app` composes through snippets and props. One component per file; no `utils` or `helpers`. `eslint.config.js` enforces all of it, plus import cycles and the editor's no-Svelte rule (`pnpm lint`).
