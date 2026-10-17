@@ -38,6 +38,7 @@ mod sync;
 mod threads;
 mod trust;
 
+use std::cell::Cell;
 use std::path::{Path, PathBuf};
 use std::pin::Pin;
 use std::sync::Arc;
@@ -295,7 +296,11 @@ impl Orchestrator {
     /// The open project `id`. The request being answered is about it from here on, and its
     /// log lines say so.
     async fn find(&self, id: ProjectId) -> Result<Arc<Open>> {
-        tracing::Span::current().record("project", id);
+        // A span prints every value recorded into it, so a request records its project once.
+        let recorded = PROJECT_RECORDED.try_with(|recorded| recorded.replace(true));
+        if recorded != Ok(true) {
+            tracing::Span::current().record("project", id);
+        }
         let open = self.projects.find(id).await?;
         reconcile::touched(&open);
         Ok(open)
@@ -405,8 +410,14 @@ impl Orchestrator {
 impl Handler for Orchestrator {
     async fn handle(&self, request: Request, events: Events) -> std::result::Result<Response, Failure> {
         let from = Connection(events);
-        Ok(reconcile::reconciling(self.answer(request, &from)).await?)
+        let answer = reconcile::reconciling(self.answer(request, &from));
+        Ok(PROJECT_RECORDED.scope(Cell::new(false), answer).await?)
     }
+}
+
+tokio::task_local! {
+    /// Whether the request being answered has recorded its project into its span.
+    static PROJECT_RECORDED: Cell<bool>;
 }
 
 /// What a request is answered with, on the heap.

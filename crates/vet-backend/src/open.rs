@@ -905,4 +905,28 @@ mod tests {
         );
         assert_eq!(open.supervisor.counts(SETTLING).0, 1, "exactly one settle loop runs");
     }
+
+    #[tokio::test]
+    async fn a_request_that_finds_its_project_twice_logs_the_project_once() {
+        use tracing::Instrument;
+
+        let (repo, _texts) = edited_repo(1);
+        let (_data, orchestrator, project, _open) = opened_repo(&repo).await;
+        let capture = vet_log::capture::Capture::default();
+        let _guard = capture.install(vet_log::filter(None).0);
+
+        let span = tracing::info_span!("request", id = 1, project = tracing::field::Empty);
+        let request = async {
+            orchestrator.ready(project).await.unwrap();
+            orchestrator.find(project).await.unwrap();
+            tracing::info!("answered");
+        };
+        crate::PROJECT_RECORDED
+            .scope(std::cell::Cell::new(false), request)
+            .instrument(span)
+            .await;
+
+        let text = capture.text();
+        assert_eq!(text.matches("project=").count(), 1, "{text}");
+    }
 }
