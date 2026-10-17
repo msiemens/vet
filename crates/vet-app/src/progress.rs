@@ -22,6 +22,9 @@ pub enum TaskKind {
     Store,
     Sync,
     Checks,
+    /// The outcome of fetching the remotes, announced when the fetch ends: failed with the failing
+    /// remotes named, finished otherwise.
+    RemoteFetch,
 }
 
 #[derive(Clone, PartialEq, Eq, Debug)]

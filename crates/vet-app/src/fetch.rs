@@ -199,9 +199,14 @@ impl<G: Fetcher> Fetch<G> {
                 fetched: 0,
                 updated: 0,
                 failure: None,
+                platform_remotes: 0,
                 platform_failure: None,
             });
         }
+        let platform_remotes = routed
+            .iter()
+            .filter(|(_, via)| matches!(via, Via::Platform { .. }))
+            .count();
         let names: Vec<&str> = routed.iter().map(|(remote, _)| remote.name.as_str()).collect();
         let task = self.tasks.start(TaskKind::Fetch, title(&names));
         let total = routed.len() as u32;
@@ -234,6 +239,7 @@ impl<G: Fetcher> Fetch<G> {
             fetched,
             updated,
             failure,
+            platform_remotes,
             platform_failure: joined(platform_failures),
         })
     }
@@ -257,6 +263,8 @@ pub struct Ran {
     pub updated: usize,
     /// Why the others were not, as the task failed with it, naming each remote.
     pub failure: Option<String>,
+    /// How many of the remotes the run took are on platform hosts, whether they were fetched or not.
+    pub platform_remotes: usize,
     /// The part of `failure` that is of remotes on platform hosts.
     pub platform_failure: Option<String>,
 }
@@ -506,6 +514,7 @@ mod tests {
                 fetched: 1,
                 updated: 1,
                 failure: Some("origin: connection refused".into()),
+                platform_remotes: 0,
                 platform_failure: None,
             })
         );
@@ -528,6 +537,7 @@ mod tests {
                 fetched: 1,
                 updated: 1,
                 failure: None,
+                platform_remotes: 1,
                 platform_failure: None,
             })
         );
@@ -555,6 +565,7 @@ mod tests {
                 fetched: 4,
                 updated: 4,
                 failure: None,
+                platform_remotes: 1,
                 platform_failure: None,
             })
         );
@@ -587,6 +598,7 @@ mod tests {
                 fetched: 0,
                 updated: 0,
                 failure: None,
+                platform_remotes: 0,
                 platform_failure: None,
             })
         );
@@ -730,6 +742,7 @@ mod tests {
                 fetched: 0,
                 updated: 0,
                 failure: None,
+                platform_remotes: 0,
                 platform_failure: None,
             })
         );
@@ -754,6 +767,7 @@ mod tests {
                 fetched: 2,
                 updated: 0,
                 failure: None,
+                platform_remotes: 0,
                 platform_failure: None,
             }),
             "both remotes answered, neither moved a ref"
@@ -764,6 +778,7 @@ mod tests {
                 fetched: 1,
                 updated: 4,
                 failure: None,
+                platform_remotes: 0,
                 platform_failure: None,
             }),
             "the reference count, not the remote count"

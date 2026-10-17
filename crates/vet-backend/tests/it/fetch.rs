@@ -453,6 +453,96 @@ async fn a_platform_remote_that_cannot_be_reached_fails_the_fetch_at_open() {
     assert!(failed.starts_with("origin: "), "names the remote: {failed}");
 }
 
+/// The report of a fetch of the platform remotes, once it has ended.
+fn remote_fetch_report(event: &Event) -> Option<vet_protocol::Task> {
+    match event {
+        Event::Task(t) if t.kind == TaskKind::RemoteFetch && t.state != TaskState::Running => Some(t.clone()),
+        _ => None,
+    }
+}
+
+/// The outcomes of the reports of fetches of the platform remotes, in the order announced.
+fn remote_fetch_states(events: &[Event]) -> Vec<TaskState> {
+    events.iter().filter_map(remote_fetch_report).map(|t| t.state).collect()
+}
+
+#[cfg(debug_assertions)]
+#[tokio::test]
+async fn a_failed_fetch_shows_a_failed_report_and_a_later_fetch_clears_it() {
+    let (_mock, fake, repo, scratch) = crate::prefetch::fixture();
+    let served = crate::prefetch::served_repo(scratch.path());
+    let aside = scratch.path().join("served-aside");
+    std::fs::rename(&served, &aside).unwrap();
+    let data = tempfile::tempdir().unwrap();
+    let config = Config {
+        fetch_interval: LONG,
+        ..crate::prefetch::config()
+    };
+    let (_backend, mut client) = crate::prefetch::backend_with(data.path(), &fake.base(), config).await;
+    let project = client.open(repo.path()).await;
+    let mut seen = Vec::new();
+
+    let failed = until(&mut client, &mut seen, remote_fetch_report).await;
+    assert_eq!(failed.title, "Fetch");
+    assert!(
+        matches!(&failed.state, TaskState::Failed { message } if message.starts_with("origin: ")),
+        "names the remote: {failed:?}"
+    );
+
+    std::fs::rename(&aside, &served).unwrap();
+    client.call(Request::Fetch { project }).await.unwrap();
+    client.call(Request::WaitForQuiet { project }).await.unwrap();
+
+    seen.extend(pending(&mut client));
+    let states = remote_fetch_states(&seen);
+    assert_eq!(states.len(), 2, "one report per fetch: {states:?}");
+    assert!(matches!(states[0], TaskState::Failed { .. }), "{states:?}");
+    assert_eq!(states[1], TaskState::Finished);
+}
+
+/// A timer fetch that has no platform remote to take reports nothing.
+#[cfg(debug_assertions)]
+#[tokio::test]
+async fn a_fetch_with_nothing_to_fetch_reports_nothing() {
+    let remote = Remote::new();
+    let (handler, _data) = orchestrator(LONG).await;
+    let mut client = Client::new(&handler);
+    let project = client.open(&remote.project).await;
+    background_ended(&client, project, "fetch").await;
+
+    let heard = pending(&mut client);
+
+    assert!(
+        !heard
+            .iter()
+            .any(|e| matches!(e, Event::Task(t) if matches!(t.kind, TaskKind::Fetch | TaskKind::RemoteFetch))),
+        "a fetch of nothing was reported: {heard:#?}"
+    );
+}
+
+/// The footer counts the platform remotes only: the viewer's fetch of a remote on another host that
+/// fails is a task of its own and no report.
+#[cfg(debug_assertions)]
+#[tokio::test]
+async fn a_viewer_fetch_of_other_hosts_only_reports_nothing() {
+    let remote = Remote::new();
+    std::fs::remove_dir_all(&remote.bare).unwrap();
+    let (handler, _data) = orchestrator(LONG).await;
+    let mut client = Client::new(&handler);
+    let project = client.open(&remote.project).await;
+    background_ended(&client, project, "fetch").await;
+    pending(&mut client);
+
+    client.call(Request::Fetch { project }).await.unwrap();
+
+    let heard = pending(&mut client);
+    assert!(
+        heard.iter().any(|e| fetch_failure(e).is_some()),
+        "the viewer's fetch did not fail: {heard:#?}"
+    );
+    assert_eq!(remote_fetch_states(&heard), []);
+}
+
 #[cfg(debug_assertions)]
 #[tokio::test]
 async fn the_periodic_fetch_fires_on_its_interval() {

@@ -28,6 +28,9 @@ pub enum TaskKind {
     Sync,
     /// Reading the checks of the pull request on view. Announced as `Sync` is.
     Checks,
+    /// The outcome of fetching the platform remotes. Announced when a fetch ends: failed with the
+    /// failing remotes named, finished otherwise.
+    RemoteFetch,
 }
 
 #[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize, TS)]
