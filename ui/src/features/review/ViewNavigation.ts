@@ -14,20 +14,23 @@ import { isAbort } from "../../lib/abort";
 import { STALE_NOTICE } from "../../lib/notice";
 import { RequestError } from "../../lib/requestError";
 import type { ViewMode } from "../../lib/viewMode";
-import type { Backend } from "../../state/backend";
-import type { TabId } from "../../state/commands";
+import type { Backend, HoverText } from "../../state/backend";
+import { type TabId, commands } from "../../state/commands";
 import { locationPicker } from "../../state/locationPicker.svelte";
 import { LocationSearch } from "../../state/locationSearch";
 import { notices } from "../../state/notices.svelte";
 import { stepInFile } from "../../state/problemRows";
 import { problems } from "../../state/problems.svelte";
 import { semantic } from "../../state/semantic.svelte";
+import { servedBy } from "../../state/servedBy.svelte";
 import { serverList } from "../../state/serverList.svelte";
+import { serverLine } from "../../state/serverStatus";
 import type { StructureTarget } from "../../state/structure.svelte";
 import type { ViewSource } from "../../state/viewScope.svelte";
 import type { OpenedResult } from "../search";
 import type { ViewHooks } from "./editor/ChangesetView";
 import { orderOf } from "./editor/findMatches";
+import type { HoverAnswer } from "./editor/semantic";
 import type { FindControl } from "./FindControl";
 import { routeFound } from "./foundRoute";
 import { problemTab } from "./problemTab";
@@ -36,6 +39,17 @@ import type { ChangesetSource } from "./changesetSource";
 import { CHANGES, ON_SCREEN, type Origin, commitOf, fileTab, pathOf, settleMode } from "./tabModel";
 import type { Tabs } from "./Tabs.svelte";
 import type { ViewScopes } from "./ViewScopes";
+
+const NO_HOVER: HoverAnswer = { text: "", code: [] };
+
+/** A hover's text with what the popup says around it: the file's server, and the key that goes to a definition. */
+function hoverAnswer(path: string, text: HoverText): HoverAnswer {
+  return {
+    ...text,
+    server: serverLine(path, servedBy.of(path), serverList.servers, serverList.runtimes, semantic.summary(path)),
+    definitionKey: commands.binding("review.goToDefinition")?.label,
+  };
+}
 
 /** The view a request that starts from `origin` reads: the tab's own (see `ViewScopes`), or for `ON_SCREEN` the one on screen. */
 export class ViewNavigation {
@@ -91,10 +105,11 @@ export class ViewNavigation {
    */
   hooks(id: TabId): ViewHooks {
     return {
-      hover: (revision, side, path, line, col, signal) =>
-        this.scopes.analysable(id, side)
-          ? semantic.hover(revision, side, path, line, col, signal)
-          : Promise.resolve({ text: "", code: [] }),
+      hover: async (revision, side, path, line, col, signal) => {
+        if (!this.scopes.analysable(id, side)) return NO_HOVER;
+        const text = await semantic.hover(revision, side, path, line, col, signal);
+        return text ? hoverAnswer(path, text) : NO_HOVER;
+      },
       definition: (revision, side, path, line, col) => {
         if (this.scopes.analysable(id, side)) void this.goToDefinition(id, revision, side, path, line, col);
       },
@@ -215,9 +230,25 @@ export class ViewNavigation {
 
   /** The definition of the symbol at a position of `side`'s text in the tab `from`, shown by `openLocation`. */
   private async goToDefinition(from: TabId, revision: number, side: Side, path: string, line: number, col: number) {
-    const found = await semantic.definition(revision, side, path, line, col);
-    const location = found?.[0];
-    if (!location) return;
+    let found;
+    try {
+      found = await semantic.definition(revision, side, path, line, col);
+    } catch (error) {
+      // Only the changeset moving on aborts a definition: the view that asked is about to be replaced.
+      if (isAbort(error)) notices.show(STALE_NOTICE);
+      else this.changeset.reportFailure(error, revision);
+      return;
+    }
+    if (!found) return;
+    if (found.unavailable) {
+      notices.show(found.unavailable.message);
+      return;
+    }
+    const location = found.locations.at(0);
+    if (!location) {
+      notices.show("No definition found");
+      return;
+    }
     if (location.external) {
       notices.show(`Defined outside the repository: ${location.path}`);
       return;

@@ -10,21 +10,15 @@ import type { Diagnostic } from "../generated/Diagnostic";
 import type { SemanticLocation } from "../generated/SemanticLocation";
 import type { Side } from "../generated/Side";
 import type { Unavailable } from "../generated/Unavailable";
-import { isAbort } from "../lib/abort";
-import { STALE_NOTICE } from "../lib/notice";
-import type { HoverAnswer } from "./backend";
-import { commands } from "./commands";
+import type { HoverText } from "./backend";
 import { DefinitionProbe } from "./definitionProbe";
 import { InFlight } from "./inFlight";
-import { notices } from "./notices.svelte";
 import { opened } from "./opened.svelte";
 import { type SemanticSummary, summarize } from "./semanticSummary";
 import { servedBy } from "./servedBy.svelte";
 import { serverList } from "./serverList.svelte";
-import { hasServer, serverLine } from "./serverStatus";
+import { hasServer } from "./serverStatus";
 import { session } from "./session.svelte";
-
-const NOTHING: HoverAnswer = { text: "", code: [] };
 
 /** A file's target-side diagnostics, each with its origin, as the backend pushed them. */
 export interface FileDiagnostics {
@@ -40,7 +34,7 @@ class SemanticStore {
   files = new SvelteMap<string, FileDiagnostics>();
   /** What `files` held when the revision last advanced, for what shows until the new revision has answered. */
   previous = $state.raw<ReadonlyMap<string, FileDiagnostics>>(new Map());
-  private hovering = new InFlight<HoverAnswer>();
+  private hovering = new InFlight<HoverText>();
   private probe = new DefinitionProbe((key, signal) => this.lookUp(key, signal));
   /** The files the backend could not answer for, and why. */
   private missing = new SvelteMap<string, Unavailable>();
@@ -112,9 +106,10 @@ class SemanticStore {
   }
 
   /**
-   * Markdown; the text is empty if the server has nothing to say, the request is stale or `signal`
-   * aborted it, and with no server for the file's type nothing is asked. The same position asked again while its answer is underway (an editor re-fires its
-   * hover when it updates) joins that request, which is cancelled once no caller wants it.
+   * The server's Markdown, or `undefined` if nothing was asked (no server for the file's type), the
+   * request failed or `signal` aborted it. The same position asked again while its answer is underway
+   * (an editor re-fires its hover when it updates) joins that request, which is cancelled once no
+   * caller wants it.
    */
   async hover(
     revision: number,
@@ -123,50 +118,40 @@ class SemanticStore {
     line: number,
     col: number,
     signal?: AbortSignal,
-  ): Promise<HoverAnswer> {
+  ): Promise<HoverText | undefined> {
     const backend = session.backend;
-    if (!backend || !hasServer(servedBy.of(path), serverList.servers)) return NOTHING;
+    if (!backend || !hasServer(servedBy.of(path), serverList.servers)) return undefined;
     try {
       return await this.hovering.share(
         JSON.stringify([revision, side, path, line, col]),
         async (shared) => {
           const r = await backend.hover(revision, side, path, line, col, shared);
           this.note(revision, path, r.unavailable);
-          return {
-            ...r,
-            server: serverLine(path, servedBy.of(path), serverList.servers, serverList.runtimes, this.summary(path)),
-            definitionKey: commands.binding("review.goToDefinition")?.label,
-          };
+          return r;
         },
         signal,
       );
     } catch {
-      return NOTHING;
+      return undefined;
     }
   }
 
-  /** The definitions at the position, in `side`'s snapshot; `undefined` after telling the viewer why there are none. */
+  /**
+   * The definitions at the position, in `side`'s snapshot, as the backend answered; `undefined`
+   * without a backend. Rejects as the request does.
+   */
   async definition(
     revision: number,
     side: Side,
     path: string,
     line: number,
     col: number,
-  ): Promise<SemanticLocation[] | undefined> {
+  ): Promise<{ locations: SemanticLocation[]; unavailable?: Unavailable } | undefined> {
     const backend = session.backend;
     if (!backend) return undefined;
-    try {
-      const r = await backend.definition(revision, side, path, line, col);
-      this.note(revision, path, r.unavailable);
-      if (r.unavailable) notices.show(r.unavailable.message);
-      else if (!r.locations.length) notices.show("No definition found");
-      else return r.locations;
-    } catch (error) {
-      // Only the changeset moving on aborts a definition: the view that asked is about to be replaced.
-      if (isAbort(error)) notices.show(STALE_NOTICE);
-      else opened.session?.reportFailure(error, revision);
-    }
-    return undefined;
+    const r = await backend.definition(revision, side, path, line, col);
+    this.note(revision, path, r.unavailable);
+    return r;
   }
 
   /**

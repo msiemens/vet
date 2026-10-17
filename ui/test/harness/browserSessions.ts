@@ -1120,6 +1120,28 @@ export const sessions: Record<string, (d: Driver) => Promise<void>> = {
       throw new Error("going back brought the result sets back");
   },
 
+  /** Go to definition in a file no server serves tells the viewer why, in the backend's words. */
+  async definitionNotice(d) {
+    await d.openText("a.txt");
+    await d.until(`document.querySelector(".pane.active .cm-editor") !== null`, "the file's editor");
+    await d.click(".pane.active .cm-content .cm-line");
+    await d.page(`(async () => { (await import("/src/state/notices.svelte.ts")).notices.close(); return true; })()`);
+    const expected = (await d.page(`(async () => {
+      const r = await __t.session.backend.definition(__t.opened.session.layout.shown.revision, "target", "a.txt", 0, 0);
+      return r.unavailable?.message ?? (r.locations.length ? null : "No definition found");
+    })()`)) as string | null;
+    if (!expected) throw new Error("the backend found a definition in a.txt");
+    await d.page(`__t.commands.run("review.goToDefinition")`);
+    await d
+      .until(
+        `(async () => (await import("/src/state/notices.svelte.ts")).notices.text === ${JSON.stringify(expected)})()`,
+        "the definition notice",
+      )
+      .catch(() => {
+        throw new Error("go to definition said nothing");
+      });
+  },
+
   /**
    * The diagnostics pushed for the changeset on view stay across a trip to the queue and are taken
    * after it; a server change drops them, and another changeset starts with none.

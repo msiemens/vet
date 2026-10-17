@@ -7,10 +7,10 @@
 // in one line instead: the server is indexing, or why there is none.
 import type { Diagnostic } from "../../../generated/Diagnostic";
 import { renderMarkdown } from "../../../lib/hoverMarkdown.ts";
-import type { HoverAnswer } from "../../../state/backend";
 
 import { iconSvg } from "../../../lib/ui/icons.ts";
 import { severitySvg } from "../../../lib/ui/severity.ts";
+import type { HoverAnswer } from "./semantic";
 
 function el<K extends keyof HTMLElementTagNameMap>(tag: K, className: string, text?: string): HTMLElementTagNameMap[K] {
   const node = document.createElement(tag);

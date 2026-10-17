@@ -11,14 +11,22 @@ import type { Diagnostic } from "../../../generated/Diagnostic";
 import type { Position } from "../../../generated/Position";
 import type { Side } from "../../../generated/Side";
 import type { TextSpan } from "../../../generated/TextSpan";
-import type { HoverAnswer } from "../../../state/backend";
+import type { HoverText } from "../../../state/backend";
 import type { CaretRect, PickerKind } from "../../../state/pickerTypes";
+import type { ServerLine } from "../../../state/serverStatus";
 import { diagnosticGutter, diagnosticList, diagnosticMarks } from "./diagnostics";
 import { gotoLinks, isGotoModifier } from "./gotoLinkDom";
 import { hoverContent } from "./hoverContent";
 import { type HoverAnchor, hoverPopups } from "./hoverDom";
 import { wordRange } from "./hoverPopup";
 import { lineOf, lineStart, offsetAt } from "./positions";
+
+/** A hover's text with what the popup says around it: the file's server, and the key that goes to a definition. */
+export interface HoverAnswer extends HoverText {
+  server?: ServerLine;
+  /** The label of the go to definition shortcut, if it has one. */
+  definitionKey?: string;
+}
 
 /** What an editor asks of its owner, which knows the view's revision and what to do with an answer. */
 export interface SemanticHooks {

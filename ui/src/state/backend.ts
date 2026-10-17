@@ -62,7 +62,6 @@ import { type Address, Connection, type Dialer, type LinkState } from "./connect
 import { reportUncaught } from "./errorLog";
 import { hashParams, inTauri, invoke } from "./host";
 import { type SessionEvent, projectEvents } from "./projectEvents";
-import type { ServerLine } from "./serverStatus";
 import { StaleRequests } from "./staleRequests";
 
 export type { LinkState };
@@ -101,13 +100,6 @@ export interface HoverText {
   code: number[][];
   /** Why there is no text, when the backend knows. */
   unavailable?: Unavailable;
-}
-
-/** A hover's text with what the popup says around it: the file's server, and the key that goes to a definition. */
-export interface HoverAnswer extends HoverText {
-  server?: ServerLine;
-  /** The label of the go to definition shortcut, if it has one. */
-  definitionKey?: string;
 }
 
 export interface PullRequestList {
