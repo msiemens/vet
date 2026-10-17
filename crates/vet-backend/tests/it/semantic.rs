@@ -1103,6 +1103,21 @@ async fn a_definition_of_a_file_the_worktree_moved_is_asked_again_at_the_newer_r
     let blocked = data.path().join("content").join(&hex[..2]).join(&hex[2..]);
     std::fs::create_dir_all(blocked).unwrap();
 
+    // The server starts and loads the project before the worktree moves: the settle that
+    // follows a move is due `debounce` after it, and a cold server can take longer than
+    // that to answer the first question, which would then be asked at a revision left behind.
+    // Hover has its own answers, so the definitions below are not served from the cache.
+    let (_, unavailable) = client
+        .hover(
+            project,
+            revision,
+            Side::Target,
+            "src/copied.rs",
+            find(COPIED, "target()", 0, 1),
+        )
+        .await;
+    assert_eq!(unavailable, None);
+
     // A file the revision has a copy of is served from it, at the revision's line.
     write(repo.path(), "src/copied.rs", COPIED_MOVED);
     let copied = client
