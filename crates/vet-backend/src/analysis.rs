@@ -25,16 +25,15 @@ const TRIES: usize = 3;
 /// How long between two tries.
 const RETRY_PAUSE: Duration = Duration::from_millis(500);
 
-/// Whether a reason the semantic layer gave for a file can pass if it is asked again: a server that
-/// is starting or indexing (or was restarted), or a query that failed. A file that is unavailable
-/// for a lasting reason — no server for its language, a project the analysis may not run in, the
-/// server does not offer the operation, no text to analyse (binary, too large, not a changed file),
-/// a snapshot that cannot be rebuilt — is not asked again.
+/// Whether a reason the semantic layer gave for a file can pass if it is asked again: a server at
+/// work on its own, or a query that failed (the server may have been restarted). A server that
+/// failed to start or stays stopped cannot: the pool answers that failure for a while without
+/// trying again, and a restart by hand restarts the analysis. Nor can a lasting reason — no server
+/// for its language, a project the analysis may not run in, the server does not offer the
+/// operation, no text to analyse (binary, too large, not a changed file), a snapshot that cannot
+/// be rebuilt.
 fn can_pass(reason: &Unavailable) -> bool {
-    matches!(
-        reason.kind,
-        UnavailableKind::Incomplete | UnavailableKind::QueryFailed | UnavailableKind::ServerFailed
-    )
+    matches!(reason.kind, UnavailableKind::Incomplete | UnavailableKind::QueryFailed)
 }
 
 /// Whether a failure of the analysis itself can pass: a store read (the review database, its
@@ -164,9 +163,12 @@ pub(crate) async fn changed_files(
 
 #[cfg(test)]
 mod tests {
-    use vet_protocol::UnavailableKind;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::time::Instant;
 
-    use super::{Error, Unavailable, can_pass, error_can_pass};
+    use vet_protocol::{DerivedInputs, FileSymbols, Response, UnavailableKind};
+
+    use super::{Error, RETRY_PAUSE, Unavailable, can_pass, error_can_pass, retrying};
 
     /// A reason of the semantic layer of `kind`, as the answer carries it.
     fn reason(kind: UnavailableKind) -> Unavailable {
@@ -180,14 +182,11 @@ mod tests {
 
     #[test]
     fn a_reason_that_can_pass_is_asked_again_and_a_lasting_one_is_not() {
-        for kind in [
-            UnavailableKind::Incomplete,
-            UnavailableKind::QueryFailed,
-            UnavailableKind::ServerFailed,
-        ] {
+        for kind in [UnavailableKind::Incomplete, UnavailableKind::QueryFailed] {
             assert!(can_pass(&reason(kind)), "{kind:?} can pass");
         }
         for kind in [
+            UnavailableKind::ServerFailed,
             UnavailableKind::Unsupported,
             UnavailableKind::ServerMissing,
             UnavailableKind::NotOffered,
@@ -196,6 +195,38 @@ mod tests {
         ] {
             assert!(!can_pass(&reason(kind)), "{kind:?} cannot pass");
         }
+    }
+
+    /// The answer for a file whose symbols could not be determined, for `kind`.
+    fn symbols_with_gap(kind: UnavailableKind) -> Response {
+        Response::FileSymbols(FileSymbols {
+            revision: 1,
+            path: "src/lib.rs".into(),
+            symbols: Vec::new(),
+            context: Vec::new(),
+            gap: Some(reason(kind)),
+            inputs: DerivedInputs {
+                analysis: String::new(),
+                bounds: None,
+                primitives: Vec::new(),
+                hunks: Vec::new(),
+                config: Vec::new(),
+            },
+        })
+    }
+
+    #[tokio::test]
+    async fn a_failed_server_is_answered_at_once() {
+        let calls = AtomicUsize::new(0);
+        let started = Instant::now();
+        let answer = retrying(|| async {
+            calls.fetch_add(1, Ordering::SeqCst);
+            Ok(symbols_with_gap(UnavailableKind::ServerFailed))
+        })
+        .await;
+        assert!(answer.is_ok());
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
+        assert!(started.elapsed() < RETRY_PAUSE);
     }
 
     #[test]
