@@ -81,7 +81,7 @@ Each store follows the events of what it shows:
 - `pendingEdits.svelte.ts` — `editsPending`: whether edits wait to settle.
 - `platform.svelte.ts` — `platformStatus`: the status, which a `PullRequestInfo` answer also sets; `notification`: the bell's list and its card.
 - `progress.svelte.ts` — `task`: the running tasks, and the last failed sync and checks refresh until one of their kind succeeds or another changeset comes on view.
-- `serverList.svelte.ts` — `serversChanged`, `serverRuntimes`, `serverInstallOutput`: the servers and an install's output.
+- `serverList.svelte.ts` — `serversChanged`: reads the servers again; `serverRuntimes`: what the servers do and offer, without reading the list; `serverInstallOutput`: an install's output.
 - `servedBy.svelte.ts` — `serversChanged`: which server serves each file.
 - `ReviewController.ts` — `serversChanged`: drops the semantic answers and re-asks; `reviewChanged`: hands the update to the scope that made it. The tabs' scopes read again when the session's flush calls them, after the manifest.
 - `accounts.svelte.ts` — `credentialsNeeded`, `accountsChanged`: hands over the keychain's token, and reads the accounts again.
