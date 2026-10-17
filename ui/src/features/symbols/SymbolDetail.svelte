@@ -23,7 +23,16 @@
     usagesBody,
   } from "./symbolTree";
 
-  let { shown, onopen }: { shown: Shown; onopen: OpenLocation } = $props();
+  let {
+    shown,
+    onopen,
+    onfind,
+  }: {
+    shown: Shown;
+    onopen: OpenLocation;
+    /** Shows the Find tool, its list focused if `focus`. */
+    onfind: (focus: boolean) => void;
+  } = $props();
 
   const symbols = $derived(opened.session?.symbols);
   const id = $derived(shown.symbol.id);
@@ -37,7 +46,7 @@
   const AFFECTED_HINT = "Unchanged direct callers; their behaviour may differ now.";
   const FIND = {
     label: "Open all usages in the Find window",
-    onclick: () =>
+    onclick: () => {
       opened.session?.findSets.findUsages({
         type: "usages",
         symbol: nameOf(id),
@@ -45,7 +54,9 @@
         path: id.path,
         line: shown.symbol.at.line,
         col: shown.symbol.at.col,
-      }),
+      });
+      onfind(true);
+    },
   };
 
   function go(target: Target) {

@@ -64,6 +64,7 @@ export class ViewNavigation {
   private scopes: ViewScopes;
   private views: ReviewViews;
   private find: FindControl;
+  private showFind: (focus: boolean) => void;
   /** Show Usages and Go to Implementation: goes to the one place found, or lists the places in the popup. */
   private search: LocationSearch;
 
@@ -78,6 +79,7 @@ export class ViewNavigation {
     scopes: ViewScopes,
     views: ReviewViews,
     find: FindControl,
+    showFind: (focus: boolean) => void,
   ) {
     this.backend = backend;
     this.changeset = changeset;
@@ -85,6 +87,7 @@ export class ViewNavigation {
     this.scopes = scopes;
     this.views = views;
     this.find = find;
+    this.showFind = showFind;
     this.search = new LocationSearch({
       picker: locationPicker,
       notice: (text) => notices.show(text),
@@ -129,11 +132,13 @@ export class ViewNavigation {
           open: (row) => void this.openRow(id, row, side),
           keep:
             kind === "usages"
-              ? (answer) =>
+              ? (answer) => {
                   this.changeset.findSets.keepUsages(
                     { type: "usages", symbol: subject.name, side, path, ...at },
                     answer,
-                  )
+                  );
+                  this.showFind(false);
+                }
               : undefined,
           ask: (signal) =>
             kind === "usages"
@@ -142,8 +147,9 @@ export class ViewNavigation {
         });
       },
       findUsages: (_revision, side, path, at, subject) => {
-        if (this.scopes.analysable(id, side))
-          this.changeset.findSets.findUsages({ type: "usages", symbol: subject.name, side, path, ...at });
+        if (!this.scopes.analysable(id, side)) return;
+        this.changeset.findSets.findUsages({ type: "usages", symbol: subject.name, side, path, ...at });
+        this.showFind(true);
       },
       diagnostics: (revision, path) =>
         this.scopes.analysable(id, "target") ? semantic.diagnostics(revision, path) : Promise.resolve([]),

@@ -8,7 +8,14 @@
   import type { OpenLocation } from "./symbolDetail";
 
   /** The panel shows what the changeset on view's `symbols` holds; the owner says where a location opens. */
-  let { onopen }: { onopen: OpenLocation } = $props();
+  let {
+    onopen,
+    onfind,
+  }: {
+    onopen: OpenLocation;
+    /** Shows the Find tool, its list focused if `focus`. */
+    onfind: (focus: boolean) => void;
+  } = $props();
   const symbols = $derived(opened.session?.symbols);
 </script>
 
@@ -20,7 +27,7 @@
     {#if symbols?.selected}
       <!-- A symbol starts with its rows shut as they begin and the lists cut. -->
       {#key `${keyOf(symbols.selected.symbol.id)}${symbols.selected.change}`}
-        <SymbolDetail shown={symbols.selected} {onopen} />
+        <SymbolDetail shown={symbols.selected} {onopen} {onfind} />
       {/key}
     {:else if symbols?.unavailable}
       <EmptyState align="start" title={symbols.unavailable.label} text={symbols.unavailable.message} />

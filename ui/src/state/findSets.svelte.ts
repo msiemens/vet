@@ -10,7 +10,6 @@ import { isAbort } from "../lib/abort";
 import { errorText } from "../lib/errorText";
 import type { SearchQuery, SearchResults } from "./backend";
 import type { ChangesetSession } from "./changesetSession.svelte";
-import { findTool } from "./findTool.svelte";
 import { type ChangedFile, type Place, placesFromRows, placesFromSearch } from "./foundPlace";
 import { type Filters, NO_FILTERS } from "./findRows";
 import { diffRuns, isStale, linesToLocate, ranVersion, slotFor } from "./findRuns";
@@ -180,7 +179,6 @@ class SessionFindSets {
   /** Finds the usages at a position, into the tool. */
   findUsages(spec: UsagesSpec) {
     void this.start(this.place(spec));
-    findTool.show(true);
   }
 
   /** Takes the list a Show Usages popup holds into the tool, as it was found. */
@@ -190,14 +188,12 @@ class SessionFindSets {
       set.places = placesFromRows(answer.rows, answer.side, this.changedFile);
       set.total = answer.total;
     });
-    findTool.show(false);
   }
 
   /** Takes the results of the Find in Files dialog into the tool. */
   keepSearch({ spec, results }: KeptSearch) {
     const set = this.place(spec);
     this.settle(set, () => this.takeSearch(set, results));
-    findTool.show(false);
   }
 
   /** The tab a result of `spec` goes to, made the active one. */

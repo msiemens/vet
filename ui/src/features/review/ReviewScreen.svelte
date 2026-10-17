@@ -61,6 +61,7 @@
     softWrap,
     onfilter,
     ontool,
+    onfind,
     scope,
     onready,
     onclose,
@@ -74,6 +75,8 @@
     onfilter: () => void;
     /** Shows a tool window. */
     ontool: (tool: "changes" | "all" | "comments" | "timeline") => void;
+    /** Shows the Find tool, its list focused if `focus`. */
+    onfind: (focus: boolean) => void;
     /** What the changes shown are of, which names the first tab. */
     scope: string;
     /** The left tool window and whether its sidebar is shown. */
@@ -220,8 +223,11 @@
   });
 
   function start(owner: ChangesetSession): () => void {
-    const made = new ReviewController(backend, owner, (path, x, y) =>
-      openMenu(fileHeaderMenu, x, y, { target: { path, dir: false } }),
+    const made = new ReviewController(
+      backend,
+      owner,
+      (path, x, y) => openMenu(fileHeaderMenu, x, y, { target: { path, dir: false } }),
+      onfind,
     );
     made.softWrap = softWrap;
     controller = made;

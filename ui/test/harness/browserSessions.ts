@@ -801,8 +801,6 @@ export const sessions: Record<string, (d: Driver) => Promise<void>> = {
     if (!(await d.page(onQueue))) throw new Error("the review screen did not go away");
     await d.page(`(async () => {
       const { openPlace } = await import("/src/app/actions.ts");
-      const { findTool } = await import("/src/state/findTool.svelte.ts");
-      findTool.show = () => undefined;
       const findSets = __t.opened.session.findSets;
       findSets.keepSearch({
         spec: {
@@ -1118,6 +1116,53 @@ export const sessions: Record<string, (d: Driver) => Promise<void>> = {
     await d.until(`__t.opened.session?.key.type === "workingTree" && !!__t.opened.session.layout`, "the working tree");
     if ((await d.page(`document.querySelectorAll("section[aria-label=Find] [role=tab]").length`)) !== 0)
       throw new Error("going back brought the result sets back");
+  },
+
+  /** Find usages from the Symbol panel shows the Find tool; Open in Find window shows it and leaves the focus alone. */
+  async findShown(d) {
+    const hideBottom = () =>
+      d.page(
+        `(async () => { (await import("/src/features/chrome/shell.svelte.ts")).shell.hideBottom(); return true; })()`,
+      );
+    const inFind = (selector: string) => `document.activeElement?.closest(${JSON.stringify(selector)}) != null`;
+    await d.page(`__t.commands.run("view.review")`);
+    await d.until(`document.querySelector(".review") !== null`, "the review screen");
+
+    // 1. The Symbol panel's button.
+    await d.page(`(async () => {
+      __t.opened.session.symbols.choose({ id: { path: "a.txt", name: ["foo"] }, modules: 0, kind: "function", span: { start: { line: 0, col: 0 }, end: { line: 0, col: 3 } }, at: { line: 0, col: 0 }, test: false });
+      return true;
+    })()`);
+    // The command toggles; the Symbol tool is the right one on show to begin with.
+    await d.page(`(async () => {
+      const { shell } = await import("/src/features/chrome/shell.svelte.ts");
+      if (!shell.right.open || shell.right.tool !== "symbol") __t.commands.run("view.tool.symbol");
+      return true;
+    })()`);
+    await hideBottom();
+    await d.click(`button[aria-label="Open all usages in the Find window"]`);
+    await d.until(`document.querySelector("section[aria-label=Find] [role=tab]") !== null`, "the Find tool");
+
+    // 2. The button of Find in Files.
+    await hideBottom();
+    await d.page(`__t.commands.run("find.inFiles")`);
+    await d.until(
+      `(async () => (await import("/src/features/search/index.ts")).findInFiles.open)()`,
+      "the Find in Files dialog",
+    );
+    await d.page(
+      `(async () => { (await import("/src/features/search/index.ts")).findInFiles.text = "line"; return true; })()`,
+    );
+    await d.until(`document.querySelector(".popup .pick.line") !== null`, "a result row");
+    await d.page(
+      `[...document.querySelectorAll(".popup button")].find((b) => (b.textContent ?? "").includes("Open in Find window")).click()`,
+    );
+    await d.until(
+      `(async () => !(await import("/src/features/search/index.ts")).findInFiles.open)() && document.querySelector("section[aria-label=Find] [role=tab]") !== null`,
+      "the Find tool with the dialog closed",
+    );
+    if (await d.page(inFind("section[aria-label=Find] [data-list]")))
+      throw new Error("Open in Find window moved the focus into the list");
   },
 
   /** Go to definition in a file no server serves tells the viewer why, in the backend's words. */

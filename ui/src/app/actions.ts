@@ -20,7 +20,7 @@ import { queue } from "../state/queue.svelte";
 import { serverList } from "../state/serverList.svelte";
 import { session } from "../state/session.svelte";
 import { defaultRange } from "../state/timelineRange";
-import { shell } from "../features/chrome";
+import { focusFind, shell } from "../features/chrome";
 import { commentsUi } from "../features/comments";
 import { logKey } from "../features/pipelines";
 import type { CheckRun } from "../generated/CheckRun";
@@ -110,6 +110,13 @@ export function openThread(thread: Thread) {
 export function openCheckLog(run: CheckRun) {
   shell.show("review");
   appState.whenReview((c) => void c.openLog(run, logKey(run, undefined)));
+}
+
+/** Shows the Find tool on the review screen, and puts the focus in its list if `focus`. */
+export function showFindTool(focus: boolean) {
+  shell.show("review");
+  shell.showBottom("find");
+  if (focus) void focusFind();
 }
 
 /** Opens a place of a result set where it was found. */

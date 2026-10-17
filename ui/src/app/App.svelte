@@ -63,7 +63,15 @@
   import { newPipelines } from "../state/pipelines.svelte";
   import { softWrapPreference, themePreference } from "./appPreferences.svelte";
   import { appState } from "./appState.svelte";
-  import { choiceHost, goToFirstFlagged, openCheckLog, openPlace, openThread, showInBrowser } from "./actions";
+  import {
+    choiceHost,
+    goToFirstFlagged,
+    openCheckLog,
+    openPlace,
+    openThread,
+    showFindTool,
+    showInBrowser,
+  } from "./actions";
   import { registerCommands } from "./commands";
   import { installWindow } from "./window";
   import ConnectionNotice from "./ConnectionNotice.svelte";
@@ -298,13 +306,14 @@
           bottomOpen={shell.bottom !== undefined}
           onfilter={() => appState.showDialog("settings", "filter")}
           ontool={showTool}
+          onfind={showFindTool}
           scope={headerFacts.scope?.label ?? "All changes"}
           onready={(c) => appState.setController(c)}
           onclose={() => appState.clearController()}
         >
           {#snippet side(tool)}
             {#if tool === "symbol"}
-              <SymbolPanel onopen={openLocation} />
+              <SymbolPanel onopen={openLocation} onfind={showFindTool} />
             {:else if tool === "structure"}
               <StructurePanel
                 onjump={(symbol, removed) => void appState.controller?.jumpToOutlineSymbol(symbol, removed)}
@@ -455,7 +464,10 @@
       shell.show("review");
       appState.whenReview((c) => void c.openFound(result));
     }}
-    onkeep={(kept) => opened.session?.findSets.keepSearch(kept)}
+    onkeep={(kept) => {
+      opened.session?.findSets.keepSearch(kept);
+      showFindTool(false);
+    }}
   />
 {/if}
 

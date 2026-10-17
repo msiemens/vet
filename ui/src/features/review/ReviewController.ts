@@ -78,6 +78,7 @@ export class ReviewController {
     readonly backend: Backend,
     private changeset: ChangesetSession,
     private fileMenu: (path: string, x: number, y: number) => void,
+    private showFind: (focus: boolean) => void,
   ) {
     this.key = keyId(changeset.key);
     this.persistence = new ViewPersistence(memoryOf(session.repo));
@@ -113,7 +114,15 @@ export class ReviewController {
         scheduleSave: this.scheduleSave,
       },
     );
-    this.nav = new ViewNavigation(backend, changeset, this.tabs, this.scopes, this.views, this.findControl);
+    this.nav = new ViewNavigation(
+      backend,
+      changeset,
+      this.tabs,
+      this.scopes,
+      this.views,
+      this.findControl,
+      this.showFind,
+    );
     this.commands = new ViewCommands(
       this.tabs,
       this.scopes,

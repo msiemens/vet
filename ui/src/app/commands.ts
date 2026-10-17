@@ -1,5 +1,5 @@
 // The window's commands: the registry built from the app, queue, recent, search, review, comments and
-// palette command groups, the app-wide command context, and the wiring of the result sets, the keymap
+// palette command groups, the app-wide command context, the keymap
 // and the screen the project opens on. `App` registers them once before its first render.
 
 import { focusFind, focusPipelines, focusProblems, shell } from "../features/chrome";
@@ -13,7 +13,6 @@ import { recentCommands } from "../features/welcome";
 import { appCommands } from "../state/appCommands";
 import { keyId } from "../state/changesetKey";
 import { commands } from "../state/commands";
-import { findTool } from "../state/findTool.svelte";
 import { canQuit } from "../state/host";
 import { keymap } from "../state/keymap.svelte";
 import { opened } from "../state/opened.svelte";
@@ -107,11 +106,6 @@ export function registerCommands(): () => void {
     ...paletteCommands({ show: (tab) => palette.show(tab) }),
   );
   keymap.load();
-  findTool.show = (focus) => {
-    shell.show("review");
-    shell.showBottom("find");
-    if (focus) void focusFind();
-  };
 
   session.onOpen(() => shell.show("queue"));
   session.onClose(() => palette.close());

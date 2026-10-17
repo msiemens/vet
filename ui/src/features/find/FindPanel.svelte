@@ -23,7 +23,7 @@
   import VirtualRows from "../../lib/ui/VirtualRows.svelte";
   import type { Backend } from "../../state/backend";
   import { type FindSet } from "../../state/findSets.svelte";
-  import { findTool } from "../../state/findTool.svelte";
+  import { findTool } from "./findTool.svelte";
   import { opened } from "../../state/opened.svelte";
   import { type Item, narrowing, itemsOf, visible } from "../../state/findRows";
   import { previewBasis, relocated } from "../../state/findRuns";
