@@ -3,9 +3,18 @@
 ## Checks
 
 ```sh
-./ci/check.sh            # everything; run it before merging
+./ci/check.sh [BASE]     # everything; run it before merging
 ./ci/quick.sh [BASE]     # only what changed since BASE (default: the merge base with main)
 ```
+
+`check.sh` with a BASE leaves out the language-server tests (the `language-servers` and `roslyn`
+groups of `.config/nextest.toml`, and `tool-tests.sh`) when no change since BASE, committed or not,
+touches what they exercise: `vet-semantic`, `vet-infra`'s `lsp`, `servers`, `restore`,
+`materialize`, `exec` and `language`, the semantic, server, symbol, problem, supervisor, trust and
+open modules of `vet-backend`, `vet-app`'s `semantics`, `servers`, `trust` and `session`, the
+integration tests of `vet-infra` and `vet-backend`, `Cargo.lock`, `.config/nextest.toml` and
+`tool-tests.sh`. Everything else still runs, and the skip is listed as `SKIPPED` in the summary.
+Without a BASE it runs everything.
 
 `check.sh` runs rustfmt (the workspace and `ui/src-tauri`), clippy (`-D warnings`), tests (the
 workspace's and the host's),

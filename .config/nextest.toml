@@ -24,6 +24,7 @@ failure-output = "immediate-final"
 filter = 'package(vet-infra) & binary(it) & test(/^lsp::roslyn/)'
 test-group = "roslyn"
 
+# ci/check.sh repeats this filter to leave the group out when nothing it exercises changed.
 [[profile.default.overrides]]
 filter = 'binary(it) & ((package(vet-infra) & test(/^(lsp|servers|restore)::/)) | (package(vet-backend) & test(/^(semantic|restore|python)::/)))'
 test-group = "language-servers"
