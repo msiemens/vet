@@ -22,6 +22,7 @@ use vet_semantic::derived::{
     symbol_at, usages,
 };
 use vet_semantic::join::bounded;
+use vet_semantic::policy::AnalysisPolicy;
 use vet_semantic::pool::{Phase, Pool, PoolKey, Servers, Supervision, Target};
 use vet_semantic::ports::{
     At, Backend, BackendId, Diagnostic, Features, Location, Materializer, Overlay, OverlayText, Provenance,
@@ -907,22 +908,32 @@ where
     /// Starts the servers for every language among the revision's changed
     /// files on the target side and for the other languages of the repository,
     /// all at once, then those of the base side, and returns when they are running.
-    /// A server already running or starting is left alone. A server that
-    /// fails to start is not reported here: the query that needs it reports it.
+    /// A server already running or starting is left alone. A failed start shows as the
+    /// server's phase and in the query that needs it.
     pub async fn start_servers(&self, view: &RevisionView<G, S>, revision: u32) -> Fallible<()> {
         let _ = self.start_servers_of(view, revision, None).await?;
         Ok(())
     }
 
     /// Stops the servers that may execute project code under a policy the revision no longer
-    /// has: trust was withdrawn (§6.5).
+    /// has: trust was withdrawn (§6.5). If the trust can't be read, every server that may
+    /// execute project code is stopped. A revision no longer on view stops nothing.
     pub async fn retire_disallowed(&self, view: &RevisionView<G, S>, revision: u32) -> Fallible<()> {
-        let sides = view.semantic_sides(revision).await?;
-        let (base, target) = served(&view.trust(&sides.source).await?, &sides);
-        self.semantic
-            .pool()
-            .retire_executing_except(&[base.policy, target.policy])
-            .await;
+        let policies: Fallible<[AnalysisPolicy; 2]> = async {
+            let sides = view.semantic_sides(revision).await?;
+            let (base, target) = served(&view.trust(&sides.source).await?, &sides);
+            Ok([base.policy, target.policy])
+        }
+        .await;
+        let policies = match policies {
+            Ok(policies) => policies,
+            Err(error @ SessionError::Stale { .. }) => return Err(error),
+            Err(error) => {
+                self.semantic.pool().retire_executing_except(&[]).await;
+                return Err(error);
+            }
+        };
+        self.semantic.pool().retire_executing_except(&policies).await;
         Ok(())
     }
 
@@ -2157,6 +2168,42 @@ mod tests {
             Err(SemanticError::Pool(vet_semantic::pool::PoolError::AnalysisLimited(_)))
         ));
         assert_eq!(counters.executing_started.load(Ordering::SeqCst), 0);
+    }
+
+    #[tokio::test]
+    async fn a_retire_that_cannot_read_the_trust_stops_every_server_that_runs_project_code() {
+        let (fx, semantics, counters) = semantics_over(
+            &[("a.rs", "one\n"), ("main.go", "one\n")],
+            &[("a.rs", "two\n"), ("main.go", "two\n")],
+        )
+        .await;
+        fx.session.set_project_trusted(true).await.unwrap();
+        let revision = fx.session.revision().await;
+        semantics.start_servers(&fx.view, revision).await.unwrap();
+        assert!(counters.executing_started.load(Ordering::SeqCst) > 0);
+
+        fx.store.fail_trust_reads(true);
+        assert!(semantics.retire_disallowed(&fx.view, revision).await.is_err());
+        let mut stopped = counters.stopped.lock().unwrap().clone();
+        stopped.sort();
+        stopped.dedup();
+        assert_eq!(stopped, ["go", "rust"], "trusted, both run under an executing policy");
+    }
+
+    #[tokio::test]
+    async fn a_retire_for_a_revision_no_longer_on_view_stops_nothing() {
+        let (fx, semantics, counters) = semantics_over(
+            &[("a.rs", "one\n"), ("main.go", "one\n")],
+            &[("a.rs", "two\n"), ("main.go", "two\n")],
+        )
+        .await;
+        fx.session.set_project_trusted(true).await.unwrap();
+        let revision = fx.session.revision().await;
+        semantics.start_servers(&fx.view, revision).await.unwrap();
+
+        let retired = semantics.retire_disallowed(&fx.view, revision + 1).await;
+        assert!(matches!(retired, Err(SessionError::Stale { .. })));
+        assert!(counters.stopped.lock().unwrap().is_empty());
     }
 
     #[tokio::test]

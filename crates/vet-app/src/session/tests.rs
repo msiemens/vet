@@ -617,6 +617,8 @@ struct Mem {
     next_row: u64,
     filters: HashMap<String, ReviewFilter>,
     trusted: HashSet<String>,
+    /// Whether reading the trust fails.
+    trust_fails: bool,
     /// The window's preferences, by scope (none: the app) and key.
     preferences: HashMap<(Option<String>, String), String>,
     /// How many reviews were started; the ids run on.
@@ -817,6 +819,11 @@ impl MemStore {
         self.0.lock().unwrap().checks
     }
 
+    /// Makes reading the project trust fail (or succeed again).
+    pub(crate) fn fail_trust_reads(&self, failing: bool) {
+        self.0.lock().unwrap().trust_fails = failing;
+    }
+
     /// The changeset of the newest review, the one every session test's session is on; none
     /// while no review has started, so what is read of it is empty.
     fn reviewed_changeset_of(mem: &Mem) -> Option<u64> {
@@ -881,7 +888,11 @@ impl ReviewStore for MemStore {
         Ok(self.0.lock().unwrap().filters.get(&repo).cloned().unwrap_or_default())
     }
     async fn project_trusted(&self, repo: String) -> StoreResult<bool> {
-        Ok(self.0.lock().unwrap().trusted.contains(&repo))
+        let mem = self.0.lock().unwrap();
+        if mem.trust_fails {
+            return Err(StoreError("the trust cannot be read".into()));
+        }
+        Ok(mem.trusted.contains(&repo))
     }
 }
 
