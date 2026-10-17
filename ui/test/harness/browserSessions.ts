@@ -1273,4 +1273,81 @@ export const sessions: Record<string, (d: Driver) => Promise<void>> = {
     if (other.files.length || other.previous)
       throw new Error(`another changeset started with ${JSON.stringify(other)}`);
   },
+
+  /**
+   * More tabs than the strip is wide: the strip scrolls instead of overflowing the layout, the vertical
+   * wheel scrolls it sideways, and whatever makes a tab active, by keyboard, command or opening it,
+   * brings it fully into view.
+   */
+  async tabStrip(d) {
+    await d.manyFiles(30);
+    await d.until(`document.querySelector("[role=tablist]") !== null`, "the tab strip");
+    const controller = `(await import("/src/app/appState.svelte.ts")).appState.controller`;
+    for (let i = 0; i < 30; i++) {
+      await d.page(
+        `(async () => { const c = ${controller}; await c.openLocation(c.tabs.active, "many/f${String(i).padStart(3, "0")}.dat", 1, "target"); return true; })()`,
+      );
+    }
+    const strip = () =>
+      d.page(`(() => {
+        const s = document.querySelector("[role=tablist]");
+        const r = s.getBoundingClientRect();
+        const tab = s.querySelector('[role=tab][aria-selected=true]').parentElement.getBoundingClientRect();
+        return {
+          scrolls: s.scrollWidth > s.clientWidth,
+          pageOverflow: document.documentElement.scrollWidth > document.documentElement.clientWidth,
+          stripInWindow: r.right <= window.innerWidth,
+          scrollLeft: s.scrollLeft,
+          whole: tab.left >= r.left - 0.01 && tab.right <= r.right + 1,
+          active: s.querySelector('[role=tab][aria-selected=true]').textContent.trim(),
+        };
+      })()`) as Promise<{
+        scrolls: boolean;
+        pageOverflow: boolean;
+        stripInWindow: boolean;
+        scrollLeft: number;
+        whole: boolean;
+        active: string;
+      }>;
+    const open = await strip();
+    if (!open.scrolls) throw new Error("the 30 tabs fit the strip");
+    if (open.pageOverflow || !open.stripInWindow)
+      throw new Error(`the tabs overflow the layout: ${JSON.stringify(open)}`);
+    if (!open.whole) throw new Error(`the newest tab is not fully in view: ${JSON.stringify(open)}`);
+
+    // The vertical wheel over the strip scrolls it sideways.
+    const wheeled = (await d.page(`(() => {
+      const s = document.querySelector("[role=tablist]");
+      const before = s.scrollLeft;
+      s.dispatchEvent(new WheelEvent("wheel", { deltaY: -120, bubbles: true, cancelable: true }));
+      return before - s.scrollLeft;
+    })()`)) as number;
+    if (wheeled <= 0) throw new Error("the vertical wheel did not scroll the strip sideways");
+
+    // Next Tab wraps from the last tab to the Changes tab, far out of view; Previous Tab wraps back.
+    await d.step("Next Tab wraps to the Changes tab", () => d.page(`__t.commands.run("tab.next")`));
+    const first = await strip();
+    if (!first.whole || first.scrollLeft !== 0)
+      throw new Error(`the Changes tab is not in view: ${JSON.stringify(first)}`);
+    await d.step("Previous Tab wraps to the last tab", () => d.page(`__t.commands.run("tab.previous")`));
+    const last = await strip();
+    if (!last.whole || last.active !== "f029.dat")
+      throw new Error(`the last tab is not in view: ${JSON.stringify(last)}`);
+
+    // Stepping left through tabs reveals each against the strip's left edge, at fractional positions.
+    for (let i = 0; i < 20; i++) {
+      await d.page(`__t.commands.run("tab.previous")`);
+      const left = await strip();
+      if (!left.whole) throw new Error(`stepping left, the tab is not in view: ${JSON.stringify(left)}`);
+    }
+
+    // Opening a file whose tab is out of view, as Go to definition does.
+    await d.page(`__t.commands.run("tab.next")`);
+    await d.page(
+      `(async () => { const c = ${controller}; await c.openLocation(c.tabs.active, "many/f017.dat", 1, "target"); return true; })()`,
+    );
+    const shown = await strip();
+    if (!shown.whole || shown.active !== "f017.dat")
+      throw new Error(`the opened tab is not in view: ${JSON.stringify(shown)}`);
+  },
 };

@@ -46,8 +46,11 @@
   function revealActive() {
     const el = strip?.querySelector<HTMLElement>('[role="tab"][aria-selected="true"]')?.parentElement;
     if (!strip || !el) return;
-    const at = el.getBoundingClientRect().left - strip.getBoundingClientRect().left + strip.scrollLeft;
-    strip.scrollLeft = scrollToReveal(strip.scrollLeft, strip.clientWidth, at, el.offsetWidth);
+    const shown = strip.getBoundingClientRect();
+    const tab = el.getBoundingClientRect();
+    const wanted = scrollToReveal(strip.scrollLeft, shown.width, tab.left - shown.left + strip.scrollLeft, tab.width);
+    // Tabs have fractional edges and the scroll offset is whole: round away from the tab's far side so the edge stays in.
+    strip.scrollLeft = wanted > strip.scrollLeft ? Math.ceil(wanted) : Math.floor(wanted);
   }
 
   // Opening or closing a tab shifts the active one, so the list is watched with the active tab.
@@ -63,7 +66,18 @@
   });
 </script>
 
-<div class="tabs" role="tablist" aria-label="Open views" bind:this={strip}>
+<!-- The vertical wheel scrolls the strip sideways; a trackpad's sideways scroll is left to the browser. -->
+<div
+  class="tabs"
+  role="tablist"
+  aria-label="Open views"
+  bind:this={strip}
+  onwheel={(e) => {
+    if (!strip || Math.abs(e.deltaY) <= Math.abs(e.deltaX)) return;
+    e.preventDefault();
+    strip.scrollLeft += e.deltaY;
+  }}
+>
   {#each tabs.open as id (id)}
     {@const path = pathOf(id)}
     {@const log = tabs.logs.get(id)}
