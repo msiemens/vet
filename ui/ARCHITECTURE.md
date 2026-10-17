@@ -157,7 +157,7 @@ Light and dark come from `lib/theme/`. A colour or size belongs in `tokens.css`,
 - New screen: `features/<name>/` with an `index.ts`, mounted from `app/App.svelte`.
 - New backend request: a method in `state/backend.ts`, then a store field if the UI displays it; a request that can fail in a way the viewer should hear about goes through the store, which tells `notices`.
 - Data the protocol does not carry: an optional prop whose absence renders a neutral empty state.
-- New sidebar tool: an entry in `TOOL_WINDOWS` (`state/appCommands.ts`), an icon in `chrome/ToolRail`, and its content in `ReviewScreen` or `App`.
+- New sidebar tool: an entry in `TOOL_WINDOWS` (`state/appCommands.ts`), an icon in `chrome/ToolRail`, and its content in `ReviewScreen` or `App`. A bottom tool's panel is a `<section aria-label>` with its `TOOL_WINDOWS` label, which `chrome/focus.ts` focuses (its `[data-list]` first).
 - New settings page: a component in `features/settings/` and an entry in `SettingsDialog`'s page list.
 - New changeset kind in the queue: the backend's `ChangesetKey` variant and its tab in `queueRows.categoryOf`.
 - New tab kind: an id in `Tabs.svelte.ts`, a pane in `ReviewScreen`, and a case in `ReviewViews.build`.
