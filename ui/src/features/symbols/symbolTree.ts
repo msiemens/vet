@@ -16,10 +16,12 @@ import type { SymbolChange } from "../../generated/SymbolChange";
 import type { SymbolInfo } from "../../generated/SymbolInfo";
 import type { SymbolKind } from "../../generated/SymbolKind";
 import type { SymbolName } from "../../generated/SymbolName";
+import type { Unavailable } from "../../generated/Unavailable";
 import type { Usages } from "../../generated/Usages";
 import { plural } from "../../lib/format.ts";
 import { MODULE_LEVEL, fileName, partsOf, shortLabel } from "../../lib/symbolLabel.ts";
 import { gapText } from "./gapText.ts";
+import { allShared, repeats, unshared } from "./serverFailure.ts";
 import { describeFate, type FateTone, rowTitle, testTitle } from "./symbolDetail.ts";
 
 /** Top-level rows a root shows before "N more". */
@@ -86,7 +88,11 @@ export interface Body {
   tail: Entry[];
   /** Nothing to show: this one muted line stands in place of the root. */
   quiet?: string;
+  /** Nothing to show, and the panel states why: the root is left out. */
+  hidden?: boolean;
 }
+
+const HIDDEN: Body = { notes: [], entries: [], tail: [], hidden: true };
 
 const open = (path: string, line: number | undefined, side: Side): Target => ({ type: "open", path, line, side });
 
@@ -161,9 +167,12 @@ export function callerTree(callers: readonly ChangedCaller[]): Entry[] {
   return settle(roots);
 }
 
-export function callersBody(calls: Calls): Body {
+/** `shared` is the failure the panel states once; the roots leave it out. */
+export function callersBody(calls: Calls, shared?: Unavailable): Body {
   const entries = callerTree(calls.callers);
-  const notes = calls.gaps.length ? [{ text: incomplete(calls.gaps), warn: true }] : [];
+  const gaps = unshared(calls.gaps, shared);
+  if (!entries.length && allShared(calls.gaps, shared)) return HIDDEN;
+  const notes = gaps.length ? [{ text: incomplete(gaps), warn: true }] : [];
   return {
     count: countRows(entries),
     notes,
@@ -176,12 +185,14 @@ export function callersBody(calls: Calls): Body {
 /** What an empty list says when the analysis behind it has gaps: that it is incomplete, not that nothing is there. */
 const incomplete = (gaps: readonly Gap[]): string => `Incomplete: ${gaps.map(gapText).join("; ")}`;
 
-export function calleesBody(callees: readonly ChangedSymbol[], gaps: readonly Gap[]): Body {
+export function calleesBody(callees: readonly ChangedSymbol[], allGaps: readonly Gap[], shared?: Unavailable): Body {
   const entries = arrange(
     callees.map((c, i) =>
       symbolEntry(`e${i}`, c.symbol, c.change, { type: "choose", symbol: c.symbol, change: c.change }),
     ),
   );
+  if (!entries.length && allShared(allGaps, shared)) return HIDDEN;
+  const gaps = unshared(allGaps, shared);
   const empty = gaps.length ? incomplete(gaps) : "No changed callees";
   return {
     count: entries.length,
@@ -308,7 +319,9 @@ function placesBody(places: readonly Place[], key: string): Pick<Body, "entries"
   return { entries, tail: [branch] };
 }
 
-export function affectedBody(affected: readonly SymbolInfo[], gaps: readonly Gap[]): Body {
+export function affectedBody(affected: readonly SymbolInfo[], allGaps: readonly Gap[], shared?: Unavailable): Body {
+  if (!affected.length && allShared(allGaps, shared)) return HIDDEN;
+  const gaps = unshared(allGaps, shared);
   const places = affected.map((s): Place => ({ path: s.id.path, at: s.at, within: s, external: false, test: s.test }));
   const empty = gaps.length ? incomplete(gaps) : "No unchanged callers to check";
   return {
@@ -319,7 +332,8 @@ export function affectedBody(affected: readonly SymbolInfo[], gaps: readonly Gap
   };
 }
 
-export function usagesBody(usages: Usages): Body {
+export function usagesBody(usages: Usages, shared?: Unavailable): Body {
+  if (!usages.references.length && repeats(shared, usages.gap)) return HIDDEN;
   const notes = usages.gap ? [{ text: `References could not be listed: ${usages.gap.message}`, warn: true }] : [];
   return {
     count: usages.references.length,
@@ -330,12 +344,14 @@ export function usagesBody(usages: Usages): Body {
 }
 
 /** The path the backend finds runs from the symbol to the entry point; it is shown from the entry point down. */
-export function reachBody(reach: Reach): Body {
+export function reachBody(reach: Reach, shared?: Unavailable): Body {
   if (reach.type === "unreachedWithinBound") {
     return { notes: [], entries: [], tail: [], quiet: "Not reached from an entry point within the bounds" };
   }
   if (reach.type === "unknown") {
-    const why = reach.gaps.length ? reach.gaps.map(gapText).join("; ") : "the analysis has gaps";
+    if (allShared(reach.gaps, shared)) return HIDDEN;
+    const gaps = unshared(reach.gaps, shared);
+    const why = gaps.length ? gaps.map(gapText).join("; ") : "the analysis has gaps";
     return { notes: [], entries: [], tail: [], quiet: `Unknown: ${why}` };
   }
   // Each step wraps the ones before it, so the entry point ends up outermost.
@@ -382,7 +398,8 @@ function siteEntry(key: string, site: CallSite): Entry {
 }
 
 /** What still refers to a removed symbol: what needs attention, open, then what is already handled. */
-export function removalBody(removal: RemovalImpact): Body {
+export function removalBody(removal: RemovalImpact, shared?: Unavailable): Body {
+  if (!removal.callSites.length && repeats(shared, removal.gap)) return HIDDEN;
   const sites = removal.callSites.map((site, i) => ({ site, entry: siteEntry(`s${i}`, site) }));
   const branch = (key: string, name: string, rows: Entry[], o: Partial<Entry>): Entry[] =>
     rows.length ? [{ key, name, branch: true, count: rows.length, title: "", children: rows, ...o }] : [];

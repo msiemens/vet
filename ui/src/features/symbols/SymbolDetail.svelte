@@ -9,7 +9,9 @@
   import EmptyState from "../../lib/ui/EmptyState.svelte";
   import Icon from "../../lib/ui/Icon.svelte";
   import { opened } from "../../state/opened.svelte";
+  import type { Load } from "../../state/symbols.svelte";
   import type { Shown } from "../../state/symbolLoad";
+  import { repeats, sharedFailure } from "./serverFailure";
   import SymbolGlyph from "./SymbolGlyph.svelte";
   import SymbolRoot from "./SymbolRoot.svelte";
   import { headOf, type OpenLocation } from "./symbolDetail";
@@ -40,6 +42,17 @@
   const where = $derived(headOf(shown.symbol));
   const file = $derived(splitPath(id.path));
   const side = $derived<Side>(removed ? "base" : "target");
+  const valueOf = <T,>(load?: Load<T>): T | undefined => (load?.state === "done" ? load.value : undefined);
+  // A server that fails to start fails every answer: it is said here, once.
+  const failure = $derived(
+    sharedFailure({
+      signature: valueOf(symbols?.signature),
+      calls: valueOf(symbols?.calls),
+      usages: valueOf(symbols?.usages),
+      reach: valueOf(symbols?.reach),
+      removal: valueOf(symbols?.removal),
+    }),
+  );
 
   const CALLERS_HINT =
     "Call hierarchy cannot see calls made through interfaces or virtual methods, callbacks, reflection or generated code, so callers and callees may be missing.";
@@ -93,34 +106,46 @@
   </button>
 </div>
 
-<SymbolRoot id="signature" title="Signature" load={symbols?.signature}>
-  {#snippet children(signature)}
-    {#if signature.signature}
-      <div class="block">
-        <code class="mono selectable" use:codeBlock={signature.signature}></code>
-      </div>
-    {:else}
-      <EmptyState align="start" text={signature.unavailable?.message ?? "The language server has no text for it"} />
-    {/if}
-  {/snippet}
-</SymbolRoot>
+{#if failure}
+  <EmptyState align="start" title={failure.label} text={failure.message} />
+{/if}
+
+{#if !repeats(failure, symbols?.signature?.state === "done" ? symbols.signature.value.unavailable : undefined)}
+  <SymbolRoot id="signature" title="Signature" load={symbols?.signature}>
+    {#snippet children(signature)}
+      {#if signature.signature}
+        <div class="block">
+          <code class="mono selectable" use:codeBlock={signature.signature}></code>
+        </div>
+      {:else}
+        <EmptyState align="start" text={signature.unavailable?.message ?? "The language server has no text for it"} />
+      {/if}
+    {/snippet}
+  </SymbolRoot>
+{/if}
 
 {#if removed}
-  <SymbolRoot id="remaining" title="Remaining references" load={symbols?.removal} build={removalBody} ongo={go} />
+  <SymbolRoot
+    id="remaining"
+    title="Remaining references"
+    load={symbols?.removal}
+    build={(removal) => removalBody(removal, failure)}
+    ongo={go}
+  />
 {:else}
   <SymbolRoot
     id="callers"
     title="Changed callers"
     hint={CALLERS_HINT}
     load={symbols?.calls}
-    build={(calls) => callersBody(calls)}
+    build={(calls) => callersBody(calls, failure)}
     ongo={go}
   />
   <SymbolRoot
     id="callees"
     title="Changed callees"
     load={symbols?.calls}
-    build={(calls) => calleesBody(calls.callees, calls.gaps)}
+    build={(calls) => calleesBody(calls.callees, calls.gaps, failure)}
     ongo={go}
   />
   {#if shown.change}
@@ -130,12 +155,25 @@
       hint={AFFECTED_HINT}
       warn
       load={symbols?.calls}
-      build={(calls) => affectedBody(calls.affected, calls.gaps)}
+      build={(calls) => affectedBody(calls.affected, calls.gaps, failure)}
       ongo={go}
     />
   {/if}
-  <SymbolRoot id="reach" title="Reached from" load={symbols?.reach} build={(r) => reachBody(r.reach)} ongo={go} />
-  <SymbolRoot id="usages" title="Usages" load={symbols?.usages} build={usagesBody} ongo={go} find={FIND} />
+  <SymbolRoot
+    id="reach"
+    title="Reached from"
+    load={symbols?.reach}
+    build={(r) => reachBody(r.reach, failure)}
+    ongo={go}
+  />
+  <SymbolRoot
+    id="usages"
+    title="Usages"
+    load={symbols?.usages}
+    build={(usages) => usagesBody(usages, failure)}
+    ongo={go}
+    find={FIND}
+  />
 {/if}
 
 <style>

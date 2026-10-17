@@ -122,7 +122,9 @@
   {/if}
 {/snippet}
 
-{#if body?.quiet}
+{#if body?.hidden}
+  <!-- The panel says why there is nothing to show. -->
+{:else if body?.quiet}
   <div class="quiet">{body.quiet}</div>
 {:else}
   <section>
