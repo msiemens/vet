@@ -921,6 +921,15 @@ export const sessions: Record<string, (d: Driver) => Promise<void>> = {
       if (!shown.includes(path)) throw new Error(`Problems does not list ${path} while a commit is on view:\n${shown}`);
   },
 
+  /** A middle click on a bottom tool's title hides it, as the tool's rail icon does. */
+  async middleClickHides(d) {
+    await d.until(`!!__t.opened.session?.layout`, "the changeset");
+    await d.page(`__t.commands.run("view.tool.problems")`);
+    await d.until(`document.querySelector("section[aria-label=Problems]") !== null`, "the Problems tool");
+    await d.middleClick("section[aria-label=Problems] header .title");
+    await d.until(`document.querySelector("section[aria-label=Problems]") === null`, "the Problems tool to hide");
+  },
+
   /**
    * The Changes tab starts at the top when another range or commit is shown, and keeps its place when
    * a new revision of the same view arrives. The views are long, so a tab that kept its place by mistake

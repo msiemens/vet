@@ -19,6 +19,8 @@ export interface Driver {
   press(key: string): Promise<void>;
   /** Clicks the element `selector` names. */
   click(selector: string): Promise<void>;
+  /** Middle-clicks the element `selector` names. */
+  middleClick(selector: string): Promise<void>;
   /** Waits `ms`; for steps built around a deliberate pause rather than a condition. */
   sleep(ms: number): Promise<void>;
   /** Another window of the same project marks or flags a hunk of the changeset. */
@@ -207,6 +209,9 @@ export async function runBrowserSession(
     async click(selector) {
       // The selector names what `document.querySelector` would: its first match.
       await page.locator(selector).first().click();
+    },
+    async middleClick(selector) {
+      await page.locator(selector).first().click({ button: "middle" });
     },
     sleep: (ms) => page.waitForTimeout(ms),
     async otherMark(path, hunk) {
