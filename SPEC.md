@@ -116,7 +116,9 @@ Types, references, diagnostics and calls come only from language servers; Vet do
 - **Paths** are relative to the repository root, use `/`, and are compared by their exact bytes (as git stores them for tracked files, as the filesystem reports them for untracked ones). Unicode normalization is used only for display and to match git's `core.precomposeUnicode` on macOS. Two paths that differ only in case or only in Unicode normalization are flagged as a `PathCollision`; Vet does not materialize such a snapshot on a filesystem that would merge them, and says so.
 - **Content:** a file's content is what git would store, after git's built-in conversions only (`eol`, `text`, `core.autocrlf`, `ident`). Otherwise every file under `autocrlf` would look changed. For files with a custom filter (for example Git LFS): if the file's size and date match git's index, Vet uses the index's content; otherwise it uses the bytes on disk and marks them `unfiltered`.
 - **Mode and kind:** where the filesystem cannot store them (`core.filemode=false`, `core.symlinks=false`, usual on Windows), they come from git's index for tracked files. Untracked files get mode `100644` and kind `file`.
-- **Fetch:** Vet fetches from the remotes inside its own process, read-only, on request and every few minutes, so remote branches and pull requests are current. It never pulls, merges or rebases.
+- **Fetch:** Vet fetches from the remotes inside its own process, read-only, so remote branches and pull requests are current. It never pulls, merges or rebases.
+  - What Vet fetches by itself (every few minutes, pull request heads and targets) reaches only remotes on a platform host with an account (§7.1), always over HTTPS with the account's token, whatever URL the remote names. It never runs `ssh` and never asks git's credential helpers, so it never prompts.
+  - A fetch the user asks for reaches every remote as git is configured to, so an SSH remote may ask its agent then.
 
 ### 4.4 Bases
 
