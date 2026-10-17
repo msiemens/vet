@@ -7,18 +7,19 @@ use std::os::unix::ffi::OsStrExt;
 use std::os::unix::fs::PermissionsExt;
 use std::path::Path;
 
-use vet_app::ports::GitError;
+use vet_app::ports::{GitError, StoredBlob};
 use vet_core::content::{BlobId, EntryKind, FileEntry, RepoPath};
 
 use super::{Inner, chained};
 use crate::paths;
 
-/// An entry with the bytes the content store had for it, if any.
-pub(super) type Pending = (RepoPath, FileEntry, Option<Vec<u8>>);
+/// An entry with what the content store had for it, if anything.
+pub(super) type Pending = (RepoPath, FileEntry, Option<StoredBlob>);
 
 impl Inner {
-    /// Writes `batch` under `root`, filling in missing bytes from the object
-    /// database. Returns the blobs neither had.
+    /// Writes `batch` under `root`, filling in missing bytes from the object database. A file the
+    /// store holds by hash only is read from the worktree too, if it still hashes to the entry's
+    /// blob. Returns the blobs none of them had.
     pub(super) fn write_entries(&self, root: &Path, batch: Vec<Pending>) -> Result<Vec<BlobId>, GitError> {
         let repo = self.open()?;
         let mut missing = Vec::new();
@@ -29,15 +30,14 @@ impl Inner {
                 std::fs::create_dir_all(&dest).map_err(chained)?;
                 continue;
             }
-            let bytes = match stored {
-                Some(bytes) => bytes,
-                None => match self.blobs.odb_content(&repo, entry.blob, u64::MAX)? {
-                    Some(bytes) => bytes,
-                    None => {
-                        missing.push(entry.blob);
-                        continue;
-                    }
-                },
+            let found = match stored {
+                Some(StoredBlob::Bytes(bytes)) => Some(bytes),
+                Some(StoredBlob::Binary { .. }) => self.read_blob(&repo, &path, entry.blob)?,
+                None => self.blobs.odb_content(&repo, entry.blob, u64::MAX)?,
+            };
+            let Some(bytes) = found else {
+                missing.push(entry.blob);
+                continue;
             };
             if let Some(parent) = dest.parent() {
                 std::fs::create_dir_all(parent).map_err(chained)?;

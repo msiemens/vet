@@ -12,7 +12,7 @@ use std::process::Command;
 
 use tempfile::TempDir;
 use vet_app::changeset::CommitId;
-use vet_app::ports::{BlobReader, Differ, Dirty, History, Scanner, Store, StoreError};
+use vet_app::ports::{BlobReader, Differ, Dirty, History, Scanner, Store, StoreError, StoredBlob};
 use vet_core::content::{BlobId, NonTextKind, RepoPath, Snapshot, SnapshotId, SnapshotStatus};
 use vet_infra::budget::Budget;
 use vet_infra::git::{GixRepo, find_root, list_files};
@@ -73,10 +73,10 @@ impl Store for NoStore {
     async fn missing_blobs(&self, ids: Vec<BlobId>) -> Result<Vec<BlobId>, StoreError> {
         Ok(ids)
     }
-    async fn blob(&self, _: BlobId) -> Result<Option<Vec<u8>>, StoreError> {
+    async fn blob(&self, _: BlobId) -> Result<Option<StoredBlob>, StoreError> {
         Ok(None)
     }
-    async fn blobs(&self, _: Vec<BlobId>) -> Result<BTreeMap<BlobId, Vec<u8>>, StoreError> {
+    async fn blobs(&self, _: Vec<BlobId>) -> Result<BTreeMap<BlobId, StoredBlob>, StoreError> {
         Ok(BTreeMap::new())
     }
     async fn snapshot(&self, _: SnapshotId) -> Result<Option<(Snapshot, SnapshotStatus)>, StoreError> {

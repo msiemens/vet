@@ -2,7 +2,7 @@
 //! delete is decided by `vet_app::gc`.
 
 use std::collections::{HashMap, HashSet};
-use std::time::{Duration, UNIX_EPOCH};
+use std::time::Duration;
 
 use sea_orm::{ColumnTrait, ConnectionTrait, EntityTrait, QueryFilter, QuerySelect, TransactionTrait};
 use vet_app::changeset::ChangesetId;
@@ -217,8 +217,7 @@ impl SqliteStore {
 impl GcStore for SqliteStore {
     async fn gc(&self, now: i64, decide: &(dyn Fn(&GcFacts) -> GcPlan + Send + Sync)) -> Result<GcReport, StoreError> {
         let (mut report, live, grace) = self.gc_metadata(decide).await?;
-        let at = UNIX_EPOCH + Duration::from_secs(now.max(0) as u64);
-        report.blobs_deleted = self.blocking(move |c| c.sweep(&live, at, grace)).await?;
+        report.blobs_deleted = self.content.sweep(&live, now, grace).await?;
         Ok(report)
     }
 }

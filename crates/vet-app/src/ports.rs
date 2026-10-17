@@ -79,8 +79,22 @@ pub enum Dirty {
 #[derive(Debug, PartialEq, Eq)]
 pub enum BlobRead {
     Found(Vec<u8>),
+    /// A binary file the content store holds by hash and size only.
+    Binary {
+        size: u64,
+    },
     TooLarge,
     Missing,
+}
+
+/// What the content store holds of a blob it has.
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub enum StoredBlob {
+    Bytes(Vec<u8>),
+    /// A binary file Vet cannot display: only its hash and size are kept.
+    Binary {
+        size: u64,
+    },
 }
 
 pub struct Scan {
@@ -505,7 +519,7 @@ pub struct GcFacts {
 pub struct GcPlan {
     pub changesets: Vec<ChangesetId>,
     pub snapshots: Vec<SnapshotId>,
-    /// Unreferenced content younger than this stays.
+    /// Unreferenced content stored less than this ago stays.
     pub content_grace: Duration,
 }
 
@@ -514,14 +528,15 @@ pub struct GcPlan {
 /// [`GcStore`]: GC checks references across changesets, spans and comments. Content is
 /// addressed by its hash, so putting it changes no review state.
 pub trait Store {
-    /// Content-addressed by `BlobId::of`, answered with the ids in the order of `blobs`;
-    /// all durable (fsynced, renamed) on return. Blobs the store holds are not written again.
+    /// Content-addressed by `BlobId::of`, answered with the ids in the order of `blobs`; one
+    /// transaction, durable on return, so callers keep batches bounded. Blobs the store holds are
+    /// not written again. Binary content other than images is held by hash and size.
     fn put_blobs(&self, blobs: Vec<Vec<u8>>) -> impl Future<Output = Result<Vec<BlobId>, StoreError>> + Send;
     /// Of `ids`, those the store does not hold durably, without reading any.
     fn missing_blobs(&self, ids: Vec<BlobId>) -> impl Future<Output = Result<Vec<BlobId>, StoreError>> + Send;
-    fn blob(&self, id: BlobId) -> impl Future<Output = Result<Option<Vec<u8>>, StoreError>> + Send;
-    /// The content of each of `ids` the store holds, read in one go; the others are left out.
-    fn blobs(&self, ids: Vec<BlobId>) -> impl Future<Output = Result<BTreeMap<BlobId, Vec<u8>>, StoreError>> + Send;
+    fn blob(&self, id: BlobId) -> impl Future<Output = Result<Option<StoredBlob>, StoreError>> + Send;
+    /// What the store holds of each of `ids`, read in one go; the others are left out.
+    fn blobs(&self, ids: Vec<BlobId>) -> impl Future<Output = Result<BTreeMap<BlobId, StoredBlob>, StoreError>> + Send;
     fn snapshot(
         &self,
         id: SnapshotId,

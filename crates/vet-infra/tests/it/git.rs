@@ -16,9 +16,9 @@ use vet_app::acquisition::Acquisition;
 use vet_app::changeset::ChangesetId;
 use vet_app::ports::{
     BlobRead, BlobReader, ChangesetRef, ChangesetRefs, Differ, Dirty, History, IgnoreRules, Scanner, Store, StoreError,
-    TextDiff,
+    StoredBlob, TextDiff,
 };
-use vet_core::content::{BlobId, EntryKind, NonTextKind, RepoPath, Snapshot, SnapshotId, SnapshotStatus};
+use vet_core::content::{BlobId, EntryKind, NonTextKind, RepoPath, Snapshot, SnapshotId, SnapshotStatus, keeps_bytes};
 use vet_infra::budget::Budget;
 use vet_infra::git::GixRepo;
 
@@ -83,7 +83,7 @@ async fn head_and_scan(dir: &Path, repo: &GixRepo) -> (Snapshot, vet_app::ports:
 }
 
 #[derive(Default)]
-struct MemStore(Mutex<HashMap<BlobId, Vec<u8>>>);
+struct MemStore(Mutex<HashMap<BlobId, StoredBlob>>);
 
 impl Store for MemStore {
     async fn put_blobs(&self, blobs: Vec<Vec<u8>>) -> Result<Vec<BlobId>, StoreError> {
@@ -92,7 +92,14 @@ impl Store for MemStore {
             .into_iter()
             .map(|bytes| {
                 let id = blob(&bytes);
-                held.insert(id, bytes);
+                let kept = if keeps_bytes(&bytes) {
+                    StoredBlob::Bytes(bytes)
+                } else {
+                    StoredBlob::Binary {
+                        size: bytes.len() as u64,
+                    }
+                };
+                held.insert(id, kept);
                 id
             })
             .collect())
@@ -101,10 +108,10 @@ impl Store for MemStore {
         let held = self.0.lock().unwrap();
         Ok(ids.into_iter().filter(|id| !held.contains_key(id)).collect())
     }
-    async fn blob(&self, id: BlobId) -> Result<Option<Vec<u8>>, StoreError> {
+    async fn blob(&self, id: BlobId) -> Result<Option<StoredBlob>, StoreError> {
         Ok(self.0.lock().unwrap().get(&id).cloned())
     }
-    async fn blobs(&self, ids: Vec<BlobId>) -> Result<BTreeMap<BlobId, Vec<u8>>, StoreError> {
+    async fn blobs(&self, ids: Vec<BlobId>) -> Result<BTreeMap<BlobId, StoredBlob>, StoreError> {
         let held = self.0.lock().unwrap();
         Ok(ids
             .into_iter()
@@ -354,6 +361,35 @@ async fn renames_are_detected_with_their_edits() {
     assert_eq!(diff.non_text.len(), 1);
     assert_eq!(diff.non_text[0].kind, NonTextKind::Rename);
     assert_eq!(diff.non_text[0].from, Some(path("pure.txt")));
+}
+
+#[tokio::test]
+async fn a_binary_held_by_hash_is_renamed_without_its_bytes() {
+    let dir = repo();
+    write(dir.path(), "keep.txt", b"k\n");
+    commit(dir.path());
+    write(dir.path(), "old.bin", b"\0archive");
+    let repo = GixRepo::for_test(dir.path());
+    let store = MemStore::default();
+    let before = repo.scan(Dirty::All).await.unwrap().snapshot;
+    store.put_blobs(vec![b"\0archive".to_vec()]).await.unwrap();
+    assert_eq!(
+        store.blob(blob(b"\0archive")).await.unwrap(),
+        Some(StoredBlob::Binary { size: 8 })
+    );
+    std::fs::rename(dir.path().join("old.bin"), dir.path().join("new.bin")).unwrap();
+    let after = repo.scan(Dirty::All).await.unwrap().snapshot;
+
+    let diff = repo.diff(&store, &before, &after).await.unwrap().diff;
+
+    assert_eq!(diff.renames.0.get(&path("old.bin")), Some(&path("new.bin")));
+    let [item] = diff.non_text.as_slice() else {
+        panic!("{:?}", diff.non_text)
+    };
+    assert_eq!(
+        (item.kind, item.from.as_ref()),
+        (NonTextKind::Rename, Some(&path("old.bin")))
+    );
 }
 
 #[tokio::test]

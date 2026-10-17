@@ -9,7 +9,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use crate::classify::{Change, changes, classify};
-use crate::content::{BlobId, EntryKind, FileDiff, FileEntry, RepoPath, Snapshot, SnapshotDiff, is_binary};
+use crate::content::{BlobId, EntryKind, FileDiff, FileEntry, RepoPath, Snapshot, SnapshotDiff, WithBinary, is_binary};
 use crate::hunks::line_hunks;
 use crate::interdiff::{FileInterdiff, InterdiffHunk, interdiff};
 
@@ -64,8 +64,14 @@ pub struct VersionDiff {
 }
 
 /// The interdiff of `paths` (see [`VersionSides::paths`]). `blobs` holds the content of
-/// [`VersionSides::blobs`] that is available and receives the rebased content of the old side.
-pub fn version_diff(sides: VersionSides, paths: &[RepoPath], blobs: &mut BTreeMap<BlobId, Vec<u8>>) -> VersionDiff {
+/// [`VersionSides::blobs`] that is available and receives the rebased content of the old side;
+/// `binary` are those known as binary files whose bytes were not kept.
+pub fn version_diff(
+    sides: VersionSides,
+    paths: &[RepoPath],
+    blobs: &mut BTreeMap<BlobId, Vec<u8>>,
+    binary: &BTreeSet<BlobId>,
+) -> VersionDiff {
     let mut out = VersionDiff::default();
     for path in paths {
         let (base_a, target_a) = (sides.base_a.entries.get(path), sides.target_a.entries.get(path));
@@ -89,7 +95,8 @@ pub fn version_diff(sides: VersionSides, paths: &[RepoPath], blobs: &mut BTreeMa
             old: old.map(|e| (path.clone(), e)),
             new: target_b.map(|e| (path.clone(), e.clone())),
         };
-        let classified = classify(&change, &*blobs);
+        let source = WithBinary { bytes: &*blobs, binary };
+        let classified = classify(&change, &source);
         out.diff.non_text.extend(classified.non_text);
         if let Some(text) = classified.text {
             let hunks = match &rebased {
@@ -203,7 +210,7 @@ mod tests {
             .iter()
             .map(|c| (BlobId::of(c.as_bytes()), c.as_bytes().to_vec()))
             .collect();
-        version_diff(sides, &sides.paths(), &mut blobs)
+        version_diff(sides, &sides.paths(), &mut blobs, &BTreeSet::new())
     }
 
     #[test]
@@ -265,7 +272,7 @@ mod tests {
             base_b: &base_b.0,
             target_b: &target_b.0,
         };
-        let result = version_diff(sides, &sides.paths(), &mut blobs);
+        let result = version_diff(sides, &sides.paths(), &mut blobs, &BTreeSet::new());
 
         let [diff] = &result.diff.files[..] else {
             panic!("{result:?}")

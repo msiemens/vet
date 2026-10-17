@@ -192,7 +192,7 @@ impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> L
                 bytes,
             },
             BlobRead::Found(_) | BlobRead::TooLarge => ItemBlob::TooLarge,
-            BlobRead::Missing => ItemBlob::Unavailable,
+            BlobRead::Binary { .. } | BlobRead::Missing => ItemBlob::Unavailable,
         })
     }
 }

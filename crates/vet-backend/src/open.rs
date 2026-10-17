@@ -644,14 +644,15 @@ mod tests {
 
         // While a copy waits for the background budget, a project opens and shows its changes.
         let background = budgets.background_io.acquire_all().await;
-        let (repo, texts) = edited_repo(5);
+        // Five files the first project did not have, so that content is left to copy.
+        let (repo, texts) = edited_repo(13);
         let second = session(repo.path()).await;
         let copy = tokio::spawn({
             let second = second.clone();
             async move { second.kept_content().await }
         });
         let manifest = tokio::time::timeout(within, second.manifest(View::Changeset)).await;
-        assert_eq!(manifest.expect("the manifest is answered").unwrap().files.len(), 5);
+        assert_eq!(manifest.expect("the manifest is answered").unwrap().files.len(), 13);
         assert!(!copy.is_finished());
         drop(background);
         tokio::time::timeout(within, copy).await.unwrap().unwrap().unwrap();

@@ -33,7 +33,9 @@ use crate::changeset::{
     VersionOrigin,
 };
 use crate::platform::{Discussion, PullRequestHead, PullRequestState, ReviewDecision};
-use crate::ports::{GcFacts, GcPlan, GcStore, LiveStore, ReviewRow, ReviewWrites, Settings, SettingsStore, Store};
+use crate::ports::{
+    GcFacts, GcPlan, GcStore, LiveStore, ReviewRow, ReviewWrites, Settings, SettingsStore, Store, StoredBlob,
+};
 use crate::review::{NonTextAck, ReviewId, ReviewSummary, SpanOrigin};
 use crate::trust::PullRequestTrust;
 
@@ -308,6 +310,10 @@ fn row_of(host: &str, number: u64) -> (RemoteKey, u64) {
     )
 }
 
+fn held(content: &[u8]) -> StoredBlob {
+    StoredBlob::Bytes(content.to_vec())
+}
+
 // The cases.
 
 /// `Store`: blobs keep their identity, what the store lacks reads as absent, and a snapshot
@@ -318,7 +324,7 @@ async fn keeps_its_blobs_and_snapshots<S: Store + LiveStore>(store: &S) {
     for id in &ids {
         read.push(store.blob(*id).await.unwrap());
     }
-    assert_eq!(read, [Some(b"one".to_vec()), Some(b"two".to_vec())]);
+    assert_eq!(read, [Some(held(b"one")), Some(held(b"two"))]);
     assert_eq!(store.missing_blobs(ids.clone()).await.unwrap(), []);
     let again = store
         .put_blobs(vec![b"two".to_vec(), b"one".to_vec(), b"three".to_vec()])
@@ -329,15 +335,34 @@ async fn keeps_its_blobs_and_snapshots<S: Store + LiveStore>(store: &S) {
         (ids[1], ids[0]),
         "blobs the store holds are not written again and answer the same ids"
     );
-    assert_eq!(store.blob(again[2]).await.unwrap().as_deref(), Some(&b"three"[..]));
+    assert_eq!(store.blob(again[2]).await.unwrap(), Some(held(b"three")));
     assert_eq!(store.missing_blobs(ids.clone()).await.unwrap(), []);
 
     assert_eq!(
         store.blobs(vec![ids[0], BlobId::of(b"gone")]).await.unwrap(),
-        BTreeMap::from([(ids[0], b"one".to_vec())]),
+        BTreeMap::from([(ids[0], held(b"one"))]),
         "the reads of a batch answer only what is held"
     );
     assert_eq!(store.blob(BlobId::of(b"gone")).await.unwrap(), None);
+
+    // Text and images keep their bytes; any other binary file is held by hash and size.
+    let archive = b"!<arch>\n\0\0\0".to_vec();
+    let image = b"\x89PNG\r\n\x1a\n\0\0".to_vec();
+    let text = b"fn main() {}\n".to_vec();
+    let ids = store
+        .put_blobs(vec![archive.clone(), image.clone(), text.clone()])
+        .await
+        .unwrap();
+    assert_eq!(ids, [&archive, &image, &text].map(|b| BlobId::of(b)));
+    assert_eq!(store.missing_blobs(ids.clone()).await.unwrap(), []);
+    assert_eq!(
+        store.blob(ids[0]).await.unwrap(),
+        Some(StoredBlob::Binary {
+            size: archive.len() as u64
+        })
+    );
+    assert_eq!(store.blob(ids[1]).await.unwrap(), Some(StoredBlob::Bytes(image)));
+    assert_eq!(store.blob(ids[2]).await.unwrap(), Some(StoredBlob::Bytes(text)));
     assert_eq!(store.snapshot(tree(255)).await.unwrap(), None);
 
     let kept = snapshot(&[("a.txt", 21)]);
@@ -1450,7 +1475,7 @@ async fn deletes_the_planned_rows_and_sweeps_what_none_reaches<S: LiveStore + Gc
     assert!(store.open_review(kept_cid).await.unwrap().is_some());
     assert_eq!(store.versions(kept_cid).await.unwrap().len(), 1);
     assert_eq!(store.snapshot(kept.id).await.unwrap().map(|(s, _)| s), Some(kept));
-    assert_eq!(store.blob(BlobId::of(&[31])).await.unwrap(), Some(vec![31]));
+    assert_eq!(store.blob(BlobId::of(&[31])).await.unwrap(), Some(held(&[31])));
 
     let young = b"young".to_vec();
     store.put_blobs(vec![young.clone()]).await.unwrap();
@@ -1460,7 +1485,7 @@ async fn deletes_the_planned_rows_and_sweeps_what_none_reaches<S: LiveStore + Gc
     };
     let report = store.gc(T0, &|_| keep.clone()).await.unwrap();
     assert_eq!(report.blobs_deleted, 0, "content within the plan's grace is kept");
-    assert_eq!(store.blob(BlobId::of(&young)).await.unwrap(), Some(young));
+    assert_eq!(store.blob(BlobId::of(&young)).await.unwrap(), Some(held(&young)));
 }
 
 /// The fake of the session tests satisfies the contract as `SqliteStore` does.

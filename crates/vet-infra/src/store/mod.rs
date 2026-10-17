@@ -1,8 +1,9 @@
 //! `vet_app::ports::Store`, `ChangesetStore`, `ReviewStore` and `ThreadStore` (reads) and
-//! `ReviewWrites` (on [`ReviewWriter`]): a content directory plus one SQLite file (WAL) accessed through SeaORM, both
-//! under the backend side's data directory (§9).
+//! `ReviewWrites` (on [`ReviewWriter`]): two SQLite files (WAL) under the backend side's data
+//! directory (§9). `vet.sqlite` holds the index and is accessed through SeaORM; `content.sqlite`
+//! holds the content, one row per blob (see [`content`]).
 //!
-//! The file is reached through two kinds of connection. Every write goes through the one
+//! `vet.sqlite` is reached through two kinds of connection. Every write goes through the one
 //! [`ReviewWriter`] connection, so writers queue in the order they asked. Every read goes
 //! through a [`StoreReader`] pool of read-only connections. In WAL mode a reader never
 //! waits for the writer, and the writer never waits for a reader, so a long read (a snapshot
@@ -35,7 +36,9 @@ use sea_orm::{
 use sea_orm_migration::MigratorTrait;
 use vet_app::changeset::{ChangesetId, CommitId, Lens, Source, Version};
 use vet_app::platform::{PullRequestHead, RemoteKey, StoredDiscussion};
-use vet_app::ports::{ChangesetStore, LiveStore, ReviewRow, ReviewStore, SourceReview, Store, StoreError, ThreadStore};
+use vet_app::ports::{
+    ChangesetStore, LiveStore, ReviewRow, ReviewStore, SourceReview, Store, StoreError, StoredBlob, ThreadStore,
+};
 use vet_app::review::{ChangesetThread, Review, ReviewId, ReviewSummary};
 use vet_app::trust::PullRequestTrust;
 use vet_core::content::{BlobId, Hash, Snapshot, SnapshotId, SnapshotStatus};
@@ -44,8 +47,9 @@ use vet_core::merkle::{self, TreeNode};
 use vet_core::review::{Anchor, PendingVote, ThreadId};
 
 use crate::budget::{Budget, REVIEW_IO};
+use crate::clock::unix_now;
 use codec::*;
-use content::ContentStore;
+use content::ContentDb;
 use entity::*;
 
 type Res<T> = Result<T, DbErr>;
@@ -54,7 +58,7 @@ type Res<T> = Result<T, DbErr>;
 pub struct SqliteStore {
     writer: ReviewWriter,
     reader: StoreReader,
-    content: Arc<ContentStore>,
+    content: Arc<ContentDb>,
     dir: PathBuf,
     /// What reads and writes of content draw on.
     io: Budget,
@@ -240,7 +244,7 @@ impl SqliteStore {
         }
         migration::Migrator::up(&writer.db, None).await?;
         let reader = StoreReader::connect(dir).await?;
-        let content = ContentStore::open(dir.join("content"))?;
+        let content = ContentDb::open(dir).await?;
         Ok(Self {
             writer,
             reader,
@@ -266,26 +270,11 @@ impl SqliteStore {
         &self.dir
     }
 
-    async fn blocking<T: Send + 'static>(
-        &self,
-        f: impl FnOnce(&ContentStore) -> io::Result<T> + Send + 'static,
-    ) -> Result<T, StoreError> {
-        let content = self.content.clone();
-        Ok(self.io.blocking(move || f(&content)).await.map_err(db_err)??)
-    }
-
-    /// Runs `f` on each of `items`, the items dealt out over the units of the content budget.
-    async fn spread<I: Send + 'static, T: Send + 'static>(
-        &self,
-        items: Vec<I>,
-        f: fn(&ContentStore, Vec<I>) -> io::Result<T>,
-    ) -> Result<Vec<T>, StoreError> {
-        let shares = self.io.limit().min(items.len());
-        let mut dealt: Vec<Vec<I>> = (0..shares).map(|_| Vec::new()).collect();
-        for (n, item) in items.into_iter().enumerate() {
-            dealt[n % shares].push(item);
-        }
-        futures::future::try_join_all(dealt.into_iter().map(|share| self.blocking(move |c| f(c, share)))).await
+    /// Holds `id` as content that is never readable, for tests that need the store to fail to
+    /// read a blob it holds.
+    #[doc(hidden)]
+    pub async fn hold_unreadable_for_test(&self, id: BlobId) -> Result<(), StoreError> {
+        self.content.hold_unreadable(id).await
     }
 
     /// Reads in one transaction, so that what takes several statements is one state of the file.
@@ -354,59 +343,21 @@ impl SqliteStore {
 }
 
 impl Store for SqliteStore {
-    /// Each blob is fsynced before it is renamed into place, and each directory once all of
-    /// the batch's were renamed into it; files and directories are synced in parallel. The
-    /// batch's blobs count as held once the content store made them durable.
+    /// The batch is one transaction of the content database, committed on return.
     async fn put_blobs(&self, blobs: Vec<Vec<u8>>) -> Result<Vec<BlobId>, StoreError> {
-        if blobs.is_empty() {
-            return Ok(Vec::new());
-        }
-        // Each share remembers where its blobs were in the batch.
-        let shares = self
-            .spread(
-                blobs.into_iter().enumerate().collect(),
-                |c, share: Vec<(usize, Vec<u8>)>| {
-                    let (at, bytes): (Vec<usize>, Vec<Vec<u8>>) = share.into_iter().unzip();
-                    Ok((at, c.place(&bytes)?))
-                },
-            )
-            .await?;
-        let mut ids = vec![None; shares.iter().map(|(at, _)| at.len()).sum()];
-        let mut placed = content::Placed::default();
-        for (at, share) in shares {
-            for (n, id) in at.into_iter().zip(&share.ids) {
-                ids[n] = Some(*id);
-            }
-            placed = placed.merge(share);
-        }
-        let dirs: Vec<PathBuf> = placed.dirs.iter().cloned().collect();
-        self.spread(dirs, |_, share| share.iter().try_for_each(|dir| content::sync_dir(dir)))
-            .await?;
-        self.blocking(move |c| c.durable(&placed)).await?;
-        Ok(ids.into_iter().map(|id| id.expect("every blob was placed")).collect())
+        self.content.put_blobs(&self.io, blobs, unix_now()).await
     }
 
     async fn missing_blobs(&self, ids: Vec<BlobId>) -> Result<Vec<BlobId>, StoreError> {
-        self.blocking(move |c| Ok(c.missing(&ids))).await
+        self.content.missing(&ids).await
     }
 
-    async fn blob(&self, id: BlobId) -> Result<Option<Vec<u8>>, StoreError> {
-        self.blocking(move |c| c.get(id)).await
+    async fn blob(&self, id: BlobId) -> Result<Option<StoredBlob>, StoreError> {
+        Ok(self.content.blobs(&self.io, vec![id]).await?.remove(&id))
     }
 
-    async fn blobs(&self, ids: Vec<BlobId>) -> Result<BTreeMap<BlobId, Vec<u8>>, StoreError> {
-        self.blocking(move |c| {
-            let mut found = BTreeMap::new();
-            for id in ids {
-                if !found.contains_key(&id)
-                    && let Some(bytes) = c.get(id)?
-                {
-                    found.insert(id, bytes);
-                }
-            }
-            Ok(found)
-        })
-        .await
+    async fn blobs(&self, ids: Vec<BlobId>) -> Result<BTreeMap<BlobId, StoredBlob>, StoreError> {
+        self.content.blobs(&self.io, ids).await
     }
 
     async fn snapshot(&self, id: SnapshotId) -> Result<Option<(Snapshot, SnapshotStatus)>, StoreError> {

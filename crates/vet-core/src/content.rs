@@ -49,11 +49,32 @@ impl BlobId {
 /// Blob bytes by id. `None` when the content is unavailable (over the capture cap).
 pub trait BlobSource {
     fn blob(&self, id: BlobId) -> Option<&[u8]>;
+
+    /// Whether the blob is a binary file whose bytes were not kept, only its hash and size.
+    fn known_binary(&self, _id: BlobId) -> bool {
+        false
+    }
 }
 
 impl BlobSource for BTreeMap<BlobId, Vec<u8>> {
     fn blob(&self, id: BlobId) -> Option<&[u8]> {
         self.get(&id).map(Vec::as_slice)
+    }
+}
+
+/// `bytes` with the blobs in `binary` known as binary files whose bytes were not kept.
+pub struct WithBinary<'a, S: ?Sized> {
+    pub bytes: &'a S,
+    pub binary: &'a BTreeSet<BlobId>,
+}
+
+impl<S: BlobSource + ?Sized> BlobSource for WithBinary<'_, S> {
+    fn blob(&self, id: BlobId) -> Option<&[u8]> {
+        self.bytes.blob(id)
+    }
+
+    fn known_binary(&self, id: BlobId) -> bool {
+        self.binary.contains(&id)
     }
 }
 
@@ -126,6 +147,24 @@ impl From<String> for RepoPath {
 /// Whether `bytes` are not text: git's heuristic, a NUL in the first 8000 bytes.
 pub fn is_binary(bytes: &[u8]) -> bool {
     bytes[..bytes.len().min(8000)].contains(&0)
+}
+
+/// Whether `bytes` start like an image of a format the preview shows, by magic bytes (SVG is
+/// text).
+pub fn is_image(bytes: &[u8]) -> bool {
+    bytes.starts_with(b"\x89PNG\r\n\x1a\n")
+        || bytes.starts_with(&[0xff, 0xd8, 0xff])
+        || bytes.starts_with(b"GIF87a")
+        || bytes.starts_with(b"GIF89a")
+        || (bytes.len() >= 12 && &bytes[..4] == b"RIFF" && &bytes[8..12] == b"WEBP")
+        || bytes.starts_with(b"BM")
+        || bytes.starts_with(&[0, 0, 1, 0])
+}
+
+/// Whether the content store keeps `bytes`: text and images. Of any other binary file it keeps
+/// only the hash and size, as Vet cannot show it.
+pub fn keeps_bytes(bytes: &[u8]) -> bool {
+    !is_binary(bytes) || is_image(bytes)
 }
 
 /// The text of `bytes` as the review shows it: invalid UTF-8 is replaced, and
@@ -470,6 +509,29 @@ mod tests {
         assert!(!is_binary(&late));
         late[7999] = 0;
         assert!(is_binary(&late));
+    }
+
+    #[test]
+    fn the_store_keeps_text_and_images_but_not_other_binary_files() {
+        let mut late = vec![b'a'; 8000];
+        late.push(0);
+        assert!(keeps_bytes(b""));
+        assert!(keeps_bytes(b"text\n"));
+        assert!(keeps_bytes(&late), "a NUL after byte 8000 does not make it binary");
+        for image in [
+            &b"\x89PNG\r\n\x1a\n\0\0"[..],
+            b"\xff\xd8\xff\xe0\0\x10JFIF",
+            b"GIF87a\0\0",
+            b"GIF89a\0\0",
+            b"RIFF\0\0\0\0WEBPVP8 ",
+            b"BM\0\0\0\0",
+            b"\0\0\x01\0\x01\0",
+        ] {
+            assert!(keeps_bytes(image), "{image:?}");
+        }
+        assert!(!keeps_bytes(b"!<arch>\n\0\0"));
+        assert!(!keeps_bytes(b"RIFF\0\0\0\0WAVEfmt "));
+        assert!(!keeps_bytes(b"\0\0\x02\0"));
     }
 
     #[test]

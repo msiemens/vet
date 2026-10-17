@@ -98,6 +98,7 @@ http = "1.5.0"
 time = { version = "0.3", default-features = false }
 notify = "8.2.0"
 rustix = "1.1"
+zstd = { version = "0.13", default-features = false }
 windows-sys = "0.61"
 junction = "2.1.0"
 

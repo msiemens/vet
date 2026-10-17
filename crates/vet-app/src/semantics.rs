@@ -433,7 +433,7 @@ impl<G: BlobReader + Send + Sync + 'static, S: Store + Send + Sync + 'static> Re
             .blob;
         match self.acquisition.blob(file, blob, true).await.ok()? {
             BlobRead::Found(bytes) => Some(String::from_utf8_lossy(&bytes).into_owned()),
-            BlobRead::TooLarge | BlobRead::Missing => None,
+            BlobRead::Binary { .. } | BlobRead::TooLarge | BlobRead::Missing => None,
         }
     }
 }

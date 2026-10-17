@@ -1,4 +1,4 @@
-use std::collections::{BTreeMap, HashMap, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::path::Path;
 use std::sync::atomic::{AtomicBool, AtomicI64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
@@ -6,7 +6,7 @@ use std::sync::{Arc, Mutex};
 use vet_core::classify::{changes, classify, text_blobs};
 use vet_core::content::{
     BlobId, EntryKind, FileDiff, FileEntry, Hunk, LineDelta, LineRange, NonTextKind, RepoPath, Snapshot, SnapshotDiff,
-    SnapshotId, SnapshotStatus,
+    SnapshotId, SnapshotStatus, WithBinary, keeps_bytes,
 };
 use vet_core::filter::{Exclusion, ReviewFilter};
 use vet_core::merkle;
@@ -27,7 +27,7 @@ use crate::platform::{Discussion, FakeHosting, PullRequestHead, StoredDiscussion
 use crate::ports::{
     Attributes, BlobJob, BlobRead, BlobReader, BlobSession, BranchInfo, ChangesetRef, ChangesetRefs, ChangesetStore,
     Checkout, CommitDetail, CommitInfo, Differ, Dirty, GitError, History, PreferenceStore, Remerged, ReviewRow,
-    ReviewStore, Scan, Scanner, SourceReview, Store, StoreError, TextDiff, ThreadStore,
+    ReviewStore, Scan, Scanner, SourceReview, Store, StoreError, StoredBlob, TextDiff, ThreadStore,
 };
 use crate::pull_request::PullRequestRefs;
 use crate::review::{ChangesetThread, NonTextAck, RecordedSpan, Review, ReviewId, ReviewSummary, SpanId, SpanOrigin};
@@ -524,11 +524,25 @@ impl Differ for FakeGit {
             .into_iter()
             .map(|(_, blob)| blob)
             .collect();
-        blobs.extend(store.blobs(wanted).await.map_err(|e| GitError::failed(e.0))?);
+        let mut binary = BTreeSet::new();
+        for (id, held) in store.blobs(wanted).await.map_err(|e| GitError::failed(e.0))? {
+            match held {
+                StoredBlob::Bytes(bytes) => {
+                    blobs.insert(id, bytes);
+                }
+                StoredBlob::Binary { .. } => {
+                    binary.insert(id);
+                }
+            }
+        }
         let mut out = SnapshotDiff::default();
         out.renames.0.extend(self.renames.lock().unwrap().iter().cloned());
+        let source = WithBinary {
+            bytes: &blobs,
+            binary: &binary,
+        };
         for change in changes(old, new) {
-            let classified = classify(&change, &blobs);
+            let classified = classify(&change, &source);
             out.non_text.extend(classified.non_text);
             if let Some(text) = classified.text {
                 let utf8 = |bytes: &[u8]| String::from_utf8(bytes.to_vec()).unwrap();
@@ -594,6 +608,8 @@ impl MemReview {
 #[derive(Default)]
 struct Mem {
     blobs: HashMap<BlobId, Vec<u8>>,
+    /// The binary blobs held by hash and size only.
+    binary: HashMap<BlobId, u64>,
     /// Every blob given to `put_blobs`, in order.
     put: Vec<BlobId>,
     /// How often `missing_blobs` was asked.
@@ -629,6 +645,14 @@ struct Mem {
 }
 
 impl Mem {
+    fn held(&self, id: BlobId) -> Option<StoredBlob> {
+        match (self.blobs.get(&id), self.binary.get(&id)) {
+            (Some(bytes), _) => Some(StoredBlob::Bytes(bytes.clone())),
+            (None, Some(&size)) => Some(StoredBlob::Binary { size }),
+            (None, None) => None,
+        }
+    }
+
     /// The changeset of a repository and source, stored if it was not.
     fn changeset_id(&mut self, repo: &str, source: &Source) -> u64 {
         match self
@@ -689,7 +713,11 @@ impl Store for MemStore {
             .into_iter()
             .map(|bytes| {
                 let id = BlobId::of(&bytes);
-                mem.blobs.insert(id, bytes);
+                if keeps_bytes(&bytes) {
+                    mem.blobs.insert(id, bytes);
+                } else {
+                    mem.binary.insert(id, bytes.len() as u64);
+                }
                 mem.put.push(id);
                 id
             })
@@ -698,17 +726,17 @@ impl Store for MemStore {
     async fn missing_blobs(&self, ids: Vec<BlobId>) -> StoreResult<Vec<BlobId>> {
         let mut mem = self.0.lock().unwrap();
         mem.checks += 1;
-        Ok(ids.into_iter().filter(|id| !mem.blobs.contains_key(id)).collect())
-    }
-    async fn blob(&self, id: BlobId) -> StoreResult<Option<Vec<u8>>> {
-        Ok(self.0.lock().unwrap().blobs.get(&id).cloned())
-    }
-    async fn blobs(&self, ids: Vec<BlobId>) -> StoreResult<BTreeMap<BlobId, Vec<u8>>> {
-        let mem = self.0.lock().unwrap();
         Ok(ids
             .into_iter()
-            .filter_map(|id| Some((id, mem.blobs.get(&id)?.clone())))
+            .filter(|id| !mem.blobs.contains_key(id) && !mem.binary.contains_key(id))
             .collect())
+    }
+    async fn blob(&self, id: BlobId) -> StoreResult<Option<StoredBlob>> {
+        Ok(self.0.lock().unwrap().held(id))
+    }
+    async fn blobs(&self, ids: Vec<BlobId>) -> StoreResult<BTreeMap<BlobId, StoredBlob>> {
+        let mem = self.0.lock().unwrap();
+        Ok(ids.into_iter().filter_map(|id| Some((id, mem.held(id)?))).collect())
     }
     async fn snapshot(&self, id: SnapshotId) -> StoreResult<Option<(Snapshot, SnapshotStatus)>> {
         Ok(self.0.lock().unwrap().snapshots.get(&id).cloned())
@@ -2141,6 +2169,67 @@ async fn items_of_one_file_are_acknowledged_separately() {
 
     assert_eq!(update.review.acknowledged, [NonTextKind::Binary]);
     assert_eq!((update.changeset.items, update.changeset.acknowledged_items), (2, 1));
+}
+
+#[tokio::test]
+async fn an_acknowledged_binary_stays_binary_once_nothing_but_the_store_knows_it() {
+    const BINARY: &str = "\0archive";
+    let files = [("a.txt", "one\n"), ("data.bin", BINARY)];
+    let fx = Fixture::open(&[("a.txt", "one\n")], &files).await;
+    fx.session
+        .acknowledge(0, "data.bin", NonTextKind::Binary, true)
+        .await
+        .unwrap();
+    {
+        let mem = fx.store.0.lock().unwrap();
+        assert_eq!(mem.binary.get(&BlobId::of(BINARY.as_bytes())), Some(&8));
+        assert!(!mem.blobs.contains_key(&BlobId::of(BINARY.as_bytes())));
+    }
+
+    // The file changed in the worktree since: neither git nor the worktree has these bytes.
+    let scan = fx.git.snapshot(&files);
+    fx.git.forget(BINARY);
+    fx.git.scans.lock().unwrap().push(scan);
+    let session = LiveSession::open(fx.git.clone(), fx.store.clone(), REPO.into(), clock)
+        .await
+        .unwrap();
+
+    let m = session.manifest(View::Changeset).await.unwrap();
+    let file = m.files.iter().find(|f| f.path == path("data.bin")).unwrap();
+    let [item] = file.non_text.as_slice() else {
+        panic!("{:?}", file.non_text)
+    };
+    assert_eq!(item.kind, NonTextKind::Binary);
+    assert_eq!(item.after.as_ref().unwrap().size, Some(8));
+    assert!(!item.has_preview);
+    assert_eq!(file.review.acknowledged, [NonTextKind::Binary]);
+}
+
+#[tokio::test]
+async fn an_image_is_served_to_its_card_and_a_binary_held_by_hash_is_not() {
+    let files = [
+        ("a.txt", "one\n"),
+        ("pic.gif", "GIF89a\0\0"),
+        ("data.gif", "!<arch>\n\0"),
+    ];
+    let fx = Fixture::reviewing(&[("a.txt", "one\n")], &files).await;
+    let revision = fx.session.revision().await;
+    let item = async |file: &str| {
+        fx.session
+            .item_blob(revision, View::Changeset, file, NonTextKind::Binary, Side::Target)
+            .await
+            .unwrap()
+    };
+
+    assert_eq!(
+        item("pic.gif").await,
+        ItemBlob::Bytes {
+            media_type: Some("image/gif"),
+            bytes: b"GIF89a\0\0".to_vec()
+        }
+    );
+    // Held by hash and size: nothing to serve, whatever its extension says.
+    assert_eq!(item("data.gif").await, ItemBlob::Unavailable);
 }
 
 /// `run.sh` is edited and made executable: a hunk and a mode change.

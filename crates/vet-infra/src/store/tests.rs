@@ -2,6 +2,7 @@ use std::collections::BTreeMap;
 use std::time::Duration;
 
 use sea_orm::PaginatorTrait;
+use sea_orm::sqlx;
 use std::collections::HashSet;
 use tempfile::TempDir;
 use vet_app::changeset::{BaseChoice, ChangedFile, CommitId, Lens, RemoteKey, Snapshots, VersionChange, VersionOrigin};
@@ -1116,7 +1117,7 @@ async fn a_batch_of_blobs_is_answered_in_order_and_held_after_a_reopen() {
     store.put_blobs(vec![vec![3]]).await.unwrap();
     // More blobs than the budget has units, a duplicate and one held already.
     let blobs: Vec<Vec<u8>> = (0..40u8)
-        .map(|n| vec![n; 1 + n as usize])
+        .map(|n| vec![n + 1; 1 + n as usize])
         .chain([vec![3], vec![7; 8]])
         .collect();
     let ids: Vec<BlobId> = blobs.iter().map(|b| BlobId::of(b)).collect();
@@ -1128,21 +1129,23 @@ async fn a_batch_of_blobs_is_answered_in_order_and_held_after_a_reopen() {
     drop(store);
     let store = open(&dir).await;
     for (id, bytes) in ids.iter().zip(&blobs) {
-        assert_eq!(store.blob(*id).await.unwrap().as_ref(), Some(bytes));
+        assert_eq!(store.blob(*id).await.unwrap(), Some(StoredBlob::Bytes(bytes.clone())));
     }
-    assert_eq!(std::fs::read_dir(dir.path().join("content/tmp")).unwrap().count(), 0);
 }
 
 #[tokio::test]
 async fn blobs_read_together_are_those_read_one_by_one() {
     let dir = tempfile::tempdir().unwrap();
     let store = open(&dir).await;
-    let held: Vec<Vec<u8>> = (0..20u8).map(|n| vec![n; 100 + n as usize]).collect();
+    let held: Vec<Vec<u8>> = (0..20u8).map(|n| vec![n + 1; 100 + n as usize]).collect();
     let mut ids = store.put_blobs(held).await.unwrap();
-    // One the store never had, one torn on disk, and one asked for twice.
+    // One the store never had, one torn, and one asked for twice.
     let torn = ids[3];
-    let hex = torn.0.to_hex();
-    std::fs::write(dir.path().join("content").join(&hex[..2]).join(&hex[2..]), b"torn").unwrap();
+    sqlx::query("UPDATE blob SET data = x'746f726e', codec = 0 WHERE id = ?")
+        .bind(torn.0.0.as_slice())
+        .execute(&store.content.writer)
+        .await
+        .unwrap();
     ids.extend([BlobId::of(b"never"), ids[5]]);
 
     let together = store.blobs(ids.clone()).await.unwrap();
@@ -1155,22 +1158,6 @@ async fn blobs_read_together_are_those_read_one_by_one() {
     assert_eq!(together, alone);
     assert_eq!(together.len(), 19);
     assert!(!together.contains_key(&torn));
-}
-
-#[cfg(target_vendor = "apple")]
-#[tokio::test]
-async fn a_batch_flushes_the_drive_once_and_a_batch_with_nothing_to_write_not_at_all() {
-    let dir = tempfile::tempdir().unwrap();
-    let store = open(&dir).await;
-    let flushes = || store.content.full_flushes.load(std::sync::atomic::Ordering::Relaxed);
-    let blobs: Vec<Vec<u8>> = (0..40u8).map(|n| vec![n; 1 + n as usize]).collect();
-
-    store.put_blobs(blobs.clone()).await.unwrap();
-    assert_eq!(flushes(), 1);
-    store.put_blobs(blobs).await.unwrap();
-    assert_eq!(flushes(), 1);
-    store.put_blobs(vec![vec![99]]).await.unwrap();
-    assert_eq!(flushes(), 2);
 }
 
 #[tokio::test]

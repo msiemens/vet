@@ -15,7 +15,7 @@ use vet_core::filter::FileMask;
 
 use super::views::{FileStatus, FileView};
 use super::{LiveSession, Result, SessionError, View};
-use crate::ports::{BlobJob, BlobRead, BlobSession, GitError, GitRepo, LiveStore};
+use crate::ports::{BlobJob, BlobRead, BlobSession, GitError, GitRepo, LiveStore, StoredBlob};
 use crate::search::{FoundLine, LineMatcher, SearchFilters, Sides, search_text};
 
 /// The most matches a search lists, whatever limit it asks for.
@@ -161,7 +161,10 @@ impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> L
             let stored = self.acquisition.store.blobs(wanted).await?;
             for source in jobs.iter_mut().flat_map(Job::sources) {
                 if source.bytes.is_none() {
-                    source.bytes = stored.get(&source.blob).cloned();
+                    source.bytes = match stored.get(&source.blob) {
+                        Some(StoredBlob::Bytes(bytes)) => Some(bytes.clone()),
+                        _ => None,
+                    };
                 }
             }
         }
@@ -261,7 +264,7 @@ impl Source {
             Some(bytes) => bytes,
             None => match git.read_blob_capped(&self.path, self.blob)? {
                 BlobRead::Found(bytes) => bytes,
-                BlobRead::TooLarge | BlobRead::Missing => return Ok(None),
+                BlobRead::Binary { .. } | BlobRead::TooLarge | BlobRead::Missing => return Ok(None),
             },
         };
         Ok(decode_text_owned(bytes))

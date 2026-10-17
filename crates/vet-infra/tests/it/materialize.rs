@@ -12,8 +12,8 @@ use std::sync::{Arc, Mutex};
 use crate::common;
 use tempfile::TempDir;
 use vet_app::acquisition::Acquisition;
-use vet_app::ports::{Checkout, CheckoutError, History, Scanner, Store, StoreError};
-use vet_core::content::{BlobId, EntryKind, FileEntry, RepoPath, Snapshot, SnapshotId, SnapshotStatus};
+use vet_app::ports::{Checkout, CheckoutError, History, Scanner, Store, StoreError, StoredBlob};
+use vet_core::content::{BlobId, EntryKind, FileEntry, RepoPath, Snapshot, SnapshotId, SnapshotStatus, keeps_bytes};
 use vet_core::merkle;
 use vet_infra::git::GixRepo;
 use vet_infra::materialize::Materialize;
@@ -52,7 +52,7 @@ fn path(s: &str) -> RepoPath {
 
 #[derive(Default)]
 struct MemStore {
-    blobs: Mutex<HashMap<BlobId, Vec<u8>>>,
+    blobs: Mutex<HashMap<BlobId, StoredBlob>>,
     snapshots: Mutex<HashMap<SnapshotId, (Snapshot, SnapshotStatus)>>,
 }
 
@@ -63,7 +63,14 @@ impl Store for MemStore {
             .into_iter()
             .map(|bytes| {
                 let id = BlobId::of(&bytes);
-                held.insert(id, bytes);
+                let kept = if keeps_bytes(&bytes) {
+                    StoredBlob::Bytes(bytes)
+                } else {
+                    StoredBlob::Binary {
+                        size: bytes.len() as u64,
+                    }
+                };
+                held.insert(id, kept);
                 id
             })
             .collect())
@@ -72,10 +79,10 @@ impl Store for MemStore {
         let held = self.blobs.lock().unwrap();
         Ok(ids.into_iter().filter(|id| !held.contains_key(id)).collect())
     }
-    async fn blob(&self, id: BlobId) -> Result<Option<Vec<u8>>, StoreError> {
+    async fn blob(&self, id: BlobId) -> Result<Option<StoredBlob>, StoreError> {
         Ok(self.blobs.lock().unwrap().get(&id).cloned())
     }
-    async fn blobs(&self, ids: Vec<BlobId>) -> Result<BTreeMap<BlobId, Vec<u8>>, StoreError> {
+    async fn blobs(&self, ids: Vec<BlobId>) -> Result<BTreeMap<BlobId, StoredBlob>, StoreError> {
         let held = self.blobs.lock().unwrap();
         Ok(ids
             .into_iter()
@@ -153,6 +160,39 @@ async fn base_and_dirty_snapshots_materialize_from_git_plus_store() {
     let base = materializer.materialize(opened.base.id, POLICY).await.unwrap();
     assert_eq!(read(&base.root, "a.txt"), b"committed\n");
     assert!(!base.root.join("new.txt").exists());
+}
+
+#[tokio::test]
+async fn a_binary_held_by_hash_is_materialized_while_the_worktree_still_has_it() {
+    let dir = fixture();
+    write(dir.path(), "data.bin", b"\0archive");
+    let acq = Arc::new(Acquisition::new(GixRepo::for_test(dir.path()), MemStore::default()));
+    let opened = common::start_at_head(&acq).await;
+    acq.store.put_snapshot(opened.target.clone(), opened.status.clone());
+    let blob = BlobId::of(b"\0archive");
+    assert_eq!(
+        acq.store.blob(blob).await.unwrap(),
+        Some(StoredBlob::Binary { size: 8 }),
+        "only its hash and size were kept"
+    );
+
+    let data = tempfile::tempdir().unwrap();
+    let kept = Materialize::new(acq.clone(), trees(data.path()))
+        .materialize(opened.target.id, POLICY)
+        .await
+        .unwrap();
+    assert_eq!(read(&kept.root, "data.bin"), b"\0archive");
+
+    // The file changed since: git never had it and the worktree no longer does.
+    write(dir.path(), "data.bin", b"\0changed!");
+    let data = tempfile::tempdir().unwrap();
+    let refused = Materialize::new(acq, trees(data.path()))
+        .materialize(opened.target.id, POLICY)
+        .await;
+    match refused {
+        Err(NotMaterializable::MissingBlobs(blobs)) => assert_eq!(blobs, [blob]),
+        other => panic!("{:?}", other.map(|m| m.root)),
+    }
 }
 
 #[tokio::test]

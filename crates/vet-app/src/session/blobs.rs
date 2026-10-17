@@ -73,15 +73,25 @@ impl<G: GitRepo + Sync, S: LiveStore + Sync> Acquisition<G, S> {
             ),
             EntryKind::Submodule => false,
         };
-        let mut blobs = BTreeMap::new();
-        let loaded = wanted && self.load(&mut blobs, path, entry.blob).await.unwrap_or(false);
-        let bytes = blobs.get(&entry.blob).filter(|_| loaded);
+        let read = if wanted {
+            self.blob(path, entry.blob, false).await.ok()
+        } else {
+            None
+        };
+        let size = match &read {
+            Some(BlobRead::Found(bytes)) => Some(bytes.len() as u64),
+            Some(BlobRead::Binary { size }) => Some(*size),
+            _ => None,
+        };
         Some(EntryInfo {
             entry: entry.clone(),
-            target: bytes
-                .filter(|_| entry.kind == EntryKind::Symlink)
-                .map(|b| String::from_utf8_lossy(b).into_owned()),
-            size: bytes.filter(|_| entry.kind == EntryKind::File).map(|b| b.len() as u64),
+            target: match &read {
+                Some(BlobRead::Found(bytes)) if entry.kind == EntryKind::Symlink => {
+                    Some(String::from_utf8_lossy(bytes).into_owned())
+                }
+                _ => None,
+            },
+            size: size.filter(|_| entry.kind == EntryKind::File),
         })
     }
 
@@ -111,7 +121,7 @@ impl<G: GitRepo + Sync, S: LiveStore + Sync> Acquisition<G, S> {
                 blobs.insert(blob, bytes);
                 true
             }
-            BlobRead::TooLarge | BlobRead::Missing => false,
+            BlobRead::Binary { .. } | BlobRead::TooLarge | BlobRead::Missing => false,
         })
     }
 
@@ -123,11 +133,17 @@ impl<G: GitRepo + Sync, S: LiveStore + Sync> Acquisition<G, S> {
         path: &RepoPath,
         blob: BlobId,
     ) -> Result<std::result::Result<String, NoText>> {
-        let mut read = BTreeMap::new();
+        let read;
         let bytes = match known.get(&blob) {
             Some(bytes) => bytes,
-            None if self.fetch(&mut read, path, blob, true).await? => &read[&blob],
-            None => return Ok(Err(NoText::Unavailable)),
+            None => match self.blob(path, blob, true).await? {
+                BlobRead::Found(bytes) => {
+                    read = bytes;
+                    &read
+                }
+                BlobRead::Binary { .. } => return Ok(Err(NoText::Binary)),
+                BlobRead::TooLarge | BlobRead::Missing => return Ok(Err(NoText::Unavailable)),
+            },
         };
         Ok(decode_text(bytes).ok_or(NoText::Binary))
     }

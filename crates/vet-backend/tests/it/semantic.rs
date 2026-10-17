@@ -10,6 +10,7 @@ use std::time::Duration;
 use crate::common::{Client, config, find, git, init, repo_with, write};
 use vet_backend::{Config, Orchestrator, open_store};
 use vet_core::content::BlobId;
+use vet_infra::store::SqliteStore;
 use vet_protocol::{
     CallFate, ChangesetKey, Event, LocationChange, ProjectId, Reach, Request, Response, ServerMessage, ServerState,
     Serving, Side, SymbolChange, SymbolId, SymbolKind, SymbolName, UnavailableKind, View,
@@ -1103,9 +1104,12 @@ async fn a_definition_of_a_file_the_worktree_moved_is_asked_again_at_the_newer_r
     let revision = client.revision(project).await;
 
     // The store cannot read the revision's copy of `fresh.rs`, however it is asked.
-    let hex = BlobId::of(FRESH.as_bytes()).0.to_hex();
-    let blocked = data.path().join("content").join(&hex[..2]).join(&hex[2..]);
-    std::fs::create_dir_all(blocked).unwrap();
+    SqliteStore::for_test(data.path())
+        .await
+        .unwrap()
+        .hold_unreadable_for_test(BlobId::of(FRESH.as_bytes()))
+        .await
+        .unwrap();
 
     client
         .warm_up(project, revision, "src/copied.rs", find(COPIED, "target()", 0, 1))

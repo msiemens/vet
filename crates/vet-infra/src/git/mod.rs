@@ -15,7 +15,7 @@ mod scan;
 mod stat_cache;
 mod tree;
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fmt::Display;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, OnceLock};
@@ -25,7 +25,7 @@ use vet_app::changeset::{ChangesetId, CommitId};
 use vet_app::ports::{
     Attributes, BlobJob, BlobRead, BlobReader, BlobSession, BranchInfo, ChangesetRef, ChangesetRefs, Checkout,
     CheckoutError, CommitDetail, CommitInfo, Differ, Dirty, Fetcher, GitError, History, IgnoreRules, RefTip, RefUpdate,
-    Remerged, RemoteInfo, Scan, Scanner, Store, TextDiff, Via,
+    Remerged, RemoteInfo, Scan, Scanner, Store, StoredBlob, TextDiff, Via,
 };
 use vet_core::classify::{changes, text_blobs};
 use vet_core::content::{BlobId, EntryKind, RepoPath, Snapshot};
@@ -238,10 +238,16 @@ impl Inner {
             .map_or(BlobRead::Missing, BlobRead::Found))
     }
 
-    fn diff(&self, stored: BTreeMap<BlobId, Vec<u8>>, old: &Snapshot, new: &Snapshot) -> Result<TextDiff, GitError> {
+    fn diff(
+        &self,
+        stored: BTreeMap<BlobId, Vec<u8>>,
+        binary: &BTreeSet<BlobId>,
+        old: &Snapshot,
+        new: &Snapshot,
+    ) -> Result<TextDiff, GitError> {
         let repo = self.open()?;
         let mut wt = scan::Worktree::new(&repo, &self.blobs, &self.stats, self.cap)?;
-        diff::diff(&repo, &mut wt, &self.blobs, self.cap, stored, old, new)
+        diff::diff(&repo, &mut wt, &self.blobs, self.cap, stored, binary, old, new)
     }
 }
 
@@ -280,7 +286,9 @@ impl Checkout for GixRepo {
             } else {
                 store.blob(entry.blob).await.map_err(|e| GitError::failed(e.0))?
             };
-            bytes += stored.as_ref().map_or(0, Vec::len);
+            if let Some(StoredBlob::Bytes(held)) = &stored {
+                bytes += held.len();
+            }
             batch.push((path.clone(), entry.clone(), stored));
             if batch.len() >= BATCH_FILES || bytes >= BATCH_BYTES {
                 missing.extend(self.write_batch(root, std::mem::take(&mut batch)).await?);
@@ -521,8 +529,8 @@ impl Attributes for GixRepo {
         let mut contents = Vec::new();
         for (path, blob) in files {
             let bytes = match stored.remove(&blob) {
-                Some(bytes) => Some(bytes),
-                None => self.read_blob(&path, blob).await?,
+                Some(StoredBlob::Bytes(bytes)) => Some(bytes),
+                Some(StoredBlob::Binary { .. }) | None => self.read_blob(&path, blob).await?,
             };
             contents.extend(bytes.map(|bytes| (path, bytes)));
         }
@@ -536,9 +544,20 @@ impl Differ for GixRepo {
             .into_iter()
             .map(|(_, blob)| blob)
             .collect();
-        let stored = store.blobs(wanted).await.map_err(|e| GitError::failed(e.0))?;
+        let mut stored = BTreeMap::new();
+        let mut binary = BTreeSet::new();
+        for (blob, held) in store.blobs(wanted).await.map_err(|e| GitError::failed(e.0))? {
+            match held {
+                StoredBlob::Bytes(bytes) => {
+                    stored.insert(blob, bytes);
+                }
+                StoredBlob::Binary { .. } => {
+                    binary.insert(blob);
+                }
+            }
+        }
         let (old, new) = (old.clone(), new.clone());
-        self.blocking(move |i| i.diff(stored, &old, &new)).await
+        self.blocking(move |i| i.diff(stored, &binary, &old, &new)).await
     }
 }
 

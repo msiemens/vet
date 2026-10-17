@@ -49,12 +49,13 @@ http.workspace = true
 time = { workspace = true, features = ["parsing", "macros"] }
 # The `packages:` of `pnpm-workspace.yaml` (restore/discover.rs); the manifest is YAML.
 yaml_serde.workspace = true
+# Compresses the content blobs (`store/content.rs`).
+zstd.workspace = true
 
 [target.'cfg(not(windows))'.dependencies]
 notify.workspace = true
-# Signalling a run's process group, and syncing content (`fsync`, Apple's `F_FULLFSYNC`),
-# without `unsafe`.
-rustix = { workspace = true, features = ["process", "fs"] }
+# Signalling a run's process group, without `unsafe`.
+rustix = { workspace = true, features = ["process"] }
 
 [target.'cfg(windows)'.dependencies]
 # Directory links that need no privilege, made by the file system API: no shell sees a path.

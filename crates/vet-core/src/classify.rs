@@ -105,6 +105,14 @@ pub fn classify<'a>(change: &'a Change, blobs: &'a impl BlobSource) -> Classifie
 
     let old = change.old.as_ref().map(|(p, e)| (p, e.blob));
     let new = change.new.as_ref().map(|(p, e)| (p, e.blob));
+    if [old, new]
+        .into_iter()
+        .flatten()
+        .any(|(_, blob)| blobs.known_binary(blob))
+    {
+        non_text.push(item(NonTextKind::Binary));
+        return Classified { non_text, text: None };
+    }
     let text = |side: Option<(&RepoPath, BlobId)>| match side {
         None => Some(&[][..]),
         Some((_, blob)) => blobs.blob(blob),
@@ -135,10 +143,10 @@ pub fn classify<'a>(change: &'a Change, blobs: &'a impl BlobSource) -> Classifie
 
 #[cfg(test)]
 mod tests {
-    use std::collections::BTreeMap;
+    use std::collections::{BTreeMap, BTreeSet};
 
     use super::*;
-    use crate::content::Hash;
+    use crate::content::{Hash, WithBinary};
 
     fn path(p: &str) -> RepoPath {
         RepoPath::from(p)
@@ -261,6 +269,24 @@ mod tests {
         let blobs = blobs(&[b"a\n", b"\0\x01"]);
         let c = change(Some(("f", file(b"a\n"))), Some(("f", file(b"\0\x01"))));
         assert_eq!(kinds(&classify(&c, &blobs)), [NonTextKind::Binary]);
+    }
+
+    #[test]
+    fn a_binary_file_whose_bytes_were_not_kept_is_binary_not_unavailable() {
+        let known = BTreeSet::from([BlobId::of(b"\0archive")]);
+        let held = blobs(&[b"a\n"]);
+        let source = WithBinary {
+            bytes: &held,
+            binary: &known,
+        };
+        let added = change(None, Some(("f", file(b"\0archive"))));
+        assert_eq!(kinds(&classify(&added, &source)), [NonTextKind::Binary]);
+        let from_text = change(Some(("f", file(b"a\n"))), Some(("f", file(b"\0archive"))));
+        assert_eq!(kinds(&classify(&from_text, &source)), [NonTextKind::Binary]);
+        let to_text = change(Some(("f", file(b"\0archive"))), Some(("f", file(b"b\n"))));
+        assert_eq!(kinds(&classify(&to_text, &source)), [NonTextKind::Binary]);
+        let unknown = change(None, Some(("f", file(b"b\n"))));
+        assert_eq!(kinds(&classify(&unknown, &source)), [NonTextKind::ContentUnavailable]);
     }
 
     #[test]

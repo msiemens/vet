@@ -1,7 +1,7 @@
 //! The timeline: the versions of the open review, for choosing what to compare, and what each
 //! one changed.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
 use vet_core::content::{BlobId, LineDelta, RepoPath, Snapshot};
@@ -79,7 +79,9 @@ impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> L
             // Unreadable content is a file without text.
             let _ = self.acquisition.load(&mut blobs, &path, blob).await;
         }
-        Ok(change(version_diff(sides, &paths, &mut blobs).diff.changed_files()))
+        // A file whose bytes were not kept is counted as changed, as any file without text is.
+        let diff = version_diff(sides, &paths, &mut blobs, &BTreeSet::new());
+        Ok(change(diff.diff.changed_files()))
     }
 }
 

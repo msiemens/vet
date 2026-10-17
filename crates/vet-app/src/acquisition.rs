@@ -9,7 +9,7 @@ use vet_core::content::{BlobId, EntryKind, RepoPath, Snapshot, SnapshotId, Snaps
 
 use crate::changeset::CommitId;
 use crate::mutex::lock;
-use crate::ports::{BlobRead, BlobReader, Dirty, GitError, History, Scan, Scanner, Store, StoreError};
+use crate::ports::{BlobRead, BlobReader, Dirty, GitError, History, Scan, Scanner, Store, StoreError, StoredBlob};
 use crate::progress::{TaskKind, Tasks};
 
 pub struct Acquisition<G, S> {
@@ -57,8 +57,8 @@ impl<G, S> Acquisition<G, S> {
     }
 }
 
-/// How many bytes of content [`Acquisition::retain`] holds before it puts them: a batch syncs
-/// each of its directories once, and a large changeset is not read into memory at once.
+/// How many bytes of content [`Acquisition::retain`] holds before it puts them: a batch is one
+/// transaction of the content store, and a large changeset is not read into memory at once.
 pub const RETAIN_BATCH: usize = 32 << 20;
 
 /// Why content could not be read or kept.
@@ -94,8 +94,10 @@ impl<G: BlobReader, S: Store> Acquisition<G, S> {
     /// (or the worktree's, if the file still hashes to `blob`). With `capped`,
     /// git content over the capture cap is not read.
     pub async fn blob(&self, path: &RepoPath, blob: BlobId, capped: bool) -> Result<BlobRead, BlobError> {
-        if let Some(bytes) = self.store.blob(blob).await? {
-            return Ok(BlobRead::Found(bytes));
+        match self.store.blob(blob).await? {
+            Some(StoredBlob::Bytes(bytes)) => return Ok(BlobRead::Found(bytes)),
+            Some(StoredBlob::Binary { size }) => return Ok(BlobRead::Binary { size }),
+            None => {}
         }
         Ok(if capped {
             self.git.read_blob_capped(path, blob).await?
