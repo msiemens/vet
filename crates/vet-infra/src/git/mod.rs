@@ -25,7 +25,7 @@ use vet_app::changeset::{ChangesetId, CommitId};
 use vet_app::ports::{
     Attributes, BlobJob, BlobRead, BlobReader, BlobSession, BranchInfo, ChangesetRef, ChangesetRefs, Checkout,
     CheckoutError, CommitDetail, CommitInfo, Differ, Dirty, Fetcher, GitError, History, IgnoreRules, RefTip, RefUpdate,
-    Remerged, RemoteInfo, Scan, Scanner, Store, StoredBlob, TextDiff, Via,
+    Remerged, RemoteInfo, Scan, Scanner, Store, StoredBlob, TextDiff, Via, split_stored,
 };
 use vet_core::classify::{changes, text_blobs};
 use vet_core::content::{BlobId, EntryKind, RepoPath, Snapshot};
@@ -544,18 +544,7 @@ impl Differ for GixRepo {
             .into_iter()
             .map(|(_, blob)| blob)
             .collect();
-        let mut stored = BTreeMap::new();
-        let mut binary = BTreeSet::new();
-        for (blob, held) in store.blobs(wanted).await.map_err(|e| GitError::failed(e.0))? {
-            match held {
-                StoredBlob::Bytes(bytes) => {
-                    stored.insert(blob, bytes);
-                }
-                StoredBlob::Binary { .. } => {
-                    binary.insert(blob);
-                }
-            }
-        }
+        let (stored, binary) = split_stored(store.blobs(wanted).await.map_err(|e| GitError::failed(e.0))?);
         let (old, new) = (old.clone(), new.clone());
         self.blocking(move |i| i.diff(stored, &binary, &old, &new)).await
     }

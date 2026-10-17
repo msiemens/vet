@@ -20,7 +20,7 @@ use super::views::{ItemView, ModeChange};
 use super::{Result, SessionError};
 use crate::acquisition::Acquisition;
 use crate::changeset::CommitId;
-use crate::ports::{CommitDetail, GitError, GitRepo, LiveStore, StoredBlob, TextDiff};
+use crate::ports::{CommitDetail, GitError, GitRepo, LiveStore, TextDiff, split_stored};
 use crate::progress::{TaskKind, Tasks};
 
 /// A diff with what showing and marking it needs.
@@ -429,21 +429,11 @@ async fn compared<G: GitRepo + Sync, S: LiveStore + Sync>(
     let paths = sides.paths();
     let wanted = sides.blobs(&paths);
     // What the store holds is read in one go; the rest comes from git or the worktree.
-    let stored = (acquisition.store)
-        .blobs(wanted.iter().map(|(_, blob)| *blob).collect())
-        .await?;
-    let mut blobs = BTreeMap::new();
-    let mut binary = BTreeSet::new();
-    for (id, held) in stored {
-        match held {
-            StoredBlob::Bytes(bytes) => {
-                blobs.insert(id, bytes);
-            }
-            StoredBlob::Binary { .. } => {
-                binary.insert(id);
-            }
-        }
-    }
+    let (mut blobs, binary) = split_stored(
+        (acquisition.store)
+            .blobs(wanted.iter().map(|(_, blob)| *blob).collect())
+            .await?,
+    );
     for (done, (path, blob)) in wanted.iter().enumerate() {
         progress.report(Some((done as u32, wanted.len() as u32)), Some(path.to_string_lossy()));
         if !binary.contains(blob) {

@@ -7,7 +7,7 @@
 //! layer's reads. `LineSources` is implemented by `vet-backend`'s highlighter,
 //! which no lower crate may name.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 use std::pin::Pin;
 use std::time::Duration;
@@ -95,6 +95,23 @@ pub enum StoredBlob {
     Binary {
         size: u64,
     },
+}
+
+/// `stored` as the content it has bytes of, and the blobs it holds by hash and size only.
+pub fn split_stored(stored: BTreeMap<BlobId, StoredBlob>) -> (BTreeMap<BlobId, Vec<u8>>, BTreeSet<BlobId>) {
+    let mut bytes = BTreeMap::new();
+    let mut binary = BTreeSet::new();
+    for (id, held) in stored {
+        match held {
+            StoredBlob::Bytes(held) => {
+                bytes.insert(id, held);
+            }
+            StoredBlob::Binary { .. } => {
+                binary.insert(id);
+            }
+        }
+    }
+    (bytes, binary)
 }
 
 pub struct Scan {

@@ -1,4 +1,4 @@
-use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::Path;
 use std::sync::atomic::{AtomicBool, AtomicI64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
@@ -27,7 +27,7 @@ use crate::platform::{Discussion, FakeHosting, PullRequestHead, StoredDiscussion
 use crate::ports::{
     Attributes, BlobJob, BlobRead, BlobReader, BlobSession, BranchInfo, ChangesetRef, ChangesetRefs, ChangesetStore,
     Checkout, CommitDetail, CommitInfo, Differ, Dirty, GitError, History, PreferenceStore, Remerged, ReviewRow,
-    ReviewStore, Scan, Scanner, SourceReview, Store, StoreError, StoredBlob, TextDiff, ThreadStore,
+    ReviewStore, Scan, Scanner, SourceReview, Store, StoreError, StoredBlob, TextDiff, ThreadStore, split_stored,
 };
 use crate::pull_request::PullRequestRefs;
 use crate::review::{ChangesetThread, NonTextAck, RecordedSpan, Review, ReviewId, ReviewSummary, SpanId, SpanOrigin};
@@ -524,17 +524,8 @@ impl Differ for FakeGit {
             .into_iter()
             .map(|(_, blob)| blob)
             .collect();
-        let mut binary = BTreeSet::new();
-        for (id, held) in store.blobs(wanted).await.map_err(|e| GitError::failed(e.0))? {
-            match held {
-                StoredBlob::Bytes(bytes) => {
-                    blobs.insert(id, bytes);
-                }
-                StoredBlob::Binary { .. } => {
-                    binary.insert(id);
-                }
-            }
-        }
+        let (stored, binary) = split_stored(store.blobs(wanted).await.map_err(|e| GitError::failed(e.0))?);
+        blobs.extend(stored);
         let mut out = SnapshotDiff::default();
         out.renames.0.extend(self.renames.lock().unwrap().iter().cloned());
         let source = WithBinary {
