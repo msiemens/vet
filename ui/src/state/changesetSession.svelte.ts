@@ -3,16 +3,12 @@
 // changeset is opened and disposed when another is, or the project closes: its lifetime ends and an
 // answer that arrives after that changes nothing.
 
-import { untrack } from "svelte";
-import type { BaseDiff } from "../generated/BaseDiff";
 import type { Completion } from "../generated/Completion";
 import type { ReviewUpdate } from "../generated/ReviewUpdate";
 import type { Manifest } from "../generated/Manifest";
 import type { RestoreFailure } from "../generated/RestoreFailure";
 import type { ReviewFilter } from "../generated/ReviewFilter";
-import type { NonTextKind } from "../generated/NonTextKind";
 import type { ChangesetKey } from "../generated/ChangesetKey";
-import type { CommentAt } from "../generated/CommentAt";
 import type { View } from "../generated/View";
 import type { CommitUnit } from "../generated/CommitUnit";
 import type { Lens } from "../generated/Lens";
@@ -22,6 +18,7 @@ import type { SessionEvent } from "./projectEvents";
 import { CommentDrafts, emptyChangesetComment, unsentComments } from "./commentDrafts";
 import { CommitList } from "./commitList";
 import { type SessionFindSets, newFindSets } from "./findSets.svelte";
+import { HeldView } from "./heldView.svelte";
 import { neighbour } from "./commitLens";
 import { type SessionChecks, newChecks } from "./checks.svelte";
 import { Lifetime } from "./lifetime";
@@ -30,20 +27,10 @@ import { type SessionPullRequest, newPullRequest } from "./pullRequest.svelte";
 import { ReadFlush } from "./readFlush";
 import { type ReadState, readsFor, threadCarry } from "./sessionReads";
 import { Latest, Resource } from "./resource";
-import {
-  type ChangesetFacts,
-  type FileLayout,
-  type FileState,
-  type Frame,
-  type ReviewedFile,
-  type ViewLayout,
-  partsOf,
-} from "./reviewModel";
-import { newReviewCells } from "./reviewCells.svelte";
-import { reportFailure, reviewMarks } from "./reviewMarks";
+import { type ChangesetFacts, type Frame, partsOf } from "./reviewModel";
+import { type Answer, reportFailure } from "./reviewMarks";
 import { whileReviewShown } from "./reviewFollow";
 import { type SessionReviewChanges, newReviewChanges } from "./reviewChanges.svelte";
-import { type WriteListener } from "./reviewSource";
 import { type SessionPipelines, newPipelines } from "./pipelines.svelte";
 import { type SessionVersions, newVersions } from "./versions.svelte";
 import { session } from "./session.svelte";
@@ -82,13 +69,11 @@ export interface SessionStart {
   viewed?: ViewPoint;
 }
 
-class Session implements ViewSource {
+class Session extends HeldView implements ViewSource {
   readonly key: ChangesetKey;
   readonly lifetime = new Lifetime();
   /** A manifest read ahead of the session's own, used by its first read of the changeset view. */
   private seed?: Manifest;
-  /** What the view of the last refresh looks like: its files' structure and its base. Replaced only by a manifest. */
-  layout = $state.raw<ViewLayout>();
   /** What is true of the changeset as a whole, whatever view is shown. */
   facts = $state.raw<ChangesetFacts>();
   /** The changeset as a whole: its files and their review state, whatever range or commit the view on screen shows. */
@@ -129,23 +114,6 @@ class Session implements ViewSource {
   viewCompletion = $state.raw<Completion>();
   /** Dependency restores that failed: the analysis of those projects is limited. Pushed as they happen. */
   restoreFailures = $state.raw<RestoreFailure[]>([]);
-  /**
-   * The current review state of each file of the view, one reactive cell per path: a review update invalidates
-   * only its file. It knows which change of the backend the state is as of; updates and manifests older than
-   * it do not replace it.
-   */
-  private cells = newReviewCells();
-  /** The requests that mark, as the view on screen sends them. */
-  private marks = reviewMarks({
-    backend: () => session.connected(),
-    admit: (shown) => this.admit(shown),
-    current: () => this.currentShown(),
-    apply: (update) => this.applyReview(update),
-    refresh: () => this.refresh(),
-    hunks: (path) => this.cells.state(path)?.review.hunks ?? [],
-    ended: () => !this.lifetime.alive,
-  });
-
   /** Which view is asked for; the only place navigation state is written. */
   private choice = $state.raw<ViewChoice>(FIRST_CHOICE);
   /**
@@ -183,18 +151,13 @@ class Session implements ViewSource {
       const parts = partsOf(manifest, commit);
       const heldFacts = this.facts;
       // A mark answered after the manifest was read is newer than the manifest, whenever the manifest arrives.
-      const newer = this.cells.order.load(
-        parts.seq,
-        parts.layout.paths,
-        isCurrent(parts.layout.shown, this.layout?.shown),
-      );
-      this.layout = parts.layout;
-      this.viewCompletion = newer.completion && this.viewCompletion ? this.viewCompletion : parts.completion;
-      this.facts = newer.changeset && heldFacts ? { ...parts.facts, completion: heldFacts.completion } : parts.facts;
-      this.shownCommit = commit;
-      this.threads.viewed(parts.layout.interdiff);
-      this.restoreFailures = manifest.restoreFailures;
-      this.cells.replace(parts.states, newer);
+      this.take(parts, (newer) => {
+        this.viewCompletion = newer.completion && this.viewCompletion ? this.viewCompletion : parts.completion;
+        this.facts = newer.changeset && heldFacts ? { ...parts.facts, completion: heldFacts.completion } : parts.facts;
+        this.shownCommit = commit;
+        this.threads.viewed(parts.layout.interdiff);
+        this.restoreFailures = manifest.restoreFailures;
+      });
       if (parts.facts.lens === "perCommit" && parts.facts.commits > 1) void this.loadCommits();
       else this.commits = [];
       this.announce();
@@ -219,7 +182,6 @@ class Session implements ViewSource {
 
   /** Same array while only review state changes. */
   paths = $derived(this.layout?.paths ?? NO_PATHS);
-  private layouts = $derived(new Map(this.layout?.files.map((file) => [file.path, file])));
   /** The files the Changes tab shows: all of them, or those of `baseChanged`. */
   shownFiles = $derived.by(() => {
     const files = this.layout?.files ?? [];
@@ -267,37 +229,6 @@ class Session implements ViewSource {
     return this.shownCommit === undefined ? this.viewCompletion : (this.facts?.completion ?? this.viewCompletion);
   }
 
-  /** The structure of a file of the view. */
-  layoutOf(path: string): FileLayout | undefined {
-    return this.layouts.get(path);
-  }
-
-  /** The review state of a file of the view as it is now. */
-  file(path: string): FileState | undefined {
-    return this.cells.file(path);
-  }
-
-  /** A file of the view with its review state as it is now; to be read, not kept. */
-  reviewed(path: string): ReviewedFile | undefined {
-    const layout = this.layouts.get(path);
-    const state = this.cells.file(path);
-    return layout && state && { ...layout, ...state };
-  }
-
-  /** The review state of a file at the moment of use; reads nothing reactively. */
-  state(path: string): FileState | undefined {
-    return this.cells.state(path);
-  }
-
-  version(path: string): number {
-    return this.cells.version(path);
-  }
-
-  /** The layout of the view on screen, for reading at the moment of use; reads nothing reactively. */
-  currentLayout(): ViewLayout | undefined {
-    return untrack(() => this.layout);
-  }
-
   /**
    * The whole changeset's files and base with what is true of it, whatever range or commit the review
    * shows: what Problems and the queue panel read.
@@ -316,7 +247,16 @@ class Session implements ViewSource {
     return this.refresh();
   }
 
+  protected override client() {
+    return session.connected();
+  }
+
+  protected override ended(): boolean {
+    return !this.lifetime.alive;
+  }
+
   constructor(start: SessionStart) {
+    super();
     this.key = start.key;
     this.seed = start.manifest;
     this.viewed = start.viewed;
@@ -418,7 +358,7 @@ class Session implements ViewSource {
     if (event.type === "lensChanged") this.applyLens(event.lens);
     // A mark made in a range or a commit is announced as that of the changeset's file, which they do not show.
     else if (event.type === "reviewChanged" && event.revision === this.layout?.shown.revision) {
-      if (this.showsChangeset) this.applyReview(event.update);
+      if (this.showsChangeset) this.applyAnswer(event.update);
       else this.applyTotals(event.update);
       this.whole.heard(event.update, event.revision);
     } else if (event.type === "reviewStarted" && this.facts) this.facts = { ...this.facts, review: event.review };
@@ -455,13 +395,13 @@ class Session implements ViewSource {
    */
   private clear() {
     this.manifestLoads.cancel();
-    this.layout = this.facts = this.viewCompletion = undefined;
+    this.clearHeld();
+    this.facts = this.viewCompletion = undefined;
     this.choice = FIRST_CHOICE;
     this.shownCommit = undefined;
     this.commits = [];
     this.commitReads.cancel();
     this.restoreFailures = [];
-    this.cells.reset();
     this.whole.clear();
     this.threads.clear();
   }
@@ -668,52 +608,22 @@ class Session implements ViewSource {
     await this.readAsked();
   }
 
-  /** What the layout on screen is of, which the views are built for; none before the first manifest. Reads nothing reactively. */
-  currentShown(): Shown | undefined {
-    return untrack(() => this.layout?.shown);
-  }
-
   /**
    * Whether a request built for `shown` may go out: the manifest is still the one it was built from and
    * no other view has been asked for since. If not, the views it came from are about to be replaced
    * and the viewer is told so.
    */
-  admit(shown: Shown): boolean {
+  override admit(shown: Shown): boolean {
     const asked = this.layout && { revision: this.layout.shown.revision, view: this.view };
     if (isCurrent(shown, asked)) return true;
     notices.show(STALE_NOTICE);
     return false;
   }
 
-  /** Flips one hunk of the file in `shown`, the view the caller displays; the backend rejects a stale revision. */
-  toggleHunk(shown: Shown, path: string, hunk: number) {
-    return this.marks.toggleHunk(shown, path, hunk);
-  }
-
-  /** Flips the flag of one hunk. */
-  toggleFlag(shown: Shown, path: string, hunk: number) {
-    return this.marks.toggleFlag(shown, path, hunk);
-  }
-
-  /** Flips the acknowledgement of one non-text item. */
-  toggleItem(shown: Shown, path: string, kind: NonTextKind) {
-    return this.marks.toggleItem(shown, path, kind);
-  }
-
-  /** Marks everything of a file seen, or takes every mark back if it all is seen already. */
-  toggleFileSeen(shown: Shown, path: string) {
-    return this.marks.toggleFileSeen(shown, path);
-  }
-
   /** Marks everything of every file of the view below the directory `dir` seen, or takes every mark back. */
   async setDirectorySeen(shown: Shown, dir: string, seen: boolean) {
     const paths = pathsBelow(this.paths, dir);
-    if (paths.length) await this.marks.setFilesSeen(shown, paths, seen);
-  }
-
-  /** Marks the hunks of a file seen against an old base seen again. */
-  reconfirmFile(shown: Shown, path: string) {
-    return this.marks.reconfirmFile(shown, path);
+    if (paths.length) await this.setFilesSeen(shown, paths, seen);
   }
 
   /** The files that have hunks seen against an old base, as they are now. */
@@ -742,16 +652,6 @@ class Session implements ViewSource {
       if (this.layout?.shown.revision !== shown.revision) return;
       await this.reconfirmFile(shown, path);
     }
-  }
-
-  /** The base diff of a hunk seen against an old base; `undefined` after showing why it could not be had. */
-  baseDiff(shown: Shown, path: string, hunk: number): Promise<BaseDiff | undefined> {
-    return this.marks.baseDiff(shown, path, hunk);
-  }
-
-  /** Where a comment on a part of the file attaches in `shown`; rejects if `shown` is not current. */
-  commentTarget(shown: Shown, path: string, at: CommentAt) {
-    return this.marks.commentTarget(shown, path, at);
   }
 
   /**
@@ -799,7 +699,7 @@ class Session implements ViewSource {
 
   /** An answer another view of this window got for the view on screen's own lines (a tab at the commit on screen): it is as good as one this store asked for. */
   adopt(shown: Shown, update: ReviewUpdate) {
-    if (isCurrent(shown, this.currentShown())) this.applyReview(update);
+    if (isCurrent(shown, this.currentShown())) this.applyAnswer(update);
   }
 
   /**
@@ -807,7 +707,7 @@ class Session implements ViewSource {
    * kept if it is as new or newer, so an update that arrives twice (as the answer and as the event)
    * or after a later one changes nothing.
    */
-  private applyReview(update: ReviewUpdate) {
+  protected override applyAnswer(update: Answer) {
     const facts = this.facts;
     if (!this.layout || !facts) return;
     const known = this.cells.has(update.path);
@@ -825,11 +725,6 @@ class Session implements ViewSource {
   private applyTotals(update: ReviewUpdate) {
     if (!this.facts || !this.cells.order.changeset(update.seq)) return;
     this.facts = { ...this.facts, completion: update.changeset };
-  }
-
-  /** Calls `listener` after review state was written, with the paths it concerns; returns the unsubscribe function. */
-  subscribe(listener: WriteListener): () => void {
-    return this.cells.subscribe(listener);
   }
 }
 
