@@ -10,7 +10,7 @@ import type { Usages } from "../../generated/Usages";
 import type { Signature } from "../../state/symbols.svelte.ts";
 
 /** What the answers about the symbol on show, as far as they are in. */
-export interface Answers {
+interface Answers {
   signature?: Signature;
   calls?: Calls;
   usages?: Usages;
@@ -18,13 +18,9 @@ export interface Answers {
   removal?: RemovalImpact;
 }
 
-/** `why` is the failure `shared` states: the same server failing the same way. */
+/** `why` is the server failure `shared` states: the same server failing again. */
 export const repeats = (shared: Unavailable | undefined, why: Unavailable | null | undefined): boolean =>
-  shared !== undefined &&
-  !!why &&
-  why.kind === "serverFailed" &&
-  why.kind === shared.kind &&
-  why.language === shared.language;
+  !!shared && why?.kind === "serverFailed" && why.language === shared.language;
 
 /** The gaps that are not `shared`'s failure again. */
 export const unshared = (gaps: readonly Gap[], shared: Unavailable | undefined): Gap[] =>

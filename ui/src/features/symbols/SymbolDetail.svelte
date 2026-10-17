@@ -44,9 +44,10 @@
   const side = $derived<Side>(removed ? "base" : "target");
   const valueOf = <T,>(load?: Load<T>): T | undefined => (load?.state === "done" ? load.value : undefined);
   // A server that fails to start fails every answer: it is said here, once.
+  const signature = $derived(valueOf(symbols?.signature));
   const failure = $derived(
     sharedFailure({
-      signature: valueOf(symbols?.signature),
+      signature,
       calls: valueOf(symbols?.calls),
       usages: valueOf(symbols?.usages),
       reach: valueOf(symbols?.reach),
@@ -110,7 +111,7 @@
   <EmptyState align="start" title={failure.label} text={failure.message} />
 {/if}
 
-{#if !repeats(failure, symbols?.signature?.state === "done" ? symbols.signature.value.unavailable : undefined)}
+{#if !repeats(failure, signature?.unavailable)}
   <SymbolRoot id="signature" title="Signature" load={symbols?.signature}>
     {#snippet children(signature)}
       {#if signature.signature}

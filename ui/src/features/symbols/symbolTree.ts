@@ -170,8 +170,8 @@ export function callerTree(callers: readonly ChangedCaller[]): Entry[] {
 /** `shared` is the failure the panel states once; the roots leave it out. */
 export function callersBody(calls: Calls, shared?: Unavailable): Body {
   const entries = callerTree(calls.callers);
-  const gaps = unshared(calls.gaps, shared);
   if (!entries.length && allShared(calls.gaps, shared)) return HIDDEN;
+  const gaps = unshared(calls.gaps, shared);
   const notes = gaps.length ? [{ text: incomplete(gaps), warn: true }] : [];
   return {
     count: countRows(entries),
