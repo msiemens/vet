@@ -7,16 +7,15 @@ import type { BaseDiff } from "../generated/BaseDiff";
 import type { CommentAt } from "../generated/CommentAt";
 import type { CommitUnit } from "../generated/CommitUnit";
 import type { NonTextKind } from "../generated/NonTextKind";
-import { STALE_NOTICE } from "../lib/notice";
 import type { Backend } from "./backend";
 import type { CommitList } from "./commitList";
+import { HeldView } from "./heldView.svelte";
 import { notices } from "./notices.svelte";
 import { Resource } from "./resource";
-import { newReviewCells } from "./reviewCells.svelte";
-import { type Answer, reviewMarks } from "./reviewMarks";
-import { type FileLayout, type FileState, type Parts, type ViewLayout, partsOf } from "./reviewModel";
-import type { ReviewSource, WriteListener } from "./reviewSource";
-import { type Shown, isCurrent } from "./shown";
+import type { Answer } from "./reviewMarks";
+import { type FileLayout, type Parts, type ViewLayout, partsOf } from "./reviewModel";
+import type { ReviewSource } from "./reviewSource";
+import type { Shown } from "./shown";
 import { commitView } from "./view";
 
 /** What a file tab reads and does in its view: the changeset store implements it for the view on screen, `ViewScope` for the others. */
@@ -51,42 +50,39 @@ interface Loaded {
 /** A commit of the changeset, by full id: the view a tab reads that is not the one on screen. */
 export type CommitSpec = Extract<ScopeSpec, { type: "commit" }>;
 
-class Scope implements ViewSource {
-  /** The view's files; none before the first manifest. */
-  layout = $state.raw<ViewLayout>();
+class Scope extends HeldView implements ViewSource {
   /** The commit of a commit's scope, once the commits are read. */
   commit = $state.raw<CommitUnit>();
   /** The commit is not among the changeset's any more. */
   gone = $state(false);
-  private cells = newReviewCells();
-  /** The files of `layout` by path, set with it. */
-  private byPath = new Map<string, FileLayout>();
-  /** The newest change of the backend this scope's state reflects. */
-  private seen = -1;
   /** A failure of reading was reported and nothing has been read since. */
   private reported = false;
   private pending: Promise<void> = Promise.resolve();
   private loads = new Resource<Loaded | "gone" | "stale">({ apply: (loaded) => this.apply(loaded) });
-  private marks = reviewMarks({
-    backend: () => this.backend,
-    admit: (shown) => this.admit(shown),
-    current: () => this.currentShown(),
-    apply: (update, shown) => {
-      this.applyUpdate(update);
-      this.marked(shown, update);
-    },
-    refresh: () => this.load(),
-    hunks: (path) => this.cells.state(path)?.review.hunks ?? [],
-  });
 
   /** `marked` is told of every answer a mark got here, since the view on screen may show the same lines. */
   constructor(
-    private backend: Backend,
+    private api: Backend,
     readonly spec: CommitSpec,
     private marked: (shown: Shown, update: Answer) => void,
     private commits: CommitList,
     private revision: () => number | undefined,
-  ) {}
+  ) {
+    super();
+  }
+
+  protected override client(): Backend {
+    return this.api;
+  }
+
+  protected override refresh(): Promise<unknown> {
+    return this.load();
+  }
+
+  protected override applyAnswer(update: Answer, shown: Shown) {
+    this.putAnswer(update);
+    this.marked(shown, update);
+  }
 
   /** Reads the manifest of the view; the latest read counts. */
   load(): Promise<void> {
@@ -132,7 +128,7 @@ class Scope implements ViewSource {
     if (!commits) return "stale";
     const index = commits.findIndex((c) => c.commit.id === id);
     if (index < 0) return "gone";
-    const parts = partsOf(await this.backend.manifest(commitView(index)), index);
+    const parts = partsOf(await this.api.manifest(commitView(index)), index);
     if (parts.revision !== revision) return "stale";
     return { parts, commit: commits[index] };
   }
@@ -145,83 +141,9 @@ class Scope implements ViewSource {
     }
     if (loaded === "stale") return;
     const { parts, commit } = loaded;
-    const newer = this.cells.order.load(
-      parts.seq,
-      parts.layout.paths,
-      isCurrent(parts.layout.shown, this.layout?.shown),
-    );
     this.gone = false;
     this.commit = commit;
-    this.byPath = new Map(parts.layout.files.map((file) => [file.path, file]));
-    this.layout = parts.layout;
-    this.seen = Math.max(this.seen, parts.seq);
-    this.cells.replace(parts.states, newer);
-  }
-
-  private applyUpdate(update: Answer) {
-    this.seen = Math.max(this.seen, update.seq);
-    if (this.cells.has(update.path) && this.cells.order.file(update.path, update.seq)) {
-      this.cells.put(update.path, { review: update.review, completion: update.completion });
-    }
-  }
-
-  subscribe(listener: WriteListener): () => void {
-    return this.cells.subscribe(listener);
-  }
-
-  state(path: string): FileState | undefined {
-    return this.cells.state(path);
-  }
-
-  version(path: string): number {
-    return this.cells.version(path);
-  }
-
-  layoutOf(path: string): FileLayout | undefined {
-    // Reading the layout makes the lookup follow it.
-    return this.layout ? this.byPath.get(path) : undefined;
-  }
-
-  currentLayout(): ViewLayout | undefined {
-    return this.layout;
-  }
-
-  currentShown(): Shown | undefined {
-    return this.layout?.shown;
-  }
-
-  admit(shown: Shown): boolean {
-    if (this.layout && isCurrent(shown, this.layout.shown)) return true;
-    notices.show(STALE_NOTICE);
-    return false;
-  }
-
-  toggleHunk(shown: Shown, path: string, hunk: number) {
-    return this.marks.toggleHunk(shown, path, hunk);
-  }
-
-  toggleFlag(shown: Shown, path: string, hunk: number) {
-    return this.marks.toggleFlag(shown, path, hunk);
-  }
-
-  toggleItem(shown: Shown, path: string, kind: NonTextKind) {
-    return this.marks.toggleItem(shown, path, kind);
-  }
-
-  toggleFileSeen(shown: Shown, path: string) {
-    return this.marks.toggleFileSeen(shown, path);
-  }
-
-  reconfirmFile(shown: Shown, path: string) {
-    return this.marks.reconfirmFile(shown, path);
-  }
-
-  baseDiff(shown: Shown, path: string, hunk: number) {
-    return this.marks.baseDiff(shown, path, hunk);
-  }
-
-  commentTarget(shown: Shown, path: string, at: CommentAt) {
-    return this.marks.commentTarget(shown, path, at);
+    this.take(parts);
   }
 }
 
