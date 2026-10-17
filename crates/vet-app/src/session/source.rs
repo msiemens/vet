@@ -59,7 +59,7 @@ impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> L
     pub async fn pull_request_head(&self, source: &Source) -> Result<Option<PullRequestHead>> {
         let stored = self.stored_pull_request_head(source).await?;
         Ok(match source {
-            Source::PullRequest { remote, number } => self.known.head(remote, *number, stored),
+            Source::PullRequest { remote, number } => self.exchange.cache.head(remote, *number, stored),
             _ => stored,
         })
     }
@@ -71,7 +71,7 @@ impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> L
 
     /// Stores how the platform names the pull request of `source` now, unless that is stored already.
     /// Answers whether it was not.
-    pub async fn remember_pull_request_head(&self, source: &Source, head: PullRequestHead) -> Result<bool> {
+    pub(super) async fn remember_pull_request_head(&self, source: &Source, head: PullRequestHead) -> Result<bool> {
         if self.stored_pull_request_head(source).await?.as_ref() == Some(&head) {
             return Ok(false);
         }

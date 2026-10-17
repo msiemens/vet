@@ -830,7 +830,7 @@ pub(crate) mod tests {
 
     /// A repository with `refs` already, and the remote's [`Served`] to move; the remote lacks the
     /// sources `gone`.
-    fn fetching_with(
+    pub(crate) fn fetching_with(
         remotes: Vec<RemoteInfo>,
         refs: Vec<RefTip>,
         gone: &[&str],
@@ -993,7 +993,13 @@ pub(crate) mod tests {
     }
 
     /// A platform that lists pull request 7 with the given states of its source branch.
-    struct Pushed(Vec<Push>);
+    pub(crate) struct Pushed(Vec<Push>);
+
+    impl Pushed {
+        pub(crate) fn new(pushes: Vec<Push>) -> Self {
+            Self(pushes)
+        }
+    }
 
     impl Platform for Pushed {
         fn traits(&self) -> crate::platform::PlatformTraits {

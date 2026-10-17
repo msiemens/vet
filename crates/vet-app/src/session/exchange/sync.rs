@@ -240,9 +240,12 @@ impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> L
         }
         stored?;
         let (remote, number) = pull_request(st)?;
-        report.listing_changed = self.known.record_discussion(&remote, number, now, discussion.clone());
+        report.listing_changed = self
+            .exchange
+            .cache
+            .record_discussion(&remote, number, now, discussion.clone());
         // Kept for the next run: a revisit shows them before the platform is asked again.
-        if let Some((head, updated_at)) = self.known.revision(&remote, number) {
+        if let Some((head, updated_at)) = self.exchange.cache.revision(&remote, number) {
             store
                 .set_discussion(remote, number, head, updated_at, now, discussion)
                 .await?;

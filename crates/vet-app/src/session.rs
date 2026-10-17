@@ -89,8 +89,9 @@ pub use self::blobs::NoText;
 pub use self::browse::{DirEntryKind, DirItem, DirListing, FileListing, PatternMatch, PatternMatches};
 pub use self::content::{FileText, ItemBlob, MAX_ITEM_BLOB, TargetText};
 use self::derived::Diffed;
+use self::exchange::Exchange;
 pub use self::exchange::{
-    Blocker, DiscussionView, Keep, Outgoing, SubmitReport, SyncNotice, SyncReport, Unread, VoteSent, is_unread,
+    Blocker, Brought, DiscussionView, Keep, Outgoing, SubmitReport, SyncNotice, SyncReport, Unread, VoteSent, is_unread,
 };
 pub use self::facts::Facts;
 use self::hold::{Held, Published, Writer};
@@ -113,7 +114,7 @@ use crate::acquisition::{Acquisition, BlobError};
 use crate::base;
 use crate::changeset::{BaseChoice, ChangesetId, CommitId, Snapshots, Source, Version, VersionChange, VersionOrigin};
 use crate::mutex::lock;
-use crate::platform::{PlatformError, PullRequestCache, Push};
+use crate::platform::{PlatformError, PullRequestCache};
 use crate::ports::{Clock, Degraded, Dirty, GitError, GitRepo, LiveStore, ReviewWrites, Scan, StoreError, Watcher};
 use crate::progress::Tasks;
 use crate::review::{ReviewId, visible_threads};
@@ -210,16 +211,9 @@ pub struct LiveSession<G, S: LiveStore> {
     degraded: std::sync::Mutex<Option<Degraded>>,
     /// Told every time the revision on view moves, so that work for an older one stops.
     revisions: Arc<Revisions>,
-    /// Held while threads are exchanged with a platform, so two exchanges never overlap. Locked
-    /// before the token, which is not held across the platform's answers.
-    exchange: Mutex<()>,
+    exchange: Exchange,
     /// What the repository says that no review state shapes, and the caches of it.
     facts: Facts<G, S>,
-    /// The states of their source branch that the platforms list for pull requests, which are the
-    /// versions the review of each has.
-    pushes: std::sync::Mutex<HashMap<Source, Vec<Push>>>,
-    /// What the platforms said of pull requests, which the discussion of the one on view is kept in.
-    known: Arc<PullRequestCache>,
     copies: Copies<G, S>,
     /// What the settle loop asks before reconciling the working tree: while the tree is not on
     /// view and has no open review, edits only mark it changed and are not scanned.
@@ -368,8 +362,7 @@ impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> L
         Self {
             author: author_of(&acquisition.git).await,
             facts: Facts::new(&acquisition, repo.clone(), clock),
-            pushes: std::sync::Mutex::default(),
-            known: Arc::default(),
+            exchange: Exchange::new(Arc::default()),
             copies: Copies::new(&acquisition),
             acquisition,
             name,
@@ -379,7 +372,6 @@ impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> L
             token: Mutex::new(Writer::new(writes)),
             degraded: std::sync::Mutex::new(None),
             revisions: Arc::default(),
-            exchange: Mutex::new(()),
             settle_wanted: Arc::new(Wanted::new(wanted)),
         }
     }
@@ -396,7 +388,10 @@ impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> L
     /// The same session, keeping what it learns of pull requests in `known`, which is shared with
     /// whoever else asks the platforms about them.
     pub fn knowing_pull_requests_in(self, known: Arc<PullRequestCache>) -> Self {
-        Self { known, ..self }
+        Self {
+            exchange: Exchange::new(known),
+            ..self
+        }
     }
 
     /// The state of the stored review `id` of `changeset`, a changeset of `source`.

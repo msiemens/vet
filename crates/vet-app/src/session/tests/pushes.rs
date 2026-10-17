@@ -1,6 +1,8 @@
 //! The versions of a pull request are the pushes its platform lists, from the first one.
 
 use super::*;
+use crate::platform::Push;
+use crate::pull_request::tests::{Anonymous, Pushed, fetching_with, info};
 
 fn push(head: &str) -> Push {
     Push {
@@ -25,6 +27,7 @@ async fn pushed_three_times() -> Fixture {
     fx.git
         .add_commit("push pr2", "pr2", &[("a.txt", &numbered(30, &[3, 20]))]);
     fx.session
+        .exchange
         .remember_pushes(&pull_request_7(), vec![push("pr1"), push("pr2"), push("pr3")]);
     fx.session.open_changeset(pull_request_7()).await.unwrap();
     fx
@@ -45,6 +48,36 @@ fn shape(versions: &[VersionView]) -> Vec<(u32, String, bool)> {
 
 fn pushed(shape: &[(u32, &str, bool)]) -> Vec<(u32, String, bool)> {
     shape.iter().map(|(n, tip, ok)| (*n, (*tip).to_owned(), *ok)).collect()
+}
+
+#[tokio::test]
+async fn bringing_in_a_pull_request_remembers_its_pushes_and_names_a_new_title_once() {
+    let base = numbered(30, &[]);
+    let fx = Fixture::open(&[("a.txt", &base)], &[("a.txt", &base)]).await;
+    let Source::PullRequest { remote, number } = pull_request_7() else {
+        unreachable!()
+    };
+    let platform = Pushed::new(vec![push("pr1"), push("pr2")]);
+    let (fetch, ..) = fetching_with(vec![info("origin", "https://github.com/acme/app")], vec![], &[]);
+
+    let first = fx
+        .session
+        .bring_in(&platform, &fetch, &Anonymous, &remote, number)
+        .await
+        .unwrap();
+    let second = fx
+        .session
+        .bring_in(&platform, &fetch, &Anonymous, &remote, number)
+        .await
+        .unwrap();
+
+    let heads: Vec<_> = (fx.session.exchange.pushes_of(&pull_request_7()))
+        .into_iter()
+        .map(|p| p.head)
+        .collect();
+    assert_eq!(heads, ["pr1", "pr2"]);
+    assert!(first.renamed, "the title was not stored yet");
+    assert!(!second.renamed, "the platform names it as stored");
 }
 
 #[tokio::test]
@@ -88,7 +121,7 @@ async fn several_pushes_between_two_fetches_are_a_version_each() {
         "pr5",
         &[("a.txt", &numbered(30, &[3, 20, 25, 27, 28]))],
     );
-    fx.session.remember_pushes(
+    fx.session.exchange.remember_pushes(
         &pull_request_7(),
         vec![push("pr1"), push("pr2"), push("pr3"), push("pr4"), push("pr5")],
     );
@@ -120,6 +153,7 @@ async fn a_push_whose_commits_cannot_be_had_is_listed_and_cannot_be_opened() {
     fx.git.add_commit("push pr1", "pr1", &[("a.txt", &numbered(30, &[3]))]);
     fx.git.unknown_commits_fail.store(true, Ordering::Relaxed);
     fx.session
+        .exchange
         .remember_pushes(&pull_request_7(), vec![push("pr1"), push("pr2"), push("pr3")]);
     fx.session.open_changeset(pull_request_7()).await.unwrap();
 
@@ -163,6 +197,7 @@ async fn a_review_comes_back_after_a_restart_whatever_its_pushes_were() {
     );
     fx.git.unknown_commits_fail.store(true, Ordering::Relaxed);
     fx.session
+        .exchange
         .remember_pushes(&pull_request_7(), vec![push("pr1"), push("pr3")]);
     fx.session.open_changeset(pull_request_7()).await.unwrap();
     fx.begin().await;

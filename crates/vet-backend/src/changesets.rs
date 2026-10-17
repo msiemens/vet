@@ -3,9 +3,10 @@
 use futures::StreamExt;
 use futures::stream::FuturesOrdered;
 use vet_app::changeset::{RemoteKey, Source};
-use vet_app::platform::{Platform, PlatformError, PullRequest, commits_checks};
-use vet_app::pull_request::{self, FetchError, PullRequestList};
+use vet_app::platform::{Platform, PlatformError, commits_checks};
+use vet_app::pull_request::{FetchError, PullRequestList};
 use vet_app::pull_request_feed::OnView;
+use vet_app::session::Brought;
 use vet_mapping as mapping;
 use vet_protocol::{ChangesetKey, Event, ProjectId, Response};
 
@@ -187,44 +188,19 @@ fn log_sources(list: &PullRequestList) {
     }
 }
 
-/// Fetches the head of pull request `number` of `remote`, its target branch and its earlier
-/// pushes, tells the session the pushes, and stores how the platform names it. Answers whether
-/// that is not what was stored, and the pull request as the platform has it.
+/// Brings in pull request `number` of `remote` through the session, with the client of the
+/// platform that hosts it.
 pub(crate) async fn bring_in(
     open: &Open,
     session: &Live,
     remote: &RemoteKey,
     number: u64,
 ) -> std::result::Result<Brought, FetchError> {
-    let held = Held(&open.accounts);
     let hosting = open
         .hosting_for(remote)
         .await
         .map_err(|error| FetchError::NoRemote(error.to_string()))?;
-    let brought = pull_request::fetch_pull_request(&hosting, &open.fetch, &held, remote, number).await?;
-    let source = Source::PullRequest {
-        remote: remote.clone(),
-        number,
-    };
-    session.remember_pushes(&source, brought.pushes);
-    // The fetch is done; a title that cannot be stored is shown again after the next one.
-    let renamed = session
-        .remember_pull_request_head(&source, brought.head)
+    session
+        .bring_in(&hosting, &open.fetch, &Held(&open.accounts), remote, number)
         .await
-        .unwrap_or_else(|error| {
-            tracing::warn!(%error, "storing the title of a pull request failed");
-            false
-        });
-    Ok(Brought {
-        renamed,
-        pull_request: brought.pull_request,
-    })
-}
-
-/// What bringing in a pull request left to tell.
-pub(crate) struct Brought {
-    /// How the platform names it is not what was stored.
-    pub(crate) renamed: bool,
-    /// The pull request as the platform has it.
-    pub(crate) pull_request: PullRequest,
 }

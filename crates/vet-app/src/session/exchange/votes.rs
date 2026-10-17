@@ -44,7 +44,7 @@ impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> L
         let current = {
             let st = self.published.read();
             let (remote, number) = pull_request(&st)?;
-            (self.known.discussion(&remote, number)).and_then(|(_, d)| d.viewer_verdict)
+            (self.exchange.cache.discussion(&remote, number)).and_then(|(_, d)| d.viewer_verdict)
         };
         let vote = (current.as_ref() != Some(&verdict)).then_some(PendingVote {
             verdict,

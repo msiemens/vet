@@ -306,7 +306,7 @@ impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> L
             if find_thread(st, id)?.is_flat() {
                 self.drop_message(st, id, MessageId(comment.key)).await?;
                 let (remote, number) = pull_request(st)?;
-                self.known.amend_discussion(&remote, number, |discussion| {
+                self.exchange.cache.amend_discussion(&remote, number, |discussion| {
                     discussion.conversation.push(ConversationItem {
                         id: comment.comment.id.clone(),
                         author: comment.comment.author.clone(),

@@ -13,7 +13,6 @@ use super::versions::first_change;
 use super::{LiveSession, Result};
 use crate::base;
 use crate::changeset::{CommitId, Snapshots, Source, Version, VersionChange, VersionOrigin};
-use crate::mutex::lock;
 use crate::platform::Push;
 use crate::ports::{GitRepo, LiveStore};
 
@@ -56,23 +55,13 @@ pub(super) fn pending(known: &[Push], recorded: &[CommitId], tip: &CommitId) -> 
 }
 
 impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> LiveSession<G, S> {
-    /// Tells the session the states the platform lists for the source branch of the pull request
-    /// `source`, oldest first, the current one last.
-    pub fn remember_pushes(&self, source: &Source, pushes: Vec<Push>) {
-        lock(&self.pushes).insert(source.clone(), pushes);
-    }
-
-    pub(super) fn pushes_of(&self, source: &Source) -> Vec<Push> {
-        lock(&self.pushes).get(source).cloned().unwrap_or_default()
-    }
-
     /// The new pushes of the pull request in `st`, whose latest version is built on `tip`, given
     /// the commits already recorded as versions; the last is the state `st` is moving to.
     pub(super) fn new_pushes(&self, st: &State, recorded: &[CommitId], tip: &CommitId) -> Option<Vec<Push>> {
         if !matches!(st.source, Source::PullRequest { .. }) {
             return None;
         }
-        pending(&self.pushes_of(&st.source), recorded, tip)
+        pending(&self.exchange.pushes_of(&st.source), recorded, tip)
     }
 
     /// The versions numbered from `first` that `pushes` stand for, where the content of each is

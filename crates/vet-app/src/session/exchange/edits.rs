@@ -204,7 +204,7 @@ impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> L
         let posted = platform
             .edit_comment(&remote, &conversation_ref(comment), &body)
             .await?;
-        self.known.amend_discussion(&remote, number, |discussion| {
+        self.exchange.cache.amend_discussion(&remote, number, |discussion| {
             if let Some(item) = discussion.conversation.iter_mut().find(|i| i.id == comment) {
                 item.body = posted.body;
             }
@@ -221,7 +221,7 @@ impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> L
             Ok(()) | Err(PlatformError::NotFound(_)) => {}
             Err(e) => return Err(e.into()),
         }
-        self.known.amend_discussion(&remote, number, |discussion| {
+        self.exchange.cache.amend_discussion(&remote, number, |discussion| {
             discussion.conversation.retain(|i| i.id != comment);
         });
         Ok(())
@@ -231,7 +231,7 @@ impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> L
     /// last sync found; fails otherwise.
     fn own_conversation_comment(&self, comment: &str) -> Result<(RemoteKey, u64)> {
         let (remote, number) = pull_request(&self.published.read())?;
-        let item = (self.known.discussion(&remote, number))
+        let item = (self.exchange.cache.discussion(&remote, number))
             .and_then(|(_, d)| d.conversation.into_iter().find(|i| i.id == comment))
             .ok_or_else(|| SessionError::NotFound(format!("comment {comment}")))?;
         match item.kind {
