@@ -17,7 +17,7 @@ use super::{LiveSession, Result, SessionError};
 use crate::acquisition::Acquisition;
 use crate::changeset::Source;
 use crate::ports::{GitRepo, LiveStore, Retainer};
-use crate::progress::{TaskKind, Tasks};
+use crate::progress::TaskKind;
 
 /// The content `target` has that `base` does not, in the store.
 #[derive(Clone, PartialEq, Eq, Hash)]
@@ -37,14 +37,35 @@ impl Kind for Retained {
     }
 }
 
-/// The engine of the copies, each reporting as a task with how many files it stored.
-pub(super) fn copies(tasks: &Tasks) -> Engine<Retained> {
-    let tasks = tasks.clone();
-    Engine::new(Limits::entries(16))
-        .observing(move |_| Some(Arc::new(tasks.start(TaskKind::Store, "Storing changed files")) as _))
+/// The copies of the working tree's content into the store under way.
+pub(super) struct Copies<G, S> {
+    /// Each copy reports as a task with how many files it stored.
+    engine: Engine<Retained>,
+    /// What a copy ahead of a review reads and writes through: the session's acquisition over
+    /// handles of their own, so that it draws on what nobody waits for.
+    through: Arc<Acquisition<G, S>>,
 }
 
-impl<G, S> LiveSession<G, S>
+impl<G, S> Copies<G, S> {
+    pub(super) fn new(acquisition: &Arc<Acquisition<G, S>>) -> Self {
+        let tasks = acquisition.tasks.clone();
+        Self {
+            engine: Engine::new(Limits::entries(16))
+                .observing(move |_| Some(Arc::new(tasks.start(TaskKind::Store, "Storing changed files")) as _)),
+            through: Arc::clone(acquisition),
+        }
+    }
+
+    /// The same copies, reading and writing through `through`.
+    pub(super) fn reading_through(self, through: Acquisition<G, S>) -> Self {
+        Self {
+            through: Arc::new(through),
+            ..self
+        }
+    }
+}
+
+impl<G, S> Copies<G, S>
 where
     G: GitRepo + Send + Sync + 'static,
     S: LiveStore + Send + Sync + 'static,
@@ -74,10 +95,16 @@ where
                 Ok(Computed::new((), true))
             }
         };
-        self.ahead.get(key, compute).await?;
+        self.engine.get(key, compute).await?;
         Ok(())
     }
+}
 
+impl<G, S> LiveSession<G, S>
+where
+    G: GitRepo + Send + Sync + 'static,
+    S: LiveStore + Send + Sync + 'static,
+{
     /// Makes sure the changed content of the working tree on view is in the store (§4.1),
     /// without the token. The one way in for the queries and the copy ahead; joins a copy
     /// under way, and a pair already stored is answered at once. The diff is the kept one
@@ -93,7 +120,7 @@ where
                 base: st.base.id,
                 target: st.target.id,
             };
-            if self.ahead.peek(&key).is_some() {
+            if self.copies.engine.peek(&key).is_some() {
                 return Ok(());
             }
             let kept = st.changes.as_ref().map(|c| Arc::clone(&c.diffed));
@@ -103,7 +130,9 @@ where
             Some(kept) => kept,
             None => self.facts.diff_of(&base, &target).await?,
         };
-        self.retained(&self.copying, (&base, &target, &status), diffed).await
+        self.copies
+            .retained(&self.copies.through, (&base, &target, &status), diffed)
+            .await
     }
 }
 

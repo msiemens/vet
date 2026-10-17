@@ -82,9 +82,8 @@ use tokio::sync::Mutex;
 use vet_core::content::{EntryKind, RepoPath, Snapshot, SnapshotId, SnapshotStatus};
 use vet_core::filter::ReviewFilter;
 use vet_core::review::{Anchor, CommentTarget, Thread, ThreadStatus};
-use vet_engine::Engine;
 
-use self::ahead::Retained;
+use self::ahead::Copies;
 pub use self::base_diff::{BaseDiffKind, BaseDiffRow, BaseDiffView};
 pub use self::blobs::NoText;
 pub use self::browse::{DirEntryKind, DirItem, DirListing, FileListing, PatternMatch, PatternMatches};
@@ -221,11 +220,7 @@ pub struct LiveSession<G, S: LiveStore> {
     pushes: std::sync::Mutex<HashMap<Source, Vec<Push>>>,
     /// What the platforms said of pull requests, which the discussion of the one on view is kept in.
     known: Arc<PullRequestCache>,
-    /// The copies of the working tree's content into the store under way.
-    ahead: Engine<Retained>,
-    /// What a copy ahead of a review reads and writes through: the session's acquisition over
-    /// handles of their own, so that it draws on what nobody waits for.
-    copying: Arc<Acquisition<G, S>>,
+    copies: Copies<G, S>,
     /// What the settle loop asks before reconciling the working tree: while the tree is not on
     /// view and has no open review, edits only mark it changed and are not scanned.
     settle_wanted: Arc<Wanted>,
@@ -375,8 +370,7 @@ impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> L
             facts: Facts::new(&acquisition, repo.clone(), clock),
             pushes: std::sync::Mutex::default(),
             known: Arc::default(),
-            ahead: ahead::copies(&acquisition.tasks),
-            copying: acquisition.clone(),
+            copies: Copies::new(&acquisition),
             acquisition,
             name,
             repo,
@@ -394,7 +388,7 @@ impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> L
     /// `store`, other handles on the session's repository and store.
     pub fn copying_through(self, git: G, store: S) -> Self {
         Self {
-            copying: Arc::new(self.acquisition.through(git, store)),
+            copies: self.copies.reading_through(self.acquisition.through(git, store)),
             ..self
         }
     }
@@ -578,7 +572,8 @@ impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> L
             let (base, target, status) = (st.base.clone(), st.target.clone(), st.target_status.clone());
             let diffed = st.changes().diffed.clone();
             drop(st);
-            self.retained(&self.acquisition, (&base, &target, &status), diffed)
+            self.copies
+                .retained(&self.acquisition, (&base, &target, &status), diffed)
                 .await?;
         }
     }
