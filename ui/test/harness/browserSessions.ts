@@ -277,7 +277,8 @@ export const sessions: Record<string, (d: Driver) => Promise<void>> = {
     );
     if (opened.requests === 0) throw new Error("opening the review screen loaded nothing");
     if (opened.requests >= total) throw new Error(`opening loaded every file (${opened.requests} of ${total})`);
-    if (opened.below === 0) throw new Error("opening loaded nothing beyond the visible part: the margin is gone");
+    if (opened.mounted <= opened.visible)
+      throw new Error("opening loaded nothing beyond the visible part: the margin is gone");
 
     // 2. A far hunk the keyboard goes to is loaded on demand, and the view lands on it.
     await d.step("a far hunk is flagged by another window", () => d.otherFlag(far, 0));
@@ -301,11 +302,11 @@ export const sessions: Record<string, (d: Driver) => Promise<void>> = {
     if (landed.path !== far) throw new Error(`the keyboard landed on ${landed.path}, not ${far}`);
     if (!landed.visible) throw new Error("the far file is not in view after the keyboard navigation");
 
-    // 3. Scrolling to the end loads the files there; the position and the last file stay put as they fill in.
+    // 3. Scrolling to the last of the many files loads the files there; the position and that file stay put as they fill in.
     const before = (await d.page(`(() => {
       const scroller = document.querySelector(".pane.active .scroll");
-      scroller.scrollTop = scroller.scrollHeight;
       window.__last = [...scroller.querySelectorAll("section.file")].filter((s) => s.querySelector(".path").textContent.endsWith(".dat")).at(-1);
+      scroller.scrollTop += window.__last.getBoundingClientRect().bottom - scroller.getBoundingClientRect().top - scroller.clientHeight;
       window.__anchor = { top: scroller.scrollTop, y: window.__last.getBoundingClientRect().top - scroller.getBoundingClientRect().top };
       return window.__anchor;
     })()`)) as { top: number; y: number };
