@@ -58,7 +58,7 @@ use vet_infra::credentials::HttpValidator;
 use vet_infra::git::GixRepo;
 use vet_infra::lsp::{LspLauncher, config as lsp_config};
 use vet_infra::materialize::Materialize;
-use vet_infra::materialize::kept::{Collected, DEFAULT_MAX_IDLE};
+use vet_infra::materialize::kept::Collected;
 use vet_infra::materialize::projects::ProjectTrees;
 use vet_infra::platform::azure_devops::AzureDevOpsClient;
 use vet_infra::platform::github::GitHubClient;
@@ -207,12 +207,7 @@ impl Orchestrator {
         let languages = backends.iter().map(|b| b.config().backend.clone()).collect();
         let resolver = ToolResolver::new(store.dir().to_owned(), &budgets);
         let referenced = Arc::new(StoreReferences(store.clone()));
-        let trees = ProjectTrees::new(
-            store.dir().to_owned(),
-            DEFAULT_MAX_IDLE,
-            referenced,
-            budgets.semantic_io.clone(),
-        );
+        let trees = ProjectTrees::new(store.dir().to_owned(), referenced, budgets.semantic_io.clone());
         let process_subscribers = Subscribers::<Connection>::default();
         let needed = process_subscribers.clone();
         let accounts = Arc::new(Accounts::new(

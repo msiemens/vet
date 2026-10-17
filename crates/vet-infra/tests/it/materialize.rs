@@ -3,7 +3,6 @@
 
 #![allow(clippy::disallowed_methods)]
 
-use std::collections::HashSet;
 use std::os::unix::fs::PermissionsExt;
 use std::path::Path;
 use std::process::Command;
@@ -17,7 +16,7 @@ use vet_core::content::{BlobId, EntryKind, FileEntry, RepoPath, Snapshot, Snapsh
 use vet_core::merkle;
 use vet_infra::git::GixRepo;
 use vet_infra::materialize::Materialize;
-use vet_infra::materialize::kept::{DEFAULT_MAX_IDLE, KeptTrees, Referenced};
+use vet_infra::materialize::kept::KeptTrees;
 use vet_infra::materialize::projects::ProjectTrees;
 use vet_infra::storage::layout::{ROOT as ROOT_FILE, SOURCES, project_dir};
 use vet_semantic::policy::AnalysisPolicy;
@@ -77,14 +76,8 @@ const POLICY: AnalysisPolicy = AnalysisPolicy::LIMITED;
 
 const ROOT: &str = "/work/repo";
 
-fn project_trees(data: &Path, referenced: &[SnapshotId]) -> ProjectTrees {
-    let referenced: HashSet<_> = referenced.iter().copied().collect();
-    let referenced: Arc<dyn Referenced> = Arc::new(move || referenced.clone());
-    ProjectTrees::for_test(data.to_owned(), DEFAULT_MAX_IDLE, referenced)
-}
-
 async fn trees(data: &Path) -> Arc<KeptTrees> {
-    project_trees(data, &[]).of(ROOT).await
+    ProjectTrees::for_test(data.to_owned()).of(ROOT).await
 }
 
 #[tokio::test]
@@ -206,7 +199,7 @@ async fn trees_live_in_their_projects_directory_and_each_project_has_its_own() {
     let data = tempfile::tempdir().unwrap();
     let acq = Arc::new(Acquisition::new(GixRepo::for_test(dir.path()), MemStore::default()));
     let opened = common::start_at_head(&acq).await;
-    let projects = project_trees(data.path(), &[]);
+    let projects = ProjectTrees::for_test(data.path().to_owned());
     let materialize = async |root| {
         Materialize::new(acq.clone(), projects.of(root).await)
             .materialize(opened.base.id, POLICY)

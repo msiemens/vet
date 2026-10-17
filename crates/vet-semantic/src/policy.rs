@@ -76,8 +76,4 @@ impl RestoreKind {
             Self::Exec => "exec",
         }
     }
-
-    pub fn from_tag(tag: &str) -> Option<Self> {
-        [Self::Fetch, Self::Exec].into_iter().find(|kind| kind.tag() == tag)
-    }
 }

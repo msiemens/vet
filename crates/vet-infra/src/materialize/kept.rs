@@ -52,7 +52,7 @@ const COMPLETE: &str = "complete";
 const LAST_USED: &str = "last-used";
 const SIZE: &str = "size";
 /// Bumped when a kept tree's layout changes: older trees are then built again.
-const FORMAT: u32 = 2;
+const FORMAT: u32 = 1;
 /// Hex digits of the snapshot in a directory name: long names break Windows paths
 /// (260 characters) inside `node_modules`. The whole id is in `meta/complete`.
 const NAME_HEX: usize = 20;
@@ -60,7 +60,7 @@ const NAME_HEX: usize = 20;
 const NEW_LAUNCH: Duration = Duration::from_secs(10);
 
 /// How long a referenced tree may stay unused before it is collected.
-pub const DEFAULT_MAX_IDLE: Duration = Duration::from_secs(14 * 24 * 3600);
+const MAX_IDLE: Duration = Duration::from_secs(14 * 24 * 3600);
 
 /// What keeps a tree from being collected besides being in use, for as long as it
 /// is used within the idle limit: the base or target of an open review's latest
@@ -124,7 +124,6 @@ struct Launch {
 
 pub struct KeptTrees {
     base: PathBuf,
-    max_idle: Duration,
     referenced: Arc<dyn Referenced>,
     launch: OnceLock<Result<Launch, String>>,
     staged: AtomicU64,
@@ -135,7 +134,6 @@ pub struct KeptTrees {
 
 struct Key {
     snapshot: SnapshotId,
-    kind: RestoreKind,
     name: String,
 }
 
@@ -144,14 +142,18 @@ impl Key {
         let hex = snapshot.0.to_hex();
         Self {
             snapshot,
-            kind,
             name: format!("{}-{}", &hex[..NAME_HEX], kind.tag()),
         }
     }
 
+    /// Whether a directory name is the name of a tree for restores of `kind`.
+    fn is_of_kind(name: &str, kind: RestoreKind) -> bool {
+        name.ends_with(&format!("-{}", kind.tag()))
+    }
+
     /// The content of `meta/complete`: the whole snapshot id guards against a name collision.
     fn mark(&self) -> String {
-        format!("vet-tree {FORMAT} {} {}", self.kind.tag(), self.snapshot.0.to_hex())
+        format!("vet-tree {FORMAT} {}", self.snapshot.0.to_hex())
     }
 }
 
@@ -165,10 +167,9 @@ async fn blocking<T: Send + 'static>(io: &Budget, work: impl FnOnce() -> T + Sen
 
 impl KeptTrees {
     /// Trees below `base`, which is created on first use; their reads and writes draw on `io`.
-    pub fn new(base: PathBuf, max_idle: Duration, referenced: Arc<dyn Referenced>, io: Budget) -> Self {
+    pub fn new(base: PathBuf, referenced: Arc<dyn Referenced>, io: Budget) -> Self {
         Self {
             base,
-            max_idle,
             referenced,
             launch: OnceLock::new(),
             staged: AtomicU64::new(0),
@@ -179,8 +180,8 @@ impl KeptTrees {
 
     /// A tree set with a budget of its own, for tests.
     #[doc(hidden)]
-    pub fn for_test(base: PathBuf, max_idle: Duration, referenced: Arc<dyn Referenced>) -> Self {
-        Self::new(base, max_idle, referenced, Budget::new(SEMANTIC_IO))
+    pub fn for_test(base: PathBuf, referenced: Arc<dyn Referenced>) -> Self {
+        Self::new(base, referenced, Budget::new(SEMANTIC_IO))
     }
 
     /// The directories, and this launch's lock, which a staging directory is judged dead by.
@@ -275,27 +276,17 @@ impl KeptTrees {
 
     /// Removes what a dead launch left and trees that are not complete. Returns how many were removed.
     pub async fn sweep(&self) -> usize {
-        let Ok(launch) = self.launch().map(|l| l.id.clone()) else {
-            return 0;
-        };
         let base = self.base.clone();
-        blocking(&self.io, move || sweep_in(&base, &launch)).await
+        blocking(&self.io, move || sweep_in(&base)).await
     }
 
     /// Removes the trees that are not in use, unless they are referenced and have been
     /// used within the idle limit.
     pub async fn collect(&self, now: SystemTime) -> Collected {
         let referenced = self.referenced.snapshots().await;
-        let (base, max_idle) = (self.base.clone(), self.max_idle);
+        let base = self.base.clone();
         blocking(&self.io, move || {
-            collect_in(
-                &base,
-                &Plan::Retention {
-                    max_idle,
-                    now,
-                    referenced,
-                },
-            )
+            collect_in(&base, &Plan::Retention { now, referenced })
         })
         .await
     }
@@ -424,7 +415,7 @@ fn publish(base: &Path, key: &Key, staging: &Path) -> Result<(), String> {
 }
 
 /// Bytes of the files below `dir`; links are not followed.
-pub(crate) fn tree_size(dir: &Path) -> u64 {
+fn tree_size(dir: &Path) -> u64 {
     let mut total = 0;
     let mut pending = vec![dir.to_owned()];
     while let Some(dir) = pending.pop() {
@@ -442,7 +433,6 @@ pub(crate) fn tree_size(dir: &Path) -> u64 {
 
 enum Plan {
     Retention {
-        max_idle: Duration,
         now: SystemTime,
         referenced: HashSet<SnapshotId>,
     },
@@ -453,7 +443,6 @@ enum Plan {
 struct Kept {
     name: String,
     snapshot: SnapshotId,
-    kind: RestoreKind,
     size: u64,
     last_used: SystemTime,
 }
@@ -472,8 +461,7 @@ fn kept_trees(base: &Path) -> Vec<Kept> {
             }
             let meta = entry.path().join(META);
             let mark = std::fs::read_to_string(meta.join(COMPLETE)).ok()?;
-            let (kind, hex) = mark.strip_prefix(&format!("vet-tree {FORMAT} "))?.split_once(' ')?;
-            let kind = RestoreKind::from_tag(kind)?;
+            let hex = mark.strip_prefix(&format!("vet-tree {FORMAT} "))?;
             let snapshot = SnapshotId(vet_core::content::Hash::from_hex(hex)?);
             let modified = |file: &str| std::fs::metadata(meta.join(file)).and_then(|m| m.modified()).ok();
             let size = std::fs::read_to_string(meta.join(SIZE))
@@ -483,7 +471,6 @@ fn kept_trees(base: &Path) -> Vec<Kept> {
             Some(Kept {
                 name,
                 snapshot,
-                kind,
                 size,
                 last_used: modified(LAST_USED).or_else(|| modified(COMPLETE)).unwrap_or(UNIX_EPOCH),
             })
@@ -497,14 +484,10 @@ fn collect_in(base: &Path, plan: &Plan) -> Collected {
     for tree in &trees {
         let evict = match plan {
             Plan::Everything => true,
-            Plan::Kind(kind) => tree.kind == *kind,
-            Plan::Retention {
-                max_idle,
-                now,
-                referenced,
-            } => {
+            Plan::Kind(kind) => Key::is_of_kind(&tree.name, *kind),
+            Plan::Retention { now, referenced } => {
                 let idle = now.duration_since(tree.last_used).unwrap_or_default();
-                !referenced.contains(&tree.snapshot) || idle > *max_idle
+                !referenced.contains(&tree.snapshot) || idle > MAX_IDLE
             }
         };
         if !evict {
@@ -523,7 +506,7 @@ fn collect_in(base: &Path, plan: &Plan) -> Collected {
 }
 
 /// What a launch that is gone left behind.
-fn sweep_in(base: &Path, own: &str) -> usize {
+fn sweep_in(base: &Path) -> usize {
     let mut removed = 0;
     let list = |dir: &str| -> Vec<PathBuf> {
         std::fs::read_dir(base.join(dir))
@@ -535,7 +518,7 @@ fn sweep_in(base: &Path, own: &str) -> usize {
     }
 
     let staging = list(STAGING);
-    let mut live = HashSet::from([own.to_owned()]);
+    let mut live = HashSet::new();
     let mut dead = Vec::new();
     for path in &staging {
         let Some(id) = path
@@ -545,9 +528,6 @@ fn sweep_in(base: &Path, own: &str) -> usize {
         else {
             continue;
         };
-        if id == own {
-            continue;
-        }
         // Created but not yet locked, or crashed doing so.
         let young = std::fs::metadata(path).is_ok_and(|m| {
             m.len() == 0
@@ -666,13 +646,13 @@ mod tests {
         SnapshotId(Hash([n; 32]))
     }
 
-    fn trees_with(base: &Path, max_idle: Duration, referenced: &[u8]) -> KeptTrees {
+    fn trees_with(base: &Path, referenced: &[u8]) -> KeptTrees {
         let referenced: HashSet<_> = referenced.iter().map(|n| snapshot(*n)).collect();
-        KeptTrees::for_test(base.to_owned(), max_idle, Arc::new(move || referenced.clone()))
+        KeptTrees::for_test(base.to_owned(), Arc::new(move || referenced.clone()))
     }
 
     fn trees(base: &Path) -> KeptTrees {
-        trees_with(base, DEFAULT_MAX_IDLE, &[])
+        trees_with(base, &[])
     }
 
     /// Writes `bytes` bytes into the tree being built.
@@ -931,7 +911,7 @@ mod tests {
     #[tokio::test]
     async fn a_tree_nothing_refers_to_is_collected_however_young_and_a_referenced_one_goes_after_the_idle_limit() {
         let data = tempfile::tempdir().unwrap();
-        let trees = trees_with(data.path(), DEFAULT_MAX_IDLE, &[2, 3]);
+        let trees = trees_with(data.path(), &[2, 3]);
         let now = SystemTime::now();
         for n in 1..=3 {
             drop(acquire(&trees, n, 10).await);
@@ -950,7 +930,7 @@ mod tests {
     #[tokio::test]
     async fn using_a_tree_again_restarts_its_idle_time() {
         let data = tempfile::tempdir().unwrap();
-        let trees = trees_with(data.path(), DEFAULT_MAX_IDLE, &[1, 2]);
+        let trees = trees_with(data.path(), &[1, 2]);
         let now = SystemTime::now();
         for n in 1..=2 {
             drop(acquire(&trees, n, 10).await);

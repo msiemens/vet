@@ -29,7 +29,7 @@ use vet_core::content::SnapshotId;
 use vet_infra::clock::TokioClock;
 use vet_infra::git::GixRepo;
 use vet_infra::materialize::Materialize;
-use vet_infra::materialize::kept::{DEFAULT_MAX_IDLE, KeptTrees, Referenced};
+use vet_infra::materialize::kept::{KeptTrees, Referenced};
 use vet_infra::store::SqliteStore;
 use vet_protocol::{
     AnchorState, AnchorStrategy, ChangesetKey, EntryKind, Event, Failure, FileChange, HunkState, LineLocation,
@@ -699,7 +699,7 @@ const POLICY: AnalysisPolicy = AnalysisPolicy::LIMITED;
 
 fn kept_trees(data: &Path) -> Arc<KeptTrees> {
     let none: Arc<dyn Referenced> = Arc::new(HashSet::<SnapshotId>::new);
-    Arc::new(KeptTrees::for_test(data.join("sources"), DEFAULT_MAX_IDLE, none))
+    Arc::new(KeptTrees::for_test(data.join("sources"), none))
 }
 
 /// Only where files can differ in case alone; `..._in_a_commit_...` covers the other filesystems.

@@ -1,54 +1,36 @@
 //! The kept trees of every project: one [`KeptTrees`] per project, below that
 //! project's directory in the data directory (see `storage::layout`).
 
-use std::collections::HashMap;
+use std::collections::HashSet;
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex};
-use std::time::{Duration, SystemTime};
+use std::sync::Arc;
+use std::time::SystemTime;
+
+use vet_core::content::SnapshotId;
 
 use super::kept::{Collected, KeptTrees, Referenced};
 use crate::budget::{Budget, SEMANTIC_IO};
 use crate::storage::layout::{PROJECTS, ROOT, SOURCES, project_dir};
-use crate::sync::lock;
 
 pub struct ProjectTrees {
     data: PathBuf,
-    max_idle: Duration,
     referenced: Arc<dyn Referenced>,
     io: Budget,
-    /// By the `sources` directory, so a set found on disk is the one a project opened.
-    sets: Mutex<HashMap<PathBuf, Arc<KeptTrees>>>,
 }
 
 impl ProjectTrees {
-    pub fn new(data: PathBuf, max_idle: Duration, referenced: Arc<dyn Referenced>, io: Budget) -> Self {
-        Self {
-            data,
-            max_idle,
-            referenced,
-            io,
-            sets: Mutex::default(),
-        }
+    pub fn new(data: PathBuf, referenced: Arc<dyn Referenced>, io: Budget) -> Self {
+        Self { data, referenced, io }
     }
 
-    /// Trees with a budget of their own, for tests.
+    /// Trees that nothing refers to, with a budget of their own, for tests.
     #[doc(hidden)]
-    pub fn for_test(data: PathBuf, max_idle: Duration, referenced: Arc<dyn Referenced>) -> Self {
-        Self::new(data, max_idle, referenced, Budget::new(SEMANTIC_IO))
+    pub fn for_test(data: PathBuf) -> Self {
+        Self::new(data, Arc::new(HashSet::<SnapshotId>::new), Budget::new(SEMANTIC_IO))
     }
 
-    fn set(&self, sources: PathBuf) -> Arc<KeptTrees> {
-        lock(&self.sets)
-            .entry(sources.clone())
-            .or_insert_with(|| {
-                Arc::new(KeptTrees::new(
-                    sources,
-                    self.max_idle,
-                    self.referenced.clone(),
-                    self.io.clone(),
-                ))
-            })
-            .clone()
+    fn set(&self, sources: PathBuf) -> KeptTrees {
+        KeptTrees::new(sources, self.referenced.clone(), self.io.clone())
     }
 
     /// The trees of the project whose repository root is `root`. The project's `root` file
@@ -58,11 +40,11 @@ impl ProjectTrees {
         let set = self.set(dir.join(SOURCES));
         let root = root.to_owned();
         let _ = self.io.blocking(move || write_root(&dir, &root)).await;
-        set
+        Arc::new(set)
     }
 
     /// The trees of every project that has a directory.
-    async fn all(&self) -> Vec<Arc<KeptTrees>> {
+    async fn all(&self) -> Vec<KeptTrees> {
         let projects = self.data.join(PROJECTS);
         let found = self
             .io

@@ -1,12 +1,8 @@
 //! Trust (§6.5) through the protocol: a project is trusted until it is marked untrusted again,
 //! which the manifest says and every change announces.
 
-use std::collections::HashSet;
-use std::sync::Arc;
-
 use crate::common::{Client, handler, repo_with};
 use vet_core::content::{Hash, SnapshotId};
-use vet_infra::materialize::kept::{DEFAULT_MAX_IDLE, Referenced};
 use vet_infra::materialize::projects::ProjectTrees;
 use vet_protocol::{AnalysisTrust, Event, Manifest, ProjectId, Request, Response, ServerMessage, View};
 use vet_semantic::policy::RestoreKind;
@@ -81,10 +77,7 @@ async fn withdrawing_trust_removes_the_executing_trees_that_are_not_in_use() {
         panic!("not a project");
     };
 
-    let none: Arc<dyn Referenced> = Arc::new(HashSet::<SnapshotId>::new);
-    let trees = ProjectTrees::for_test(data.path().to_owned(), DEFAULT_MAX_IDLE, none)
-        .of(&root)
-        .await;
+    let trees = ProjectTrees::for_test(data.path().to_owned()).of(&root).await;
     let snapshot = |n: u8| SnapshotId(Hash([n; 32]));
     let build = |dest: std::path::PathBuf| std::future::ready(std::fs::write(dest.join("file"), "x"));
     let leased = trees.acquire(snapshot(1), RestoreKind::Exec, build).await.unwrap();

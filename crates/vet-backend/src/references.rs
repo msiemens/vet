@@ -32,7 +32,7 @@ mod tests {
     use vet_app::changeset::{BaseChoice, CommitId, Snapshots, Source, Version, VersionChange, VersionOrigin};
     use vet_app::ports::{LiveStore, ReviewWrites};
     use vet_core::content::Hash;
-    use vet_infra::materialize::kept::{DEFAULT_MAX_IDLE, KeptTrees};
+    use vet_infra::materialize::kept::KeptTrees;
     use vet_semantic::policy::RestoreKind;
 
     use super::*;
@@ -82,11 +82,7 @@ mod tests {
             )
             .await
             .unwrap();
-        let trees = KeptTrees::for_test(
-            data.path().join("sources"),
-            DEFAULT_MAX_IDLE,
-            std::sync::Arc::new(StoreReferences(store)),
-        );
+        let trees = KeptTrees::for_test(data.path().join("sources"), std::sync::Arc::new(StoreReferences(store)));
         let base = keep(&trees, snapshot(1)).await;
         let target = keep(&trees, snapshot(2)).await;
         let other = keep(&trees, snapshot(9)).await;
