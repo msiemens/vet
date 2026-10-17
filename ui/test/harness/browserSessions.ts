@@ -928,6 +928,21 @@ export const sessions: Record<string, (d: Driver) => Promise<void>> = {
     await d.until(`document.querySelector("section[aria-label=Problems]") !== null`, "the Problems tool");
     await d.middleClick("section[aria-label=Problems] header .title");
     await d.until(`document.querySelector("section[aria-label=Problems]") === null`, "the Problems tool to hide");
+
+    const side = (which: "left" | "right") =>
+      `(async () => { const { shell } = await import("/src/features/chrome/shell.svelte.ts"); return shell.${which}; })()`;
+    // A sidebar's tool window hides and stays selected, as when its rail icon hides it.
+    await d.until(`document.querySelector("nav[aria-label=Changes]") !== null`, "the Changes tool");
+    await d.middleClick("nav[aria-label=Changes] .sh-bar > span");
+    await d.until(`document.querySelector("nav[aria-label=Changes]") === null`, "the Changes tool to hide");
+    const left = (await d.page(side("left"))) as { tool: string; open: boolean };
+    if (left.tool !== "changes" || left.open) throw new Error(`the left rail is ${JSON.stringify(left)}`);
+
+    await d.until(`document.querySelector("aside[aria-label=Symbol]") !== null`, "the Symbol tool");
+    await d.middleClick("aside[aria-label=Symbol] .sh-bar > span");
+    await d.until(`document.querySelector("aside[aria-label=Symbol]") === null`, "the Symbol tool to hide");
+    const right = (await d.page(side("right"))) as { tool: string; open: boolean };
+    if (right.tool !== "symbol" || right.open) throw new Error(`the right rail is ${JSON.stringify(right)}`);
   },
 
   /**

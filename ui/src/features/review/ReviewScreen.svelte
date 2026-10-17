@@ -61,6 +61,7 @@
     softWrap,
     onfilter,
     ontool,
+    onhideleft,
     onfind,
     scope,
     onready,
@@ -75,6 +76,8 @@
     onfilter: () => void;
     /** Shows a tool window. */
     ontool: (tool: "changes" | "all" | "comments" | "timeline") => void;
+    /** Hides the left sidebar. */
+    onhideleft: () => void;
     /** Shows the Find tool, its list focused if `focus`. */
     onfind: (focus: boolean) => void;
     /** What the changes shown are of, which names the first tab. */
@@ -309,6 +312,7 @@
       {@const owner = controller}
       <CommentsPanel
         onselect={(thread) => void owner.goToThread(thread)}
+        onhide={onhideleft}
         card={(thread, open, toggle) => owner.threadCard(thread, open, toggle)}
       />
     {:else if loading || !changeset || !controller}
@@ -336,6 +340,7 @@
         commit={changeset.commitIndex}
         oncommit={(index) => void changeset.showCommit(index)}
         onselect={select}
+        onhide={onhideleft}
         onopen={(path) => void controller?.openSource(ON_SCREEN, path)}
         onopensymbol={openSymbol}
         onmenu={(path, dir, x, y) => openMenu(treeMenu(dir), x, y, { target: { path, dir } })}

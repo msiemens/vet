@@ -5,6 +5,7 @@
   import EmptyState from "../../lib/ui/EmptyState.svelte";
   import Icon from "../../lib/ui/Icon.svelte";
   import IconButton from "../../lib/ui/IconButton.svelte";
+  import { middleClickHides } from "../../lib/ui/middleClickHides";
   import MoreRow from "../../lib/ui/MoreRow.svelte";
   import ScrollArea from "../../lib/ui/ScrollArea.svelte";
   import TreeRow from "../../lib/ui/TreeRow.svelte";
@@ -26,10 +27,13 @@
   let {
     onselect,
     card,
+    onhide,
   }: {
     onselect: (thread: Thread) => void;
     /** Draws a thread as the diff's card, for the threads on the pull request as a whole where they are threads. */
     card: (thread: Thread, open: boolean, toggle: () => void) => HTMLElement;
+    /** Hides the tool window. */
+    onhide: () => void;
   } = $props();
 
   const info = $derived(opened.session?.pullRequest?.info);
@@ -154,7 +158,7 @@
 {/snippet}
 
 <aside aria-label="Comments">
-  <div class="sh sh-bar">
+  <div class="sh sh-bar" use:middleClickHides={onhide}>
     <span>Comments</span>
     <span class="grow"></span>
     <IconButton

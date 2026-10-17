@@ -53,6 +53,16 @@ class Shell {
     this.bottom = tool;
   }
 
+  /** Hides the left sidebar; its tool stays selected, as when the rail hides it. */
+  hideLeft() {
+    this.leftChosen.open = false;
+  }
+
+  /** Hides the right sidebar; its tool stays selected, as when the rail hides it. */
+  hideRight() {
+    this.right.open = false;
+  }
+
   /** Hides the bottom panel. */
   hideBottom() {
     this.bottom = undefined;

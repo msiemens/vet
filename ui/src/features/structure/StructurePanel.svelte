@@ -13,6 +13,7 @@
   import Icon from "../../lib/ui/Icon.svelte";
   import IconButton from "../../lib/ui/IconButton.svelte";
   import { ListNav } from "../../lib/ui/listNav";
+  import { middleClickHides } from "../../lib/ui/middleClickHides";
   import { SpeedSearch } from "../../lib/ui/speedSearch.svelte";
   import SpeedSearchField from "../../lib/ui/SpeedSearchField.svelte";
   import TextToggle from "../../lib/ui/TextToggle.svelte";
@@ -27,11 +28,14 @@
   let {
     onjump,
     oneditor,
+    onhide,
   }: {
     /** Shows the symbol in the file's tab, at the base side's text for a removed one. */
     onjump: (symbol: SymbolInfo, removed: boolean) => void;
     /** Gives the keyboard focus back to the editor. */
     oneditor: () => void;
+    /** Hides the tool window. */
+    onhide: () => void;
   } = $props();
 
   const search = new SpeedSearch();
@@ -184,7 +188,7 @@
 </script>
 
 <aside aria-label="Structure" onfocusin={() => nav.focusin()}>
-  <div class="sh sh-bar">
+  <div class="sh sh-bar" use:middleClickHides={onhide}>
     <span>Structure</span>
     {#if outline && !outline.unavailable}<span class="mono n">{symbols.length}</span>{/if}
     <span class="grow"></span>

@@ -1,6 +1,7 @@
 <script lang="ts">
   // The Symbol tool window: the details of the symbol on show.
   import EmptyState from "../../lib/ui/EmptyState.svelte";
+  import { middleClickHides } from "../../lib/ui/middleClickHides";
   import ScrollArea from "../../lib/ui/ScrollArea.svelte";
   import { keyOf } from "../../state/symbolKey";
   import { opened } from "../../state/opened.svelte";
@@ -11,16 +12,19 @@
   let {
     onopen,
     onfind,
+    onhide,
   }: {
     onopen: OpenLocation;
     /** Shows the Find tool, its list focused if `focus`. */
     onfind: (focus: boolean) => void;
+    /** Hides the tool window. */
+    onhide: () => void;
   } = $props();
   const symbols = $derived(opened.session?.symbols);
 </script>
 
 <aside aria-label="Symbol">
-  <div class="sh sh-bar">
+  <div class="sh sh-bar" use:middleClickHides={onhide}>
     <span>Symbol</span>
   </div>
   <ScrollArea>

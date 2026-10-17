@@ -17,6 +17,7 @@
   import IconButton from "../../lib/ui/IconButton.svelte";
   import SeverityIcon from "../../lib/ui/SeverityIcon.svelte";
   import { onChevron } from "../../lib/ui/chevron";
+  import { middleClickHides } from "../../lib/ui/middleClickHides";
   import DiffBar from "../../lib/ui/DiffBar.svelte";
   import EmptyState from "../../lib/ui/EmptyState.svelte";
   import { deltaText } from "../../lib/ui/lineDelta";
@@ -64,6 +65,7 @@
     onopen,
     onopensymbol,
     onmenu,
+    onhide,
   }: {
     /** Which tool window this is: the changed files, every file, or the commits with the files of the one on view. */
     tool: "changes" | "all" | "commits";
@@ -102,6 +104,8 @@
     onopensymbol: (row: SymbolRow) => void;
     /** Context menu on a file or folder row, at the pointer position. */
     onmenu: (path: string, dir: boolean, x: number, y: number) => void;
+    /** Hides the tool window. */
+    onhide: () => void;
   } = $props();
 
   const TITLES = { changes: "Changes", all: "All Files", commits: "Commits" } as const;
@@ -567,7 +571,7 @@
 {/snippet}
 
 <nav aria-label={TITLES[tool]} bind:this={nav}>
-  <div class="sh sh-bar">
+  <div class="sh sh-bar" use:middleClickHides={onhide}>
     <span>{TITLES[tool]}</span>
     {#if tool === "commits"}<span class="mono n">{commits.length}</span>{/if}
     {#if tool === "changes" && narrowed}<NarrowingChip label={narrowed} {onreset} />{/if}

@@ -306,6 +306,7 @@
           bottomOpen={shell.bottom !== undefined}
           onfilter={() => appState.showDialog("settings", "filter")}
           ontool={showTool}
+          onhideleft={() => shell.hideLeft()}
           onfind={showFindTool}
           scope={headerFacts.scope?.label ?? "All changes"}
           onready={(c) => appState.setController(c)}
@@ -313,9 +314,10 @@
         >
           {#snippet side(tool)}
             {#if tool === "symbol"}
-              <SymbolPanel onopen={openLocation} onfind={showFindTool} />
+              <SymbolPanel onopen={openLocation} onfind={showFindTool} onhide={() => shell.hideRight()} />
             {:else if tool === "structure"}
               <StructurePanel
+                onhide={() => shell.hideRight()}
                 onjump={(symbol, removed) => void appState.controller?.jumpToOutlineSymbol(symbol, removed)}
                 oneditor={() => appState.controller?.focusEditor()}
               />

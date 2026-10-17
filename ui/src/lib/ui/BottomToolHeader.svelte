@@ -3,6 +3,7 @@
   // that hides it.
   import type { Snippet } from "svelte";
   import IconButton from "./IconButton.svelte";
+  import { middleClickHides } from "./middleClickHides";
 
   let {
     title,
@@ -23,15 +24,7 @@
   } = $props();
 </script>
 
-<!-- Button 1 is the middle button; its mousedown would start autoscroll and its click paste. -->
-<header
-  onmousedown={(e) => e.button === 1 && e.preventDefault()}
-  onauxclick={(e) => {
-    if (e.button !== 1 || (e.target as Element).closest("button, input, select, a")) return;
-    e.preventDefault();
-    onclose();
-  }}
->
+<header use:middleClickHides={onclose}>
   <span class="title">
     {title}
     {#if count !== undefined}<span class="n">{count}</span>{/if}
