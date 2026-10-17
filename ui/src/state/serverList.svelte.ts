@@ -1,6 +1,7 @@
 // The open repository's language servers as the backend resolves them, for the footer to name the
 // one of the focused file, for commands to know what it offers and for the Servers page to list,
-// with the installs the viewer started and their output. It follows the project from the day a
+// with the installs the viewer started and their output. What the servers offer comes with the
+// runtimes the backend pushes, not with the list. It follows the project from the day a
 // repository is open, not from the day a page is shown: an install goes on, and its output is
 // kept, whichever page is shown.
 
@@ -13,7 +14,7 @@ import { Resource } from "./resource";
 import { session } from "./session.svelte";
 
 /** What no server is known to do, older than anything the backend says. */
-const NOTHING_KNOWN: ServerRuntimes = { serial: -1, runtimes: [] };
+const NOTHING_KNOWN: ServerRuntimes = { serial: -1, runtimes: [], features: [] };
 
 class ServerList {
   servers = $state.raw<ServerInfo[]>([]);
@@ -40,9 +41,8 @@ class ServerList {
           this.logs = { ...this.logs, [event.language]: appendLog(this.logs[event.language] ?? [], event.line) };
           return;
         }
-        // A server that has started has told what it offers.
-        const started = event.type === "serverRuntimes" && this.hear(event.runtimes);
-        if (event.type === "serversChanged" || started) this.reload();
+        if (event.type === "serverRuntimes") this.hear(event.runtimes);
+        else if (event.type === "serversChanged") this.reload();
       }),
     );
     session.onOpen(() => {
@@ -88,14 +88,9 @@ class ServerList {
     this.loadError = undefined;
   }
 
-  /** Takes what the backend says of the servers' phases if it is newer than what is held; whether a server became ready by it. */
-  private hear(runtimes: ServerRuntimes): boolean {
-    if (runtimes.serial <= this.runtimes.serial) return false;
-    const was = new Set(
-      this.runtimes.runtimes.filter((r) => r.phase.type === "ready").map((r) => `${r.language}/${r.side}`),
-    );
-    this.runtimes = runtimes;
-    return runtimes.runtimes.some((r) => r.phase.type === "ready" && !was.has(`${r.language}/${r.side}`));
+  /** Takes what the backend says of the servers if it is newer than what is held. */
+  private hear(runtimes: ServerRuntimes) {
+    if (runtimes.serial > this.runtimes.serial) this.runtimes = runtimes;
   }
 
   /** Restarts the servers of `language` in the open project; resolves with why they did not start, if so. */

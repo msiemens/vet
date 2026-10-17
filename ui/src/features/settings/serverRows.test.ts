@@ -12,7 +12,6 @@ const found = (origin: "custom" | "project" | "installed" | "path"): ServerInfo 
   pinnedVersion: "2026-01-01",
   installBlocker: null,
   canInstall: true,
-  features: null,
 });
 
 const missing: ServerInfo = {
@@ -24,7 +23,6 @@ const missing: ServerInfo = {
   pinnedVersion: "1.1.400",
   installBlocker: null,
   canInstall: true,
-  features: null,
 };
 
 void test("a found server is found unless its origin is custom, which is its own status and keeps the path to reset", () => {
@@ -66,7 +64,7 @@ const all = {
 };
 
 void test("features list offered and missing ones in the fixed order", () => {
-  const row = serverRow({ ...found("installed"), features: { ...all, references: false, hover: false } });
+  const row = serverRow(found("installed"), undefined, { ...all, references: false, hover: false });
   assert.deepEqual(
     row.features?.map((f) => [f.name, f.offered]),
     [
@@ -83,7 +81,7 @@ void test("features list offered and missing ones in the fixed order", () => {
 
 void test("a found server that has not started has unknown features, a missing one has none", () => {
   assert.equal(serverRow(found("installed")).features, null);
-  assert.equal(serverRow({ ...missing, features: all }).features, undefined);
+  assert.equal(serverRow(missing, undefined, all).features, undefined);
 });
 
 void test("install progress overrides the resolved state", () => {

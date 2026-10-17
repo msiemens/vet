@@ -197,13 +197,13 @@ async fn rust_semantics_through_the_protocol() {
         "a limit cuts the rows and keeps the total"
     );
 
-    // A server that ran says what it offers; one that has not started does not.
-    let Response::Servers { servers, .. } = client.call(Request::ListServers { project }).await.unwrap() else {
+    // A server that started says what it offers, in the runtimes; one that has not does not.
+    let Response::Servers { runtimes, .. } = client.call(Request::ListServers { project }).await.unwrap() else {
         panic!("not servers");
     };
     let offers = |language: &str| {
-        let server = servers.iter().find(|s| s.language == language).unwrap();
-        server.features.map(|f| f.implementations)
+        let found = runtimes.features.iter().find(|f| f.language == language);
+        found.map(|f| f.features.implementations)
     };
     assert_eq!(offers("rust"), Some(true));
     assert_eq!(offers("python"), None);

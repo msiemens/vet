@@ -118,17 +118,8 @@ impl Orchestrator {
             None => AnalysisPolicy::LIMITED,
         };
         let all = self.servers.status(&open.repo, policy).await?;
-        // What a server offers is known from the project's own server; where none ran, from another's.
-        let booted = self.projects.all().await;
-        let features = |language: &BackendId| {
-            let mut projects = open
-                .booted_now()
-                .into_iter()
-                .chain(booted.iter().filter_map(|o| o.booted_now()));
-            projects.find_map(|b| b.semantics.features(language))
-        };
         let runtimes = open.booted_now().map(|b| b.semantics.runtimes()).unwrap_or_default();
-        Ok(mapping::semantic::servers(&all, features, &runtimes))
+        Ok(mapping::semantic::servers(&all, &runtimes))
     }
 
     /// The language's executable changed: its running servers restart in every project, and

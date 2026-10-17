@@ -92,7 +92,8 @@ export class ViewCommands {
       findOpen: this.find.open.has(id),
       editor,
       noImplementations:
-        editor && withoutFeature(servedBy.language(editor.path), serverList.servers, "implementations"),
+        editor &&
+        withoutFeature(servedBy.language(editor.path), serverList.servers, serverList.runtimes, "implementations"),
       noUsages: this.scopes.showsCommit(id),
       serverLanguage: file === undefined ? undefined : servedBy.language(file),
     };

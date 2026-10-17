@@ -147,6 +147,7 @@ const indexing = (language: string, done?: number): ServerRuntimes => ({
       phase: { type: "indexing", done: done ?? null, total: done === undefined ? null : 100, detail: null },
     },
   ],
+  features: [],
 });
 
 void test("a server still indexing is said to make the symbols incomplete, a failed or idle one is not", () => {

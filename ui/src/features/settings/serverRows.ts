@@ -1,4 +1,4 @@
-// What the "Language servers" page shows per language, derived from `ListServers`.
+// What the "Language servers" page shows per language, derived from `ListServers` and the servers' runtimes.
 
 import type { ServerFeatures } from "../../generated/ServerFeatures";
 import type { ServerInfo } from "../../generated/ServerInfo";
@@ -89,14 +89,13 @@ const FEATURES: [keyof ServerFeatures, string][] = [
 ];
 
 /** `undefined` for a missing server (no line); `null` while a found one has not started yet. */
-function featureList(info: ServerInfo): ServerFeature[] | null | undefined {
+function featureList(info: ServerInfo, features?: ServerFeatures): ServerFeature[] | null | undefined {
   if (info.state.type === "missing") return undefined;
-  const { features } = info;
   if (!features) return null;
   return FEATURES.map(([key, name]) => ({ name, offered: features[key] }));
 }
 
-export function serverRow(info: ServerInfo, install?: InstallProgress): ServerRow {
+export function serverRow(info: ServerInfo, install?: InstallProgress, features?: ServerFeatures): ServerRow {
   const { state } = info;
   let status: ServerStatus;
   if (install?.running) status = "installing";
@@ -121,6 +120,6 @@ export function serverRow(info: ServerInfo, install?: InstallProgress): ServerRo
     pinnedVersion: info.pinnedVersion ?? undefined,
     canInstall: info.canInstall && !install?.running,
     installBlocker: info.installBlocker ?? undefined,
-    features: featureList(info),
+    features: featureList(info, features),
   };
 }

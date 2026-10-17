@@ -180,9 +180,11 @@ impl<M: Materializer, L: ServerLauncher> StartProgress for Indexing<M, L> {
 /// What the pool knows of its servers.
 #[derive(Clone, Debug)]
 pub struct Servers {
-    /// Rises with every change of a phase.
+    /// Rises with every change of a phase or of the features.
     pub changes: u64,
     pub phases: Vec<(PoolKey, Phase)>,
+    /// What each backend's server offers, as of the server started last; sorted by backend.
+    pub features: Vec<(BackendId, Features)>,
     /// The restore steps that failed for the trees of the servers that run, by server.
     pub restore_failures: Vec<(PoolKey, Vec<RestoreFailure>)>,
 }
@@ -495,7 +497,7 @@ struct State<S, G> {
     /// started.
     features: HashMap<BackendId, Features>,
     phases: HashMap<PoolKey, Phase>,
-    /// Counts the changes of `phases`.
+    /// Rises with every change of `phases` or `features`.
     changes: u64,
 }
 
@@ -940,7 +942,7 @@ impl<M: Materializer, L: ServerLauncher> Inner<M, L> {
             let stale = state.generations.get(&key.backend).copied().unwrap_or(0) != generation;
             state.tick += 1;
             if !stale {
-                state.features.insert(key.backend.clone(), server.features());
+                Self::set_features(&mut state, &key.backend, Some(server.features()));
                 Self::put(&mut state, &key, Some(phase_of(server.readiness())));
             }
             let credit = state.clock + backend.config().warmup.weight();
@@ -1048,11 +1050,28 @@ impl<M: Materializer, L: ServerLauncher> Inner<M, L> {
         changed
     }
 
+    /// Whether the features of `backend` changed.
+    fn set_features(state: &mut State<L::Server, M::Guard>, backend: &BackendId, features: Option<Features>) -> bool {
+        let held = state.features.get(backend).copied();
+        let changed = held != features;
+        if changed {
+            match features {
+                Some(features) => state.features.insert(backend.clone(), features),
+                None => state.features.remove(backend),
+            };
+            state.changes += 1;
+        }
+        changed
+    }
+
     fn servers(&self) -> Servers {
         let state = self.lock();
+        let mut features: Vec<_> = state.features.iter().map(|(b, f)| (b.clone(), *f)).collect();
+        features.sort_by(|a, b| a.0.0.cmp(&b.0.0));
         Servers {
             changes: state.changes,
             phases: state.phases.iter().map(|(k, p)| (k.clone(), p.clone())).collect(),
+            features,
             restore_failures: (state.slots.iter())
                 .filter(|(_, entry)| !entry.restore_failures.is_empty())
                 .map(|(key, entry)| (key.clone(), entry.restore_failures.clone()))
@@ -1273,10 +1292,10 @@ impl<M: Materializer, L: ServerLauncher> Pool<M, L> {
         let (idle, leased, changed) = {
             let mut state = self.inner.lock();
             *state.generations.entry(backend.clone()).or_default() += 1;
-            state.features.remove(backend);
+            let dropped = Inner::<M, L>::set_features(&mut state, backend, None);
             state.health.retain(|key, _| &key.backend != backend);
             let shown: Vec<_> = state.phases.keys().filter(|k| &k.backend == backend).cloned().collect();
-            let changed = !shown.is_empty();
+            let changed = !shown.is_empty() || dropped;
             for key in shown {
                 Inner::<M, L>::put(&mut state, &key, None);
             }
@@ -1299,11 +1318,6 @@ impl<M: Materializer, L: ServerLauncher> Pool<M, L> {
         }
         self.inner.launcher.restarted(backend);
         (idle, leased)
-    }
-
-    /// The operations the server of `backend` offers; `None` before one has started.
-    pub fn features(&self, backend: &BackendId) -> Option<Features> {
-        self.inner.lock().features.get(backend).copied()
     }
 
     /// Stop every server that is not leased.
@@ -2999,16 +3013,37 @@ mod tests {
     fn what_a_backends_server_offers_is_known_once_one_started_and_forgotten_by_a_restart() {
         let (pool, counters) = pool(4);
         let rust = BackendId("rust".into());
+        let told = Arc::new(Mutex::new(Vec::<Servers>::new()));
+        let seen = told.clone();
+        let pool = pool.observed(Arc::new(move |servers| seen.lock().unwrap().push(servers)));
+        let offered = |pool: &TestPool| {
+            (pool.servers().features.into_iter())
+                .find(|(b, _)| *b == rust)
+                .map(|(_, f)| f)
+        };
         block_on(async {
-            assert_eq!(pool.features(&rust), None);
+            assert_eq!(offered(&pool), None);
             pool.lease(&snapshot_key(1), &backend(true))
                 .await
                 .unwrap()
                 .release()
                 .await;
-            assert_eq!(pool.features(&rust), Some(Features::ALL));
+            assert_eq!(offered(&pool), Some(Features::ALL));
+
+            pool.shutdown().await;
+            assert!(pool.keys().is_empty());
+            assert_eq!(offered(&pool), Some(Features::ALL));
+
+            let before = pool.servers().changes;
+            let announced = told.lock().unwrap().len();
             pool.restart(&rust).await;
-            assert_eq!(pool.features(&rust), None);
+            assert_eq!(offered(&pool), None);
+            assert!(pool.servers().changes > before);
+            {
+                let told = told.lock().unwrap();
+                assert!(told.len() > announced, "the dropped features are announced");
+                assert!(told.last().unwrap().features.is_empty());
+            }
 
             counters.lacking.lock().unwrap().push(Feature::CallHierarchy);
             pool.lease(&snapshot_key(1), &backend(true))
@@ -3016,7 +3051,7 @@ mod tests {
                 .unwrap()
                 .release()
                 .await;
-            let offered = pool.features(&rust).unwrap();
+            let offered = offered(&pool).unwrap();
             assert!(!offered.offers(Feature::CallHierarchy));
             assert!(offered.offers(Feature::Hover));
         });

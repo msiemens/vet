@@ -544,6 +544,64 @@ export const sessions: Record<string, (d: Driver) => Promise<void>> = {
   },
 
   /**
+   * A server that becomes ready tells what it offers with the runtimes it pushes; the list of the
+   * servers is not read again for it, only for a change of the servers themselves.
+   */
+  async serverPushes(d) {
+    const quiet = async () => {
+      await d.page(`__t.session.backend.waitForQuiet()`);
+      await d.sleep(300);
+    };
+    const listed = () => d.page(`window.__wire.listServers ?? 0`) as Promise<number>;
+    const project = () => d.page(`__t.session.backend.project`) as Promise<number>;
+    const fire = (event: Record<string, unknown>) =>
+      d.page(
+        `(() => { const c = __t.session.backend.conn; for (const l of [...c.listeners]) l(${JSON.stringify(event)}); return true; })()`,
+      );
+    const ready = [
+      ["rust", "target"],
+      ["rust", "base"],
+      ["python", "target"],
+      ["python", "base"],
+      ["typescript", "target"],
+    ] as const;
+    const all = {
+      documentSymbols: true,
+      definition: true,
+      references: true,
+      implementations: true,
+      hover: true,
+      callHierarchy: true,
+      workspaceSymbols: true,
+    };
+
+    await quiet();
+    const before = await listed();
+    const at = await project();
+    for (let i = 0; i < ready.length; i++) {
+      await fire({
+        type: "serverRuntimes",
+        project: at,
+        runtimes: {
+          serial: 1000 + i,
+          runtimes: ready.slice(0, i + 1).map(([language, side]) => ({ language, side, phase: { type: "ready" } })),
+          features: [{ language: "rust", features: { ...all, implementations: i < 2 } }],
+        },
+      });
+    }
+    await quiet();
+    if ((await listed()) !== before) throw new Error("servers becoming ready read the list of the servers again");
+    const offers = await d.page(
+      `(async () => (await import("/src/state/serverList.svelte.ts")).serverList.runtimes.features.find((f) => f.language === "rust")?.features.implementations)()`,
+    );
+    if (offers !== false) throw new Error(`the pushed features were not taken: implementations is ${String(offers)}`);
+
+    await fire({ type: "serversChanged", project: at });
+    await quiet();
+    if ((await listed()) !== before + 1) throw new Error("a change of the servers did not read the list exactly once");
+  },
+
+  /**
    * Going to the queue and back keeps the review screen as it was: its open tabs, the active one,
    * where it was scrolled and scrolled to, and an unsent comment draft.
    */

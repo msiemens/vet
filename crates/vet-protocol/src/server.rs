@@ -73,8 +73,6 @@ pub struct ServerInfo {
     pub install_blocker: Option<String>,
     /// `InstallServer` can run now: there is a version to install and no blocker.
     pub can_install: bool,
-    /// What the last server started advertised; `None` before one has started.
-    pub features: Option<ServerFeatures>,
 }
 
 /// The operations a language server advertised. A request for one it lacks is answered with
@@ -138,6 +136,16 @@ pub struct ServerRuntime {
     pub phase: ServerPhase,
 }
 
+/// What a language's server offers, as of the server started last in the project.
+#[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct LanguageFeatures {
+    /// The language's id, as in `ServerInfo`.
+    pub language: String,
+    pub features: ServerFeatures,
+}
+
 /// What the servers of the changeset on view are doing. A client keeps the highest `serial` it
 /// has heard, whether it came as an event or with a list of the servers.
 #[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize, TS)]
@@ -147,6 +155,9 @@ pub struct ServerRuntimes {
     #[ts(type = "number")]
     pub serial: u64,
     pub runtimes: Vec<ServerRuntime>,
+    /// Every language whose server started in this project, not only those of the revision on
+    /// view; none before one started, and gone after a restart, an install or a path change.
+    pub features: Vec<LanguageFeatures>,
 }
 
 /// How a restore step ended short of plain success.

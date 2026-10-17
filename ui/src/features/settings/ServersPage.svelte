@@ -16,6 +16,7 @@
   import { backendSettings } from "../../state/backendSettings.svelte";
   import { commands } from "../../state/commands";
   import { serverList } from "../../state/serverList.svelte";
+  import { featuresOf } from "../../state/serverStatus";
   import ServerPathSheet from "./ServerPathSheet.svelte";
   import SettingsTable from "./SettingsTable.svelte";
   import { serverRow, serverTone, type ServerRow } from "./serverRows";
@@ -39,7 +40,9 @@
   const rows = $derived(
     sortRows(
       serverList.servers
-        .map((info) => serverRow(info, serverList.installs[info.language]))
+        .map((info) =>
+          serverRow(info, serverList.installs[info.language], featuresOf(info.language, serverList.runtimes)),
+        )
         .flatMap((row) => {
           const m = match(search.query, row.title);
           return m ? [{ ...row, ranges: m.ranges }] : [];

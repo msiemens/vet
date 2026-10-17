@@ -6,7 +6,7 @@ import type { ServerRuntimes } from "../generated/ServerRuntimes.ts";
 import type { Serving } from "../generated/Serving.ts";
 import type { Unavailable } from "../generated/Unavailable.ts";
 import { summarize } from "./semanticSummary.ts";
-import { atWork, hasServer, indexingOf, serverLine, withoutFeature } from "./serverStatus.ts";
+import { atWork, featuresOf, hasServer, indexingOf, serverLine, withoutFeature } from "./serverStatus.ts";
 
 const server = (language: string, name: string): ServerInfo => ({
   language,
@@ -17,7 +17,6 @@ const server = (language: string, name: string): ServerInfo => ({
   pinnedVersion: null,
   installBlocker: null,
   canInstall: false,
-  features: null,
 });
 const SERVERS = [server("rust", "rust-analyzer"), server("python", "Pyright")];
 
@@ -32,6 +31,7 @@ const serving = (language: string): Serving => ({ type: "language", language });
 const runtimes = (...rows: [string, "target" | "base", ServerPhase][]): ServerRuntimes => ({
   serial: 1,
   runtimes: rows.map(([language, side, phase]) => ({ language, side, phase })),
+  features: [],
 });
 const indexing = (done: number | null, total: number | null, detail: string | null = null): ServerPhase => ({
   type: "indexing",
@@ -143,19 +143,24 @@ void test("a server is without a feature only once it has said so, whatever the 
     callHierarchy: true,
     workspaceSymbols: true,
   };
-  const says = (rust: Partial<typeof all> | null, python: Partial<typeof all> | null) => [
-    { ...server("rust", "rust-analyzer"), features: rust && { ...all, ...rust } },
-    { ...server("python", "Pyright"), features: python && { ...all, ...python } },
-  ];
-  const servers = says({}, { implementations: false, callHierarchy: false });
-  assert.equal(withoutFeature("python", servers, "implementations"), "Pyright");
-  assert.equal(withoutFeature("python", servers, "callHierarchy"), "Pyright");
-  assert.equal(withoutFeature("python", servers, "hover"), undefined);
-  assert.equal(withoutFeature("rust", servers, "implementations"), undefined);
-  assert.equal(withoutFeature("rust", says({ hover: false }, null), "hover"), "rust-analyzer");
-  assert.equal(withoutFeature("python", says(null, null), "hover"), undefined);
-  assert.equal(withoutFeature(undefined, servers, "implementations"), undefined);
-  assert.equal(withoutFeature("python", [], "implementations"), undefined);
+  const says = (rust: Partial<typeof all> | null, python: Partial<typeof all> | null): ServerRuntimes => ({
+    serial: 1,
+    runtimes: [],
+    features: [
+      ...(rust ? [{ language: "rust", features: { ...all, ...rust } }] : []),
+      ...(python ? [{ language: "python", features: { ...all, ...python } }] : []),
+    ],
+  });
+  const told = says({}, { implementations: false, callHierarchy: false });
+  assert.equal(withoutFeature("python", SERVERS, told, "implementations"), "Pyright");
+  assert.equal(withoutFeature("python", SERVERS, told, "callHierarchy"), "Pyright");
+  assert.equal(withoutFeature("python", SERVERS, told, "hover"), undefined);
+  assert.equal(withoutFeature("rust", SERVERS, told, "implementations"), undefined);
+  assert.equal(withoutFeature("rust", SERVERS, says({ hover: false }, null), "hover"), "rust-analyzer");
+  assert.equal(withoutFeature("python", SERVERS, says(null, null), "hover"), undefined);
+  assert.equal(withoutFeature(undefined, SERVERS, told, "implementations"), undefined);
+  assert.equal(withoutFeature("python", [], told, "implementations"), undefined);
+  assert.equal(featuresOf("go", told), undefined);
 });
 
 void test("a file without a server shows the backend's label alone", () => {

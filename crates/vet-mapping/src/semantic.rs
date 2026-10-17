@@ -13,8 +13,8 @@ use vet_semantic::derived::{
 };
 use vet_semantic::pool::{Outcome, Phase, PoolError};
 use vet_semantic::ports::{
-    At, BackendId, Diagnostic, Feature, Features, LaunchError, Location, Pos, RestoreFailure, RestoreFailureKind,
-    Severity, Span, Sym, SymbolInfo, SymbolKind,
+    At, Diagnostic, Feature, Features, LaunchError, Location, Pos, RestoreFailure, RestoreFailureKind, Severity, Span,
+    Sym, SymbolInfo, SymbolKind,
 };
 use vet_semantic::query::SemanticError;
 
@@ -522,15 +522,16 @@ pub fn runtimes(now: &ServerRuntimes) -> p::ServerRuntimes {
                 },
             })
             .collect(),
+        features: (now.features.iter())
+            .map(|(language, features)| p::LanguageFeatures {
+                language: language.0.clone(),
+                features: server_features(*features),
+            })
+            .collect(),
     }
 }
 
-/// `features` tells for a language what its server advertised.
-pub fn servers(
-    all: &[ServerStatus],
-    features: impl Fn(&BackendId) -> Option<Features>,
-    now: &ServerRuntimes,
-) -> p::Response {
+pub fn servers(all: &[ServerStatus], now: &ServerRuntimes) -> p::Response {
     p::Response::Servers {
         runtimes: runtimes(now),
         servers: all
@@ -544,7 +545,6 @@ pub fn servers(
                 pinned_version: s.pinned.clone(),
                 install_blocker: s.install_blocker.clone(),
                 can_install: s.can_install(),
-                features: features(&s.language).map(server_features),
             })
             .collect(),
     }
@@ -554,6 +554,7 @@ pub fn servers(
 mod tests {
     use vet_app::semantics::{LanguageSymbols, Row, Standing};
     use vet_core::content::RepoPath;
+    use vet_semantic::ports::BackendId;
 
     use super::*;
 

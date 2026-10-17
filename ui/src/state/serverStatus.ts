@@ -21,6 +21,11 @@ export function hasServer(serving: Serving | undefined, servers: readonly Server
   return !server || server.state.type === "found";
 }
 
+/** What the server of `language` offers; `undefined` while none has started. */
+export function featuresOf(language: string | undefined, runtimes: ServerRuntimes): ServerFeatures | undefined {
+  return runtimes.features.find((f) => f.language === language)?.features;
+}
+
 /**
  * The name of the server of `language` when that server has said it does not offer `feature`; none
  * while it has not said (it has not started yet) or offers it.
@@ -28,10 +33,11 @@ export function hasServer(serving: Serving | undefined, servers: readonly Server
 export function withoutFeature(
   language: string | undefined,
   servers: readonly ServerInfo[],
+  runtimes: ServerRuntimes,
   feature: keyof ServerFeatures,
 ): string | undefined {
   const server = servers.find((s) => s.language === language);
-  return server?.features?.[feature] === false ? server.server : undefined;
+  return featuresOf(language, runtimes)?.[feature] === false ? server?.server : undefined;
 }
 
 const runtimesOf = (language: string, all: ServerRuntimes) => all.runtimes.filter((r) => r.language === language);

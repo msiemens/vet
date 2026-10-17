@@ -234,6 +234,8 @@ pub struct ServerRuntime {
 pub struct ServerRuntimes {
     pub serial: u64,
     pub runtimes: Vec<ServerRuntime>,
+    /// What each language's server offers in this project, as of the server started last.
+    pub features: Vec<(BackendId, Features)>,
 }
 
 /// Told what the servers of the revision on view are doing, after every change.
@@ -315,6 +317,7 @@ impl Watched {
             sink(ServerRuntimes {
                 serial: self.serial,
                 runtimes: self.runtimes(servers),
+                features: servers.features.clone(),
             });
         }
         let failures = self.failures(servers);
@@ -593,20 +596,17 @@ where
     /// What the servers of the revision on view are doing now.
     pub fn runtimes(&self) -> ServerRuntimes {
         let watched = lock(&self.watched);
+        let servers = self.semantic.pool().servers();
         ServerRuntimes {
             serial: watched.serial,
-            runtimes: watched.runtimes(&self.semantic.pool().servers()),
+            runtimes: watched.runtimes(&servers),
+            features: servers.features,
         }
     }
 
     /// The language that serves `file`; `None`: it is unsupported.
     pub fn language_of(&self, file: &RepoPath) -> Option<&BackendId> {
         self.semantic.language_of(file)
-    }
-
-    /// What the server of `language` offers; `None` before one has started.
-    pub fn features(&self, language: &BackendId) -> Option<Features> {
-        self.semantic.pool().features(language)
     }
 
     /// The restore steps that failed for the trees of the running servers of the revision on view:
@@ -1974,6 +1974,23 @@ mod tests {
                 ("l1", Side::Target, Phase::Ready),
             ]
         );
+        assert_eq!(
+            last.features,
+            [
+                (BackendId("l0".into()), Features::ALL),
+                (BackendId("l1".into()), Features::ALL)
+            ]
+        );
+        for value in told.iter() {
+            for runtime in &value.runtimes {
+                if !matches!(runtime.phase, Phase::Starting | Phase::Failed(_)) {
+                    assert!(
+                        value.features.iter().any(|(l, _)| *l == runtime.language),
+                        "a server that is up has told what it offers: {value:?}"
+                    );
+                }
+            }
+        }
         assert_eq!(semantics.runtimes(), *last);
     }
 
