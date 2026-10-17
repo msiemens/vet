@@ -7,8 +7,9 @@ use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
+use tokio::sync::mpsc::Receiver;
 use vet_backend::Config;
-use vet_protocol::{ChangesetKey, ProjectId, Request};
+use vet_protocol::{ChangesetKey, Event, ProjectId, Request, ServerMessage};
 
 use crate::common::{Client, config, git, handler_with, repo_with, write};
 #[cfg(debug_assertions)]
@@ -77,6 +78,18 @@ impl Rig {
         git(dir, &["checkout", "-q", "-b", name, "main"]);
         write(dir, "src/lib.rs", &format!("pub fn f() -> u32 {{\n    {value}\n}}\n"));
         git(dir, &["commit", "-q", "-am", name]);
+        git(dir, &["checkout", "-q", "main"]);
+    }
+
+    /// A branch that adds `files`.
+    fn branch_with(&self, name: &str, files: &[(&str, &str)]) {
+        let dir: &Path = self.repo.path();
+        git(dir, &["checkout", "-q", "-b", name, "main"]);
+        for (path, content) in files {
+            write(dir, path, content);
+        }
+        git(dir, &["add", "-A"]);
+        git(dir, &["commit", "-q", "-m", name]);
         git(dir, &["checkout", "-q", "main"]);
     }
 
@@ -156,6 +169,70 @@ async fn a_changeset_put_on_view_from_the_queue_starts_no_server_and_the_review_
     rig.show_review(true).await;
     assert!(rig.servers_started() > 0, "the review screen starts them");
     rig.launched_beyond(0).await;
+}
+
+/// Whether the symbols and the target diagnostics of `path` were pushed within `within`.
+#[cfg(debug_assertions)]
+async fn pushed_for(
+    inbox: &mut Receiver<ServerMessage>,
+    project: ProjectId,
+    path: &str,
+    within: Duration,
+) -> (bool, bool) {
+    let (mut symbols, mut diagnostics) = (false, false);
+    let deadline = tokio::time::Instant::now() + within;
+    while !(symbols && diagnostics) {
+        let left = deadline.saturating_duration_since(tokio::time::Instant::now());
+        let Ok(Some(ServerMessage::Event { event })) = tokio::time::timeout(left, inbox.recv()).await else {
+            break;
+        };
+        match event {
+            Event::FileSymbols {
+                project: at,
+                symbols: pushed,
+                ..
+            } if at == project && pushed.path == path => symbols = true,
+            Event::FileDiagnostics {
+                project: at,
+                path: pushed,
+                compared: false,
+                ..
+            } if at == project && pushed == path => diagnostics = true,
+            _ => {}
+        }
+    }
+    (symbols, diagnostics)
+}
+
+#[cfg(debug_assertions)]
+#[tokio::test]
+async fn a_file_no_server_claims_is_analysed_while_the_rust_server_is_still_starting() {
+    let mut rig = Rig::start().await;
+    let files: Vec<(String, String)> = ["a", "b", "c", "d", "e"]
+        .iter()
+        .map(|name| (format!("src/{name}.rs"), format!("pub fn {name}() {{}}\n")))
+        .chain([("zz.unclaimed".to_owned(), "text\n".to_owned())])
+        .collect();
+    let files: Vec<(&str, &str)> = files.iter().map(|(p, c)| (p.as_str(), c.as_str())).collect();
+    rig.branch_with("wide", &files);
+
+    rig.open("wide").await;
+    rig.show_review(true).await;
+    // The script never answers `initialize`, so the start of the rust server goes on.
+    rig.launched_beyond(0).await;
+
+    let (symbols, diagnostics) = pushed_for(
+        &mut rig.client.inbox,
+        rig.project,
+        "zz.unclaimed",
+        Duration::from_secs(10),
+    )
+    .await;
+    assert!(symbols, "the symbols of the unclaimed file waited for the rust server");
+    assert!(
+        diagnostics,
+        "the problems of the unclaimed file waited for the rust server"
+    );
 }
 
 #[cfg(debug_assertions)]

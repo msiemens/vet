@@ -5,12 +5,13 @@
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU32, Ordering};
 
-use futures::stream::{self, StreamExt};
+use futures::stream::StreamExt;
+use tokio::sync::Semaphore;
 use vet_core::content::RepoPath;
 use vet_protocol::{DerivedInputs, Event, FileSymbols, Response, Unavailable, UnavailableKind};
 
 use crate::Open;
-use crate::analysis::{changed_files, injected, retrying};
+use crate::analysis::{BOTH_SIDES, Turns, changed_files, in_turns, injected, retrying};
 use crate::error::Error;
 use crate::open::Booted;
 
@@ -38,16 +39,24 @@ async fn run(open: Arc<Open>, revision: u32) {
     let (opened, rest) = changed_files(&open, &booted, |file| !file.hunks.is_empty()).await;
     let total = (opened.len() + rest.len()) as u32;
     let done = Arc::new(AtomicU32::new(0));
-    // The files the viewer has open first, then the rest; each batch a few at a time.
+    // The files the viewer has open first, then the rest; each batch a few at a time, which are
+    // turns taken in order: a file waiting for its server gives its turn away.
+    let permits = Arc::new(Semaphore::new(AT_ONCE));
     for batch in [opened, rest] {
-        stream::iter(batch)
-            .for_each_concurrent(AT_ONCE, |path| {
-                let (open, booted, done) = (open.clone(), booted.clone(), done.clone());
+        in_turns(batch, permits.clone())
+            .for_each_concurrent(None, |(path, permit)| {
+                let (open, booted, done, permits) = (open.clone(), booted.clone(), done.clone(), permits.clone());
                 async move {
                     if !open.screens.shown() || booted.session.revision().await != revision {
                         return;
                     }
-                    let symbols = match retrying(|| {
+                    let turns = Turns::new(
+                        permits,
+                        booted.semantics.watch_runtimes(),
+                        booted.semantics.language_of(&RepoPath::from(path.as_str())).cloned(),
+                        BOTH_SIDES,
+                    );
+                    let symbols = match retrying(&turns, permit, || {
                         let (open, booted, path) = (open.clone(), booted.clone(), path.clone());
                         async move {
                             match injected(&open, &path) {

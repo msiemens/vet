@@ -4,13 +4,14 @@
 
 use std::sync::Arc;
 
-use futures::stream::{self, StreamExt};
+use futures::stream::StreamExt;
+use tokio::sync::{OwnedSemaphorePermit, Semaphore};
 use vet_app::session::FileStatus;
 use vet_core::content::RepoPath;
 use vet_protocol::{Event, Response, Unavailable, UnavailableKind};
 
 use crate::Open;
-use crate::analysis::{changed_files, retrying};
+use crate::analysis::{BOTH_SIDES, TARGET_SIDE, Turns, changed_files, in_turns, retrying};
 use crate::open::Booted;
 
 /// Files whose target side is read at once, as the window did.
@@ -42,17 +43,18 @@ async fn run(open: Arc<Open>, revision: u32) {
     })
     .await;
     for compared in [false, true] {
-        let at_once = if compared { COMPARED_AT_ONCE } else { TARGET_AT_ONCE };
-        // The files the viewer has open first, then the rest; each batch a few at a time.
+        let at_once = Arc::new(Semaphore::new(if compared { COMPARED_AT_ONCE } else { TARGET_AT_ONCE }));
+        // The files the viewer has open first, then the rest; each batch a few at a time, which are
+        // turns taken in order: a file waiting for its server gives its turn away.
         for batch in [&opened, &rest] {
-            stream::iter(batch.iter().cloned())
-                .for_each_concurrent(at_once, |path| {
-                    let (open, booted) = (open.clone(), booted.clone());
+            in_turns(batch.iter().cloned(), at_once.clone())
+                .for_each_concurrent(None, |(path, permit)| {
+                    let (open, booted, at_once) = (open.clone(), booted.clone(), at_once.clone());
                     async move {
                         if !open.screens.shown() || booted.session.revision().await != revision {
                             return;
                         }
-                        push(&open, &booted, revision, &path, compared).await;
+                        push(&open, &booted, revision, &path, compared, &at_once, permit).await;
                     }
                 })
                 .await;
@@ -64,9 +66,23 @@ async fn run(open: Arc<Open>, revision: u32) {
 }
 
 /// Asks the backend for one file's diagnostics and pushes them; `compared` asks for the comparison
-/// with the base side.
-async fn push(open: &Open, booted: &Booted, revision: u32, path: &str, compared: bool) {
-    let event = match retrying(|| {
+/// with the base side. `permit` is the turn of `permits` the file took.
+async fn push(
+    open: &Open,
+    booted: &Booted,
+    revision: u32,
+    path: &str,
+    compared: bool,
+    permits: &Arc<Semaphore>,
+    permit: OwnedSemaphorePermit,
+) {
+    let turns = Turns::new(
+        permits.clone(),
+        booted.semantics.watch_runtimes(),
+        booted.semantics.language_of(&RepoPath::from(path)).cloned(),
+        if compared { BOTH_SIDES } else { TARGET_SIDE },
+    );
+    let event = match retrying(&turns, permit, || {
         let (booted, path) = (booted, path.to_owned());
         async move { booted.diagnostics(revision, &path, compared).await }
     })

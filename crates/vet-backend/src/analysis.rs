@@ -1,19 +1,28 @@
 //! Which changed files the background analysis (symbols, problems) reads, in what order, and how a
-//! failure that can pass is asked again.
+//! failure that can pass is asked again once what it waits for is over.
 
 #[cfg(debug_assertions)]
 use std::collections::{HashMap, VecDeque};
+use std::future::Future;
+use std::sync::Arc;
 #[cfg(debug_assertions)]
 use std::sync::Mutex;
 use std::time::Duration;
+
+use futures::stream::{self, Stream, StreamExt};
+use tokio::sync::{OwnedSemaphorePermit, Semaphore, watch};
 
 #[cfg(debug_assertions)]
 use crate::mutex::lock;
 use vet_app::analysis::open_first;
 #[cfg(debug_assertions)]
 use vet_app::ports::StoreError;
+use vet_app::semantics::ServerRuntimes;
 use vet_app::session::{FileView, SessionError, View};
+use vet_core::review::Side;
 use vet_protocol::{Response, Unavailable, UnavailableKind};
+use vet_semantic::pool::Phase;
+use vet_semantic::ports::BackendId;
 
 use crate::Open;
 use crate::error::Error;
@@ -25,15 +34,37 @@ const TRIES: usize = 3;
 /// How long between two tries.
 const RETRY_PAUSE: Duration = Duration::from_millis(500);
 
-/// Whether a reason the semantic layer gave for a file can pass if it is asked again: a server at
-/// work on its own, or a query that failed (the server may have been restarted). A server that
-/// failed to start or stays stopped cannot: the pool answers that failure for a while without
-/// trying again, and a restart by hand restarts the analysis. Nor can a lasting reason — no server
-/// for its language, a project the analysis may not run in, the server does not offer the
-/// operation, no text to analyse (binary, too large, not a changed file), a snapshot that cannot
-/// be rebuilt.
-fn can_pass(reason: &Unavailable) -> bool {
-    matches!(reason.kind, UnavailableKind::Incomplete | UnavailableKind::QueryFailed)
+/// How long one wait for a file's server to finish working lasts at most; after it the file is
+/// asked again whatever the server does.
+const READY_WAIT: Duration = Duration::from_secs(10);
+
+/// Both sides of the revision on view: what a comparison with the base asks of the servers.
+pub(crate) const BOTH_SIDES: &[Side] = &[Side::Base, Side::Target];
+/// The target side alone: what reading a file's own problems asks of the servers.
+pub(crate) const TARGET_SIDE: &[Side] = &[Side::Target];
+
+/// What a file waits for before it is asked again, from the weakest to the strongest.
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Debug)]
+enum Again {
+    /// Nothing can change the answer: a server that failed to start or stays stopped (the pool
+    /// answers that failure for a while without trying again, and a restart by hand restarts the
+    /// analysis), or a lasting reason — no server for its language, a project the analysis may
+    /// not run in, the server does not offer the operation, no text to analyse (binary, too large,
+    /// not a changed file), a snapshot that cannot be rebuilt.
+    Never,
+    /// A query that failed (the server may have been restarted): a pause is honest.
+    Pause,
+    /// A server at work on its own: asking again helps once it is at rest.
+    AtRest,
+}
+
+/// What a reason the semantic layer gave for a file waits for.
+fn again_for(reason: &Unavailable) -> Again {
+    match reason.kind {
+        UnavailableKind::Incomplete => Again::AtRest,
+        UnavailableKind::QueryFailed => Again::Pause,
+        _ => Again::Never,
+    }
 }
 
 /// Whether a failure of the analysis itself can pass: a store read (the review database, its
@@ -48,41 +79,181 @@ fn error_can_pass(error: &Error) -> bool {
     }
 }
 
-/// Whether the answer to one file's analysis is a failure that can pass: the whole answer failed,
-/// the comparison with the base could not be made, or a server was at work while it answered.
-fn answer_can_pass(answer: &Response) -> bool {
-    match answer {
-        Response::FileSymbols(symbols) => symbols.gap.as_ref().is_some_and(can_pass),
-        Response::Diagnostics {
+/// What the outcome of one file's analysis waits for before the file is asked again: the whole
+/// answer failed, the comparison with the base could not be made, or a server was at work while it
+/// answered.
+fn again(outcome: &Result<Response, Error>) -> Again {
+    match outcome {
+        Err(error) if error_can_pass(error) => Again::Pause,
+        Err(_) => Again::Never,
+        Ok(Response::FileSymbols(symbols)) => symbols.gap.as_ref().map_or(Again::Never, again_for),
+        Ok(Response::Diagnostics {
             unavailable,
             origin_unavailable,
             incomplete,
             ..
-        } => {
-            unavailable.as_ref().is_some_and(can_pass)
-                || origin_unavailable.as_ref().is_some_and(can_pass)
-                || incomplete.is_some()
+        }) => {
+            if incomplete.is_some() {
+                return Again::AtRest;
+            }
+            [unavailable, origin_unavailable]
+                .into_iter()
+                .flatten()
+                .map(again_for)
+                .max()
+                .unwrap_or(Again::Never)
         }
-        _ => false,
+        Ok(_) => Again::Never,
     }
 }
 
-/// `analyse`, asked up to [`TRIES`] times while it fails for a reason that can pass; the last
-/// answer is returned. Callers check the review screen and the revision before each file; a newer
-/// run, a hidden screen or a closed project aborts the task, and with it a pause between two tries.
-pub(crate) async fn retrying<F, Fut>(mut analyse: F) -> Result<Response, Error>
-where
-    F: FnMut() -> Fut,
-    Fut: std::future::Future<Output = Result<Response, Error>>,
-{
-    for _ in 1..TRIES {
-        match analyse().await {
-            Ok(answer) if !answer_can_pass(&answer) => return Ok(answer),
-            Err(error) if !error_can_pass(&error) => return Err(error),
-            Ok(_) | Err(_) => tokio::time::sleep(RETRY_PAUSE).await,
+/// The turns of one batch of files to analyse, and what one file waits for outside them: its
+/// server. A file asks while it holds a turn; while its server starts, and while it waits to ask
+/// again, it holds none, so files of other languages and files the cache can answer go on.
+pub(crate) struct Turns {
+    permits: Arc<Semaphore>,
+    runtimes: watch::Receiver<ServerRuntimes>,
+    /// The language of the file; none when no server serves it.
+    language: Option<BackendId>,
+    /// The sides of the revision on view the analysis of the file asks its server about.
+    sides: &'static [Side],
+    ready_wait: Duration,
+}
+
+impl Turns {
+    pub(crate) fn new(
+        permits: Arc<Semaphore>,
+        runtimes: watch::Receiver<ServerRuntimes>,
+        language: Option<BackendId>,
+        sides: &'static [Side],
+    ) -> Self {
+        Self {
+            permits,
+            runtimes,
+            language,
+            sides,
+            ready_wait: READY_WAIT,
         }
     }
-    analyse().await
+
+    #[cfg(test)]
+    fn waiting_at_most(mut self, ready_wait: Duration) -> Self {
+        self.ready_wait = ready_wait;
+        self
+    }
+
+    /// Whether the file's server has a runtime on one of its sides in a phase `is` accepts.
+    fn phase_is(&self, runtimes: &ServerRuntimes, is: fn(&Phase) -> bool) -> bool {
+        runtimes.runtimes.iter().any(|runtime| {
+            Some(&runtime.language) == self.language.as_ref()
+                && self.sides.contains(&runtime.side)
+                && is(&runtime.phase)
+        })
+    }
+
+    /// Resolves when the file's server is being started; never without a language, nor when the
+    /// runtimes are no longer published.
+    async fn starting(&self) {
+        if self.language.is_some() {
+            let mut runtimes = self.runtimes.clone();
+            if runtimes
+                .wait_for(|now| self.phase_is(now, |phase| matches!(phase, Phase::Starting)))
+                .await
+                .is_ok()
+            {
+                return;
+            }
+        }
+        std::future::pending::<()>().await;
+    }
+
+    /// Waits until the file's server is neither starting nor indexing, at most the readiness wait.
+    async fn at_rest(&self) {
+        let mut runtimes = self.runtimes.clone();
+        let _ = tokio::time::timeout(
+            self.ready_wait,
+            runtimes
+                .wait_for(|now| !self.phase_is(now, |phase| matches!(phase, Phase::Starting | Phase::Indexing { .. }))),
+        )
+        .await;
+    }
+
+    /// `question`, asked under `permit`; the permit is given back as soon as the file's server
+    /// shows it is being started, and the question is awaited without it.
+    async fn asked<Fut: Future<Output = Result<Response, Error>>>(
+        &self,
+        permit: OwnedSemaphorePermit,
+        question: Fut,
+    ) -> Result<Response, Error> {
+        let mut question = std::pin::pin!(question);
+        let early = {
+            let _permit = permit;
+            tokio::select! {
+                biased;
+                answer = &mut question => Some(answer),
+                () = self.starting() => None,
+            }
+        };
+        match early {
+            Some(answer) => answer,
+            None => question.await,
+        }
+    }
+
+    /// The next turn, after those who wait for one.
+    async fn turn(&self) -> OwnedSemaphorePermit {
+        take_turn(self.permits.clone()).await
+    }
+}
+
+async fn take_turn(permits: Arc<Semaphore>) -> OwnedSemaphorePermit {
+    permits
+        .acquire_owned()
+        .await
+        .expect("the turns of a run are never closed")
+}
+
+/// `items`, each with the turn it took from `permits`, taken in order: the next item is yielded
+/// when a turn is free.
+pub(crate) fn in_turns<T>(
+    items: impl IntoIterator<Item = T>,
+    permits: Arc<Semaphore>,
+) -> impl Stream<Item = (T, OwnedSemaphorePermit)> {
+    stream::iter(items).then(move |item| {
+        let permits = permits.clone();
+        async move { (item, take_turn(permits).await) }
+    })
+}
+
+/// `analyse`, asked up to [`TRIES`] times while it fails for a reason that can pass; the last
+/// answer is returned. `first` is the turn the file took to begin; each try asks under a turn and
+/// waits for what it needs outside one: a server at work is waited for until it is at rest, a
+/// failed query pauses. Callers check the review screen and the revision before each file; a newer
+/// run, a hidden screen or a closed project aborts the task, and with it a wait between two tries.
+pub(crate) async fn retrying<F, Fut>(
+    turns: &Turns,
+    first: OwnedSemaphorePermit,
+    mut analyse: F,
+) -> Result<Response, Error>
+where
+    F: FnMut() -> Fut,
+    Fut: Future<Output = Result<Response, Error>>,
+{
+    let mut permit = Some(first);
+    for tried in 1..=TRIES {
+        let turn = match permit.take() {
+            Some(permit) => permit,
+            None => turns.turn().await,
+        };
+        let answer = turns.asked(turn, analyse()).await;
+        match again(&answer) {
+            _ if tried == TRIES => return answer,
+            Again::Never => return answer,
+            Again::AtRest => turns.at_rest().await,
+            Again::Pause => tokio::time::sleep(RETRY_PAUSE).await,
+        }
+    }
+    unreachable!("the last try returns")
 }
 
 /// A failure a test asks the symbols analysis of a file to give, so the retry can be exercised
@@ -164,11 +335,15 @@ pub(crate) async fn changed_files(
 #[cfg(test)]
 mod tests {
     use std::sync::atomic::{AtomicUsize, Ordering};
-    use std::time::Instant;
-
+    use tokio::sync::Notify;
+    use tokio::time::Instant;
+    use vet_app::semantics::ServerRuntime;
     use vet_protocol::{DerivedInputs, FileSymbols, Response, UnavailableKind};
 
-    use super::{Error, RETRY_PAUSE, Unavailable, can_pass, error_can_pass, retrying};
+    use super::{
+        Again, Arc, BOTH_SIDES, BackendId, Duration, Error, Phase, RETRY_PAUSE, Semaphore, ServerRuntimes, Side, Turns,
+        Unavailable, again, retrying, watch,
+    };
 
     /// A reason of the semantic layer of `kind`, as the answer carries it.
     fn reason(kind: UnavailableKind) -> Unavailable {
@@ -180,21 +355,92 @@ mod tests {
         }
     }
 
+    /// The answer for a file's diagnostics, with what the semantic layer said about them.
+    fn diagnostics(
+        unavailable: Option<UnavailableKind>,
+        origin_unavailable: Option<UnavailableKind>,
+        incomplete: bool,
+    ) -> Result<Response, Error> {
+        Ok(Response::Diagnostics {
+            revision: 1,
+            path: "src/lib.rs".into(),
+            diagnostics: Vec::new(),
+            count: 0,
+            unavailable: unavailable.map(reason),
+            origin_unavailable: origin_unavailable.map(reason),
+            incomplete: incomplete.then(|| reason(UnavailableKind::Incomplete)),
+        })
+    }
+
+    fn diagnostics_incomplete() -> Result<Response, Error> {
+        diagnostics(None, None, true)
+    }
+
+    /// What the servers do when the rust server is `phase` on the target side.
+    fn runtimes(phase: Phase) -> ServerRuntimes {
+        ServerRuntimes {
+            serial: 1,
+            runtimes: vec![ServerRuntime {
+                language: BackendId("rust".into()),
+                side: Side::Target,
+                phase,
+            }],
+            features: Vec::new(),
+        }
+    }
+
+    /// The turns of a batch of one at a time, for a rust file; the permit is the one the file took.
+    fn turns(runtimes: ServerRuntimes) -> (Turns, tokio::sync::OwnedSemaphorePermit, watch::Sender<ServerRuntimes>) {
+        let permits = Arc::new(Semaphore::new(1));
+        let first = permits.clone().try_acquire_owned().unwrap();
+        let (sender, receiver) = watch::channel(runtimes);
+        (
+            Turns::new(permits, receiver, Some(BackendId("rust".into())), BOTH_SIDES),
+            first,
+            sender,
+        )
+    }
+
     #[test]
-    fn a_reason_that_can_pass_is_asked_again_and_a_lasting_one_is_not() {
-        for kind in [UnavailableKind::Incomplete, UnavailableKind::QueryFailed] {
-            assert!(can_pass(&reason(kind)), "{kind:?} can pass");
-        }
+    fn each_answer_is_asked_again_after_what_it_waits_for() {
+        use vet_app::ports::StoreError;
+        use vet_app::session::SessionError;
+
+        use UnavailableKind::{
+            AnalysisLimited, Incomplete, NotOffered, QueryFailed, ServerFailed, ServerMissing, SnapshotUnavailable,
+            Unsupported,
+        };
+
         for kind in [
-            UnavailableKind::ServerFailed,
-            UnavailableKind::Unsupported,
-            UnavailableKind::ServerMissing,
-            UnavailableKind::NotOffered,
-            UnavailableKind::AnalysisLimited,
-            UnavailableKind::SnapshotUnavailable,
+            ServerFailed,
+            Unsupported,
+            ServerMissing,
+            NotOffered,
+            AnalysisLimited,
+            SnapshotUnavailable,
         ] {
-            assert!(!can_pass(&reason(kind)), "{kind:?} cannot pass");
+            assert_eq!(again(&Ok(symbols_with_gap(kind))), Again::Never, "{kind:?}");
+            assert_eq!(again(&diagnostics(Some(kind), None, false)), Again::Never, "{kind:?}");
         }
+        assert_eq!(again(&Ok(symbols_with_gap(Incomplete))), Again::AtRest);
+        assert_eq!(again(&Ok(symbols_with_gap(QueryFailed))), Again::Pause);
+        assert_eq!(again(&diagnostics(None, None, false)), Again::Never);
+        assert_eq!(again(&diagnostics_incomplete()), Again::AtRest);
+        assert_eq!(again(&diagnostics(Some(QueryFailed), None, false)), Again::Pause);
+        assert_eq!(again(&diagnostics(None, Some(Incomplete), false)), Again::AtRest);
+        // The strongest wait of the two reasons wins.
+        assert_eq!(
+            again(&diagnostics(Some(QueryFailed), Some(Incomplete), false)),
+            Again::AtRest
+        );
+        assert_eq!(
+            again(&Err(Error::Store(StoreError("the store was busy".into())))),
+            Again::Pause
+        );
+        assert_eq!(
+            again(&Err(Error::Session(SessionError::NotFound("src/lib.rs".into())))),
+            Again::Never
+        );
     }
 
     /// The answer for a file whose symbols could not be determined, for `kind`.
@@ -215,11 +461,12 @@ mod tests {
         })
     }
 
-    #[tokio::test]
+    #[tokio::test(start_paused = true)]
     async fn a_failed_server_is_answered_at_once() {
+        let (turns, first, _runtimes) = turns(runtimes(Phase::Ready));
         let calls = AtomicUsize::new(0);
         let started = Instant::now();
-        let answer = retrying(|| async {
+        let answer = retrying(&turns, first, || async {
             calls.fetch_add(1, Ordering::SeqCst);
             Ok(symbols_with_gap(UnavailableKind::ServerFailed))
         })
@@ -229,14 +476,123 @@ mod tests {
         assert!(started.elapsed() < RETRY_PAUSE);
     }
 
-    #[test]
-    fn a_store_failure_can_pass_and_a_missing_file_cannot() {
-        use vet_app::ports::StoreError;
-        use vet_app::session::SessionError;
+    fn indexing() -> Phase {
+        Phase::Indexing {
+            done_of_total: None,
+            detail: None,
+        }
+    }
 
-        assert!(error_can_pass(&Error::Store(StoreError("the store was busy".into()))));
-        assert!(!error_can_pass(&Error::Session(SessionError::NotFound(
-            "src/lib.rs".into()
-        ))));
+    #[tokio::test(start_paused = true)]
+    async fn an_incomplete_answer_is_asked_again_as_soon_as_its_server_is_at_rest() {
+        let (turns, first, runtimes_sender) = turns(runtimes(indexing()));
+        let permits = turns.permits.clone();
+        let calls = Arc::new(AtomicUsize::new(0));
+        let task = tokio::spawn({
+            let calls = calls.clone();
+            async move {
+                retrying(&turns, first, || {
+                    let first = calls.fetch_add(1, Ordering::SeqCst) == 0;
+                    async move {
+                        if first {
+                            diagnostics_incomplete()
+                        } else {
+                            diagnostics(None, None, false)
+                        }
+                    }
+                })
+                .await
+            }
+        });
+
+        tokio::time::sleep(RETRY_PAUSE / 10).await;
+        assert_eq!(
+            calls.load(Ordering::SeqCst),
+            1,
+            "asked again while the server was at work"
+        );
+        assert_eq!(permits.available_permits(), 1, "the wait held the turn");
+
+        let ready = Instant::now();
+        runtimes_sender.send_replace(runtimes(Phase::Ready));
+        assert!(task.await.unwrap().is_ok());
+        assert_eq!(calls.load(Ordering::SeqCst), 2);
+        assert!(ready.elapsed() < RETRY_PAUSE / 2, "waited a pause, not for the server");
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_question_waiting_on_a_starting_server_gives_its_turn_back() {
+        let (turns, first, _runtimes) = turns(runtimes(Phase::Starting));
+        let permits = turns.permits.clone();
+        let answer = Arc::new(Notify::new());
+        let task = tokio::spawn({
+            let answer = answer.clone();
+            async move {
+                retrying(&turns, first, || {
+                    let answer = answer.clone();
+                    async move {
+                        answer.notified().await;
+                        diagnostics(None, None, false)
+                    }
+                })
+                .await
+            }
+        });
+
+        tokio::time::sleep(RETRY_PAUSE / 5).await;
+        assert_eq!(permits.available_permits(), 1, "the start held the turn");
+        answer.notify_one();
+        assert!(task.await.unwrap().is_ok());
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_server_that_stays_at_work_is_waited_for_at_most_ready_wait_each_try() {
+        let (turns, first, _runtimes) = turns(runtimes(indexing()));
+        let turns = turns.waiting_at_most(Duration::from_millis(100));
+        let calls = AtomicUsize::new(0);
+        let started = Instant::now();
+        let answer = retrying(&turns, first, || async {
+            calls.fetch_add(1, Ordering::SeqCst);
+            diagnostics_incomplete()
+        })
+        .await;
+        assert!(answer.is_ok());
+        assert_eq!(calls.load(Ordering::SeqCst), 3);
+        let took = started.elapsed();
+        assert!(
+            took >= Duration::from_millis(200) && took < Duration::from_secs(2),
+            "{took:?}"
+        );
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_store_failure_pauses_without_holding_a_turn() {
+        use vet_app::ports::StoreError;
+
+        let (turns, first, _runtimes) = turns(runtimes(Phase::Ready));
+        let permits = turns.permits.clone();
+        let calls = Arc::new(AtomicUsize::new(0));
+        let task = tokio::spawn({
+            let calls = calls.clone();
+            async move {
+                retrying(&turns, first, || {
+                    let first = calls.fetch_add(1, Ordering::SeqCst) == 0;
+                    async move {
+                        if first {
+                            Err(Error::Store(StoreError("the store was busy".into())))
+                        } else {
+                            diagnostics(None, None, false)
+                        }
+                    }
+                })
+                .await
+            }
+        });
+
+        tokio::time::sleep(RETRY_PAUSE / 5).await;
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
+        assert_eq!(permits.available_permits(), 1, "the pause held the turn");
+        assert!(task.await.unwrap().is_ok());
+        assert_eq!(calls.load(Ordering::SeqCst), 2);
     }
 }
