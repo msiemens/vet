@@ -176,6 +176,8 @@ pub struct Orchestrator {
     /// How often each project's background tasks were started and how many run now: what
     /// `Request::WaitForQuiet` waits on, and what the tests watch.
     background: Arc<background::Background>,
+    /// For tests: see [`Orchestrator::with_served_platforms`].
+    served_platforms: bool,
 }
 
 #[cfg(debug_assertions)]
@@ -244,7 +246,15 @@ impl Orchestrator {
             #[cfg(debug_assertions)]
             analysis_failures: Arc::default(),
             background: Arc::new(background::Background::new(shutdown_bound)),
+            served_platforms: false,
         }
+    }
+
+    /// For tests: platform fetches are served from the directory the repository's
+    /// `vet.servedPlatforms` names (`GixRepo::serving_platforms`).
+    pub fn with_served_platforms(mut self) -> Self {
+        self.served_platforms = true;
+        self
     }
 
     /// The budgets every project's blocking work and probes draw on.

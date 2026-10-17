@@ -217,7 +217,7 @@ fn hang_when_asked(scratch: &std::path::Path) -> (std::path::PathBuf, std::path:
             "#!/bin/sh\nif [ -e '{}' ]; then : > '{}'; exec sleep 5; fi\nexec git-upload-pack '{}'\n",
             hang.display(),
             hanging.display(),
-            scratch.join("served.git").display()
+            crate::prefetch::served_repo(scratch).display()
         ),
     )
     .unwrap();

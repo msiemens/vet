@@ -616,7 +616,7 @@ async fn a_periodic_fetch_that_moved_a_ref_announces_follows_and_syncs() {
         &[
             "push",
             "-q",
-            scratch.path().join("served.git").to_str().unwrap(),
+            crate::prefetch::served_repo(scratch.path()).to_str().unwrap(),
             "feature:refs/heads/main",
         ],
     );

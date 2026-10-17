@@ -184,7 +184,8 @@ fn served(dir: &Path) -> (Served, PathBuf) {
     git(&work, &["add", "-A"]);
     git(&work, &["commit", "-qm", "first push"]);
     let head1 = git(&work, &["rev-parse", "HEAD"]);
-    let bare = dir.join("served.git");
+    let bare = dir.join("dev.azure.com/contoso/Shop/_git/api");
+    std::fs::create_dir_all(&bare).unwrap();
     git(dir, &["init", "-q", "--bare", bare.to_str().unwrap()]);
     // The earlier push is fetched by commit, as Azure DevOps serves it.
     git(&bare, &["config", "uploadpack.allowAnySHA1InWant", "true"]);
@@ -243,6 +244,14 @@ fn project(wrapper: &Path) -> tempfile::TempDir {
     );
     git(repo.path(), &["config", "core.sshCommand", wrapper.to_str().unwrap()]);
     git(repo.path(), &["config", "ssh.variant", "ssh"]);
+    git(
+        repo.path(),
+        &[
+            "config",
+            "vet.servedPlatforms",
+            wrapper.parent().unwrap().to_str().unwrap(),
+        ],
+    );
     repo
 }
 
@@ -282,7 +291,8 @@ async fn backend(data: &Path, fake: &Fake) -> (Arc<Orchestrator>, Client) {
 /// A backend whose remotes are fetched every `fetch_interval`.
 async fn backend_fetching_every(data: &Path, fake: &Fake, fetch_interval: Duration) -> (Arc<Orchestrator>, Client) {
     let orchestrator = Orchestrator::new(open_store(data).await.unwrap(), config_fetching_every(fetch_interval))
-        .with_platform_endpoints(None, Some(&fake.base()));
+        .with_platform_endpoints(None, Some(&fake.base()))
+        .with_served_platforms();
     signed_in(orchestrator).await
 }
 
@@ -328,6 +338,7 @@ impl Rig {
         let data = tempfile::tempdir().unwrap();
         let orchestrator = Orchestrator::new(open_store(data.path()).await.unwrap(), config())
             .with_platform_endpoints(None, Some(&fake.base()))
+            .with_served_platforms()
             .with_analysis_failing(path, failures);
         let (_orchestrator, client) = signed_in(orchestrator).await;
         let project = client.open(repo.path()).await;
@@ -806,7 +817,7 @@ async fn a_push_to_a_github_pull_request_leaves_the_changed_lines_unseen() {
     write(&work, "a.txt", "base\npushed\n");
     git(&work, &["add", "-A"]);
     git(&work, &["commit", "-qm", "a push"]);
-    let bare = scratch.path().join("served.git");
+    let bare = crate::prefetch::served_repo(scratch.path());
     git(
         &work,
         &["push", "-q", bare.to_str().unwrap(), "feature:refs/pull/7/head"],
@@ -849,7 +860,8 @@ fn served_rust(dir: &Path) -> (Served, PathBuf) {
     git(&work, &["add", "-A"]);
     git(&work, &["commit", "-qm", "first push"]);
     let head1 = git(&work, &["rev-parse", "HEAD"]);
-    let bare = dir.join("served.git");
+    let bare = dir.join("dev.azure.com/contoso/Shop/_git/api");
+    std::fs::create_dir_all(&bare).unwrap();
     git(dir, &["init", "-q", "--bare", bare.to_str().unwrap()]);
     git(&bare, &["config", "uploadpack.allowAnySHA1InWant", "true"]);
     git(

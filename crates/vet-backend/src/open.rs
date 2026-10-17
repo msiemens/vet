@@ -503,7 +503,11 @@ impl Orchestrator {
         // A fetch holds its thread for as long as the network takes, so it has a budget of
         // its own: it must not take the review's threads, nor the semantic lane's. The pull
         // request feed shares it, over the platforms and the refs.
-        let fetch = Arc::new(Fetch::new(GixRepo::new(&repo, Budget::new(FETCH_IO)), tasks.clone()));
+        let mut git = GixRepo::new(&repo, Budget::new(FETCH_IO));
+        if self.served_platforms {
+            git = git.serving_platforms();
+        }
+        let fetch = Arc::new(Fetch::new(git, tasks.clone()));
         let supervisor = self.background.supervisor(id);
         let feed = self.pull_request_feed(fetch.clone(), entry.clone(), supervisor.clone());
         let sync = crate::sync::trigger(&supervisor, entry.clone());

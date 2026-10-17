@@ -467,8 +467,9 @@ fn azure(mock: Arc<Mutex<AzureMock>>) -> Fake {
 }
 
 /// A bare repository the wrapper serves: `main` at the base commit and `refs/pull/7/head` at the
-/// head. Answers the two commits and the wrapper's path.
-fn served(dir: &Path) -> (String, String, PathBuf) {
+/// head, at `at` below `dir`: where the platform's URL is served from. Answers the two commits and
+/// the wrapper's path.
+fn served(dir: &Path, at: &str) -> (String, String, PathBuf) {
     let work = dir.join("work");
     std::fs::create_dir_all(&work).unwrap();
     init(&work);
@@ -481,7 +482,8 @@ fn served(dir: &Path) -> (String, String, PathBuf) {
     git(&work, &["add", "-A"]);
     git(&work, &["commit", "-qm", "feature"]);
     let head = git(&work, &["rev-parse", "HEAD"]);
-    let bare = dir.join("served.git");
+    let bare = dir.join(at);
+    std::fs::create_dir_all(&bare).unwrap();
     git(dir, &["init", "-q", "--bare", bare.to_str().unwrap()]);
     git(
         &work,
@@ -504,7 +506,13 @@ fn served(dir: &Path) -> (String, String, PathBuf) {
     (base, head, wrapper)
 }
 
-/// A project whose `origin` is `github.com/acme/app`, fetched through `wrapper`.
+/// The bare repository `fixture` serves as `github.com/acme/app`.
+pub(crate) fn served_repo(scratch: &Path) -> PathBuf {
+    scratch.join("github.com/acme/app.git")
+}
+
+/// A project whose `origin` is `github.com/acme/app`, fetched through `wrapper`, and which the
+/// wrapper's directory serves the platform's URLs for.
 fn project(wrapper: &Path) -> tempfile::TempDir {
     let repo = tempfile::tempdir().unwrap();
     init(repo.path());
@@ -519,13 +527,21 @@ fn project(wrapper: &Path) -> tempfile::TempDir {
     // The `ssh` variant is invoked with the options gix uses; without it gix probes the command
     // with a feature check, which would run the wrapper's `git-upload-pack` and wait on its stdin.
     git(repo.path(), &["config", "ssh.variant", "ssh"]);
+    git(
+        repo.path(),
+        &[
+            "config",
+            "vet.servedPlatforms",
+            wrapper.parent().unwrap().to_str().unwrap(),
+        ],
+    );
     repo
 }
 
 /// Two pull requests, 7 updated before 8, and the bare repository they are fetched from.
 pub(crate) fn fixture() -> (Arc<Mutex<Mock>>, Fake, tempfile::TempDir, tempfile::TempDir) {
     let scratch = tempfile::tempdir().unwrap();
-    let (base, head, wrapper) = served(scratch.path());
+    let (base, head, wrapper) = served(scratch.path(), "github.com/acme/app.git");
     let mock = Arc::new(Mutex::new(Mock {
         base,
         prs: vec![
@@ -567,6 +583,14 @@ fn azure_project(wrapper: &Path) -> tempfile::TempDir {
     );
     git(repo.path(), &["config", "core.sshCommand", wrapper.to_str().unwrap()]);
     git(repo.path(), &["config", "ssh.variant", "ssh"]);
+    git(
+        repo.path(),
+        &[
+            "config",
+            "vet.servedPlatforms",
+            wrapper.parent().unwrap().to_str().unwrap(),
+        ],
+    );
     repo
 }
 
@@ -574,7 +598,7 @@ fn azure_project(wrapper: &Path) -> tempfile::TempDir {
 /// are fetched from.
 fn azure_fixture(count: u64) -> (Arc<Mutex<AzureMock>>, Fake, tempfile::TempDir, tempfile::TempDir) {
     let scratch = tempfile::tempdir().unwrap();
-    let (_base, head, wrapper) = served(scratch.path());
+    let (_base, head, wrapper) = served(scratch.path(), "dev.azure.com/contoso/Shop/_git/api");
     let mock = Arc::new(Mutex::new(AzureMock {
         prs: (0..count)
             .map(|i| Pr {
@@ -610,8 +634,11 @@ pub(crate) async fn backend(data: &Path, base: &str) -> (Arc<Orchestrator>, Clie
 
 /// A backend on `config`, whose platforms answer at `base`, with the credential the fake accepts.
 pub(crate) async fn backend_with(data: &Path, base: &str, config: Config) -> (Arc<Orchestrator>, Client) {
-    let orchestrator =
-        Arc::new(Orchestrator::new(open_store(data).await.unwrap(), config).with_platform_endpoints(Some(base), None));
+    let orchestrator = Arc::new(
+        Orchestrator::new(open_store(data).await.unwrap(), config)
+            .with_platform_endpoints(Some(base), None)
+            .with_served_platforms(),
+    );
     let client = Client::new(&orchestrator);
     client
         .call(Request::SetCredentials {
@@ -627,7 +654,9 @@ pub(crate) async fn backend_with(data: &Path, base: &str, config: Config) -> (Ar
 /// A backend whose Azure DevOps answers at `base`, with the credential the fake accepts.
 async fn azure_backend(data: &Path, base: &str) -> (Arc<Orchestrator>, Client) {
     let orchestrator = Arc::new(
-        Orchestrator::new(open_store(data).await.unwrap(), config()).with_platform_endpoints(None, Some(base)),
+        Orchestrator::new(open_store(data).await.unwrap(), config())
+            .with_platform_endpoints(None, Some(base))
+            .with_served_platforms(),
     );
     let client = Client::new(&orchestrator);
     client
