@@ -526,10 +526,10 @@ export class TextView {
     return view && lineOf(view.state.doc, view.state.selection.main.head);
   }
 
-  /** The first line in view and the caret's, as 0-based lines; none until the text has arrived. */
+  /** The first line in view and the caret's, as 0-based lines; none until the text has arrived or while the view is detached. */
   lines(): PanePosition | undefined {
     const { view } = this;
-    if (!view) return undefined;
+    if (!view?.dom.isConnected) return undefined;
     const { doc } = view.state;
     // A line scrolled to the edge starts there, to the pixel: probe just below.
     const rootTop = view.scrollDOM.getBoundingClientRect().top;

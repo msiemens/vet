@@ -420,16 +420,21 @@ export class ChangesetView {
     this.root.scrollTop = this.sections[fi].top + offset;
   }
 
-  /** A wrapping editor measured its lines: the section takes the height its editor now has. */
+  /**
+   * A wrapping editor measured its lines: the section takes the height its editor now has. An editor
+   * outside the viewport only estimates its height, so its section keeps the one it has.
+   */
   private heightChanged(s: Section) {
     this.measured.add(s);
     this.measuring ??= requestAnimationFrame(() => {
       this.measuring = undefined;
       let scrollTop = this.root.scrollTop;
       const m = this.heights.m;
+      const bottom = scrollTop + this.root.clientHeight;
       for (const section of this.measured) {
         const views = section.handle?.views;
         if (!views) continue;
+        if (section.top + section.height <= scrollTop || section.top >= bottom) continue;
         const editor = Math.max(...views.map((v) => v.contentHeight));
         scrollTop += this.heights.resize(
           section,
@@ -1084,10 +1089,10 @@ export class ChangesetView {
     return this.heights.m.header + this.heights.m.hunk;
   }
 
-  /** The first target line in view and the caret's of the first file, as lines; none while its editor is not mounted. */
+  /** The first target line in view and the caret's of the first file, as lines; none while its editor is not mounted or the view is detached. */
   lines(): PanePosition | undefined {
     const view = this.sections[0]?.handle?.view;
-    if (!view) return undefined;
+    if (!view?.dom.isConnected) return undefined;
     const { doc } = view.state;
     // A line scrolled to the edge starts there, to the pixel: probe just below.
     const rootTop = this.root.getBoundingClientRect().top;

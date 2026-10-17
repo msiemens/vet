@@ -738,9 +738,15 @@ export const sessions: Record<string, (d: Driver) => Promise<void>> = {
     await switchTo(`{ type: "branch", name: "feature" }`, "branch");
     await switchTo(`{ type: "workingTree" }`, "workingTree");
     await d.sleep(1000);
-    // The place is restored by file and distance, which lands on the same file but not on the same pixel.
-    const scrolled = (await d.page(`document.querySelector(".pane.active .scroll").scrollTop`)) as number;
-    if (scrolled < 400) throw new Error(`the Changes tab was at ${changesProbe.line} and came back at the top`);
+    const scrollTop = () => d.page(`document.querySelector(".pane.active .scroll").scrollTop`) as Promise<number>;
+    const scrolled = await scrollTop();
+    if (scrolled !== 800)
+      throw new Error(`the Changes tab was at ${changesProbe.line} and came back scrolled to ${scrolled}`);
+    // Sections above the view keep the heights they had: scrolling up moves nothing under it.
+    await d.page(`document.querySelector(".pane.active .scroll").scrollTop = 700`);
+    await d.sleep(500);
+    const up = await scrollTop();
+    if (up !== 700) throw new Error(`scrolling the Changes tab up to 700 moved it to ${up}`);
     if (JSON.stringify(await settings()) !== JSON.stringify(set))
       throw new Error(`the Problems settings were ${JSON.stringify(set)} and are ${JSON.stringify(await settings())}`);
     const kept = await listeners();
