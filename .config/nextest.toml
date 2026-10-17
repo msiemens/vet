@@ -6,8 +6,9 @@
 # typescript-language-server, pyright, roslyn, dotnet, npm). Several at once
 # compete for CPU and slow each other past their own timeouts.
 language-servers = { max-threads = 2 }
-# The load tests (`vet-backend`'s `load` module): each runs a backend on a 300-file repository against
-# servers that are stuck on purpose, and counts on the whole machine. They run one at a time.
+# The load tests (`vet-backend`'s `load` module): each runs a backend against servers that are
+# stuck on purpose, three of them on a repository of 300 changed files whose diff is CPU work.
+# They run one at a time, so that two of them do not slow each other.
 load = { max-threads = 1 }
 # The Roslyn tests: each restores a project of its own into one shared NuGet cache and starts a
 # server that loads it; they run one at a time.
@@ -27,10 +28,9 @@ test-group = "roslyn"
 filter = 'binary(it) & ((package(vet-infra) & test(/^(lsp|servers|restore)::/)) | (package(vet-backend) & test(/^(semantic|restore|python)::/)))'
 test-group = "language-servers"
 
-# A load test also takes every test thread, so that nothing else runs beside it and takes the
-# CPU its diffs and hashes need: under a full parallel run it would otherwise be starved past
-# the timeout above while it passes alone.
+# A load test waits on work that is stuck on purpose and bounds each request at 120 s itself, so
+# nextest's kill comes later than that when a busy machine starves its diffs and hashes.
 [[profile.default.overrides]]
 filter = 'package(vet-backend) & binary(it) & test(/^load::/)'
 test-group = "load"
-threads-required = "num-test-threads"
+slow-timeout = { period = "60s", terminate-after = 4 }
