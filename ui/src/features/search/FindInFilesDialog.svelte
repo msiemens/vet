@@ -5,7 +5,6 @@
   import type { SearchSide } from "../../generated/SearchSide";
   import type { View } from "../../generated/View";
   import { letterOfStatus } from "../../lib/changeLetter";
-  import { Debounced } from "../../lib/debounced";
   import { errorText } from "../../lib/errorText";
   import { toggleIn } from "../../lib/foldKeys";
   import { count, noun, plural } from "../../lib/format";
@@ -36,8 +35,8 @@
   import { commands } from "../../state/commands";
   import type { KeptSearch } from "../../state/findSets.svelte";
   import { isMac } from "../../state/host";
+  import { SearchRun } from "../../state/searchRun";
   import { findInFiles } from "./FindInFiles.svelte";
-  import { LatestRun } from "./latestRun";
   import ResultPreview from "./ResultPreview.svelte";
   import {
     type OpenedResult,
@@ -100,7 +99,7 @@
   let scopeOpen = $state(false);
   let input = $state<HTMLInputElement>();
   let list = $state<VirtualRows>();
-  const latest = new LatestRun<SearchResults>();
+  const run = new SearchRun();
 
   const choices = $derived(
     scopeChoices({ view, files, range, commits: commits.map(({ shortId, subject }) => ({ shortId, subject })) }),
@@ -149,35 +148,29 @@
   $effect(() => {
     const request = asked();
     // The gate reads the revision too, so a new changeset runs the search again.
-    if (!reasked(revision, request)) return;
+    if (!reasked(revision, JSON.stringify(request))) return;
     if (!request.pattern.text) {
-      latest.cancel();
+      run.cancel();
       results = undefined;
       error = undefined;
       pending = false;
       return;
     }
     pending = true;
-    const pause = new Debounced();
-    pause.schedule(120, () => {
-      void latest
-        .run((signal) => backend.search(request, signal))
-        .then((outcome) => {
-          if (!outcome) return;
-          pending = false;
-          if (outcome.type === "done") {
-            results = outcome.value;
-            error = undefined;
-          } else {
-            results = undefined;
-            error = errorText(outcome.error);
-          }
-        });
+    void run.ask(backend, request, 120).then((outcome) => {
+      if (!outcome) return;
+      pending = false;
+      if (outcome.type === "done") {
+        results = outcome.value;
+        error = undefined;
+      } else {
+        results = undefined;
+        error = errorText(outcome.error);
+      }
     });
-    return () => pause.cancel();
   });
 
-  onDestroy(() => latest.cancel());
+  onDestroy(() => run.cancel());
 
   const maskError = $derived(error?.startsWith('invalid pattern "') === true);
 

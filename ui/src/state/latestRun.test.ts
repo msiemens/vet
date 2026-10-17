@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { abortError } from "../../lib/abort.ts";
+import { abortError } from "../lib/abort.ts";
 import { LatestRun } from "./latestRun.ts";
 
 /** A request that answers when told, and rejects like a cancelled one when its signal aborts. */
@@ -37,6 +37,12 @@ void test("an answer that comes after the run was replaced is dropped even when 
   late("old");
   assert.equal(await slow, undefined);
   assert.deepEqual(await next, { type: "done", value: "new" });
+});
+
+void test("an abort the run did not ask for is a failure", async () => {
+  const run = new LatestRun<string>();
+  const error = abortError();
+  assert.deepEqual(await run.run(() => Promise.reject(error)), { type: "failed", error });
 });
 
 void test("a failure of the run is told, and one of a run given up on is not", async () => {

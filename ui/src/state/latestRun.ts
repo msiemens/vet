@@ -1,8 +1,6 @@
 // A search that is asked again gives up on the one before it: its request is cancelled, so the backend
 // does not go on reading files for an answer nobody wants, and its answer is dropped if it comes anyway.
 
-import { isAbort } from "../../lib/abort.ts";
-
 /** How a run ended; none if a later run or `cancel` replaced it. */
 export type Outcome<T> = { type: "done"; value: T } | { type: "failed"; error: unknown };
 
@@ -18,7 +16,7 @@ export class LatestRun<T> {
     try {
       outcome = { type: "done", value: await ask(mine.signal) };
     } catch (error) {
-      if (isAbort(error)) return undefined;
+      if (mine.signal.aborted) return undefined;
       outcome = { type: "failed", error };
     }
     return mine.signal.aborted ? undefined : outcome;
