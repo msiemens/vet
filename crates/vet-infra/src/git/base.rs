@@ -40,28 +40,22 @@ pub(super) fn merge_base(repo: &gix::Repository, reference: &str, tip: &CommitId
         .map_err(|_| unrelated())?;
     // gix orders and prunes candidates by commit time, so with equal times it can keep a commit
     // that is an ancestor of another candidate.
-    for base in &bases {
-        let mut redundant = false;
-        for better in bases.iter().filter(|b| b.detach() != base.detach()) {
-            redundant |= is_ancestor(repo, base.detach(), better.detach())?;
+    'candidates: for base in &bases {
+        for other in bases.iter().filter(|o| o.detach() != base.detach()) {
+            if reaches(repo, other.detach(), base.detach())? {
+                continue 'candidates;
+            }
         }
-        if !redundant {
-            return Ok(CommitId(base.to_string()));
-        }
+        return Ok(CommitId(base.to_string()));
     }
     Err(unrelated())
 }
 
-/// Whether `ancestor` is `descendant` or reachable from it. The walk visits the whole history
-/// instead of relying on commit times, which gix's merge-base search trusts.
-fn is_ancestor(repo: &gix::Repository, ancestor: gix::ObjectId, descendant: gix::ObjectId) -> Result<bool, GitError> {
-    let walk = repo
-        .rev_walk([descendant])
-        .sorting(gix::revision::walk::Sorting::BreadthFirst)
-        .all()
-        .map_err(chained)?;
-    for info in walk {
-        if info.map_err(chained)?.id == ancestor {
+/// Whether `target` is `from` or reachable from it. The walk visits the whole history instead of
+/// relying on commit times, which gix's merge-base search trusts.
+fn reaches(repo: &gix::Repository, from: gix::ObjectId, target: gix::ObjectId) -> Result<bool, GitError> {
+    for info in repo.rev_walk([from]).all().map_err(chained)? {
+        if info.map_err(chained)?.id == target {
             return Ok(true);
         }
     }

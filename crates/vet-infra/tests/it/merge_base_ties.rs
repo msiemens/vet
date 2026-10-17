@@ -48,18 +48,10 @@ async fn assert_bases_match_git(dir: &Path, commits: &[String]) {
     for a in commits {
         git(dir, &["update-ref", "refs/heads/probe", a]);
         for b in commits {
-            let all: Vec<String> = Command::new("git")
-                .current_dir(dir)
-                .args(["merge-base", "--all", a, b])
-                .output()
-                .map(|o| {
-                    String::from_utf8(o.stdout)
-                        .unwrap()
-                        .lines()
-                        .map(str::to_owned)
-                        .collect()
-                })
-                .unwrap();
+            let all: Vec<String> = git(dir, &["merge-base", "--all", a, b])
+                .lines()
+                .map(str::to_owned)
+                .collect();
             let got = repo
                 .merge_base("refs/heads/probe", &CommitId(b.clone()))
                 .await
