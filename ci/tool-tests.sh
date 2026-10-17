@@ -44,35 +44,57 @@ probes=(
     "command -v bash-language-server && command -v shellcheck"
     "command -v docker-langserver"
 )
+# The tests each tool covers, as space-separated PACKAGE:REGEX alternatives over the test names of
+# the package's `it` binary. Every REGEX starts with `^`.
 filters=(
-    'package(vet-backend) & binary(it) & test(/^(restart|cancel|load|pushes)::/)'
-    '(package(vet-infra) & binary(it) & test(/^lsp::rust_analyzer/)) | (package(vet-backend) & binary(it) & test(/^(semantic|symbols|problems)::/))'
-    'package(vet-infra) & binary(it) & test(/^lsp::typescript/)'
-    'package(vet-infra) & binary(it) & test(/^lsp::pyright/)'
-    'package(vet-infra) & binary(it) & test(/^lsp::roslyn/)'
-    'package(vet-infra) & binary(it) & test(/^lsp::svelte/)'
-    'package(vet-infra) & binary(it) & test(/^lsp::angular/)'
-    'package(vet-infra) & binary(it) & test(/^lsp::yaml/)'
-    'package(vet-infra) & binary(it) & test(/^lsp::json/)'
-    'package(vet-infra) & binary(it) & test(/^lsp::bash_language_server_answers/)'
-    'package(vet-infra) & binary(it) & test(/^lsp::bash_language_server_reports/)'
-    'package(vet-infra) & binary(it) & test(/^lsp::dockerfile/)'
+    'vet-backend:^(restart|cancel|load|pushes)::'
+    'vet-infra:^lsp::rust_analyzer vet-backend:^(semantic|symbols|problems)::'
+    'vet-infra:^lsp::typescript'
+    'vet-infra:^lsp::pyright'
+    'vet-infra:^lsp::roslyn'
+    'vet-infra:^lsp::svelte'
+    'vet-infra:^lsp::angular'
+    'vet-infra:^lsp::yaml'
+    'vet-infra:^lsp::json'
+    'vet-infra:^lsp::bash_language_server_answers'
+    'vet-infra:^lsp::bash_language_server_reports'
+    'vet-infra:^lsp::dockerfile'
 )
 # Ignored tests that run on request: they download packages, talk to a network service or take
 # long to measure.
-on_request='binary(it) & ((package(vet-infra) & test(/^(servers|restore)::/)) | (package(vet-backend) & test(/^(python|restore|first_mark)::/)) | (package(vet-core) & test(/^review_poc::/)))'
-# Ignored tests that another test starts as a child process; never run on their own.
-children='test(crash_child)'
+on_request='vet-infra:^(servers|restore):: vet-backend:^(python|restore|first_mark):: vet-core:^review_poc::'
+
+# The nextest filterset that selects the alternatives' tests.
+filterset() {
+    local alt out=""
+    for alt in $1; do
+        out+="${out:+ | }(package(${alt%%:*}) & binary(it) & test(/${alt#*:}/))"
+    done
+    printf '%s' "$out"
+}
+
+# The lines of a `nextest list` (`PACKAGE::BINARY TEST`, on stdin) that the alternatives select.
+selected_by() {
+    local alt regex lines
+    lines=$(cat)
+    for alt in $1; do
+        regex=${alt#*:}
+        grep -E -- "^${alt%%:*}::it ${regex#^}" <<<"$lines" || true
+    done
+}
 
 if [[ $mode == on-request ]]; then
-    cargo nextest run "${scope[@]}" --run-ignored ignored-only --no-tests=pass -E "$on_request"
+    cargo nextest run "${scope[@]}" --run-ignored ignored-only --no-tests=pass -E "$(filterset "$on_request")"
     exit
 fi
 
-union=""
-for f in "${filters[@]}"; do union+="${union:+ | }($f)"; done
-unclaimed=$(cargo nextest list "${scope[@]}" --run-ignored ignored-only --message-format oneline \
-    -E "not (($union) | ($on_request) | ($children))")
+all=$(cargo nextest list "${scope[@]}" --run-ignored ignored-only --message-format oneline)
+# Ignored tests that another test starts as a child process are never run on their own.
+claimed=$(
+    for f in "${filters[@]}" "$on_request"; do selected_by "$f" <<<"$all"; done
+    grep -F crash_child <<<"$all" || true
+)
+unclaimed=$(grep -vxF -f <(printf '%s\n' "$claimed") <<<"$all" || true)
 if [[ -n $unclaimed ]]; then
     echo "ignored tests that no tool in ci/tool-tests.sh runs:" >&2
     echo "$unclaimed" >&2
@@ -84,9 +106,9 @@ missing=()
 not_run=0
 for i in "${!names[@]}"; do
     if bash -c "${probes[$i]}" >/dev/null 2>&1; then
-        selected+=(-E "${filters[$i]}")
+        selected+=(-E "$(filterset "${filters[$i]}")")
     else
-        left=$(cargo nextest list "${scope[@]}" --run-ignored ignored-only --message-format oneline -E "${filters[$i]}")
+        left=$(selected_by "${filters[$i]}" <<<"$all")
         if [[ -n $left ]]; then
             echo "SKIPPED: not installed (${names[$i]}); not run:"
             sed 's/^/    /' <<<"$left"
