@@ -14,8 +14,10 @@ mod server;
 mod setup;
 mod uri;
 
+use std::collections::HashMap;
 use std::io;
 use std::path::{Path, PathBuf};
+use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
 use lsp_types as lsp;
@@ -35,6 +37,7 @@ use crate::git::list_files;
 use crate::language;
 use crate::paths;
 use crate::restore::discover;
+use crate::sync::lock;
 use capabilities::Offered;
 use rpc::{Connection, Replies};
 use setup::Setup;
@@ -64,6 +67,31 @@ pub struct LspLauncher<L, R> {
     pub identities: Identities,
     /// Where the files of a start are looked at.
     pub semantic_io: Budget,
+    /// Which missing servers were warned about.
+    pub missing: Missing,
+}
+
+/// Why each missing server was last warned about. Every start attempt of a server that is not
+/// installed fails the same way, and the pool tries again by back-off: one warning per
+/// reason is enough.
+#[derive(Default)]
+pub struct Missing(Mutex<HashMap<BackendId, String>>);
+
+impl Missing {
+    /// Whether `reason` is news for `backend`; it is not again until the reason changes, the
+    /// server is found or the backend is restarted.
+    fn is_news(&self, backend: &BackendId, reason: &str) -> bool {
+        let mut warned = lock(&self.0);
+        if warned.get(backend).is_some_and(|last| last == reason) {
+            return false;
+        }
+        warned.insert(backend.clone(), reason.to_owned());
+        true
+    }
+
+    fn forget(&self, backend: &BackendId) {
+        lock(&self.0).remove(backend);
+    }
 }
 
 impl<L, R> LspLauncher<L, R> {
@@ -76,6 +104,7 @@ impl<L, R> LspLauncher<L, R> {
             tasks: Tasks::default(),
             identities: Identities::new(UserEnv::current(), budgets),
             semantic_io: budgets.semantic_io.clone(),
+            missing: Missing::default(),
         }
     }
 
@@ -228,14 +257,16 @@ struct Launched {
 
 /// A server that did not come up. The message can carry what the server wrote to stderr, which
 /// can quote code, so only its first line is logged above `debug`.
-fn warn_not_started(server: &str, tree: Tree, why: &LaunchError) {
+fn log_not_started(server: &str, tree: Tree, why: &LaunchError, news: bool) {
     let message = why.to_string();
-    tracing::warn!(
-        server,
-        ?tree,
-        reason = vet_log::first_line(&message),
-        "the language server did not start"
-    );
+    if news {
+        tracing::warn!(
+            server,
+            ?tree,
+            reason = vet_log::first_line(&message),
+            "the language server did not start"
+        );
+    }
     tracing::debug!(server, ?tree, reason = %message, "the language server's failure in full");
 }
 
@@ -332,8 +363,13 @@ impl<L: ServerLocator + Send + Sync + 'static, R: Restorer + Send + Sync + 'stat
             .tasks
             .start(TaskKind::ServerStart, format!("Starting {name}{side}"));
         let launched = self.launch(root, tree, backend, policy).await;
-        if let Err(why) = &launched {
-            warn_not_started(name, tree, why);
+        match &launched {
+            Err(why @ LaunchError::NotInstalled(reason)) => {
+                let news = self.missing.is_news(&config.backend, reason);
+                log_not_started(name, tree, why, news);
+            }
+            Err(why) => log_not_started(name, tree, why, true),
+            Ok(_) => self.missing.forget(&config.backend),
         }
         starting.conclude(&launched);
         let Launched {
@@ -371,7 +407,7 @@ impl<L: ServerLocator + Send + Sync + 'static, R: Restorer + Send + Sync + 'stat
                 indexing.fail(why.clone());
             }
             let why = LaunchError::NotReady(conn.describe(why));
-            warn_not_started(name, tree, &why);
+            log_not_started(name, tree, &why, true);
             return Err(why);
         }
         phases.mark("ready wait", phase);
@@ -426,6 +462,7 @@ impl<L: ServerLocator + Send + Sync + 'static, R: Restorer + Send + Sync + 'stat
 
     fn restarted(&self, backend: &BackendId) {
         self.identities.renewed(backend);
+        self.missing.forget(backend);
     }
 }
 
@@ -561,6 +598,8 @@ fn client_capabilities() -> lsp::ClientCapabilities {
 
 #[cfg(test)]
 mod tests {
+    use vet_semantic::ports::Unwatched;
+
     use super::*;
 
     fn touch(root: &Path, name: &str) {
@@ -602,5 +641,43 @@ mod tests {
             workspace_folders(&io, empty.path(), &config).await,
             [empty.path().to_owned()]
         );
+    }
+
+    /// Says the server is not installed, with the reason it is told to give.
+    struct Absent(Mutex<String>);
+
+    impl ServerLocator for Absent {
+        async fn locate(&self, _: &ServerConfig, _: &Path, _: AnalysisPolicy) -> Result<ServerCommand, String> {
+            Err(lock(&self.0).clone())
+        }
+    }
+
+    #[tokio::test]
+    async fn a_missing_server_is_warned_about_once_until_its_reason_changes_or_it_is_restarted() {
+        let capture = vet_log::capture::Capture::default();
+        let _guard = capture.install(vet_log::filter(None).0);
+        let launcher = LspLauncher::new(
+            Absent(Mutex::new("yaml-language-server was not found".into())),
+            NoRestore,
+            &Budgets::default(),
+        );
+        let dir = tempfile::tempdir().unwrap();
+        let yaml = config::yaml();
+        let warnings = || capture.text().matches("the language server did not start").count();
+        let attempt = || launcher.start(dir.path(), Tree::Live, &yaml, AnalysisPolicy::LIMITED, &Unwatched);
+
+        for _ in 0..3 {
+            assert!(matches!(attempt().await, Err(LaunchError::NotInstalled(_))));
+        }
+        assert_eq!(warnings(), 1, "{}", capture.text());
+
+        *lock(&launcher.locator.0) = "yaml-language-server was not found in /opt".into();
+        let _ = attempt().await;
+        assert_eq!(warnings(), 2, "a new reason is news");
+
+        let _ = attempt().await;
+        launcher.restarted(&yaml.config().backend);
+        let _ = attempt().await;
+        assert_eq!(warnings(), 3, "a restart by hand is too");
     }
 }
