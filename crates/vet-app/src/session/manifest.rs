@@ -283,8 +283,8 @@ pub(super) fn stored_completion(st: &State) -> Completion {
     )
 }
 
-/// The files of `changes` the filter shows, in the order of [`RepoPath::tree_order`]. `state` gives a file's review state and completion
-/// from its text diff and its shown non-text changes.
+/// The files of `changes` the filter shows, in the order of [`RepoPath::tree_order`]. `state` gives
+/// a file's review state and completion from its text diff and its shown non-text changes.
 pub(super) fn file_views(
     changes: &Diffed,
     filter: &ReviewFilter,

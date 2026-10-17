@@ -76,8 +76,7 @@ impl RepoPath {
     }
 
     /// The order the file tree and the file lists show paths in: segment by segment, at the first
-    /// differing one a folder before a file, then by [`name_order`]. Total, so it never ties for
-    /// different paths.
+    /// differing one by [`entry_order`]. Total, so it never ties for different paths.
     pub fn tree_order(&self, other: &Self) -> Ordering {
         let mut a = self.0.split(|&b| b == b'/').peekable();
         let mut b = other.0.split(|&b| b == b'/').peekable();
@@ -89,16 +88,19 @@ impl RepoPath {
             if x == y {
                 continue;
             }
-            let (x_dir, y_dir) = (a.peek().is_some(), b.peek().is_some());
-            return y_dir.cmp(&x_dir).then_with(|| name_order(x, y));
+            return entry_order((a.peek().is_some(), x), (b.peek().is_some(), y));
         }
     }
 }
 
-/// How names within one folder are ordered: by Unicode lowercase, ties by bytes.
-pub fn name_order(a: &[u8], b: &[u8]) -> Ordering {
+/// How the entries of one folder are ordered, each a (is a folder, name): folders first, then names
+/// by Unicode lowercase, ties by bytes.
+pub fn entry_order((a_dir, a): (bool, &[u8]), (b_dir, b): (bool, &[u8])) -> Ordering {
     let lower = |name: &[u8]| String::from_utf8_lossy(name).to_lowercase();
-    lower(a).cmp(&lower(b)).then_with(|| a.cmp(b))
+    b_dir
+        .cmp(&a_dir)
+        .then_with(|| lower(a).cmp(&lower(b)))
+        .then_with(|| a.cmp(b))
 }
 
 impl From<&str> for RepoPath {
