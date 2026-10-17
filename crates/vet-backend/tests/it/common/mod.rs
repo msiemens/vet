@@ -171,6 +171,17 @@ impl Client {
         }
     }
 
+    /// Has the server of `path`'s language started and load the project, by asking it
+    /// something at `at` on the target side. A test that moves the worktree does this
+    /// first: the settle of a move is due after the debounce, and a cold server can take
+    /// longer than that to answer, which would leave the question at a revision left
+    /// behind. Hover keeps its own answers, so choose a position the test does not ask
+    /// about again.
+    pub async fn warm_up(&self, project: ProjectId, revision: u32, path: &str, at: (u32, u32)) {
+        let (_, unavailable) = self.hover(project, revision, Side::Target, path, at).await;
+        assert_eq!(unavailable, None);
+    }
+
     pub async fn definition(
         &self,
         project: ProjectId,
