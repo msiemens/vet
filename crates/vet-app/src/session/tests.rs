@@ -155,6 +155,10 @@ pub(crate) struct FakeGit {
     /// When set, the first jobs of `with_blobs` take this much longer the earlier they started, so
     /// that they end in the opposite order.
     pub(crate) stagger: Arc<Mutex<Option<std::time::Duration>>>,
+    /// How many times `commits_behind` was asked.
+    behind_walks: Arc<AtomicUsize>,
+    /// How many times `commit_info` was asked.
+    commit_info_reads: Arc<AtomicUsize>,
 }
 
 /// Reads from the blobs of a [`FakeGit`], as a repository would on a blocking thread.
@@ -400,6 +404,7 @@ impl History for FakeGit {
         Ok(self.branches.lock().unwrap().clone())
     }
     async fn commit_info(&self, commit: &CommitId) -> std::result::Result<CommitInfo, GitError> {
+        self.commit_info_reads.fetch_add(1, Ordering::Relaxed);
         Ok(CommitInfo {
             id: commit.clone(),
             subject: format!("subject of {}", commit.0),
@@ -429,6 +434,7 @@ impl History for FakeGit {
         Ok(self.remerges.lock().unwrap().get(merge).cloned())
     }
     async fn commits_behind(&self, tip: &CommitId, base: &CommitId, _: usize) -> std::result::Result<usize, GitError> {
+        self.behind_walks.fetch_add(1, Ordering::Relaxed);
         let history = self.history.lock().unwrap();
         let chain = |c: &CommitId| history.get(c).cloned().unwrap_or_else(|| vec![c.clone()]);
         let tip_chain = chain(tip);
@@ -4838,6 +4844,7 @@ async fn a_pull_request_pushed_to_and_fetched_again_is_counted_anew_and_not_from
 
 mod ahead;
 mod derived;
+mod listing;
 mod marks;
 mod parked;
 mod publish;

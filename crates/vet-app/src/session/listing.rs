@@ -3,6 +3,7 @@
 
 use super::{LiveSession, Result};
 use crate::changeset::{CommitId, RemoteKey, Source};
+use crate::mutex::lock;
 use crate::ports::{BranchInfo, GitRepo, LiveStore, SourceReview};
 use crate::review::ReviewSummary;
 
@@ -105,7 +106,7 @@ fn kept(source: &Source, review: &RowReview, on_view: &Source) -> bool {
     source == on_view || matches!(review, RowReview::Open { .. })
 }
 
-impl<G: GitRepo + Sync, S: LiveStore + Sync> LiveSession<G, S> {
+impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> LiveSession<G, S> {
     /// The working tree, every local branch, and the remote branches worth reviewing.
     pub async fn changesets(&self) -> Result<ChangesetList> {
         let on_view = self.published.read().source.clone();
@@ -167,7 +168,7 @@ impl<G: GitRepo + Sync, S: LiveStore + Sync> LiveSession<G, S> {
             // review only while it has commits that are not pushed yet.
             let unpushed = if !branch.remote && default_branch.as_deref() == Some(branch.name.as_str()) {
                 Some(match &upstream {
-                    Some(upstream) => git.commits_behind(&branch.commit, upstream, MAX_COUNT).await? as u32,
+                    Some(upstream) => self.behind(&branch.commit, upstream).await?,
                     None => 0,
                 })
             } else {
@@ -176,13 +177,16 @@ impl<G: GitRepo + Sync, S: LiveStore + Sync> LiveSession<G, S> {
             if unpushed == Some(0) && !keep {
                 continue;
             }
+            let tip = self.commit_info(&branch.commit).await?;
+            let last_commit = tip.time;
+            let age_days = now.saturating_sub(last_commit) / (24 * 60 * 60);
+            if branch.remote && !keep && age_days > RECENT_DAYS {
+                continue;
+            }
             let divergence = match &default {
                 Some(default) => Some(self.divergence(&branch, default).await?),
                 None => None,
             };
-            let tip = git.commit_info(&branch.commit).await?;
-            let last_commit = tip.time;
-            let age_days = now.saturating_sub(last_commit) / (24 * 60 * 60);
             if branch.remote && !offered_remote(divergence, age_days, keep) {
                 continue;
             }
@@ -241,12 +245,21 @@ impl<G: GitRepo + Sync, S: LiveStore + Sync> LiveSession<G, S> {
     }
 
     async fn divergence(&self, branch: &BranchInfo, default: &CommitId) -> Result<Divergence> {
-        let git = &self.acquisition.git;
-        let ahead = git.commits_behind(&branch.commit, default, MAX_COUNT).await?;
-        let behind = git.commits_behind(default, &branch.commit, MAX_COUNT).await?;
         Ok(Divergence {
-            ahead: ahead as u32,
-            behind: behind as u32,
+            ahead: self.behind(&branch.commit, default).await?,
+            behind: self.behind(default, &branch.commit).await?,
         })
+    }
+
+    /// The commits of `tip` that `base` lacks. `MAX_COUNT` is the only cap, so the key leaves it out.
+    async fn behind(&self, tip: &CommitId, base: &CommitId) -> Result<u32> {
+        let key = (tip.clone(), base.clone());
+        let found = lock(&self.behind).get(&key).copied();
+        if let Some(count) = found {
+            return Ok(count);
+        }
+        let count = self.acquisition.git.commits_behind(tip, base, MAX_COUNT).await? as u32;
+        lock(&self.behind).insert(key, count);
+        Ok(count)
     }
 }

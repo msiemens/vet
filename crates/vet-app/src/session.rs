@@ -227,6 +227,10 @@ pub struct LiveSession<G, S: LiveStore> {
     commit_infos: std::sync::Mutex<Lru<CommitId, CommitInfo>>,
     /// How a branch came to hold a tip, by the tip and the branch's commit, which git does not change.
     merges: std::sync::Mutex<Lru<(CommitId, CommitId), Option<MergedAs>>>,
+    /// The commits reachable from the first commit and not from the second, counted up to the
+    /// listing's cap. Git does not change it for the same two commits short of shallow deepening
+    /// or `replace` refs.
+    behind: std::sync::Mutex<Lru<(CommitId, CommitId), u32>>,
     /// The states of their source branch that the platforms list for pull requests, which are the
     /// versions the review of each has.
     pushes: std::sync::Mutex<HashMap<Source, Vec<Push>>>,
@@ -250,10 +254,13 @@ type MergedAs = (CommitInfo, Option<u32>, Option<u32>);
 const KEPT_LINE_DELTAS: usize = 4096;
 
 /// How many commit facts the session keeps; the one used longest ago goes first.
-const KEPT_COMMIT_INFOS: usize = 64;
+const KEPT_COMMIT_INFOS: usize = 1024;
 
 /// How many merge facts the session keeps; the one used longest ago goes first.
 const KEPT_MERGES: usize = 16;
+
+/// How many ahead and behind counts the session keeps; the one used longest ago goes first.
+const KEPT_BEHIND: usize = 4096;
 
 /// What settling a snapshot into a tree needs that takes a while, worked out for the tree as it
 /// was found, without the token.
@@ -399,6 +406,7 @@ impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> L
             derived: Arc::new(Derived::new(&acquisition.tasks)),
             commit_infos: std::sync::Mutex::new(Lru::new(KEPT_COMMIT_INFOS)),
             merges: std::sync::Mutex::new(Lru::new(KEPT_MERGES)),
+            behind: std::sync::Mutex::new(Lru::new(KEPT_BEHIND)),
             pushes: std::sync::Mutex::default(),
             known: Arc::default(),
             ahead: ahead::copies(&acquisition.tasks),
