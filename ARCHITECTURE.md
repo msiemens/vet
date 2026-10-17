@@ -144,7 +144,7 @@ What makes the watcher ask for a full reconciliation:
 - Keyed work follows the state:
   - the analysis (symbols, problems): revision, policy, servers, a rerun, while the review screen is shown;
   - server starts: queued, never two at once; the snapshots, policy, servers, while the review screen is shown;
-  - retiring servers a policy no longer allows: the snapshots, policy, on any screen;
+  - retiring servers a policy no longer allows: the snapshots, policy, on any screen; a retire that can't read the trust stops every server that may execute project code;
   - the checks: the snapshots, an action on a run, an account change, for a pull request, on any screen;
   - the copy ahead: asked for by a quiet tree or the screen coming up, while the review screen is shown; the queries on the working tree ask through the same flight, and a stored pair costs nothing.
 
