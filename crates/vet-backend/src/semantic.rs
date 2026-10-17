@@ -40,16 +40,31 @@ impl Booted {
 
     /// Starts the servers the current revision's changed files and the
     /// repository's languages need. A server that fails to start is reported
-    /// by the query that needs it.
+    /// by the query that needs it; a start that can't be tried is logged.
     pub(crate) async fn start_servers(&self) {
         let revision = self.session.revision().await;
-        let _ = self.semantics.start_servers(&self.view, revision).await;
+        match self.semantics.start_servers(&self.view, revision).await {
+            Err(SessionError::Stale { .. }) | Ok(()) => {}
+            Err(error) => {
+                tracing::warn!(%error, revision, "starting the servers of the revision on view failed");
+            }
+        }
     }
 
-    /// Stops the servers that run under a policy the current revision no longer has.
+    /// Stops the servers that run under a policy the current revision no longer has. If that
+    /// can't be told, every server that may execute project code is stopped and the error logged.
     pub(crate) async fn retire_disallowed_servers(&self) {
         let revision = self.session.revision().await;
-        let _ = self.semantics.retire_disallowed(&self.view, revision).await;
+        match self.semantics.retire_disallowed(&self.view, revision).await {
+            Err(SessionError::Stale { .. }) | Ok(()) => {}
+            Err(error) => {
+                tracing::warn!(
+                    %error, revision,
+                    "retiring the servers a policy no longer allows failed; \
+                     every server that may execute project code was stopped"
+                );
+            }
+        }
     }
 
     /// Replaces the servers of `language` and waits until the ones the revision needs run.
