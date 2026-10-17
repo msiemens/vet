@@ -88,6 +88,26 @@ void test("clearing the failures keeps the running tasks", () => {
   assert.deepEqual(ids(board.shown(0)), [2]);
 });
 
+void test("a failed fetch stays until a fetch of the remotes succeeds", () => {
+  const board = new TaskBoard();
+  board.apply(task(1, { type: "failed", message: "origin: offline" }, "Fetch", "remoteFetch"), 0, 0);
+  board.apply(task(2, { type: "failed", message: "origin: refused" }, "Fetching origin", "fetch"), 1, 0);
+  board.apply(task(3, { type: "finished" }, "Fetching origin", "fetch"), 2, 0);
+  assert.deepEqual(ids(board.failed()), [1], "a head fetch neither replaces nor clears it");
+
+  board.apply(task(4, { type: "finished" }, "Fetch", "remoteFetch"), 3, 0);
+  assert.deepEqual(board.failed(), []);
+});
+
+void test("switching changesets keeps a failed fetch and drops a failed sync", () => {
+  const board = new TaskBoard();
+  const failed = { type: "failed", message: "offline" } as const;
+  board.apply(task(1, failed, "Fetch", "remoteFetch"), 0, 0);
+  board.apply(task(2, failed, "Pull request sync", "sync"), 0, 0);
+  board.clearFailures();
+  assert.deepEqual(ids(board.failed()), [1]);
+});
+
 void test("a failed task of another kind is not kept", () => {
   const board = new TaskBoard();
   board.apply(task(1, { type: "failed", message: "gone" }, "Fetching", "fetch"), 0, 0);

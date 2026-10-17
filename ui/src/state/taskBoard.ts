@@ -10,7 +10,10 @@ interface Entry {
 }
 
 /** The kinds whose last failure stays shown until a task of the kind finishes. */
-const LASTING: readonly Task["kind"][] = ["sync", "checks"];
+const LASTING: readonly Task["kind"][] = ["sync", "checks", "remoteFetch"];
+
+/** The lasting failures that belong to the changeset on view. */
+const PER_CHANGESET: readonly Task["kind"][] = ["sync", "checks"];
 
 export class TaskBoard {
   private entries = new Map<number, Entry>();
@@ -49,9 +52,9 @@ export class TaskBoard {
     this.failures.clear();
   }
 
-  /** Drops the failures that stay shown; the running tasks go on. */
+  /** Drops the lasting failures of the changeset on view; the running tasks go on. */
   clearFailures() {
-    this.failures.clear();
+    for (const kind of PER_CHANGESET) this.failures.delete(kind);
   }
 
   /** The failures that stay shown, oldest first. */

@@ -37,7 +37,7 @@ class ProgressStore {
       this.board.clear();
       this.publish();
     });
-    // A failure belongs to the pull request it happened on.
+    // A sync or checks failure belongs to the pull request it happened on.
     opened.onSession(() => {
       this.board.clearFailures();
       this.publish();
