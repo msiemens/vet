@@ -615,7 +615,7 @@ mod tests {
         let first = session(repo.path()).await;
         first.manifest(View::Changeset).await.unwrap();
         let review = budgets.review_io.acquire_all().await;
-        let copied = tokio::time::timeout(within, first.copy_ahead()).await;
+        let copied = tokio::time::timeout(within, first.kept_content()).await;
         copied.expect("the copy finishes").unwrap();
         drop(review);
         assert_eq!(missing(&texts).await, []);
@@ -626,7 +626,7 @@ mod tests {
         let second = session(repo.path()).await;
         let copy = tokio::spawn({
             let second = second.clone();
-            async move { second.copy_ahead().await }
+            async move { second.kept_content().await }
         });
         let manifest = tokio::time::timeout(within, second.manifest(View::Changeset)).await;
         assert_eq!(manifest.expect("the manifest is answered").unwrap().files.len(), 5);

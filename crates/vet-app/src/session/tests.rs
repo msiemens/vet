@@ -585,6 +585,8 @@ struct Mem {
     blobs: HashMap<BlobId, Vec<u8>>,
     /// Every blob given to `put_blobs`, in order.
     put: Vec<BlobId>,
+    /// How often `missing_blobs` was asked.
+    checks: usize,
     snapshots: HashMap<SnapshotId, (Snapshot, SnapshotStatus)>,
     /// The stored changesets, in the order they were first stored.
     changesets: Vec<(String, Source)>,
@@ -681,7 +683,8 @@ impl Store for MemStore {
             .collect())
     }
     async fn missing_blobs(&self, ids: Vec<BlobId>) -> StoreResult<Vec<BlobId>> {
-        let mem = self.0.lock().unwrap();
+        let mut mem = self.0.lock().unwrap();
+        mem.checks += 1;
         Ok(ids.into_iter().filter(|id| !mem.blobs.contains_key(id)).collect())
     }
     async fn blob(&self, id: BlobId) -> StoreResult<Option<Vec<u8>>> {
@@ -799,6 +802,11 @@ fn review_row_of(review: &MemReview) -> ReviewRow {
 /// source, by id), so tests that read what their session stored name the changeset their
 /// review is on, not the first row the store got.
 impl MemStore {
+    /// How often the store was asked which blobs it lacks.
+    pub(crate) fn checks(&self) -> usize {
+        self.0.lock().unwrap().checks
+    }
+
     /// The changeset of the newest review, the one every session test's session is on; none
     /// while no review has started, so what is read of it is empty.
     fn reviewed_changeset_of(mem: &Mem) -> Option<u64> {

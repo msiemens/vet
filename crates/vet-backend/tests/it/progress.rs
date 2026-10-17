@@ -86,3 +86,30 @@ async fn the_scan_and_the_diff_are_announced_as_tasks_that_end() {
             .all(|t| !matches!(t.kind, TaskKind::Scan | TaskKind::Diff))
     );
 }
+
+#[tokio::test]
+async fn the_changed_content_is_stored_once_however_many_files_the_review_screen_analyses() {
+    let names = ["a.txt", "b.txt", "c.txt", "d.txt", "e.txt"];
+    let base: Vec<_> = names.iter().map(|n| (*n, "one\n")).collect();
+    let dirty: Vec<_> = names.iter().map(|n| (*n, "two\n")).collect();
+    let repo = repo_with(&base, &dirty);
+    let (handler, _data) = handler().await;
+    let mut client = Client::new(&handler);
+    let project = client.open(repo.path()).await;
+    client.revision(project).await;
+
+    client
+        .call(Request::SetReviewShown { project, shown: true })
+        .await
+        .unwrap();
+    client.call(Request::WaitForQuiet { project }).await.unwrap();
+
+    let tasks = announced(&mut client);
+    let stored: Vec<_> = tasks
+        .iter()
+        .filter(|t| t.kind == TaskKind::Store && t.project == project)
+        .collect();
+    let ids: std::collections::BTreeSet<_> = stored.iter().map(|t| t.id).collect();
+    assert_eq!(ids.len(), 1, "{tasks:?}");
+    assert_eq!(stored.last().map(|t| &t.state), Some(&TaskState::Finished));
+}

@@ -21,7 +21,7 @@ async fn run(open: Arc<Open>) {
     let Ok(booted) = open.booted().await else {
         return;
     };
-    if let Err(e) = booted.session.copy_ahead().await {
+    if let Err(e) = booted.session.kept_content().await {
         tracing::warn!(error = %e, "could not copy the working tree's content ahead of a review");
     }
 }

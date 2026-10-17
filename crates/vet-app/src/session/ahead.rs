@@ -2,7 +2,8 @@
 //! Starting a review copies what the target has that the base does not (§4.1); on a large
 //! changeset that is most of the first mark's time. Copied while the session browses, the
 //! first mark finds the content there and copies only what changed since. A copy is a flight
-//! of `vet-engine`, so the first mark joins one under way instead of copying the same files.
+//! of `vet-engine`, so the first mark joins one under way instead of copying the same files,
+//! and one that succeeded is kept per snapshot pair, so asking again costs nothing.
 //! What is never referenced by a review is removed by the store's collection, after its grace.
 
 use std::pin::Pin;
@@ -29,17 +30,17 @@ impl Kind for Retained {
     type Value = ();
     type Error = SessionError;
 
-    /// The store, not the engine, knows what it holds: a copy that finished is asked again,
-    /// and the store answers which blobs are missing.
+    /// Content leaves the store only in the collection at store open
+    /// (`vet_backend::open_store`), so a pair whose copy succeeded stays stored for the session.
     fn retention(&self) -> Retention {
-        Retention::InFlight
+        Retention::Kept
     }
 }
 
 /// The engine of the copies, each reporting as a task with how many files it stored.
 pub(super) fn copies(tasks: &Tasks) -> Engine<Retained> {
     let tasks = tasks.clone();
-    Engine::new(Limits::entries(0))
+    Engine::new(Limits::entries(16))
         .observing(move |_| Some(Arc::new(tasks.start(TaskKind::Store, "Storing changed files")) as _))
 }
 
@@ -70,37 +71,29 @@ where
                 acquisition
                     .retain(&[&*base], &target, &status, &diffed.blobs, report)
                     .await?;
-                Ok(Computed::new((), false))
+                Ok(Computed::new((), true))
             }
         };
         self.ahead.get(key, compute).await?;
         Ok(())
     }
 
-    /// Copies the working tree's dirty content into the store, as starting a review of it
-    /// would, through the handles of [`LiveSession::copying_through`]. Does nothing unless the
-    /// working tree is on view and no review of it is open.
-    pub async fn copy_ahead(&self) -> Result<()> {
-        let (base, target, status) = {
-            let st = self.published.read();
-            if st.source != Source::WorkingTree || st.review.is_some() {
-                return Ok(());
-            }
-            (st.base.clone(), st.target.clone(), st.target_status.clone())
-        };
-        let diffed = self.diff_of(&base, &target).await?;
-        self.retained(&self.copying, (&base, &target, &status), diffed).await
-    }
-
-    /// The changed content of the working tree's snapshot on view is in the store (§4.1),
-    /// without the token: what settling with a review open kept, or what the quiet copy ahead
-    /// keeps, of which a copy under way is joined through. The diff is the kept one where
-    /// there is one, for it read the texts already. A step that cannot be copied fails as the
-    /// settle's does, and the queries of a file whose copy went missing answer from the disk.
+    /// Makes sure the changed content of the working tree on view is in the store (§4.1),
+    /// without the token. The one way in for the queries and the copy ahead; joins a copy
+    /// under way, and a pair already stored is answered at once. The diff is the kept one
+    /// where there is one, for it read the texts already. A file that cannot be copied fails
+    /// the call, and the queries of a file whose copy went missing answer from the disk.
     pub async fn kept_content(&self) -> Result<()> {
         let (base, target, status, kept) = {
             let st = self.published.read();
             if st.source != Source::WorkingTree {
+                return Ok(());
+            }
+            let key = Retained {
+                base: st.base.id,
+                target: st.target.id,
+            };
+            if self.ahead.peek(&key).is_some() {
                 return Ok(());
             }
             let kept = st.changes.as_ref().map(|c| Arc::clone(&c.diffed));

@@ -1711,6 +1711,36 @@ mod tests {
         );
     }
 
+    /// Every query of a live tree asks for its changed content to be stored; once it is, the
+    /// store is not asked again.
+    #[tokio::test]
+    async fn the_queries_of_a_live_tree_check_the_stored_content_once() {
+        let fx = Fixture::open(&[("a.rs", "one\n")], &[("a.rs", "kept\n")]).await;
+        let revision = fx.settle(&[("a.rs", "kept\n")]).await;
+        let counters = Arc::new(Counters::default());
+        let semantics = Semantics::new(
+            FakeMaterializer(counters.clone()),
+            FakeLauncher(counters.clone()),
+            "/live".into(),
+            vec![backend("rust", "rs")],
+            Links {
+                revisions: fx.session.revisions(),
+                retainer: Some(fx.session.clone()),
+            },
+        );
+        let at = At {
+            file: RepoPath(b"a.rs".to_vec()),
+            pos: Pos { line: 0, col: 0 },
+        };
+
+        let checks = fx.store.checks();
+        for _ in 0..5 {
+            semantics.hover(&fx.view, revision, Side::Target, &at).await.unwrap();
+        }
+
+        assert_eq!(fx.store.checks() - checks, 1);
+    }
+
     /// A definition that lands in a file whose text the revision had no copy of and
     /// the worktree has moved since (the server read the disk, whose lines answer
     /// nothing the revision was about): it is asked again at the newer revision,

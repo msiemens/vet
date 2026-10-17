@@ -5,7 +5,7 @@ use std::collections::BTreeSet;
 use std::task::{Context, Waker};
 use std::time::Duration;
 
-use super::derived::announcing;
+use super::derived::{Heard, announcing};
 use super::*;
 use crate::progress::{Task, TaskKind, TaskState};
 
@@ -21,7 +21,7 @@ async fn after_the_tree_settled_and_was_copied_the_first_mark_copies_nothing() {
     let (edited, added) = (numbered(10, &[3, 7]), "n\n");
     fx.settle(&[("a.txt", &edited), ("new.txt", added)]).await;
 
-    fx.session.copy_ahead().await.unwrap();
+    fx.session.kept_content().await.unwrap();
     let copied = put(&fx);
     assert_eq!(
         BTreeSet::from_iter(copied.iter().copied()),
@@ -42,7 +42,7 @@ async fn the_first_mark_copies_only_what_changed_since_the_copy() {
         &[("a.txt", &numbered(10, &[3])), ("new.txt", added)],
     )
     .await;
-    fx.session.copy_ahead().await.unwrap();
+    fx.session.kept_content().await.unwrap();
     let copied = put(&fx).len();
     let edited = numbered(10, &[3, 7]);
     let revision = fx.settle(&[("a.txt", &edited), ("new.txt", added)]).await;
@@ -64,7 +64,7 @@ async fn a_manifest_asked_while_the_first_mark_waits_for_the_copy_is_answered_me
     fx.session.manifest(View::Changeset).await.unwrap();
 
     let paused = fx.git.paused.lock().await;
-    let mut copy = Box::pin(fx.session.copy_ahead());
+    let mut copy = Box::pin(fx.session.kept_content());
     let mut mark = Box::pin(fx.session.toggle_hunk(0, View::Changeset, "a.txt", 0));
     let mut cx = Context::from_waker(Waker::noop());
     assert!(copy.as_mut().poll(&mut cx).is_pending(), "the copy reads the tree");
@@ -92,7 +92,7 @@ async fn a_copy_is_a_task_that_counts_the_files_it_stores_and_ends() {
     )
     .await;
 
-    fx.session.copy_ahead().await.unwrap();
+    fx.session.kept_content().await.unwrap();
 
     let heard = heard.lock().unwrap();
     let copy: Vec<&Task> = heard.iter().filter(|t| t.kind == TaskKind::Store).collect();
@@ -122,7 +122,7 @@ async fn the_copy_takes_the_texts_the_diff_read_and_reads_only_what_the_diff_doe
     fx.session.manifest(View::Changeset).await.unwrap();
     fx.git.reads.lock().unwrap().clear();
 
-    fx.session.copy_ahead().await.unwrap();
+    fx.session.kept_content().await.unwrap();
 
     assert_eq!(*fx.git.reads.lock().unwrap(), [BlobId::of(binary.as_bytes())]);
     let mut want: Vec<BlobId> = [&dirty[0], &dirty[1], binary].map(|d| BlobId::of(d.as_bytes())).into();
@@ -141,7 +141,7 @@ async fn a_copy_whose_content_is_not_what_the_tree_says_fails_and_the_first_mark
     let id = BlobId::of(dirty.as_bytes());
     fx.git.blobs.lock().unwrap().insert(id, numbered(10, &[4]).into_bytes());
 
-    let copied = fx.session.copy_ahead().await;
+    let copied = fx.session.kept_content().await;
     assert!(matches!(copied, Err(SessionError::Git(e)) if e.message().contains("changed while being copied")));
     assert!(fx.session.set_seen(0, "a.txt", &[0], true).await.is_err());
     assert_eq!(fx.session.lifecycle().await, Lifecycle::Browsing);
@@ -160,7 +160,7 @@ async fn a_mark_while_the_tree_is_copied_waits_for_that_copy_and_no_file_is_copi
     fx.session.manifest(View::Changeset).await.unwrap();
 
     let paused = fx.git.paused.lock().await;
-    let mut copy = Box::pin(fx.session.copy_ahead());
+    let mut copy = Box::pin(fx.session.kept_content());
     let mut mark = Box::pin(fx.session.set_seen(0, "a.txt", &[0], true));
     let mut cx = Context::from_waker(Waker::noop());
     assert!(copy.as_mut().poll(&mut cx).is_pending(), "the copy reads the tree");
@@ -175,4 +175,104 @@ async fn a_mark_while_the_tree_is_copied_waits_for_that_copy_and_no_file_is_copi
     let mut want: Vec<BlobId> = dirty.iter().map(|d| BlobId::of(d.as_bytes())).collect();
     want.sort();
     assert_eq!(put, want, "each dirty file copied once");
+}
+
+/// The ids of the distinct store tasks heard.
+fn store_tasks(heard: &Heard) -> BTreeSet<u32> {
+    let heard = heard.lock().unwrap();
+    heard
+        .iter()
+        .filter(|t| t.kind == TaskKind::Store)
+        .map(|t| t.id)
+        .collect()
+}
+
+#[tokio::test]
+async fn the_content_of_a_settled_tree_is_checked_once_however_often_it_is_asked_for() {
+    let base = numbered(10, &[]);
+    let (fx, heard) = announcing(&[("a.txt", &base), ("b.txt", &base)], &[("a.txt", &base)]).await;
+    let (a, b) = (numbered(10, &[3]), numbered(10, &[5]));
+    fx.settle(&[("a.txt", &a), ("b.txt", &b)]).await;
+
+    let checks = fx.store.checks();
+    let tasks = store_tasks(&heard).len();
+    for _ in 0..5 {
+        fx.session.kept_content().await.unwrap();
+    }
+
+    assert_eq!(fx.store.checks() - checks, 1);
+    assert_eq!(store_tasks(&heard).len() - tasks, 1);
+    let mut put = put(&fx);
+    put.sort();
+    let mut want = vec![BlobId::of(a.as_bytes()), BlobId::of(b.as_bytes())];
+    want.sort();
+    assert_eq!(put, want, "each dirty blob put once");
+}
+
+#[tokio::test]
+async fn a_newly_settled_tree_is_checked_again() {
+    let base = numbered(10, &[]);
+    let fx = Fixture::open(&[("a.txt", &base)], &[("a.txt", &numbered(10, &[3]))]).await;
+    let mut checks = Vec::new();
+
+    for edited in [numbered(10, &[3]), numbered(10, &[3, 7])] {
+        fx.settle(&[("a.txt", &edited)]).await;
+        let before = fx.store.checks();
+        fx.session.kept_content().await.unwrap();
+        fx.session.kept_content().await.unwrap();
+        checks.push(fx.store.checks() - before);
+    }
+
+    assert_eq!(checks, [1, 1]);
+}
+
+#[tokio::test]
+async fn a_new_filter_asks_the_store_nothing_again() {
+    let base = numbered(10, &[]);
+    let fx = Fixture::open(&[("a.txt", &base)], &[("a.txt", &numbered(10, &[3]))]).await;
+    let checks = fx.store.checks();
+    fx.session.kept_content().await.unwrap();
+
+    let filter = ReviewFilter {
+        hide_binary: true,
+        ..Default::default()
+    };
+    fx.session.set_filter(filter).await.unwrap();
+    fx.session.kept_content().await.unwrap();
+
+    assert_eq!(fx.store.checks() - checks, 1);
+}
+
+#[tokio::test]
+async fn a_copy_that_failed_is_tried_again_by_the_next_ask() {
+    let base = numbered(10, &[]);
+    // The binary file is not among the diff's texts, so the copy reads it from git.
+    let binary = "\0bin\n";
+    let fx = Fixture::open(&[("a.txt", &base)], &[("a.txt", &base), ("c.bin", binary)]).await;
+    let id = BlobId::of(binary.as_bytes());
+    fx.git.blobs.lock().unwrap().insert(id, b"\0other\n".to_vec());
+    let checks = fx.store.checks();
+
+    assert!(fx.session.kept_content().await.is_err());
+    fx.git.blobs.lock().unwrap().insert(id, binary.as_bytes().to_vec());
+    fx.session.kept_content().await.unwrap();
+
+    assert_eq!(fx.store.checks() - checks, 2);
+    assert!(put(&fx).contains(&id));
+}
+
+#[tokio::test]
+async fn with_a_review_open_the_first_ask_after_a_settle_checks_once_and_puts_nothing() {
+    let base = numbered(10, &[]);
+    let fx = Fixture::open(&[("a.txt", &base)], &[("a.txt", &numbered(10, &[3]))]).await;
+    fx.session.set_seen(0, "a.txt", &[0], true).await.unwrap();
+    fx.settle(&[("a.txt", &numbered(10, &[3, 7]))]).await;
+    let (checks, puts) = (fx.store.checks(), put(&fx).len());
+
+    for _ in 0..3 {
+        fx.session.kept_content().await.unwrap();
+    }
+
+    assert_eq!(fx.store.checks() - checks, 1);
+    assert_eq!(put(&fx).len(), puts);
 }
