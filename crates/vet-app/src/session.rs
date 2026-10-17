@@ -39,22 +39,30 @@
 //! only when `observe` sees the ref (the branch, or the pull request's head as
 //! last fetched) or the merge base move.
 //!
-//! This module is the lifecycle and persistence of a review. The rest of the
-//! session is split by what it does with the state: `derived` computes the
-//! diffs, interdiffs and commits without touching it, `remap` puts a revision's
-//! review state onto them, `manifest` and `content` and `browse` show them,
-//! `marks` and `threads` edit the review, `blobs` reads the content they all
-//! need, `ahead` copies the working tree's content before a review needs it,
-//! and `source` and `listing` are about which changeset is on view.
+//! This module is the changeset on view: the token, the published state, the
+//! revision announcements and the settle gate, and how a review begins, records
+//! its versions and ends. `open` opens a session, `settling` settles the working
+//! tree's snapshots into it, `filter` changes its review filter and `base_view`
+//! describes the base. Two parts beside it never touch that state: `facts`
+//! holds what the repository says and its caches (`derived` computes the diffs,
+//! interdiffs and commits, `lines` and `listing` read the queue's counts and
+//! rows from it), and `ahead` copies the working tree's content before a review
+//! needs it. The third, `exchange`, is the platform exchange, whose commands are
+//! review commands. `remap` puts a revision's review state onto the diffs,
+//! `manifest` and `content` and `browse` show them, `marks` and `threads` edit
+//! the review, `blobs` reads the content they all need, and `source` is about
+//! which changeset is on view.
 
 mod ahead;
 mod base_diff;
+mod base_view;
 mod blobs;
 mod browse;
 mod content;
 mod derived;
 mod exchange;
 mod facts;
+mod filter;
 mod hold;
 mod interdiff;
 mod lens;
@@ -63,10 +71,12 @@ mod listing;
 mod lru;
 mod manifest;
 mod marks;
+mod open;
 mod pushes;
 mod remap;
 mod revision;
 mod search;
+mod settling;
 mod source;
 mod state;
 mod threads;
@@ -74,13 +84,12 @@ mod trust;
 mod versions;
 mod views;
 
-use std::collections::{BTreeMap, BTreeSet, HashMap};
+use std::collections::{BTreeSet, HashMap};
 use std::fmt;
 use std::sync::Arc;
 
 use tokio::sync::Mutex;
 use vet_core::content::{EntryKind, RepoPath, Snapshot, SnapshotId, SnapshotStatus};
-use vet_core::filter::ReviewFilter;
 use vet_core::review::{Anchor, CommentTarget, Thread, ThreadStatus};
 
 use self::ahead::Copies;
@@ -88,7 +97,6 @@ pub use self::base_diff::{BaseDiffKind, BaseDiffRow, BaseDiffView};
 pub use self::blobs::NoText;
 pub use self::browse::{DirEntryKind, DirItem, DirListing, FileListing, PatternMatch, PatternMatches};
 pub use self::content::{FileText, ItemBlob, MAX_ITEM_BLOB, TargetText};
-use self::derived::Diffed;
 use self::exchange::Exchange;
 pub use self::exchange::{
     Blocker, Brought, DiscussionView, Keep, Outgoing, SubmitReport, SyncNotice, SyncReport, Unread, VoteSent, is_unread,
@@ -99,7 +107,6 @@ pub use self::lens::{CommitKind, CommitUnitView, CommitsView};
 pub use self::listing::{ChangesetList, ChangesetRow, Divergence, RowReview};
 pub use self::revision::{ChangedFiles, RevisionView};
 pub use self::search::{MAX_HITS, SearchFile, SearchQuery, SearchResult, SearchScope};
-use self::source::Stored;
 pub use self::state::View;
 use self::state::{OpenReview, Shown, State, lifecycle_of};
 pub use self::threads::{CommentAt, CommentSpot, NewThread, ThreadView, ThreadsView};
@@ -111,15 +118,11 @@ pub use self::views::{
     SemanticSides, TargetView,
 };
 use crate::acquisition::{Acquisition, BlobError};
-use crate::base;
-use crate::changeset::{BaseChoice, ChangesetId, CommitId, Snapshots, Source, Version, VersionChange, VersionOrigin};
-use crate::mutex::lock;
-use crate::platform::{PlatformError, PullRequestCache};
-use crate::ports::{Clock, Degraded, Dirty, GitError, GitRepo, LiveStore, ReviewWrites, Scan, StoreError, Watcher};
-use crate::progress::Tasks;
-use crate::review::{ReviewId, visible_threads};
+use crate::changeset::{ChangesetId, CommitId, Snapshots, Source, Version, VersionOrigin};
+use crate::platform::PlatformError;
+use crate::ports::{Degraded, GitError, GitRepo, LiveStore, ReviewWrites, StoreError};
 use crate::revisions::Revisions;
-use crate::settle::{Settled, Settling, Wanted};
+use crate::settle::Wanted;
 
 #[derive(Clone, Debug)]
 pub enum SessionError {
@@ -220,274 +223,7 @@ pub struct LiveSession<G, S: LiveStore> {
     settle_wanted: Arc<Wanted>,
 }
 
-/// What settling a snapshot into a tree needs that takes a while, worked out for the tree as it
-/// was found, without the token.
-struct Settlement {
-    base: SnapshotId,
-    target: SnapshotId,
-    /// A review of the tree was open, so the settled snapshot is its next version.
-    reviewing: bool,
-    /// Why the content of the version could not be kept, if it could not.
-    retained: Option<BlobError>,
-    /// What the version changed against the one before it.
-    change: Option<VersionChange>,
-    /// The diff of the base against the settled snapshot, if it could be had.
-    diffed: Option<Arc<Diffed>>,
-}
-
-impl Settlement {
-    /// Whether `tree` is still the one this was worked out for.
-    fn fits(&self, tree: &State) -> bool {
-        let reviewing = tree.review.is_some() && tree.changeset.is_some();
-        tree.base.id == self.base && tree.target.id == self.target && reviewing == self.reviewing
-    }
-}
-
-/// What a session is called: the repository's directory name, else its whole path.
-fn name_of_repo(repo: &str) -> String {
-    std::path::Path::new(repo)
-        .file_name()
-        .map_or_else(|| repo.to_owned(), |n| n.to_string_lossy().into_owned())
-}
-
-/// Git's `user.name`, else "You".
-async fn author_of<G: GitRepo>(git: &G) -> String {
-    git.user_name()
-        .await
-        .filter(|n| !n.trim().is_empty())
-        .unwrap_or_else(|| "You".into())
-}
-
 impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> LiveSession<G, S> {
-    /// Resumes the open review of the working tree of the repository at `repo`
-    /// (the root, as the key changesets are recorded under), or else starts out
-    /// browsing the tree against the current branch's tip. The threads that are
-    /// still open from earlier reviews are on view either way.
-    pub async fn open(git: G, store: S, repo: String, clock: UnixClock) -> Result<Self> {
-        Self::open_reporting(git, store, repo, clock, Tasks::default()).await
-    }
-
-    /// Like [`LiveSession::open`], with the scans and diffs of the session reporting to `tasks`.
-    pub async fn open_reporting(git: G, store: S, repo: String, clock: UnixClock, tasks: Tasks) -> Result<Self> {
-        let acquisition = Arc::new(Acquisition::new(git, store).reporting(tasks));
-        let filter = acquisition.store.filter(repo.clone()).await?.normalized();
-        let name = name_of_repo(&repo);
-        let source = Source::WorkingTree;
-        let writes = acquisition.store.writes();
-        let (changeset, threads) = match Self::stored(&acquisition, &writes, &repo, &source, &filter, clock).await? {
-            Stored::Resumed(mut state) => {
-                state.off_base = base::head_left(&acquisition.git, &state.base_commit).await;
-                let session = Self::assemble(acquisition, name, repo, clock, *state).await;
-                session.catch_up().await?;
-                return Ok(session);
-            }
-            Stored::Browsing { changeset, threads } => (changeset, threads),
-        };
-        let git = &acquisition.git;
-        let head = git.head().await?;
-        // Browsing keeps the base the tree was opened against across restarts, until a review
-        // that ends lets the next session pin its own.
-        let pinned = acquisition.store.pinned_base(repo.clone(), source.clone()).await?;
-        let (base_choice, base_commit, base) = match pinned {
-            Some(commit) => match git.commit_snapshot(&commit).await {
-                Ok(base) => {
-                    let (choice, commit) = base::for_working_tree(&commit);
-                    (choice, commit, base)
-                }
-                Err(_) => Self::pin(&acquisition, &writes, &repo, &source, &head).await?,
-            },
-            None => Self::pin(&acquisition, &writes, &repo, &source, &head).await?,
-        };
-        let base = Arc::new(base);
-        let off_base = base::head_left(git, &base_commit).await;
-        // The session opens at `HEAD`, which builds on itself.
-        let Scan {
-            snapshot: target,
-            status,
-        } = acquisition.reconcile(Dirty::All).await?;
-        let target = Arc::new(target);
-        acquisition.record_commit(base.id, base_commit.clone());
-        acquisition.record_commit(target.id, head.clone());
-        let state = State {
-            source,
-            revision: 0,
-            snapshot: 0,
-            seq: 0,
-            changeset,
-            review: None,
-            filter,
-            project: None,
-            base,
-            base_choice,
-            base_commit,
-            head,
-            off_base,
-            target,
-            target_status: status,
-            known: HashMap::new(),
-            recorded: Vec::new(),
-            acks: Vec::new(),
-            threads,
-            changes: None,
-        };
-        Ok(Self::assemble(acquisition, name, repo, clock, state).await)
-    }
-
-    /// Pins the working tree to `head` as its base and remembers that.
-    async fn pin(
-        acquisition: &Acquisition<G, S>,
-        writes: &S::Writes,
-        repo: &str,
-        source: &Source,
-        head: &CommitId,
-    ) -> Result<(BaseChoice, CommitId, Snapshot)> {
-        let (choice, commit) = base::for_working_tree(head);
-        let base = acquisition.git.commit_snapshot(&commit).await?;
-        writes
-            .set_pinned_base(repo.to_owned(), source.clone(), Some(commit.clone()))
-            .await?;
-        Ok((choice, commit, base))
-    }
-
-    async fn assemble(
-        acquisition: Arc<Acquisition<G, S>>,
-        name: String,
-        repo: String,
-        clock: UnixClock,
-        state: State,
-    ) -> Self {
-        let writes = acquisition.store.writes();
-        // A session opens with the working tree on view, so the settle loop wants it at once.
-        let wanted = state.source == Source::WorkingTree;
-        Self {
-            author: author_of(&acquisition.git).await,
-            facts: Facts::new(&acquisition, repo.clone(), clock),
-            exchange: Exchange::new(Arc::default()),
-            copies: Copies::new(&acquisition),
-            acquisition,
-            name,
-            repo,
-            clock,
-            published: Arc::new(Published::new(state)),
-            token: Mutex::new(Writer::new(writes)),
-            degraded: std::sync::Mutex::new(None),
-            revisions: Arc::default(),
-            settle_wanted: Arc::new(Wanted::new(wanted)),
-        }
-    }
-
-    /// The same session, its copies ahead of a review reading through `git` and writing through
-    /// `store`, other handles on the session's repository and store.
-    pub fn copying_through(self, git: G, store: S) -> Self {
-        Self {
-            copies: self.copies.reading_through(self.acquisition.through(git, store)),
-            ..self
-        }
-    }
-
-    /// The same session, keeping what it learns of pull requests in `known`, which is shared with
-    /// whoever else asks the platforms about them.
-    pub fn knowing_pull_requests_in(self, known: Arc<PullRequestCache>) -> Self {
-        Self {
-            exchange: Exchange::new(known),
-            ..self
-        }
-    }
-
-    /// The state of the stored review `id` of `changeset`, a changeset of `source`.
-    /// `None` if it cannot be reconstructed: its versions, its latest snapshot or its
-    /// base commit is gone.
-    async fn resumed(
-        acquisition: &Acquisition<G, S>,
-        changeset: ChangesetId,
-        id: ReviewId,
-        filter: ReviewFilter,
-        source: Source,
-    ) -> Result<Option<State>> {
-        let store = &acquisition.store;
-        let Some(review) = store.review(id).await? else {
-            return Ok(None);
-        };
-        let versions = store.versions(changeset).await?;
-        let Some(latest) = versions.last() else {
-            return Ok(None);
-        };
-        // The latest version is the state the pull request was last fetched at: it has content.
-        let Some(latest_snapshots) = latest.snapshots else {
-            return Ok(None);
-        };
-        let Some((target, target_status)) = store.snapshot(latest_snapshots.target).await? else {
-            return Ok(None);
-        };
-        let Ok(base) = acquisition.git.commit_snapshot(&latest.base_commit).await else {
-            return Ok(None);
-        };
-        let (base, target) = (Arc::new(base), Arc::new(target));
-        // The review keeps its base however far the branches have moved since:
-        // commits made while Vet was closed are part of what is under review,
-        // and re-resolving would turn every mark against the old base into
-        // `SeenAgainstOldBase`. Moving the base is the user's call (§4.4).
-        // The refs that keep the versions' commits are already in git; taking each again would
-        // write it on every return, so only what a rebuild lacks is set.
-        let existing: HashMap<(u32, String), CommitId> = acquisition
-            .git
-            .changeset_refs(changeset)
-            .await?
-            .into_iter()
-            .map(|kept| ((kept.version, kept.name), kept.commit))
-            .collect();
-        for (i, version) in versions.iter().enumerate() {
-            if let Some(snapshots) = version.snapshots {
-                acquisition.record_commit(snapshots.target, version.tip.clone());
-                acquisition.record_commit(snapshots.base, version.base_commit.clone());
-            }
-            let previous = Version::last_commits(&versions[..i]);
-            Self::keep_commits(acquisition, changeset, version, previous, Some(&existing)).await?;
-        }
-        let threads = visible_threads(store.threads(changeset).await?, Some(id));
-        Ok(Some(State {
-            source,
-            revision: 0,
-            snapshot: 0,
-            seq: 0,
-            changeset: Some(changeset),
-            review: Some(OpenReview {
-                id,
-                version: latest.n,
-                updated_at: latest.at,
-                last_reviewed: review.last_reviewed,
-                summary: review.summary,
-            }),
-            filter,
-            project: None,
-            base,
-            base_choice: review.base,
-            base_commit: latest.base_commit.clone(),
-            head: latest.tip.clone(),
-            off_base: false,
-            target,
-            target_status,
-            known: HashMap::new(),
-            recorded: review.spans.into_iter().map(Arc::new).collect(),
-            acks: review.acks,
-            threads,
-            changes: None,
-        }))
-    }
-
-    /// Settles the tree as it is now, so recorded spans and threads remap onto
-    /// whatever changed while Vet was not running (I2).
-    async fn catch_up(&self) -> Result<()> {
-        let scan = self.acquisition.reconcile(Dirty::All).await?;
-        if scan.snapshot.id != self.settled_snapshot().await {
-            let (revision, retained) = self.settled(scan).await?;
-            if let Some(e) = retained {
-                tracing::warn!(revision, error = %e, "could not keep the content of the revision");
-            }
-        }
-        Ok(())
-    }
-
     /// Takes the refs that keep the commits of `version` alive in git, except those the version
     /// before it already holds, whose base commit and tip are `previous`, and those `existing`
     /// says point at the same commit already. A resumption passes what it found in git so that
@@ -700,160 +436,6 @@ impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> L
         Ok(complete)
     }
 
-    /// The base with its display facts; `current` is the branch the working tree is on.
-    async fn base_view(&self, st: &State, current: Option<&str>) -> Result<BaseView> {
-        let own = manifest::target_view(&st.source, &st.head, current).branch;
-        let contained = base::contained_in(&st.base_choice, &st.base_commit, &st.head, own.as_deref());
-        Ok(BaseView {
-            commit: self.facts.commit_info(&st.base_commit).await?,
-            contained_in: match contained {
-                Some(reference) => Some(self.contained(st, &reference).await),
-                None => None,
-            },
-            into: self.merged_into(st).await?,
-            head_off_base: st.off_base,
-        })
-    }
-
-    /// What there is to say of a changeset whose tip `reference` already holds. What git cannot
-    /// say is left out: the changeset is empty either way.
-    async fn contained(&self, st: &State, reference: &str) -> Contained {
-        let git = &self.acquisition.git;
-        let default = git
-            .default_branch()
-            .await
-            .map_err(|e| tracing::warn!(error = %e, "the default branch is not found"))
-            .ok()
-            .flatten();
-        let target = match &st.source {
-            Source::PullRequest { .. } => self
-                .pull_request_head(&st.source)
-                .await
-                .ok()
-                .flatten()
-                .map(|head| head.target_branch),
-            _ => None,
-        };
-        let branch = target.unwrap_or_else(|| base::reference_name(reference, default.as_deref()));
-        let reference_tip = git
-            .resolve_commit(reference)
-            .await
-            .map_err(|e| tracing::warn!(error = %e, reference, "the branch holding the changeset cannot be read"))
-            .ok()
-            .flatten();
-        let same_tip = reference_tip.as_ref() == Some(&st.head);
-        let merged = match &reference_tip {
-            Some(tip) if !same_tip => self.facts.merged_into_branch(&st.head, tip).await,
-            _ => None,
-        };
-        let (merged_by, commits, since) = match merged {
-            Some((info, commits, since)) => (Some(info), commits, since),
-            None => (None, None, None),
-        };
-        Contained {
-            branch,
-            same_tip,
-            merged_by,
-            commits,
-            since,
-        }
-    }
-
-    /// The branch a pull request is merged into, when that is not the repository's default branch.
-    async fn merged_into(&self, st: &State) -> Result<Option<String>> {
-        if !matches!(st.source, Source::PullRequest { .. }) {
-            return Ok(None);
-        }
-        let Some(head) = self.pull_request_head(&st.source).await? else {
-            tracing::warn!(source = ?st.source, "the target branch of the pull request is not stored");
-            return Ok(None);
-        };
-        // With no default branch to compare with, the target is said.
-        let default = self.acquisition.git.default_branch().await?;
-        Ok((default.as_ref() != Some(&head.target_branch)).then_some(head.target_branch))
-    }
-
-    /// Looks at the working tree's `HEAD` again and keeps whether it still builds on the base.
-    /// Answers whether that changed. Does nothing for another changeset.
-    async fn track_head(&self, st: &mut State) -> bool {
-        if st.source != Source::WorkingTree {
-            return false;
-        }
-        let off_base = base::head_left(&self.acquisition.git, &st.base_commit).await;
-        std::mem::replace(&mut st.off_base, off_base) != off_base
-    }
-
-    /// Replaces the repository's review filter, stored whether or not a review
-    /// is open, and bumps the revision; completion and the excluded counts
-    /// follow with the next manifest. Returns the revision.
-    pub async fn set_filter(&self, filter: ReviewFilter) -> Result<u32> {
-        self.replace_filter(&mut self.hold().await, filter).await
-    }
-
-    /// Adds the file at `path`, or with `directory` everything below the folder at `path`, to the
-    /// filter's excluded globs, and bumps the revision unless it was excluded already. Returns
-    /// the revision.
-    pub async fn exclude_path(&self, path: &str, directory: bool) -> Result<u32> {
-        let mut st = self.hold().await;
-        let mut filter = st.project_filter().clone();
-        let glob = exclude_glob(path, directory);
-        if !filter.exclude.contains(&glob) {
-            filter.exclude.push(glob);
-        }
-        self.replace_filter(&mut st, filter).await
-    }
-
-    async fn replace_filter(&self, st: &mut Held<'_, S::Writes>, filter: ReviewFilter) -> Result<u32> {
-        let filter = filter.normalized();
-        filter.validate().map_err(SessionError::Invalid)?;
-        if *st.project_filter() == filter {
-            return Ok(st.revision);
-        }
-        let writes = st.writes();
-        writes.set_filter(self.repo.clone(), filter.clone()).await?;
-        st.filter = filter;
-        st.project = None;
-        self.refilter(st).await
-    }
-
-    /// Narrows the review on view to `filter`, which replaces the project's filter until the
-    /// narrowing is reset (`None`), the project's filter is edited or another changeset comes
-    /// on view. Nothing is stored. Does nothing when `source` is not the changeset on view, which
-    /// the viewer left meanwhile. Returns the new revision, or none when nothing changed.
-    pub async fn narrow(&self, source: &Source, filter: Option<ReviewFilter>) -> Result<Option<u32>> {
-        let mut st = self.hold().await;
-        if st.source != *source {
-            return Ok(None);
-        }
-        let project = st.project_filter().clone();
-        let (filter, narrowed) = match filter {
-            Some(narrowing) => (narrowing.normalized(), true),
-            None => (project.clone(), false),
-        };
-        filter.validate().map_err(SessionError::Invalid)?;
-        if st.filter == filter {
-            return Ok(None);
-        }
-        st.filter = filter;
-        st.project = narrowed.then_some(project);
-        self.refilter(&mut st).await.map(Some)
-    }
-
-    /// Counts the review again under `st.filter` as a new revision.
-    async fn refilter(&self, st: &mut Held<'_, S::Writes>) -> Result<u32> {
-        let writes = st.writes();
-        st.revision += 1;
-        if st.changes.is_some() {
-            for view in st.remapped_views() {
-                remap::recount(st, view);
-            }
-        }
-        st.publish();
-        self.revisions.advance(st.revision);
-        self.note_progress(&writes, st).await;
-        Ok(st.revision)
-    }
-
     pub async fn revision(&self) -> u32 {
         self.published.read().revision
     }
@@ -886,16 +468,6 @@ impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> L
         self.settle_wanted.clone()
     }
 
-    fn set_degraded(&self, degraded: Option<Degraded>) {
-        *lock(&self.degraded) = degraded;
-    }
-
-    /// Why the working tree is polled instead of watched, if it is; none for any other source.
-    fn degraded_for(&self, source: &Source) -> Option<Degraded> {
-        let degraded = *lock(&self.degraded);
-        degraded.filter(|_| *source == Source::WorkingTree)
-    }
-
     /// The latest settled target: what the review last showed.
     pub async fn target_snapshot(&self) -> Arc<Snapshot> {
         self.published.read().target.clone()
@@ -916,207 +488,6 @@ impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> L
     /// report it again.
     pub async fn settled_snapshot(&self) -> SnapshotId {
         self.published.read().target.id
-    }
-
-    /// Makes a settled snapshot the target and returns the new revision. While a
-    /// review is open it is also the next version: its content is stored and
-    /// the changeset gains a version. The revision comes with its diff and the review state
-    /// remapped onto it, which are worked out before the token is taken. A failed copy of its
-    /// content is not fatal: the diff then reads the worktree, or shows the file as unavailable.
-    /// It is the working tree's, wherever that is: on view, or parked while a branch is.
-    pub async fn settled(&self, scan: Scan) -> Result<(u32, Option<BlobError>)> {
-        let Scan { snapshot, status } = scan;
-        let snapshot = Arc::new(snapshot);
-        loop {
-            let tree = self.working_tree().await;
-            let settlement = self.settlement(&tree, &snapshot, &status).await?;
-            let mut held = self.hold().await;
-            if held.source == Source::WorkingTree {
-                if !settlement.fits(&held) {
-                    continue;
-                }
-                let writes = held.writes();
-                let settled = self
-                    .settle_tree(&writes, &mut held, snapshot, status, settlement)
-                    .await?;
-                held.publish();
-                self.revisions.advance(settled.0);
-                return Ok(settled);
-            }
-            let writes = held.writes();
-            let tree = held
-                .parked()
-                .tree_mut()
-                .expect("the working tree is parked while another changeset is on view");
-            if !settlement.fits(tree) {
-                continue;
-            }
-            return self
-                .settle_tree(&writes, Arc::make_mut(tree), snapshot, status, settlement)
-                .await;
-        }
-    }
-
-    /// The working tree's state: the one on view, or the one parked while another changeset is.
-    async fn working_tree(&self) -> Arc<State> {
-        let st = self.published.read();
-        if st.source == Source::WorkingTree {
-            return st;
-        }
-        let mut held = self.hold().await;
-        // It may have come on view while this waited for the token.
-        if held.source == Source::WorkingTree {
-            return held.shared();
-        }
-        let tree = held.parked().tree();
-        Arc::clone(tree.expect("the working tree is parked while another changeset is on view"))
-    }
-
-    /// What settling `snapshot` into `tree` needs that takes a while: the content kept for its
-    /// version and what it changed, while a review is open, and the diff the revision is shown
-    /// with. A diff that cannot be had is left for the first request of the revision to try again.
-    async fn settlement(&self, tree: &State, snapshot: &Arc<Snapshot>, status: &SnapshotStatus) -> Result<Settlement> {
-        let mut settlement = Settlement {
-            base: tree.base.id,
-            target: tree.target.id,
-            reviewing: tree.review.is_some() && tree.changeset.is_some(),
-            retained: None,
-            change: None,
-            diffed: None,
-        };
-        if settlement.reviewing {
-            let retained = self
-                .acquisition
-                .retain(
-                    &[&*tree.base, &*tree.target],
-                    snapshot,
-                    status,
-                    &BTreeMap::new(),
-                    |_, _| {},
-                )
-                .await;
-            settlement.retained = retained.err();
-            let sides = (&tree.base, &tree.target);
-            settlement.change = Some(self.change_of(sides, &tree.base, snapshot).await?);
-        }
-        settlement.diffed = self.facts.diff_of(&tree.base, snapshot).await.ok();
-        Ok(settlement)
-    }
-
-    /// Settles `snapshot` into `st`, which need not be the one on view: only the revision of
-    /// the one on view is announced, by the caller.
-    async fn settle_tree(
-        &self,
-        store: &S::Writes,
-        st: &mut State,
-        snapshot: Arc<Snapshot>,
-        status: SnapshotStatus,
-        settlement: Settlement,
-    ) -> Result<(u32, Option<BlobError>)> {
-        // The agent commits on top of the base: the snapshot is built on the `HEAD` of now.
-        let mut head = st.head.clone();
-        if st.source == Source::WorkingTree
-            && let Ok(now) = self.acquisition.git.head().await
-        {
-            head = now;
-        }
-        if let (Some(review), Some(changeset)) = (&st.review, st.changeset) {
-            let version = Version {
-                n: review.version + 1,
-                snapshots: Some(Snapshots {
-                    base: st.base.id,
-                    target: snapshot.id,
-                }),
-                base_commit: st.base_commit.clone(),
-                tip: head.clone(),
-                at: (self.clock)(),
-                origin: VersionOrigin::Settled,
-                change: settlement.change.expect("worked out while the review was open"),
-            };
-            let previous = Some((&st.base_commit, &st.head));
-            let write = store.append_version(changeset, version.clone());
-            self.record_version(store, changeset, &version, previous, &[(&snapshot, &status)], write)
-                .await?;
-        }
-        st.head = head;
-        // Older versions stay materializable (§6.2).
-        self.acquisition.record_commit(snapshot.id, st.head.clone());
-        let old = std::mem::replace(&mut st.target, snapshot);
-        st.target_status = status;
-        if let Some(review) = &mut st.review {
-            st.known.insert(old.id, old);
-            review.version += 1;
-            review.updated_at = (self.clock)();
-        }
-        st.revision += 1;
-        st.snapshot += 1;
-        st.changes = None;
-        self.track_head(st).await;
-        if let Some(diffed) = settlement.diffed
-            && let Err(e) = self.install_diff(store, st, diffed).await
-        {
-            tracing::warn!(error = %e, "could not remap the review onto the settled tree");
-            st.changes = None;
-        }
-        Ok((st.revision, settlement.retained))
-    }
-
-    /// Settles snapshots of the worktree as `settling` reports them, and looks at the branch
-    /// on view when a ref was written, calling `on_settled` with each new revision of the
-    /// changeset on view and the open review's latest version after it, until dropped. A settled
-    /// tree that is not on view is not announced: it is not what is shown. `on_quiet` is called
-    /// when `settling` finds the settled tree quiet, `on_edits` when edits start or stop waiting
-    /// to settle.
-    pub async fn follow<W: Watcher + Send, C: Clock + Send + Sync>(
-        &self,
-        mut settling: Settling<W, C>,
-        mut on_settled: impl FnMut(u32, Option<u32>) + Send,
-        mut on_quiet: impl FnMut() + Send,
-        mut on_edits: impl FnMut(bool) + Send,
-    ) {
-        self.set_degraded(settling.degraded());
-        loop {
-            settling.set_busy(false);
-            let settled = settling.next_settled(&self.acquisition).await;
-            // Handling what settled is work too, even when it is not a scan: a client waiting for
-            // quiet must not answer between the result and the event it announces.
-            settling.set_busy(true);
-            let scan = match settled {
-                Ok(Settled::Tree(scan)) => scan,
-                Ok(Settled::Quiet) => {
-                    on_quiet();
-                    continue;
-                }
-                Ok(Settled::Edits(waiting)) => {
-                    on_edits(waiting);
-                    continue;
-                }
-                Ok(Settled::RefsMoved) => {
-                    match self.observe().await {
-                        Ok(Some(revision)) => on_settled(revision, self.review_version()),
-                        Ok(None) => {}
-                        Err(e) => tracing::warn!(error = %e, "could not look at the branch on view"),
-                    }
-                    continue;
-                }
-                Err(e) => {
-                    tracing::warn!(error = %e, "reconciliation failed");
-                    continue;
-                }
-            };
-            match self.settled(scan).await {
-                Ok((revision, retained)) => {
-                    if let Some(e) = retained {
-                        tracing::warn!(revision, error = %e, "could not keep the content of the revision");
-                    }
-                    self.set_degraded(settling.degraded());
-                    if self.published.read().source == Source::WorkingTree {
-                        on_settled(revision, self.review_version());
-                    }
-                }
-                Err(e) => tracing::warn!(error = %e, "could not record a settled snapshot"),
-            }
-        }
     }
 
     /// Copies into the store the content that `anchors` (those of recorded spans
@@ -1146,23 +517,6 @@ impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> L
         }
         Ok(())
     }
-}
-
-/// The filter glob for exactly the file at `path`, or everything below the folder at `path`:
-/// anchored at the root, with the characters that are glob syntax matching themselves.
-fn exclude_glob(path: &str, directory: bool) -> String {
-    let mut glob = String::from("/");
-    for c in path.chars() {
-        if matches!(c, '*' | '?' | '[' | ']' | '{' | '}') {
-            glob.extend(['[', c, ']']);
-        } else {
-            glob.push(c);
-        }
-    }
-    if directory {
-        glob.push_str("/**");
-    }
-    glob
 }
 
 #[cfg(test)]

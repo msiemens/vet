@@ -19,6 +19,7 @@ use vet_core::completion::HunkState;
 
 use super::blobs::image_media_type;
 use super::manifest::{old_path_of, update_of};
+use super::open::name_of_repo;
 use super::state::{check_revision, outcome};
 use super::*;
 use crate::changeset::{BaseChoice, ChangesetId, CommitId, Lens, RemoteKey, Source, Version, VersionOrigin};
