@@ -135,7 +135,7 @@ What makes the watcher ask for a full reconciliation:
 ### Concurrency and budgets
 
 - Three lanes own their resources and share only the engine: the review commands, the semantic lane, and the platform lane (serialized by the session's exchange lock, with the state released while the platform is asked).
-- A command holding the token never awaits a language server, a platform or another lane's budget; settling works its content out before it takes the token, and derives diffs, interdiffs and commits without touching the state.
+- A command holding the token never awaits a language server, a platform or another lane's budget; settling works its content out before it takes the token, and derives diffs, interdiffs and commits without touching the state. The session's `Facts` (what the repository says, its caches and engines, the queue) cannot reach review state at all.
 - Derived work runs on `vet-engine`: computed once per key however many callers ask, kept by count and bytes, one flight per key, dropped when no waiter is left. Long work reports as throttled `Task`s. The working tree's copy into the store is kept per base and target snapshot, since content leaves the store only in the collection at store open.
 - Every way off the async threads draws on a bound (`vet-infra/src/budget.rs`): review I/O, semantic I/O, background I/O, probes, restores. A lane cannot take another's permits, so a saturated semantic lane leaves the review's reads alone; a fetch has its own budget.
 - `crates/clippy.toml` bans a bare `spawn_blocking`, `thread::spawn`, `Command::new` and a raw mutex lock; blocking work and processes go through `budget` and `exec`, the two modules that allow them, and the narrow exceptions are local (the transport's stdin thread, the host's backend child, the fake platform, each crate's lock helper, tests that build fixtures). The lint covers the workspace crates, not `ui/src-tauri`.
@@ -191,7 +191,7 @@ What makes the watcher ask for a full reconciliation:
 - A rule about what a review is: `vet-core`, with tests on plain values.
 - A use case: a module of `vet-app` over ports it declares; the adapter for a new port goes in `vet-infra`.
 - A new request or event: `vet-protocol`, then `vet-mapping` and `vet-backend` for the handler, its classification in `contract.rs`, and the typed call in `ui/src/state/backend.ts`.
-- A change to review state: a session command that takes the write token and publishes; a derived value: a `vet-engine` kind awaited without the token. Blocking work and processes go through `budget` and `exec`.
+- A change to review state: a session command that takes the write token and publishes; a derived value: a `vet-engine` kind on the session's `Facts`, awaited without the token. Blocking work and processes go through `budget` and `exec`.
 - A new store table: an entity and a migration in `vet-infra/src/store`, behind the store ports in `vet-app/src/ports.rs`.
 - A semantic query: a primitive on `LanguageServer`, a key in `reuse.rs`, a `Feature` if servers may lack it, a derived analysis in `vet-semantic/src/derived`.
 - A new language server: a `Language` in `vet-infra/src/language.rs` (binary, file types, root markers, whether it executes project code (assumed yes unless known), its install and restore, its setup in `lsp/setup.rs`), then a check of which features the server offers. Special cases for a server are added one by one, for problems actually seen.
