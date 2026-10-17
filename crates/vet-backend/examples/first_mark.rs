@@ -14,6 +14,7 @@ use std::time::{Duration, Instant};
 mod common;
 
 use common::{Client, config, git, init, write};
+use vet_app::ports::Store;
 use vet_backend::{Orchestrator, open_store};
 use vet_protocol::{Event, ProjectId, Request, Response, ServerMessage, TaskKind, TaskState, View};
 
@@ -211,6 +212,59 @@ async fn session(
     println!("{label}: a mark with everything seen: unmark {undo:?}, mark {redo:?}");
 }
 
+/// The bytes under `dir` on disk, counting the blocks the files occupy where the platform says.
+fn disk_size(dir: &Path) -> u64 {
+    let Ok(entries) = std::fs::read_dir(dir) else { return 0 };
+    entries
+        .flatten()
+        .map(|entry| {
+            let Ok(meta) = entry.metadata() else { return 0 };
+            if meta.is_dir() {
+                return disk_size(&entry.path());
+            }
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::MetadataExt;
+                meta.blocks() * 512
+            }
+            #[cfg(not(unix))]
+            meta.len()
+        })
+        .sum()
+}
+
+/// What writing and asking for the content of the texts costs, on a store of its own: the whole
+/// batch, the same batch again (all held), one question for every id, one write per text (the
+/// shape of `keep`), and the size of the data directory.
+async fn blob_writes(files: &[(String, String)]) {
+    let texts: Vec<Vec<u8>> = files.iter().map(|(_, t)| t.clone().into_bytes()).collect();
+    let data = tempfile::tempdir().unwrap();
+    let store = open_store(data.path()).await.unwrap();
+    let (ids, put) = timed(store.put_blobs(texts.clone())).await;
+    let ids = ids.unwrap();
+    let (_, again) = timed(store.put_blobs(texts.clone())).await;
+    let (missing, asked) = timed(store.missing_blobs(ids)).await;
+    assert!(missing.unwrap().is_empty());
+    let started = Instant::now();
+    for text in &texts {
+        store.put_blobs(vec![text.clone()]).await.unwrap();
+    }
+    let single = started.elapsed();
+    let fresh = tempfile::tempdir().unwrap();
+    let store = open_store(fresh.path()).await.unwrap();
+    let started = Instant::now();
+    for text in &texts {
+        store.put_blobs(vec![text.clone()]).await.unwrap();
+    }
+    let single_fresh = started.elapsed();
+    println!(
+        "blobs: put of {} texts {put:?}, again {again:?}, missing {asked:?}, one put per text on a \
+         store holding them {single:?}, on an empty one {single_fresh:?}, data directory {} KB on disk",
+        texts.len(),
+        disk_size(data.path()) / 1024,
+    );
+}
+
 #[tokio::main(flavor = "multi_thread", worker_threads = 4)]
 async fn main() {
     let count = std::env::var("VET_MEASURE_FILES").map_or(300, |n| n.parse().unwrap());
@@ -219,6 +273,7 @@ async fn main() {
     println!("{} files, {} KB", files.len(), bytes / 1024);
     let repo = repo(&files);
     let names: Vec<_> = files.iter().map(|(n, _)| n.clone()).collect();
+    blob_writes(&files).await;
     let data = tempfile::tempdir().unwrap();
 
     // The first mark starts the review before the tree was quiet long enough to be copied ahead:
