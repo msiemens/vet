@@ -300,7 +300,7 @@ While the review screen shows the current changeset, the backend analyses it in 
 
 - **Changed symbols:** the changed symbols of each changed file, the files the reviewer has open first.
 - **Problems:** the diagnostics of each changed file, the files the reviewer has open first. First the new side, marked "origin pending", then the comparison with the old side (§6.3).
-- If a file's analysis fails for a reason that may pass (a storage read, a server that is starting, indexing or restarted, a request that failed), Vet tries again a few times before it reports the failure. A file that cannot be analysed for a lasting reason (no server for its language, an untrusted project, a binary or too-large file, a file the changeset does not change, a snapshot that cannot be materialized) is reported at once.
+- If a file's analysis fails for a reason that may pass (a storage read, a server that is starting, indexing or restarted, a request that failed), Vet tries again a few times before it reports the failure: a server at work is waited for until it is done, not asked again on a timer, and a file waiting for its server does not hold up files of other languages. A file that cannot be analysed for a lasting reason (no server for its language, an untrusted project, a binary or too-large file, a file the changeset does not change, a snapshot that cannot be materialized) is reported at once.
 - The analysis follows the current revision. A filter change restarts it for the files the filter now includes. It can be run again on request.
 
 ## 7. Platforms
