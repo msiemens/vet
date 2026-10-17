@@ -22,17 +22,18 @@ use std::time::Duration;
 use sea_orm::sqlx::sqlite::{SqliteConnectOptions, SqliteJournalMode, SqlitePool, SqlitePoolOptions};
 use sea_orm::sqlx::{self, Row};
 use tokio::sync::{mpsc, oneshot};
+use vet_core::content::{Hash, SnapshotId};
 use vet_semantic::reuse::{Key, SemanticCache, Value};
 
 use crate::clock::unix_now;
 use crate::store::remove_database;
-use codec::{Address, address, decode, encode};
+use codec::{Address, address, decode, encode, snapshot_of};
 
 const FILE: &str = "semantic-cache.sqlite";
 
 /// Bumped when the table changes. A file with another version is recreated.
-const SCHEMA: i64 = 1;
-const SET_SCHEMA: &str = "PRAGMA user_version = 1";
+const SCHEMA: i64 = 2;
+const SET_SCHEMA: &str = "PRAGMA user_version = 2";
 
 /// How long writes are gathered into one transaction, and how many at most.
 const BATCH_WINDOW: Duration = Duration::from_millis(200);
@@ -53,6 +54,8 @@ type Clock = Arc<dyn Fn() -> i64 + Send + Sync>;
 enum Job {
     Put {
         address: Address,
+        /// The snapshot of a project answer; none for the answer about a text.
+        snapshot: Option<Hash>,
         kind: i64,
         bytes: Vec<u8>,
     },
@@ -119,7 +122,8 @@ async fn connect(path: &Path) -> Result<SqlitePool, Unusable> {
             kind      INTEGER NOT NULL,
             value     BLOB NOT NULL,
             bytes     INTEGER NOT NULL,
-            last_used INTEGER NOT NULL
+            last_used INTEGER NOT NULL,
+            snapshot  BLOB
         ) WITHOUT ROWID",
     )
     .execute(&mut *tx)
@@ -127,9 +131,28 @@ async fn connect(path: &Path) -> Result<SqlitePool, Unusable> {
     sqlx::query("CREATE INDEX IF NOT EXISTS answer_lru ON answer(last_used)")
         .execute(&mut *tx)
         .await?;
+    sqlx::query("CREATE INDEX IF NOT EXISTS answer_snapshot ON answer(snapshot)")
+        .execute(&mut *tx)
+        .await?;
     sqlx::query(SET_SCHEMA).execute(&mut *tx).await?;
     tx.commit().await?;
     Ok(pool)
+}
+
+/// SQLite allows 32766 bound variables per statement.
+const SNAPSHOTS_PER_STATEMENT: usize = 1000;
+
+/// `{head} snapshot IN (…snapshots)` with the snapshots bound.
+fn by_snapshots<'q>(
+    head: &str,
+    snapshots: &'q [SnapshotId],
+) -> sqlx::query::Query<'q, sqlx::Sqlite, sqlx::sqlite::SqliteArguments> {
+    let marks = vec!["?"; snapshots.len()].join(",");
+    let mut query = sqlx::query(sqlx::AssertSqlSafe(format!("{head} snapshot IN ({marks})")));
+    for snapshot in snapshots {
+        query = query.bind(&snapshot.0.0[..]);
+    }
+    query
 }
 
 /// The bytes the cache's file takes in `dir`, the data directory, with its write-ahead log.
@@ -187,6 +210,37 @@ impl SqliteSemanticCache {
         wait.await.unwrap_or(0)
     }
 
+    /// Removes the answers given for `snapshots`, those still queued included. Answers about a
+    /// text alone belong to no snapshot and stay.
+    pub async fn forget(&self, snapshots: &[SnapshotId]) {
+        if snapshots.is_empty() {
+            return;
+        }
+        self.flush().await;
+        for chunk in snapshots.chunks(SNAPSHOTS_PER_STATEMENT) {
+            let result = by_snapshots("DELETE FROM answer WHERE", chunk)
+                .execute(&self.pool)
+                .await;
+            if let Err(e) = result {
+                tracing::warn!(error = %e, "answers of removed snapshots could not be deleted");
+            }
+        }
+        shrink(&self.pool).await;
+    }
+
+    /// The bytes the answers given for `snapshots` take.
+    pub async fn bytes_of(&self, snapshots: &[SnapshotId]) -> u64 {
+        let mut total = 0u64;
+        for chunk in snapshots.chunks(SNAPSHOTS_PER_STATEMENT) {
+            let bytes = by_snapshots("SELECT COALESCE(SUM(bytes), 0) FROM answer WHERE", chunk)
+                .fetch_one(&self.pool)
+                .await
+                .map_or(0, |row| row.get::<i64, _>(0));
+            total += u64::try_from(bytes).unwrap_or(0);
+        }
+        total
+    }
+
     /// Holds the file to `budget` bytes from now on; returns when it is within it, and
     /// the space of what was removed is handed back to the file system.
     pub async fn set_budget(&self, budget: u64) {
@@ -236,6 +290,7 @@ impl SemanticCache for SqliteSemanticCache {
             &self.queue,
             Job::Put {
                 address,
+                snapshot: snapshot_of(key),
                 kind: kind.id(),
                 bytes,
             },
@@ -318,9 +373,14 @@ async fn apply(pool: &SqlitePool, batch: Vec<Job>, clock: &Clock) -> Vec<Ack> {
         let now = clock();
         for job in batch {
             match job {
-                Job::Put { address, kind, bytes } => {
+                Job::Put {
+                    address,
+                    snapshot,
+                    kind,
+                    bytes,
+                } => {
                     sqlx::query(
-                        "INSERT INTO answer (key, kind, value, bytes, last_used) VALUES (?, ?, ?, ?, ?)
+                        "INSERT INTO answer (key, kind, value, bytes, last_used, snapshot) VALUES (?, ?, ?, ?, ?, ?)
                          ON CONFLICT(key) DO UPDATE SET
                            value = excluded.value, bytes = excluded.bytes, last_used = excluded.last_used",
                     )
@@ -329,6 +389,7 @@ async fn apply(pool: &SqlitePool, batch: Vec<Job>, clock: &Clock) -> Vec<Ack> {
                     .bind(&bytes[..])
                     .bind(bytes.len() as i64)
                     .bind(now)
+                    .bind(snapshot.as_ref().map(|s| &s.0[..]))
                     .execute(&mut *tx)
                     .await?;
                 }

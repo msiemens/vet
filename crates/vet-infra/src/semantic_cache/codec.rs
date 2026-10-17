@@ -158,6 +158,15 @@ pub(super) fn address(key: &Key) -> Option<(Address, Kind)> {
     Some((address, kind))
 }
 
+/// The snapshot a project answer was given for, which says whose it is; none for an answer
+/// about a text alone.
+pub(super) fn snapshot_of(key: &Key) -> Option<Hash> {
+    match key {
+        Key::Project { basis, .. } => Some(basis.snapshot.0),
+        Key::Text { .. } => None,
+    }
+}
+
 fn kind_of_value(value: &Value) -> Kind {
     match value {
         Value::Symbols(_) => Kind::Symbols,

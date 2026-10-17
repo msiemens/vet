@@ -28,6 +28,7 @@ pub mod semantics;
 pub mod servers;
 pub mod session;
 pub mod settle;
+pub mod storage;
 pub mod supervise;
 pub mod trust;
 

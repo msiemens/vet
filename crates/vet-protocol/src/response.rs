@@ -4,12 +4,12 @@ use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
 use crate::{
-    Account, BackendSettings, BaseDiff, BlobContent, Calls, ChangesetKey, ChangesetRow, CheckLog, CommitChecks,
-    CommitUnit, Diagnostic, DirEntry, FileOutline, FileSymbols, Highlights, Lens, LineDelta, LocationRows, Locations,
-    Manifest, MappedLine, PatternMatch, PipelineOutcome, PipelineStep, Preference, ProjectId, PullRequestInfo,
-    PullRequestRow, PullRequestSource, Reachability, RecentProject, RemovalImpact, ReviewSubmitted, ReviewUpdate,
-    SearchFile, ServerInfo, ServerRuntimes, Serving, Side, SymbolAt, SymbolSignature, Task, TextChange, TextContent,
-    Thread, ThreadTarget, Unavailable, Usages, VersionInfo, WorkspaceSymbols,
+    Account, AppStorage, BackendSettings, BaseDiff, BlobContent, Calls, ChangesetKey, ChangesetRow, CheckLog,
+    CommitChecks, CommitUnit, Diagnostic, DirEntry, FileOutline, FileSymbols, Highlights, Lens, LineDelta,
+    LocationRows, Locations, Manifest, MappedLine, PatternMatch, PipelineOutcome, PipelineStep, Preference, ProjectId,
+    ProjectStorage, PullRequestInfo, PullRequestRow, PullRequestSource, Reachability, RecentProject, RemovalImpact,
+    ReviewSubmitted, ReviewUpdate, SearchFile, ServerInfo, ServerRuntimes, Serving, Side, SymbolAt, SymbolSignature,
+    Task, TextChange, TextContent, Thread, ThreadTarget, Unavailable, Usages, VersionInfo, WorkspaceSymbols,
 };
 
 #[derive(Clone, PartialEq, Debug, Serialize, Deserialize, TS)]
@@ -34,6 +34,21 @@ pub enum Response {
     SemanticCacheUsage {
         #[ts(type = "number")]
         bytes: u64,
+    },
+    /// The projects' disk use, in root order, and what is kept for none.
+    ProjectsStorage {
+        projects: Vec<ProjectStorage>,
+        app: AppStorage,
+    },
+    /// One project's disk use.
+    ProjectStorage {
+        project: ProjectStorage,
+    },
+    /// After `RemoveProject`: the bytes the project took, which are freed apart from content that
+    /// is still young enough to be kept for a while.
+    ProjectRemoved {
+        #[ts(type = "number")]
+        freed: u64,
     },
     /// The backend's own settings.
     Settings {

@@ -33,11 +33,17 @@ impl ProjectTrees {
         KeptTrees::new(sources, self.referenced.clone(), self.io.clone())
     }
 
+    /// The trees of the project whose repository root is `root`, which may have none: nothing is
+    /// written.
+    pub fn at(&self, root: &str) -> KeptTrees {
+        self.set(project_dir(&self.data, root).join(SOURCES))
+    }
+
     /// The trees of the project whose repository root is `root`. The project's `root` file
     /// is written here, so that the directory says whose it is.
     pub async fn of(&self, root: &str) -> Arc<KeptTrees> {
         let dir = project_dir(&self.data, root);
-        let set = self.set(dir.join(SOURCES));
+        let set = self.at(root);
         let root = root.to_owned();
         let _ = self.io.blocking(move || write_root(&dir, &root)).await;
         Arc::new(set)

@@ -11,6 +11,7 @@ mod git_edges;
 mod listing;
 mod lsp;
 mod materialize;
+mod project_files;
 mod remerge;
 mod restore;
 mod semantic_cache;

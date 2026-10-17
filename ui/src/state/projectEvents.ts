@@ -5,7 +5,16 @@ import type { Event as ServerEvent } from "../generated/Event";
 /** The events that belong to the backend, not to a session. */
 export type ProcessEvent = Extract<
   ServerEvent,
-  { type: "credentialsNeeded" | "accountsChanged" | "recentProjectsChanged" | "settingsChanged" | "preferenceChanged" }
+  {
+    type:
+      | "credentialsNeeded"
+      | "accountsChanged"
+      | "recentProjectsChanged"
+      | "projectRemoved"
+      | "storageChanged"
+      | "settingsChanged"
+      | "preferenceChanged";
+  }
 >;
 
 /** The events of a session. */
@@ -15,6 +24,8 @@ const PROCESS_EVENTS: ReadonlySet<string> = new Set<ProcessEvent["type"]>([
   "credentialsNeeded",
   "accountsChanged",
   "recentProjectsChanged",
+  "projectRemoved",
+  "storageChanged",
   "settingsChanged",
   "preferenceChanged",
 ]);

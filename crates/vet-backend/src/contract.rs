@@ -15,6 +15,8 @@ pub enum Kind {
     CredentialsNeeded,
     AccountsChanged,
     RecentProjectsChanged,
+    ProjectRemoved,
+    StorageChanged,
     SettingsChanged,
     PreferenceChanged,
     SnapshotMoved,
@@ -49,6 +51,8 @@ impl Kind {
             Event::CredentialsNeeded { .. } => Self::CredentialsNeeded,
             Event::AccountsChanged => Self::AccountsChanged,
             Event::RecentProjectsChanged => Self::RecentProjectsChanged,
+            Event::ProjectRemoved { .. } => Self::ProjectRemoved,
+            Event::StorageChanged => Self::StorageChanged,
             Event::SettingsChanged => Self::SettingsChanged,
             Event::PreferenceChanged { .. } => Self::PreferenceChanged,
             Event::SnapshotMoved { .. } => Self::SnapshotMoved,
@@ -133,6 +137,8 @@ pub fn effect(request: &Request) -> Effect {
         | Request::RecentProjects
         | Request::Accounts
         | Request::SemanticCacheUsage
+        | Request::ProjectsStorage
+        | Request::ProjectStorage { .. }
         | Request::Settings
         | Request::Preferences { .. }
         | Request::LogDirectory
@@ -194,6 +200,8 @@ pub fn effect(request: &Request) -> Effect {
         Request::ClearSemanticCaches => Effect::Unannounced(
             "only speed is lost; the disk use it answers with is read by the Settings page when it opens",
         ),
+        Request::ClearProjectCaches { .. } => tested(&[StorageChanged]),
+        Request::RemoveProject { .. } => tested(&[ProjectRemoved, RecentProjectsChanged, StorageChanged]),
         Request::SetSettings { .. } => tested(&[SettingsChanged]),
         Request::SetPreference { .. } => tested(&[PreferenceChanged]),
         Request::RecordRecentProject { .. } | Request::ForgetRecentProject { .. } => tested(&[RecentProjectsChanged]),
@@ -362,6 +370,10 @@ mod tests {
             },
             Request::ClearSemanticCaches,
             Request::SemanticCacheUsage,
+            Request::ProjectsStorage,
+            Request::ProjectStorage { root: path() },
+            Request::ClearProjectCaches { root: path() },
+            Request::RemoveProject { root: path() },
             Request::Settings,
             Request::SetSettings {
                 settings: BackendSettings {
@@ -947,7 +959,7 @@ mod tests {
         let orchestrator = Orchestrator::new(open_store(data.path()).await.unwrap(), config);
         let (requester, observer) = (Listener::new(), Listener::new());
         let root = p.to_str().unwrap();
-        let (project, _) = orchestrator.open(root, requester.connection.clone()).await.unwrap();
+        let (project, canonical) = orchestrator.open(root, requester.connection.clone()).await.unwrap();
         orchestrator.open(root, observer.connection.clone()).await.unwrap();
         for listener in [&requester, &observer] {
             orchestrator
@@ -980,6 +992,11 @@ mod tests {
                 scope: Some(root.into()),
                 key: "tabs".into(),
                 value: Some("[]".into()),
+            })
+            .await;
+        world
+            .drive(Request::ClearProjectCaches {
+                root: canonical.clone(),
             })
             .await;
 
@@ -1296,6 +1313,8 @@ mod tests {
                 lens: Lens::PerCommit,
             })
             .await;
+
+        world.drive(Request::RemoveProject { root: canonical }).await;
 
         // Every request is classified, and every mutation that can be driven was.
         let samples = samples();

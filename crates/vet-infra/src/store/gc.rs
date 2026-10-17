@@ -17,7 +17,7 @@ use super::{Res, SqliteStore};
 /// SQLite allows 32766 bound variables per statement.
 const CHUNK: usize = 1000;
 
-fn snapshot_id(bytes: &[u8]) -> Res<SnapshotId> {
+pub(super) fn snapshot_id(bytes: &[u8]) -> Res<SnapshotId> {
     hash(bytes).map(SnapshotId)
 }
 
@@ -130,14 +130,8 @@ where
     Ok(deleted)
 }
 
-/// Deletes the tree nodes no snapshot reaches; returns how many went.
-async fn sweep_nodes(db: &impl ConnectionTrait) -> Res<usize> {
-    let roots: Vec<Vec<u8>> = snapshot::Entity::find()
-        .select_only()
-        .column(snapshot::Column::Id)
-        .into_tuple()
-        .all(db)
-        .await?;
+/// The directories each tree node holds.
+pub(super) async fn dir_children(db: &impl ConnectionTrait) -> Res<HashMap<Vec<u8>, Vec<Vec<u8>>>> {
     let edges: Vec<(Vec<u8>, Vec<u8>)> = tree_child::Entity::find()
         .filter(tree_child::Column::Kind.eq(kinds::ChildKind::Dir))
         .select_only()
@@ -150,6 +144,18 @@ async fn sweep_nodes(db: &impl ConnectionTrait) -> Res<usize> {
     for (node, dir) in edges {
         children.entry(node).or_default().push(dir);
     }
+    Ok(children)
+}
+
+/// Deletes the tree nodes no snapshot reaches; returns how many went.
+async fn sweep_nodes(db: &impl ConnectionTrait) -> Res<usize> {
+    let roots: Vec<Vec<u8>> = snapshot::Entity::find()
+        .select_only()
+        .column(snapshot::Column::Id)
+        .into_tuple()
+        .all(db)
+        .await?;
+    let mut children = dir_children(db).await?;
     let mut reachable: HashSet<Vec<u8>> = HashSet::new();
     let mut stack = roots;
     while let Some(n) = stack.pop() {

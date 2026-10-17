@@ -32,6 +32,7 @@ mod review;
 mod screens;
 mod semantic;
 mod servers;
+mod storage;
 mod supervisor;
 mod symbols;
 mod sync;
@@ -46,16 +47,17 @@ use std::time::{Duration, SystemTime};
 
 use vet_app::gc::Retention;
 use vet_app::platform::Accounts;
-use vet_app::ports::{PreferenceStore, RecentProject, Settings, SettingsStore, StoreError};
+use vet_app::ports::{AnswerStore, PreferenceStore, RecentProject, Settings, SettingsStore, StoreError};
 use vet_app::recent::RecentProjects;
 use vet_app::registry::{Entry, Registry, Subscribers};
 use vet_app::semantics::Semantics;
 use vet_app::servers::Servers;
 use vet_app::session::LiveSession;
+use vet_app::storage::Storage;
 use vet_infra::budget::{Budget, Budgets, REVIEW_IO};
 use vet_infra::clock::unix_now;
 use vet_infra::credentials::HttpValidator;
-use vet_infra::git::GixRepo;
+use vet_infra::git::{GixRepo, RepoRefs};
 use vet_infra::lsp::{LspLauncher, config as lsp_config};
 use vet_infra::materialize::Materialize;
 use vet_infra::materialize::kept::Collected;
@@ -64,6 +66,7 @@ use vet_infra::platform::azure_devops::AzureDevOpsClient;
 use vet_infra::platform::github::GitHubClient;
 use vet_infra::restore::ToolRestorer;
 use vet_infra::servers::ToolResolver;
+use vet_infra::storage::DataFiles;
 use vet_infra::store::SqliteStore;
 use vet_protocol::{BackendSettings, Event, Failure, Preference, ProjectId, Request, Response};
 use vet_semantic::ports::Backend;
@@ -143,6 +146,7 @@ type Projects = Registry<Connection, Wired>;
 type PlatformAccounts = Accounts<CliRunner, HttpValidator>;
 type GitHub = GitHubClient<Arc<PlatformAccounts>>;
 type AzureDevOps = AzureDevOpsClient<Arc<PlatformAccounts>>;
+type ProjectData = Storage<SqliteStore, DataFiles, Arc<PersistentAnswers>, RepoRefs>;
 
 pub struct Orchestrator {
     store: SqliteStore,
@@ -160,6 +164,10 @@ pub struct Orchestrator {
     trees: Arc<ProjectTrees>,
     /// The answers of the language servers kept between launches (§9).
     answers: Arc<PersistentAnswers>,
+    /// What the projects hold in the stores and on disk, and removing it.
+    storage: ProjectData,
+    /// The last measure of what the projects take, which a removal or a clear drops.
+    measured: tokio::sync::Mutex<Option<storage::Computed>>,
     /// Held while the backend's own settings change, so that what a change applies is the
     /// difference to the settings it replaces.
     settings_changing: tokio::sync::Mutex<()>,
@@ -207,7 +215,18 @@ impl Orchestrator {
         let languages = backends.iter().map(|b| b.config().backend.clone()).collect();
         let resolver = ToolResolver::new(store.dir().to_owned(), &budgets);
         let referenced = Arc::new(StoreReferences(store.clone()));
-        let trees = ProjectTrees::new(store.dir().to_owned(), referenced, budgets.semantic_io.clone());
+        let trees = Arc::new(ProjectTrees::new(
+            store.dir().to_owned(),
+            referenced,
+            budgets.semantic_io.clone(),
+        ));
+        let answers = Arc::new(PersistentAnswers::new(store.clone(), budgets.semantic_io.clone()));
+        let storage = Storage::new(
+            store.clone(),
+            DataFiles::new(store.dir().to_owned(), trees.clone(), budgets.semantic_io.clone()),
+            answers.clone(),
+            RepoRefs::new(budgets.review_io.clone()),
+        );
         let process_subscribers = Subscribers::<Connection>::default();
         let needed = process_subscribers.clone();
         let accounts = Arc::new(Accounts::new(
@@ -233,8 +252,10 @@ impl Orchestrator {
             highlighter: highlight::Highlighter::new(budgets.review_io.clone()),
             sources: highlight::Sources::new(highlight::Highlighter::new(budgets.review_io.clone())),
             budgets,
-            trees: Arc::new(trees),
-            answers: Arc::new(PersistentAnswers::new(store.clone())),
+            trees,
+            answers,
+            storage,
+            measured: tokio::sync::Mutex::default(),
             settings_changing: tokio::sync::Mutex::new(()),
             recent: RecentProjects::new(store.clone()),
             store,
@@ -311,6 +332,7 @@ impl Orchestrator {
             .semantic_io
             .blocking(move || std::fs::remove_dir_all(legacy))
             .await;
+        self.storage.sweep().await;
         let swept = self.trees.sweep().await;
         let collected = self.trees.collect(SystemTime::now()).await;
         if swept + collected.removed > 0 {
@@ -344,7 +366,7 @@ impl Orchestrator {
 
     async fn semantic_cache_usage(&self) -> Response {
         Response::SemanticCacheUsage {
-            bytes: self.answers.usage(&self.budgets.semantic_io).await,
+            bytes: self.answers.file_size().await,
         }
     }
 
@@ -461,6 +483,10 @@ impl Orchestrator {
                 Ok(self.semantic_cache_usage().await)
             }),
             Request::SemanticCacheUsage => reply(async move { Ok(self.semantic_cache_usage().await) }),
+            Request::ProjectsStorage => reply(self.projects_storage()),
+            Request::ProjectStorage { root } => reply(self.project_storage(root)),
+            Request::ClearProjectCaches { root } => reply(self.clear_project_caches(root)),
+            Request::RemoveProject { root } => reply(self.remove_project(root)),
             Request::Settings => reply(self.settings()),
             Request::SetSettings { settings } => reply(self.set_settings(settings)),
             Request::Preferences { scope } => reply(self.preferences(scope)),

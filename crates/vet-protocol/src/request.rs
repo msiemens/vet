@@ -72,6 +72,34 @@ pub enum Request {
     /// How much disk the answers of the language servers kept between launches take. They
     /// belong to the backend, not to a project. Answers with `Response::SemanticCacheUsage`.
     SemanticCacheUsage,
+    /// What every project the backend holds anything for takes on disk, and what is kept for none:
+    /// the projects of the recent list, of the store (changesets, trust, filter, preferences) and
+    /// of the project directories, whether the folder is still there or not. The figures are
+    /// computed on request and kept for a short while, until a project is removed or cleared.
+    /// They belong to the backend, not to a project. Answers with `Response::ProjectsStorage`.
+    ProjectsStorage,
+    /// The same for the project whose repository root is `root`, which need not be known. Answers
+    /// with `Response::ProjectStorage`.
+    ProjectStorage {
+        root: String,
+    },
+    /// Removes the kept source trees of the project at `root` that no language server uses and
+    /// no open review needs. Only speed is lost. Every connection subscribed to the events of the
+    /// backend gets `StorageChanged`. Answers with `Response::ProjectStorage`, after clearing.
+    ClearProjectCaches {
+        root: String,
+    },
+    /// Removes everything the backend holds for the project at `root`: its reviews, threads,
+    /// drafts and votes, its filter, its trust and preferences, its place on the recent list, the
+    /// content and answers no other project keeps alive, its kept trees and the refs Vet keeps in
+    /// the repository. It works when the folder is gone: the root is not looked up. A project that
+    /// is open is closed for every connection, which hear `ProjectRemoved`, and opening the
+    /// repository again starts from nothing. Every connection subscribed to the events of the
+    /// backend gets `ProjectRemoved`, `RecentProjectsChanged` and `StorageChanged`. Answers with
+    /// `Response::ProjectRemoved`.
+    RemoveProject {
+        root: String,
+    },
     /// The backend's own settings. Answers with `Response::Settings`.
     Settings,
     /// Replaces the backend's own settings and keeps them across launches. A smaller

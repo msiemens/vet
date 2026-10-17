@@ -256,6 +256,22 @@ impl ContentDb {
         Ok(ids.iter().copied().filter(|id| !held.contains(id)).collect())
     }
 
+    /// The bytes the rows of `ids` hold as stored (compressed); a blob held by hash and size only
+    /// has none.
+    pub(super) async fn stored_bytes(&self, ids: &[Vec<u8>]) -> Result<u64, StoreError> {
+        let mut total = 0u64;
+        for chunk in ids.chunks(IDS_PER_STATEMENT) {
+            let query = by_ids(
+                "SELECT COALESCE(SUM(length(data)), 0) FROM blob WHERE",
+                chunk.iter().map(Vec::as_slice),
+                "",
+            );
+            let bytes: i64 = query.fetch_one(&self.readers).await?.get(0);
+            total += u64::try_from(bytes).unwrap_or(0);
+        }
+        Ok(total)
+    }
+
     /// Writes each of `blobs` the store does not hold, in one transaction that is committed when
     /// this returns, with `stored` (unix seconds) as the time they were stored. Answers the ids of
     /// all of `blobs`, in order. A batch whose blobs are all held opens no transaction.

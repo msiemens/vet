@@ -392,6 +392,57 @@ async fn clearing_removes_everything_and_the_cache_keeps_working() {
     assert!(cache.get(&hover_key(3)).await.is_some());
 }
 
+fn of_snapshot(n: u8) -> Key {
+    Key::Project {
+        server: server(1),
+        basis: Basis {
+            snapshot: SnapshotId(Hash([n; 32])),
+            ..basis()
+        },
+        query: ProjectQuery::Hover(at("a.rs", 1, 2)),
+    }
+}
+
+fn snapshots(of: &[u8]) -> Vec<SnapshotId> {
+    of.iter().map(|n| SnapshotId(Hash([*n; 32]))).collect()
+}
+
+#[tokio::test]
+async fn forgetting_snapshots_removes_the_answers_given_for_them_and_nothing_else() {
+    let dir = tempfile::tempdir().unwrap();
+    let cache = open(&dir).await;
+    for n in 1..=3 {
+        cache.put(&of_snapshot(n), &hover("answer"));
+    }
+    cache.put(&text_key(1), &Value::Symbols(vec![]));
+    // Not flushed first: what is still queued is removed too.
+    cache.forget(&snapshots(&[1, 2, 4])).await;
+
+    assert!(cache.get(&of_snapshot(1)).await.is_none());
+    assert!(cache.get(&of_snapshot(2)).await.is_none());
+    assert!(cache.get(&of_snapshot(3)).await.is_some(), "another snapshot's answer");
+    assert!(cache.get(&text_key(1)).await.is_some(), "an answer about a text");
+}
+
+#[tokio::test]
+async fn the_bytes_of_snapshots_are_those_of_the_answers_given_for_them() {
+    let dir = tempfile::tempdir().unwrap();
+    let cache = open(&dir).await;
+    cache.put(&of_snapshot(1), &hover("short"));
+    cache.put(&of_snapshot(2), &hover("short"));
+    cache.put(&of_snapshot(3), &hover(&"long ".repeat(100)));
+    cache.put(&text_key(1), &Value::Symbols(vec![]));
+    cache.flush().await;
+
+    let one = cache.bytes_of(&snapshots(&[1])).await;
+    assert!(one > 0);
+    assert_eq!(cache.bytes_of(&snapshots(&[2])).await, one);
+    assert_eq!(cache.bytes_of(&snapshots(&[1, 2])).await, 2 * one);
+    assert!(cache.bytes_of(&snapshots(&[3])).await > 2 * one);
+    assert_eq!(cache.bytes_of(&snapshots(&[9])).await, 0);
+    assert_eq!(cache.bytes_of(&[]).await, 0);
+}
+
 #[test]
 fn a_full_write_queue_drops_a_write_instead_of_growing() {
     let (queue, _jobs) = mpsc::channel(2);

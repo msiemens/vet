@@ -14,6 +14,7 @@ mod content;
 mod entity;
 mod gc;
 mod migration;
+mod projects;
 mod recent;
 mod servers;
 mod settings;
@@ -215,6 +216,16 @@ pub(crate) fn remove_database(dir: &Path, file: &str) -> io::Result<()> {
         }
     }
     Ok(())
+}
+
+/// The bytes the two databases take in `dir`, the data directory, with their logs.
+pub fn size_on_disk(dir: &Path) -> u64 {
+    [DATABASE, content::FILE]
+        .iter()
+        .flat_map(|file| ["", "-wal", "-shm"].map(|suffix| format!("{file}{suffix}")))
+        .filter_map(|name| std::fs::metadata(dir.join(name)).ok())
+        .map(|m| m.len())
+        .sum()
 }
 
 impl SqliteStore {

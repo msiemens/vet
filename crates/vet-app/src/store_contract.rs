@@ -34,7 +34,8 @@ use crate::changeset::{
 };
 use crate::platform::{Discussion, PullRequestHead, PullRequestState, ReviewDecision};
 use crate::ports::{
-    GcFacts, GcPlan, GcStore, LiveStore, ReviewRow, ReviewWrites, Settings, SettingsStore, Store, StoredBlob,
+    GcFacts, GcPlan, GcStore, LiveStore, ProjectStore, RecentProject, RecentStore, ReviewRow, ReviewWrites, Settings,
+    SettingsStore, Store, StoredBlob,
 };
 use crate::review::{NonTextAck, ReviewId, ReviewSummary, SpanOrigin};
 use crate::trust::PullRequestTrust;
@@ -1486,6 +1487,450 @@ async fn deletes_the_planned_rows_and_sweeps_what_none_reaches<S: LiveStore + Gc
     let report = store.gc(T0, &|_| keep.clone()).await.unwrap();
     assert_eq!(report.blobs_deleted, 0, "content within the plan's grace is kept");
     assert_eq!(store.blob(BlobId::of(&young)).await.unwrap(), Some(held(&young)));
+}
+
+/// `ProjectStore`: what is held for a repository root, and what removing it leaves. No fake
+/// implements this port, so it runs against the real store alone.
+pub async fn project_contract<S: LiveStore + GcStore + ProjectStore + RecentStore>(mut open: impl AsyncFnMut() -> S) {
+    {
+        let store = open().await;
+        removes_every_kind_of_row_of_a_project_and_leaves_the_others(&store).await;
+    }
+    {
+        let store = open().await;
+        sweeps_only_the_content_no_remaining_project_reaches(&store).await;
+    }
+    {
+        let store = open().await;
+        reads_the_facts_of_a_project(&store).await;
+    }
+    {
+        let store = open().await;
+        measures_the_content_only_one_project_reaches(&store).await;
+    }
+}
+
+fn pull_of(path: &str, number: u64) -> Source {
+    Source::PullRequest {
+        remote: RemoteKey {
+            host: "host.example".into(),
+            path: path.into(),
+        },
+        number,
+    }
+}
+
+fn main_base() -> BaseChoice {
+    BaseChoice::MergeBase {
+        reference: "main".into(),
+    }
+}
+
+/// `repo` holds a review with a thread, a filter, trust, a preference, a place on the recent list
+/// and the stored details of the pull requests `maker/base` #7 and `solo/<repo>` #3.
+async fn hold_everything_for<S: LiveStore + RecentStore>(store: &S, repo: &str, recent: &[&str]) {
+    let writes = store.writes();
+    let (changeset, review) = writes
+        .start_review(repo.into(), tree_of_repo(), main_base(), vec![version_of(1)], T0)
+        .await
+        .unwrap();
+    writes
+        .add_thread(
+            changeset,
+            Some(review),
+            CommentTarget::Changeset,
+            message("why?"),
+            None,
+            ThreadStatus::Open,
+        )
+        .await
+        .unwrap();
+    writes.set_filter(repo.into(), filter()).await.unwrap();
+    writes.set_project_trusted(repo.into(), true).await.unwrap();
+    store
+        .set_preference(Some(repo.into()), "tabs".into(), Some("[]".into()))
+        .await
+        .unwrap();
+    let solo = format!("solo{repo}");
+    for source in [pull(7), pull_of(&solo, 3)] {
+        writes
+            .set_pull_request_head(repo.into(), source.clone(), head("a change"))
+            .await
+            .unwrap();
+        let Source::PullRequest { remote, number } = source else {
+            unreachable!("a pull request");
+        };
+        writes
+            .set_discussion(remote, number, PLATFORM_HEAD.into(), T0, T0, &discussion("a"))
+            .await
+            .unwrap();
+    }
+    store
+        .set_recent_projects(
+            recent
+                .iter()
+                .map(|path| RecentProject {
+                    path: (*path).into(),
+                    opened_at: T0,
+                })
+                .collect(),
+        )
+        .await
+        .unwrap();
+}
+
+/// `ProjectStore::remove_project`: each kind of row held for the repository goes, in one go, and
+/// what another repository holds stays; the details of a pull request go only when no changeset of
+/// another repository names its remote.
+async fn removes_every_kind_of_row_of_a_project_and_leaves_the_others<S: LiveStore + ProjectStore + RecentStore>(
+    store: &S,
+) {
+    hold_everything_for(store, REPO, &[REPO]).await;
+    hold_everything_for(store, OTHER_REPO, &[REPO, OTHER_REPO]).await;
+    let mine = store.changeset(REPO.into(), tree_of_repo()).await.unwrap().unwrap();
+    let theirs = store
+        .changeset(OTHER_REPO.into(), tree_of_repo())
+        .await
+        .unwrap()
+        .unwrap();
+    let review = store.open_review(mine).await.unwrap().unwrap();
+    assert_eq!(
+        store.known_projects().await.unwrap(),
+        [OTHER_REPO, REPO],
+        "both are known, in root order"
+    );
+
+    store.remove_project(REPO.into()).await.unwrap();
+
+    assert_eq!(
+        store.changeset(REPO.into(), tree_of_repo()).await.unwrap(),
+        None,
+        "changeset"
+    );
+    assert_eq!(
+        store.changeset(REPO.into(), pull(7)).await.unwrap(),
+        None,
+        "pull request changeset"
+    );
+    assert_eq!(store.versions(mine).await.unwrap(), [], "versions");
+    assert!(store.review(review).await.unwrap().is_none(), "review");
+    assert_eq!(store.threads(mine).await.unwrap(), [], "threads");
+    assert_eq!(
+        store.filter(REPO.into()).await.unwrap(),
+        ReviewFilter::default(),
+        "filter"
+    );
+    assert!(!store.project_trusted(REPO.into()).await.unwrap(), "trust");
+    assert_eq!(store.preferences(Some(REPO.into())).await.unwrap(), [], "preferences");
+    let recent: Vec<String> = store
+        .recent_projects()
+        .await
+        .unwrap()
+        .into_iter()
+        .map(|p| p.path)
+        .collect();
+    assert_eq!(recent, [OTHER_REPO], "the recent list");
+    let details = |path: &str, number: u64| {
+        let remote = RemoteKey {
+            host: "host.example".into(),
+            path: path.into(),
+        };
+        async move { store.stored_discussion(remote, number).await.unwrap().is_some() }
+    };
+    assert!(
+        !details(&format!("solo{REPO}"), 3).await,
+        "the details of a pull request only this project named"
+    );
+    assert!(
+        details("maker/base", 7).await,
+        "the details of a remote another project's changeset names"
+    );
+
+    assert!(store.open_review(theirs).await.unwrap().is_some(), "the other's review");
+    assert_eq!(store.versions(theirs).await.unwrap().len(), 1, "the other's versions");
+    assert_eq!(store.threads(theirs).await.unwrap().len(), 1, "the other's threads");
+    assert_eq!(
+        store.filter(OTHER_REPO.into()).await.unwrap(),
+        filter(),
+        "the other's filter"
+    );
+    assert!(
+        store.project_trusted(OTHER_REPO.into()).await.unwrap(),
+        "the other's trust"
+    );
+    assert_eq!(
+        store.preferences(Some(OTHER_REPO.into())).await.unwrap().len(),
+        1,
+        "the other's preferences"
+    );
+    assert!(
+        details(&format!("solo{OTHER_REPO}"), 3).await,
+        "the other's pull request"
+    );
+    assert_eq!(
+        store.known_projects().await.unwrap(),
+        [OTHER_REPO],
+        "a removed project is known no more"
+    );
+}
+
+/// Garbage collection after a removal: content and snapshots only the removed project held go once
+/// they are older than the grace; what another project's changeset names, and what is younger,
+/// stays.
+async fn sweeps_only_the_content_no_remaining_project_reaches<S: LiveStore + GcStore + ProjectStore>(store: &S) {
+    let writes = store.writes();
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs() as i64;
+    // Blobs are stored at the real time; the collection runs two hours later.
+    let collected_at = now + 7200;
+    let own = snapshot(&[("own.txt", 41)]);
+    let shared = snapshot(&[("shared.txt", 42)]);
+    let young = snapshot(&[("young.txt", 43)]);
+    let others = snapshot(&[("others.txt", 44)]);
+    store
+        .put_blobs(vec![vec![41], vec![42], vec![43], vec![44]])
+        .await
+        .unwrap();
+    for (s, at) in [(&own, now), (&shared, now), (&young, collected_at - 60), (&others, now)] {
+        writes
+            .put_snapshot(s.clone(), SnapshotStatus::default(), at)
+            .await
+            .unwrap();
+    }
+    let review = |repo: &'static str, source: Source, snapshot: SnapshotId| {
+        writes.start_review(repo.into(), source, main_base(), vec![version_at(snapshot, 1)], T0)
+    };
+    review(REPO, tree_of_repo(), own.id).await.unwrap();
+    review(REPO, branch_of("shares"), shared.id).await.unwrap();
+    review(REPO, branch_of("young"), young.id).await.unwrap();
+    review(OTHER_REPO, tree_of_repo(), shared.id).await.unwrap();
+    review(OTHER_REPO, branch_of("own"), others.id).await.unwrap();
+    let all = vec![own.id, shared.id, young.id, others.id];
+    let facts = store.project_facts(REPO.into()).await.unwrap();
+    assert_eq!(
+        store.named_snapshots(all.clone()).await.unwrap().len(),
+        4,
+        "every snapshot is named by a changeset"
+    );
+
+    store.remove_project(REPO.into()).await.unwrap();
+    let still = store.named_snapshots(facts.snapshots.clone()).await.unwrap();
+    assert_eq!(still, [shared.id], "only what the other project names is named still");
+    crate::gc::collect(store, collected_at, &crate::gc::Retention::default())
+        .await
+        .unwrap();
+
+    let held_by_the_store = async |s: &Snapshot, blob: u8| {
+        (
+            store.snapshot(s.id).await.unwrap().is_some(),
+            store.blob(BlobId::of(&[blob])).await.unwrap().is_some(),
+        )
+    };
+    assert_eq!(
+        held_by_the_store(&own, 41).await,
+        (false, false),
+        "what only the removed project held"
+    );
+    assert_eq!(
+        held_by_the_store(&shared, 42).await,
+        (true, true),
+        "what the other project names too"
+    );
+    assert_eq!(
+        held_by_the_store(&young, 43).await,
+        (true, true),
+        "what is younger than the grace"
+    );
+    assert_eq!(
+        held_by_the_store(&others, 44).await,
+        (true, true),
+        "what only the other project holds"
+    );
+}
+
+/// `ProjectStore::project_facts`: what removing the project loses, counted from the project's own
+/// rows.
+async fn reads_the_facts_of_a_project<S: LiveStore + ProjectStore>(store: &S) {
+    let writes = store.writes();
+    let (open, open_review) = writes
+        .start_review(
+            REPO.into(),
+            tree_of_repo(),
+            main_base(),
+            vec![version_at(tree(1), 1), version_at(tree(2), 2)],
+            T0,
+        )
+        .await
+        .unwrap();
+    let (closed, closed_review) = writes
+        .start_review(
+            REPO.into(),
+            branch_of("done"),
+            main_base(),
+            vec![version_at(tree(3), 1)],
+            T0,
+        )
+        .await
+        .unwrap();
+    writes.close_review(closed_review, T0 + 1, true).await.unwrap();
+    writes
+        .add_thread(
+            open,
+            Some(open_review),
+            CommentTarget::Range(Anchor {
+                snapshot: tree(4),
+                ..anchor(Side::Target, 0)
+            }),
+            message("only here"),
+            None,
+            ThreadStatus::Open,
+        )
+        .await
+        .unwrap();
+    let (thread, _) = writes
+        .add_thread(
+            open,
+            None,
+            CommentTarget::Changeset,
+            posted("C1", "from the platform"),
+            Some(PlatformThread {
+                remote_id: Some("T1".into()),
+                resolvable: true,
+                resolved_by: None,
+                status_pending: false,
+            }),
+            ThreadStatus::Open,
+        )
+        .await
+        .unwrap();
+    writes.add_message(thread, message("a draft reply")).await.unwrap();
+    writes.add_message(thread, posted("C2", "posted too")).await.unwrap();
+    writes
+        .add_thread(
+            closed,
+            None,
+            CommentTarget::Changeset,
+            message("on the finished one"),
+            None,
+            ThreadStatus::Resolved,
+        )
+        .await
+        .unwrap();
+    writes
+        .set_pending_vote(REPO.into(), branch_of("done"), Some(waiting_vote()))
+        .await
+        .unwrap();
+    writes.set_project_trusted(REPO.into(), true).await.unwrap();
+    writes
+        .start_review(
+            OTHER_REPO.into(),
+            tree_of_repo(),
+            main_base(),
+            vec![version_at(tree(9), 1)],
+            T0,
+        )
+        .await
+        .unwrap();
+
+    let facts = store.project_facts(REPO.into()).await.unwrap();
+    assert_eq!(facts.changesets, [open, closed], "the project's own changesets");
+    let mut named = facts.snapshots.clone();
+    named.sort();
+    assert_eq!(
+        named,
+        [tree(1), tree(2), tree(3), tree(4)],
+        "the snapshots of its versions and anchors, and no other project's"
+    );
+    assert_eq!(facts.open_reviews, 1, "one review is open");
+    assert_eq!(
+        facts.unposted_comments, 3,
+        "the two messages only Vet has on the open changeset and the one on the finished one, not the posted ones"
+    );
+    assert_eq!(facts.pending_votes, 1);
+    assert!(facts.trusted);
+    let other = store.project_facts(OTHER_REPO.into()).await.unwrap();
+    assert_eq!(
+        (
+            other.open_reviews,
+            other.unposted_comments,
+            other.pending_votes,
+            other.trusted
+        ),
+        (1, 0, 0, false)
+    );
+}
+
+/// A blob that does not compress and that the store keeps the bytes of.
+fn noise(len: usize, seed: u64) -> Vec<u8> {
+    let mut state = seed.wrapping_mul(0x9e37_79b9_7f4a_7c15) | 1;
+    (0..len)
+        .map(|_| {
+            state ^= state << 13;
+            state ^= state >> 7;
+            state ^= state << 17;
+            (state % 255) as u8 + 1
+        })
+        .collect()
+}
+
+/// `ProjectStore::review_data`: the stored bytes of the content only one project's snapshots
+/// reach; content two projects reach counts for neither.
+async fn measures_the_content_only_one_project_reaches<S: LiveStore + ProjectStore>(store: &S) {
+    let writes = store.writes();
+    let (own, shared, others) = (noise(1000, 1), noise(3000, 2), noise(2000, 3));
+    store
+        .put_blobs(vec![own.clone(), shared.clone(), others.clone()])
+        .await
+        .unwrap();
+    let tree_of = |files: &[&[u8]]| {
+        let entries: BTreeMap<RepoPath, FileEntry> = files
+            .iter()
+            .enumerate()
+            .map(|(n, text)| (RepoPath::from(format!("f{n}.txt").as_str()), entry_of(text, 0o100644)))
+            .collect();
+        Snapshot {
+            id: merkle::snapshot_id(&entries),
+            entries,
+        }
+    };
+    let mine = tree_of(&[&own, &shared]);
+    let theirs = tree_of(&[&others, &shared]);
+    let unowned = tree_of(&[&[7u8; 10]]);
+    for s in [&mine, &theirs, &unowned] {
+        writes
+            .put_snapshot(s.clone(), SnapshotStatus::default(), T0)
+            .await
+            .unwrap();
+    }
+    writes
+        .start_review(
+            REPO.into(),
+            tree_of_repo(),
+            main_base(),
+            vec![version_at(mine.id, 1)],
+            T0,
+        )
+        .await
+        .unwrap();
+    writes
+        .start_review(
+            OTHER_REPO.into(),
+            tree_of_repo(),
+            main_base(),
+            vec![version_at(theirs.id, 1)],
+            T0,
+        )
+        .await
+        .unwrap();
+
+    let sizes = store.review_data().await.unwrap();
+    assert_eq!(
+        sizes,
+        BTreeMap::from([(OTHER_REPO.to_owned(), 2000), (REPO.to_owned(), 1000)]),
+        "each project's own content, not the shared content, and not what no project names"
+    );
 }
 
 /// The fake of the session tests satisfies the contract as `SqliteStore` does.

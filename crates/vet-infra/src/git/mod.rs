@@ -14,6 +14,7 @@ mod remerge;
 mod scan;
 mod stat_cache;
 mod tree;
+mod vet_refs;
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt::Display;
@@ -36,6 +37,7 @@ use checkout::Pending;
 use stat_cache::StatCache;
 
 pub(crate) use blob_cache::BlobCache;
+pub use vet_refs::RepoRefs;
 
 /// Default capture size cap (§4.1).
 pub const DEFAULT_CAP: u64 = 50 * 1024 * 1024;

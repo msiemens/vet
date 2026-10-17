@@ -154,6 +154,13 @@ pub fn source_columns(source: &Source) -> (kinds::SourceKind, String) {
     }
 }
 
+/// The `(host, path)` of the remote a pull request's stored key `host/path#number` names.
+pub fn pull_request_remote(key: &str) -> Option<(String, String)> {
+    let (remote, _number) = key.rsplit_once('#')?;
+    let (host, path) = remote.split_once('/')?;
+    Some((host.to_owned(), path.to_owned()))
+}
+
 /// A version without snapshots (a push whose commits could not be had) is not available and has
 /// empty ones.
 pub fn version_row(changeset: ChangesetId, v: &Version) -> version::ActiveModel {

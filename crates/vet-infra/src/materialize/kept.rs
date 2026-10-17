@@ -31,6 +31,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
+use vet_app::ports::TreeUsage;
 use vet_core::content::SnapshotId;
 use vet_semantic::policy::RestoreKind;
 
@@ -291,6 +292,13 @@ impl KeptTrees {
         .await
     }
 
+    /// What the trees take, and of that what is in use: leased now, or kept by [`Self::collect`].
+    pub async fn usage(&self, now: SystemTime) -> TreeUsage {
+        let referenced = self.referenced.snapshots().await;
+        let base = self.base.clone();
+        blocking(&self.io, move || usage_in(&base, &Plan::Retention { now, referenced })).await
+    }
+
     /// Removes every tree that is not in use, referenced or not.
     pub async fn clear(&self) -> Collected {
         let base = self.base.clone();
@@ -415,7 +423,7 @@ fn publish(base: &Path, key: &Key, staging: &Path) -> Result<(), String> {
 }
 
 /// Bytes of the files below `dir`; links are not followed.
-fn tree_size(dir: &Path) -> u64 {
+pub(crate) fn tree_size(dir: &Path) -> u64 {
     let mut total = 0;
     let mut pending = vec![dir.to_owned()];
     while let Some(dir) = pending.pop() {
@@ -478,19 +486,40 @@ fn kept_trees(base: &Path) -> Vec<Kept> {
         .collect()
 }
 
-fn collect_in(base: &Path, plan: &Plan) -> Collected {
-    let trees = kept_trees(base);
-    let mut done = Collected::default();
-    for tree in &trees {
-        let evict = match plan {
+impl Plan {
+    fn evicts(&self, tree: &Kept) -> bool {
+        match self {
             Plan::Everything => true,
             Plan::Kind(kind) => Key::is_of_kind(&tree.name, *kind),
             Plan::Retention { now, referenced } => {
                 let idle = now.duration_since(tree.last_used).unwrap_or_default();
                 !referenced.contains(&tree.snapshot) || idle > MAX_IDLE
             }
-        };
-        if !evict {
+        }
+    }
+}
+
+/// Whether a server holds the tree: its lock is shared, so an exclusive one is refused.
+fn leased(base: &Path, name: &str) -> bool {
+    open_lock(&base.join(LOCKS).join(name)).is_ok_and(|lock| matches!(lock.try_lock(), Err(TryLockError::WouldBlock)))
+}
+
+fn usage_in(base: &Path, plan: &Plan) -> TreeUsage {
+    let mut usage = TreeUsage::default();
+    for tree in kept_trees(base) {
+        usage.total += tree.size;
+        if !plan.evicts(&tree) || leased(base, &tree.name) {
+            usage.in_use += tree.size;
+        }
+    }
+    usage
+}
+
+fn collect_in(base: &Path, plan: &Plan) -> Collected {
+    let trees = kept_trees(base);
+    let mut done = Collected::default();
+    for tree in &trees {
+        if !plan.evicts(tree) {
             continue;
         }
         match retire(base, &tree.name) {

@@ -3,17 +3,27 @@
 // Tests build their repositories with git.
 #![allow(clippy::disallowed_methods)]
 
+use std::collections::BTreeMap;
 use std::path::Path;
 use std::process::Command;
 use std::sync::Arc;
 use std::time::Duration;
 
 use tokio::sync::mpsc::Receiver;
+use vet_app::changeset::{BaseChoice, ChangesetId, CommitId, Snapshots, Source, Version, VersionChange, VersionOrigin};
+use vet_app::ports::{LiveStore, ReviewWrites, Store};
+use vet_app::review::ReviewId;
 use vet_backend::{Config, Orchestrator, open_store};
+use vet_core::content::{BlobId, EntryKind, FileEntry, Hash, RepoPath, Snapshot, SnapshotId, SnapshotStatus};
+use vet_core::merkle;
+use vet_infra::store::SqliteStore;
 use vet_protocol::{
     Diagnostic, Failure, LocationRows, Locations, ProjectId, Request, Response, ServerInfo, ServerMessage, ServerState,
     Side, Unavailable,
 };
+use vet_semantic::policy::AnalysisPolicy;
+use vet_semantic::ports::{At, BackendId, Pos, ServerIdentity};
+use vet_semantic::reuse::{Basis, Key, ProjectQuery, Restore};
 use vet_transport::{Events, Handler};
 
 /// Git as the tests use it: nothing of the user's configuration (identity,
@@ -340,6 +350,105 @@ pub async fn handler_with(config: Config) -> (Arc<Orchestrator>, tempfile::TempD
     let data = tempfile::tempdir().unwrap();
     let handler = Arc::new(Orchestrator::new(open_store(data.path()).await.unwrap(), config));
     (handler, data)
+}
+
+/// A handler over a store the test keeps a handle on, on a fresh data directory, so that it can
+/// hold what a project would, for projects that have no repository.
+pub async fn handler_over_store() -> (Arc<Orchestrator>, SqliteStore, tempfile::TempDir) {
+    let data = tempfile::tempdir().unwrap();
+    let store = open_store(data.path()).await.unwrap();
+    let handler = Arc::new(Orchestrator::new(store.clone(), config()));
+    (handler, store, data)
+}
+
+/// The snapshot of files with these names and contents.
+pub fn snapshot_of(files: &[(&str, &[u8])]) -> Snapshot {
+    let entries: BTreeMap<RepoPath, FileEntry> = files
+        .iter()
+        .map(|(name, content)| {
+            let entry = FileEntry {
+                blob: BlobId::of(content),
+                mode: 0o100644,
+                kind: EntryKind::File,
+                unfiltered: false,
+            };
+            (RepoPath::from(*name), entry)
+        })
+        .collect();
+    Snapshot {
+        id: merkle::snapshot_id(&entries),
+        entries,
+    }
+}
+
+/// Stores the content of `snapshot` and the snapshot, as stored at `at` (unix seconds).
+pub async fn hold(store: &SqliteStore, files: &[(&str, &[u8])], at: i64) -> Snapshot {
+    let snapshot = snapshot_of(files);
+    store
+        .put_blobs(files.iter().map(|(_, content)| content.to_vec()).collect())
+        .await
+        .unwrap();
+    store
+        .writes()
+        .put_snapshot(snapshot.clone(), SnapshotStatus::default(), at)
+        .await
+        .unwrap();
+    snapshot
+}
+
+/// Starts a review of `source` in the repository at `root`, whose one version is `snapshot`.
+pub async fn review(store: &SqliteStore, root: &str, source: Source, snapshot: SnapshotId) -> (ChangesetId, ReviewId) {
+    let commit = CommitId("abc123".into());
+    let version = Version {
+        n: 1,
+        snapshots: Some(Snapshots {
+            base: snapshot,
+            target: snapshot,
+        }),
+        base_commit: commit.clone(),
+        tip: commit.clone(),
+        at: 0,
+        origin: VersionOrigin::Settled,
+        change: VersionChange::default(),
+    };
+    store
+        .writes()
+        .start_review(root.into(), source, BaseChoice::Commit { id: commit }, vec![version], 0)
+        .await
+        .unwrap()
+}
+
+/// The key of the answer to a hover on `snapshot`.
+pub fn answer_for(snapshot: SnapshotId) -> Key {
+    Key::Project {
+        server: ServerIdentity {
+            backend: BackendId("rust".into()),
+            fingerprint: Hash([1; 32]),
+            label: "rust-analyzer".into(),
+        },
+        basis: Basis {
+            snapshot,
+            policy: AnalysisPolicy::EXECUTING,
+            restore: Restore::Recorded(Hash([5; 32])),
+        },
+        query: ProjectQuery::Hover(At {
+            file: "a.rs".into(),
+            pos: Pos { line: 1, col: 0 },
+        }),
+    }
+}
+
+/// A blob that does not compress and that the store keeps the bytes of.
+pub fn noise(len: usize, seed: u64) -> Vec<u8> {
+    let mut state = seed.wrapping_mul(0x9e37_79b9_7f4a_7c15) | 1;
+    (0..len)
+        .map(|_| {
+            state ^= state << 13;
+            state ^= state >> 7;
+            state ^= state << 17;
+            (state % 255) as u8 + 1
+        })
+        .collect()
 }
 
 /// A repository whose `main` commit holds `base`, with `dirty` written on top.

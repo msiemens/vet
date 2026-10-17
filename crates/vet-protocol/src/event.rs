@@ -30,6 +30,13 @@ pub enum Event {
     /// The recent list changed (`RecordRecentProject`, `ForgetRecentProject`): ask for
     /// `RecentProjects` again. Sent to every connection that asked to `Subscribe`.
     RecentProjectsChanged,
+    /// The project at `root` was removed (`RemoveProject`): everything held for it is gone and, if
+    /// it was open, so is its `ProjectId`. Sent to the connections subscribed to the project and
+    /// to every connection that asked to `Subscribe`.
+    ProjectRemoved { root: String },
+    /// What the projects take on disk changed (`RemoveProject`, `ClearProjectCaches`): ask for
+    /// `ProjectsStorage` again. Sent to every connection that asked to `Subscribe`.
+    StorageChanged,
     /// The backend's own settings changed (`SetSettings`): ask for `Settings` again. Sent to
     /// every connection that asked to `Subscribe`.
     SettingsChanged,

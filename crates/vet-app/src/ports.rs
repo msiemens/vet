@@ -1059,3 +1059,112 @@ pub trait ServerSettings {
         path: Option<String>,
     ) -> impl Future<Output = Result<(), StoreError>> + Send;
 }
+
+/// What the store holds of the repository at one root, as removing it and showing what it takes
+/// read it.
+#[derive(Clone, PartialEq, Eq, Debug, Default)]
+pub struct ProjectFacts {
+    pub changesets: Vec<ChangesetId>,
+    /// The snapshots its versions and anchors name.
+    pub snapshots: Vec<SnapshotId>,
+    pub open_reviews: u32,
+    /// Messages only Vet has: drafts, and comments on changesets no platform holds.
+    pub unposted_comments: u32,
+    pub pending_votes: u32,
+    pub trusted: bool,
+}
+
+/// The store's side of a project as a whole: what is held for a repository root, what it takes and
+/// how it is removed. `repo` is the root as it was recorded.
+pub trait ProjectStore {
+    /// The roots anything is held for: changesets, the recent list, trust, a filter or a
+    /// project-scoped preference. In root order.
+    fn known_projects(&self) -> impl Future<Output = Result<Vec<String>, StoreError>> + Send;
+    fn project_facts(&self, repo: String) -> impl Future<Output = Result<ProjectFacts, StoreError>> + Send;
+    /// For each root, the bytes the content that only its snapshots reach takes in the store, as
+    /// stored. Content that two roots reach, or none does, is counted for neither.
+    fn review_data(&self) -> impl Future<Output = Result<BTreeMap<String, u64>, StoreError>> + Send;
+    /// Deletes in one transaction what is held for `repo`: its changesets with all they own, its
+    /// filter, trust, preferences and recent entry, and the stored details of the pull requests that
+    /// no changeset of another root names. Snapshots and content are left to garbage collection.
+    fn remove_project(&self, repo: String) -> impl Future<Output = Result<(), StoreError>> + Send;
+    /// Of `snapshots`, those a changeset still names.
+    fn named_snapshots(
+        &self,
+        snapshots: Vec<SnapshotId>,
+    ) -> impl Future<Output = Result<Vec<SnapshotId>, StoreError>> + Send;
+}
+
+/// What a project's kept source trees take.
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
+pub struct TreeUsage {
+    pub total: u64,
+    /// Of `total`, the trees a server has leased or an open review needs.
+    pub in_use: u64,
+}
+
+/// What is kept outside the projects' own files, in bytes.
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
+pub struct SharedFiles {
+    /// The language servers Vet installed.
+    pub language_servers: u64,
+    /// The two databases of the store, with their logs.
+    pub databases: u64,
+}
+
+/// A project's directory in the data directory: its kept source trees and the root that names it.
+pub trait ProjectFiles {
+    /// The roots of the project directories there are.
+    fn roots(&self) -> impl Future<Output = Vec<String>> + Send;
+    /// What the project's kept trees take.
+    fn trees(&self, root: &str) -> impl Future<Output = TreeUsage> + Send;
+    /// Deletes the project's directory. Best effort: what cannot be deleted at once is left to
+    /// [`Self::sweep`].
+    fn remove(&self, root: &str) -> impl Future<Output = ()> + Send;
+    /// Deletes what an earlier removal left half done.
+    fn sweep(&self) -> impl Future<Output = ()> + Send;
+    fn shared(&self) -> impl Future<Output = SharedFiles> + Send;
+    /// Whether the folder at `root` is there.
+    fn folder_exists(&self, root: &str) -> impl Future<Output = bool> + Send;
+}
+
+/// The answers of the language servers kept between launches, by the snapshot they were given for.
+pub trait AnswerStore {
+    /// Deletes the answers for `snapshots`.
+    fn forget(&self, snapshots: Vec<SnapshotId>) -> impl Future<Output = ()> + Send;
+    /// The bytes the answers for `snapshots` take.
+    fn usage(&self, snapshots: Vec<SnapshotId>) -> impl Future<Output = u64> + Send;
+    /// The bytes the file of all answers takes on disk.
+    fn file_size(&self) -> impl Future<Output = u64> + Send;
+}
+
+/// A shared answer store is one.
+impl<T: AnswerStore> AnswerStore for std::sync::Arc<T> {
+    fn forget(&self, snapshots: Vec<SnapshotId>) -> impl Future<Output = ()> + Send {
+        self.as_ref().forget(snapshots)
+    }
+
+    fn usage(&self, snapshots: Vec<SnapshotId>) -> impl Future<Output = u64> + Send {
+        self.as_ref().usage(snapshots)
+    }
+
+    fn file_size(&self) -> impl Future<Output = u64> + Send {
+        self.as_ref().file_size()
+    }
+}
+
+/// The refs Vet keeps in a repository's git directory, reached by the root alone: removing a
+/// project has no session.
+pub trait VetRefs {
+    /// The git directory the repository's worktrees share; `None` if `root` is no repository (any
+    /// more).
+    fn common_dir(&self, root: &str) -> impl Future<Output = Option<PathBuf>> + Send;
+    /// Deletes `refs/vet/changesets/<id>/` of each of `changesets`, and with `pull_requests`
+    /// everything below `refs/vet/pr/`.
+    fn delete_refs(
+        &self,
+        root: &str,
+        changesets: Vec<ChangesetId>,
+        pull_requests: bool,
+    ) -> impl Future<Output = Result<(), GitError>> + Send;
+}
