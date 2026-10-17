@@ -364,7 +364,7 @@ What follows from them:
 
 - **Work for the review screen waits for it.** While the queue is shown, Vet keeps up to date only what the queue shows: the lists of changesets, their line counts and pull request details, and for the current changeset its files, the files changed since the last review, checks, comments and pull request details (see also §6.2).
 - **Progress.** While a project opens and while background work runs (scanning, diffing, servers starting and indexing, dependency restores), Vet reports which step is running. A changeset's changes are shown as early as possible, not after all work ends.
-- **Failures that stand.** A failed sync or checks refresh is reported until one of the same kind succeeds or another changeset becomes current.
+- **Failures that stand.** A failed sync or checks refresh is reported until one of the same kind succeeds or another changeset becomes current. A failed fetch of the platform remotes (§4.3) is reported until a fetch of them succeeds, whichever changeset is current.
 - **Language servers** report their status as §6.1 says.
 - **Nothing to review.** A changeset with no changes to show always says why, using only facts the backend has:
   - the working tree has no edits yet;
