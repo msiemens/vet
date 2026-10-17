@@ -90,6 +90,7 @@ Types, references, diagnostics and calls come only from language servers; Vet do
 
 - **What is in a snapshot:** every file under the repository root that git tracks, plus every untracked file that git does not ignore.
   - Files larger than 50 MB (configurable) are hashed in full, so two snapshots never look equal by mistake, but Vet does not keep their content and shows them as `content unavailable`.
+  - Of binary files other than images, Vet keeps only the hash and size, not the content. They are still shown and acknowledged as binary changes.
   - Ignored files can be included explicitly.
   - Untracked files in folders that belong to a tool by name (`.pnpm-store/`) are never included. This list is fixed.
   - Vet never guesses which files matter.
@@ -100,7 +101,7 @@ Types, references, diagnostics and calls come only from language servers; Vet do
   - Content shown on either side of a diff, or under a comment or a seen mark, is copied when first shown. Review state therefore never depends on git keeping old objects.
   - The working tree's uncommitted content is copied ahead of a review only while the review screen shows it.
 - **Session refs:** while a review is open, Vet keeps refs on the commits its snapshots come from, so git's garbage collection never removes them. They are deleted when the review is finished.
-- **Materializing a snapshot** (writing it to a directory to run a language server on it) works only while all of its file contents are available, from git or from the content store. If any are missing, the language features for that snapshot are disabled with a visible reason. Vet never starts a server on an incomplete copy.
+- **Materializing a snapshot** (writing it to a directory to run a language server on it) works only while all of its file contents are available, from git or from the content store. If any are missing, the language features for that snapshot are disabled with a visible reason. Vet never starts a server on an incomplete copy. A binary file whose content Vet did not keep is available only while git or the working tree still has it.
 
 ### 4.2 Watching and settling
 
@@ -382,7 +383,7 @@ What follows from them:
 
 - **Location:** the backend side's own filesystem (in WSL the Linux home directory, never `/mnt/*`), in the usual data directory of each platform.
 - **What is stored:** snapshots and their order, sessions, seen marks, comments, the content store, which projects are trusted, and for each pull request whether it is from a fork and which head commit it is trusted at. Also what the platform last said about recently read pull requests besides their comments (description, reviewers, labels, conversation and state), so revisiting one shows them before Vet asks the platform again. A crash never leaves a record pointing at content that was not written.
-- **Upgrades:** a newer Vet keeps all data of an older one. An older Vet does not open the data of a newer one, and never deletes it.
+- **Upgrades:** an older Vet does not open the data of a newer one, and never deletes it. A newer Vet upgrades the review data of an older one; data it no longer reads (such as an older layout of the content store) it leaves untouched rather than converting it.
 - **Settings and preferences:** everything Vet remembers besides review data is stored with it, except tokens (in the keychain) and the window's size and position (a file of the window).
   - The backend's own settings (language-server cache size, how long finished reviews are kept) apply to the whole app.
   - The window's preferences are stored either for the whole app or for one project.
