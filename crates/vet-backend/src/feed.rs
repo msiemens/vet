@@ -79,7 +79,7 @@ impl FeedProject {
 impl Project for FeedProject {
     async fn on_view(&self) -> Option<(RemoteKey, u64)> {
         let open = self.open()?;
-        let booted = open.booted().await.ok()?;
+        let booted = open.booted_unless_failed().await.ok()?;
         match booted.session.source().await {
             Source::PullRequest { remote, number } => Some((remote, number)),
             _ => None,
@@ -90,11 +90,11 @@ impl Project for FeedProject {
         &self,
         unlisted: Vec<(RemoteKey, u64)>,
     ) -> std::result::Result<Vec<(RemoteKey, u64)>, SessionError> {
-        // The listing the cycle made booted the session, so this cannot fail.
+        // The listing the cycle made booted the session, so this fails only if the scan did.
         let Some(open) = self.open() else {
             return Ok(Vec::new());
         };
-        let Ok(booted) = open.booted().await else {
+        let Ok(booted) = open.booted_unless_failed().await else {
             return Ok(Vec::new());
         };
         booted.session.prunable(unlisted).await
@@ -114,7 +114,7 @@ impl Project for FeedProject {
         let Some(open) = self.open() else {
             return;
         };
-        let Ok(booted) = open.booted().await else {
+        let Ok(booted) = open.booted_unless_failed().await else {
             return;
         };
         if let Ok(Some(revision)) = booted.session.observe().await {

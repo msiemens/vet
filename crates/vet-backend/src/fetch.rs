@@ -68,7 +68,7 @@ async fn follow_fetch(open: &Arc<Open>, asked: Asked, fetched: usize, updated: u
     if !moved && asked == Asked::Viewer {
         return;
     }
-    let Ok(booted) = open.booted().await else {
+    let Ok(booted) = open.booted_unless_failed().await else {
         return;
     };
     if open.supervisor.closed() {

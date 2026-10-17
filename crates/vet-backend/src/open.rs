@@ -113,6 +113,8 @@ pub(crate) struct Wired {
     pub screens: ReviewScreens,
     plan: Plan,
     booted: OnceCell<Arc<Booted>>,
+    /// Whether the last scan failed, so background work leaves it to the next request to try again.
+    failed: AtomicBool,
     /// The pull request feed: the last listing, and the cycle that keeps it. Its run ends with the
     /// session.
     feed: Feed,
@@ -149,10 +151,25 @@ impl Wired {
     /// kept: a boot that failed is given to the caller that asked for it, and
     /// the next caller that needs the project boots again.
     pub(crate) async fn booted(&self) -> Result<&Arc<Booted>> {
+        self.attempt(true).await
+    }
+
+    /// `booted` for background work, which joins a scan under way but never repeats one that
+    /// failed: only a request boots again.
+    pub(crate) async fn booted_unless_failed(&self) -> Result<&Arc<Booted>> {
+        self.attempt(false).await
+    }
+
+    async fn attempt(&self, requested: bool) -> Result<&Arc<Booted>> {
         self.booted
             .get_or_try_init(|| async {
+                if !requested && self.failed.load(Ordering::SeqCst) {
+                    return Err(Error::Unavailable("the first scan failed".into()));
+                }
                 let _counted = self.supervisor.counted(BOOT);
-                self.boot().await
+                let booted = self.boot().await;
+                self.failed.store(booted.is_err(), Ordering::SeqCst);
+                booted
             })
             .await
     }
@@ -514,6 +531,7 @@ impl Orchestrator {
                 entry,
             },
             booted: OnceCell::new(),
+            failed: AtomicBool::new(false),
             checks_pace: self.config.checks_pace,
             checks_settle: self.config.checks_settle,
             open_files: Arc::default(),
