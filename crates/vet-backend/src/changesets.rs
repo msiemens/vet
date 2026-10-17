@@ -43,7 +43,7 @@ impl Orchestrator {
             .iter()
             .map(|listed| mapping::pull_request_source(&listed.remote, listed.row.number))
             .collect();
-        let reviews = open.session.reviews_of(&sources).await?;
+        let reviews = open.session.facts().reviews_of(&sources).await?;
         Ok(mapping::pull_requests(&list, &reviews))
     }
 
@@ -64,7 +64,7 @@ impl Orchestrator {
         loop {
             while counted.len() < LINES_AT_ONCE {
                 let Some((source, _)) = pending.next() else { break };
-                counted.push_back(open.session.lines_of(source));
+                counted.push_back(open.session.facts().lines_of(source));
             }
             let Some(gotten) = counted.next().await else { break };
             let gotten = gotten?;

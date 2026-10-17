@@ -7,14 +7,15 @@ use std::sync::Arc;
 use vet_core::content::Snapshot;
 use vet_engine::{Engine, Limits};
 
-use super::Result;
 use super::derived::{CommitUnit, CommitsBetween, Compared, Derived, Diffed, Interdiff, LinesBetween};
 use super::lru::Lru;
+use super::{Result, SessionError, UnixClock};
 use crate::acquisition::Acquisition;
 use crate::base;
-use crate::changeset::CommitId;
+use crate::changeset::{BaseChoice, CommitId, Source};
 use crate::mutex::lock;
 use crate::ports::{CommitInfo, GitError, GitRepo, LiveStore};
+use crate::pull_request::PullRequestRefs;
 
 /// Commits counted for how far a branch is from the default one.
 const MAX_COUNT: usize = 10_000;
@@ -38,9 +39,12 @@ const KEPT_BEHIND: usize = 4096;
 /// How many commit counts the session keeps; the one used longest ago goes first.
 const KEPT_COMMIT_COUNTS: usize = 16;
 
-pub(super) struct Facts<G, S> {
+pub struct Facts<G, S> {
     /// What the facts are read through: the session's own handles.
     pub(super) acquisition: Arc<Acquisition<G, S>>,
+    /// The repository root, which with a source is the key a changeset is stored under.
+    pub(super) repo: String,
+    pub(super) clock: UnixClock,
     /// The diffs, interdiffs and commits the review state is remapped onto.
     pub(super) derived: Arc<Derived>,
     /// The line deltas between commits that the list of changesets shows.
@@ -59,9 +63,11 @@ pub(super) struct Facts<G, S> {
 }
 
 impl<G, S> Facts<G, S> {
-    pub(super) fn new(acquisition: &Arc<Acquisition<G, S>>) -> Self {
+    pub(super) fn new(acquisition: &Arc<Acquisition<G, S>>, repo: String, clock: UnixClock) -> Self {
         Self {
             acquisition: Arc::clone(acquisition),
+            repo,
+            clock,
             derived: Arc::new(Derived::new(&acquisition.tasks)),
             lines: Engine::new(Limits::entries(KEPT_LINE_DELTAS)),
             commit_infos: std::sync::Mutex::new(Lru::new(KEPT_COMMIT_INFOS)),
@@ -165,5 +171,25 @@ where
     /// The commits of `key`, as [`Facts::diff_of`].
     pub(super) async fn commits_of(&self, key: CommitsBetween) -> Result<Arc<Vec<CommitUnit>>> {
         self.derived.commits(&self.acquisition, key).await
+    }
+
+    /// The base a changeset of `source`, whose tip is `tip`, is compared against by its kind: where
+    /// a branch left the repository's default branch, or where a pull request's head left the
+    /// fetched target. The working tree is not one: its base is pinned when it is opened. The one
+    /// rule the review view and the queue's line counts use.
+    pub(super) async fn base_for(&self, source: &Source, tip: &CommitId) -> Result<(BaseChoice, CommitId)> {
+        let git = &self.acquisition.git;
+        let resolved = match source {
+            Source::PullRequest { remote, number } => {
+                base::for_pull_request(git, &PullRequestRefs::of(remote, *number), tip).await
+            }
+            Source::Branch { .. } => base::for_branch(git, tip).await,
+            Source::WorkingTree => {
+                return Err(SessionError::Invalid(
+                    "the working tree's base is pinned when it is opened".into(),
+                ));
+            }
+        };
+        Ok(resolved?)
     }
 }

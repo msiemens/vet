@@ -6,15 +6,15 @@ use std::sync::Arc;
 use vet_core::content::{LineDelta, Snapshot};
 use vet_engine::Computed;
 
-use super::LiveSession;
 use super::derived::LinesBetween;
+use super::facts::Facts;
 use super::source::tip_of;
 use crate::acquisition::Acquisition;
 use crate::base;
 use crate::changeset::{CommitId, Source};
 use crate::ports::{GitError, GitRepo, LiveStore};
 
-impl<G, S> LiveSession<G, S>
+impl<G, S> Facts<G, S>
 where
     G: GitRepo + Send + Sync + 'static,
     S: LiveStore + Send + Sync + 'static,
@@ -35,13 +35,12 @@ where
             return Ok(None);
         };
         let acquisition = Arc::clone(&self.acquisition);
-        let derived = Arc::clone(&self.facts.derived);
+        let derived = Arc::clone(&self.derived);
         let key = LinesBetween {
             base: base.clone(),
             tip: tip.clone(),
         };
         let counted = self
-            .facts
             .lines
             .get(key, move |_| async move {
                 let old = derived.snapshot(&acquisition, &base).await?;

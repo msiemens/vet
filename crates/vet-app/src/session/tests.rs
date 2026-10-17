@@ -4635,7 +4635,7 @@ async fn the_review_state_of_pull_requests_is_listed_for_the_sources_asked() {
     let revision = fx.session.open_changeset(pull_request_7()).await.unwrap().unwrap();
     fx.session.set_seen(revision, "a.txt", &[0], true).await.unwrap();
 
-    let reviews = fx.session.reviews_of(&[other, pull_request_7()]).await.unwrap();
+    let reviews = fx.session.facts().reviews_of(&[other, pull_request_7()]).await.unwrap();
 
     assert_eq!(reviews[0], RowReview::None);
     assert!(matches!(reviews[1], RowReview::Open { version: 1, .. }), "{reviews:?}");
@@ -4765,7 +4765,7 @@ async fn a_review_whose_base_moved_has_its_base_changed_lines_in_the_progress() 
     let fx = seen_then_base_changed().await;
     let m = fx.session.manifest(View::Changeset).await.unwrap();
 
-    let RowReview::Open { progress, .. } = fx.session.reviews_of(&[pull_request_7()]).await.unwrap()[0] else {
+    let RowReview::Open { progress, .. } = fx.session.facts().reviews_of(&[pull_request_7()]).await.unwrap()[0] else {
         panic!("the review is open")
     };
     let progress = progress.expect("measured");
@@ -4810,17 +4810,17 @@ async fn the_lines_of_a_branch_are_counted_between_its_base_and_its_tip_once_per
         &[("a.txt", &numbered(30, &[3, 20])), ("new.txt", "n\n")],
     );
 
-    let lines = fx.session.lines_of(&feature()).await.unwrap();
+    let lines = fx.session.facts().lines_of(&feature()).await.unwrap();
 
     assert_eq!(lines, Some(LineDelta { added: 3, removed: 2 }));
-    assert_eq!(fx.session.lines_of(&feature()).await.unwrap(), lines);
+    assert_eq!(fx.session.facts().lines_of(&feature()).await.unwrap(), lines);
     assert_eq!(fx.git.diffs.load(Ordering::Relaxed), 1, "the pair was diffed once");
 
     // The branch moved: another tip is another pair.
     fx.git
         .branch("feature", "tip2", &[("a.txt", &numbered(30, &[3]))], &["tip1", "m1"]);
     assert_eq!(
-        fx.session.lines_of(&feature()).await.unwrap(),
+        fx.session.facts().lines_of(&feature()).await.unwrap(),
         Some(LineDelta { added: 1, removed: 1 })
     );
     assert_eq!(fx.git.diffs.load(Ordering::Relaxed), 2);
@@ -4830,11 +4830,11 @@ async fn the_lines_of_a_branch_are_counted_between_its_base_and_its_tip_once_per
 async fn a_pull_request_has_lines_once_it_was_fetched_and_the_working_tree_has_none() {
     let fx = Fixture::open(&[("a.txt", "one\n")], &[("a.txt", "dirty\n")]).await;
     assert_eq!(
-        fx.session.lines_of(&pull_request_7()).await.unwrap(),
+        fx.session.facts().lines_of(&pull_request_7()).await.unwrap(),
         None,
         "not fetched"
     );
-    assert_eq!(fx.session.lines_of(&Source::WorkingTree).await.unwrap(), None);
+    assert_eq!(fx.session.facts().lines_of(&Source::WorkingTree).await.unwrap(), None);
 
     fetch_pull_request_7(
         &fx.git,
@@ -4844,7 +4844,7 @@ async fn a_pull_request_has_lines_once_it_was_fetched_and_the_working_tree_has_n
     );
 
     assert_eq!(
-        fx.session.lines_of(&pull_request_7()).await.unwrap(),
+        fx.session.facts().lines_of(&pull_request_7()).await.unwrap(),
         Some(LineDelta { added: 2, removed: 1 })
     );
 }
@@ -4854,7 +4854,7 @@ async fn a_pull_request_pushed_to_and_fetched_again_is_counted_anew_and_not_from
     let fx = Fixture::open(&[("a.txt", "one\n")], &[("a.txt", "dirty\n")]).await;
     fetch_pull_request_7(&fx.git, &[("a.txt", "one\n")], "pr1", &[("a.txt", "two\n")]);
     assert_eq!(
-        fx.session.lines_of(&pull_request_7()).await.unwrap(),
+        fx.session.facts().lines_of(&pull_request_7()).await.unwrap(),
         Some(LineDelta { added: 1, removed: 1 })
     );
 
@@ -4866,7 +4866,7 @@ async fn a_pull_request_pushed_to_and_fetched_again_is_counted_anew_and_not_from
     );
 
     assert_eq!(
-        fx.session.lines_of(&pull_request_7()).await.unwrap(),
+        fx.session.facts().lines_of(&pull_request_7()).await.unwrap(),
         Some(LineDelta { added: 3, removed: 1 })
     );
 }

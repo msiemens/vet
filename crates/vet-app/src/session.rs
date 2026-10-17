@@ -93,7 +93,7 @@ use self::derived::Diffed;
 pub use self::exchange::{
     Blocker, DiscussionView, Keep, Outgoing, SubmitReport, SyncNotice, SyncReport, Unread, VoteSent, is_unread,
 };
-use self::facts::Facts;
+pub use self::facts::Facts;
 use self::hold::{Held, Published, Writer};
 pub use self::lens::{CommitKind, CommitUnitView, CommitsView};
 pub use self::listing::{ChangesetList, ChangesetRow, Divergence, RowReview};
@@ -372,7 +372,7 @@ impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> L
         let wanted = state.source == Source::WorkingTree;
         Self {
             author: author_of(&acquisition.git).await,
-            facts: Facts::new(&acquisition),
+            facts: Facts::new(&acquisition, repo.clone(), clock),
             pushes: std::sync::Mutex::default(),
             known: Arc::default(),
             ahead: ahead::copies(&acquisition.tasks),
@@ -915,6 +915,11 @@ impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> L
     /// language-server pool.
     pub fn acquisition(&self) -> Arc<Acquisition<G, S>> {
         self.acquisition.clone()
+    }
+
+    /// What the repository says that no review state shapes: the queue's rows and line counts.
+    pub fn facts(&self) -> &Facts<G, S> {
+        &self.facts
     }
 
     /// The initial scan identifies the settled snapshot, so settling does not

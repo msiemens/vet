@@ -64,26 +64,6 @@ impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> L
         })
     }
 
-    /// The base a changeset of `source`, whose tip is `tip`, is compared against by its kind: where
-    /// a branch left the repository's default branch, or where a pull request's head left the
-    /// fetched target. The working tree is not one: its base is pinned when it is opened. The one
-    /// rule the review view and the queue's line counts use.
-    pub(super) async fn base_for(&self, source: &Source, tip: &CommitId) -> Result<(BaseChoice, CommitId)> {
-        let git = &self.acquisition.git;
-        let resolved = match source {
-            Source::PullRequest { remote, number } => {
-                base::for_pull_request(git, &PullRequestRefs::of(remote, *number), tip).await
-            }
-            Source::Branch { .. } => base::for_branch(git, tip).await,
-            Source::WorkingTree => {
-                return Err(SessionError::Invalid(
-                    "the working tree's base is pinned when it is opened".into(),
-                ));
-            }
-        };
-        Ok(resolved?)
-    }
-
     async fn stored_pull_request_head(&self, source: &Source) -> Result<Option<PullRequestHead>> {
         let store = &self.acquisition.store;
         Ok(store.pull_request_head(self.repo.clone(), source.clone()).await?)
@@ -320,7 +300,7 @@ impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> L
             Stored::Resumed(state) => return Ok(*state),
             Stored::Browsing { changeset, threads } => (changeset, threads),
         };
-        let (base_choice, base_commit) = self.base_for(source, &tip).await?;
+        let (base_choice, base_commit) = self.facts.base_for(source, &tip).await?;
         let base = self.facts.snapshot_of(&base_commit).await?;
         let target = self.facts.snapshot_of(&tip).await?;
         acquisition.record_commit(base.id, base_commit.clone());

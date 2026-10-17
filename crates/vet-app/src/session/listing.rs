@@ -104,10 +104,10 @@ fn kept(source: &Source, review: &RowReview, on_view: &Source) -> bool {
     source == on_view || matches!(review, RowReview::Open { .. })
 }
 
-impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> LiveSession<G, S> {
-    /// The working tree, every local branch, and the remote branches worth reviewing.
-    pub async fn changesets(&self) -> Result<ChangesetList> {
-        let on_view = self.published.read().source.clone();
+impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> Facts<G, S> {
+    /// The working tree, every local branch, and the remote branches worth reviewing; `on_view` is
+    /// the changeset on view.
+    pub(super) async fn changesets(&self, on_view: Source) -> Result<ChangesetList> {
         let git = &self.acquisition.git;
         let default = match git.default_reference().await? {
             Some(reference) => git.resolve_commit(&reference).await?,
@@ -166,7 +166,7 @@ impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> L
             // review only while it has commits that are not pushed yet.
             let unpushed = if !branch.remote && default_branch.as_deref() == Some(branch.name.as_str()) {
                 Some(match &upstream {
-                    Some(upstream) => self.facts.behind(&branch.commit, upstream).await?,
+                    Some(upstream) => self.behind(&branch.commit, upstream).await?,
                     None => 0,
                 })
             } else {
@@ -175,14 +175,14 @@ impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> L
             if unpushed == Some(0) && !keep {
                 continue;
             }
-            let tip = self.facts.commit_info(&branch.commit).await?;
+            let tip = self.commit_info(&branch.commit).await?;
             let last_commit = tip.time;
             let age_days = now.saturating_sub(last_commit) / (24 * 60 * 60);
             if branch.remote && !keep && age_days > RECENT_DAYS {
                 continue;
             }
             let divergence = match &default {
-                Some(default) => Some(self.facts.divergence(&branch, default).await?),
+                Some(default) => Some(self.divergence(&branch, default).await?),
                 None => None,
             };
             if branch.remote && !offered_remote(divergence, age_days, keep) {
@@ -223,7 +223,11 @@ impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> L
     /// The pull requests of `unlisted`, which were fetched before and a listing no longer has,
     /// whose refs may be dropped: neither the one on view nor one whose review is open, which may
     /// still need their commits before the platform can be asked again.
-    pub async fn prunable(&self, unlisted: Vec<(RemoteKey, u64)>) -> Result<Vec<(RemoteKey, u64)>> {
+    pub(super) async fn prunable(
+        &self,
+        unlisted: Vec<(RemoteKey, u64)>,
+        on_view: &Source,
+    ) -> Result<Vec<(RemoteKey, u64)>> {
         let sources: Vec<Source> = unlisted
             .iter()
             .map(|(remote, number)| Source::PullRequest {
@@ -232,22 +236,33 @@ impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> L
             })
             .collect();
         let reviews = self.reviews_of(&sources).await?;
-        let on_view = self.published.read().source.clone();
         Ok(unlisted
             .into_iter()
             .zip(sources)
             .zip(reviews)
-            .filter(|((_, source), review)| !kept(source, review, &on_view))
+            .filter(|((_, source), review)| !kept(source, review, on_view))
             .map(|((pull_request, _), _)| pull_request)
             .collect())
     }
-}
 
-impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> Facts<G, S> {
-    pub(super) async fn divergence(&self, branch: &BranchInfo, default: &CommitId) -> Result<Divergence> {
+    async fn divergence(&self, branch: &BranchInfo, default: &CommitId) -> Result<Divergence> {
         Ok(Divergence {
             ahead: self.behind(&branch.commit, default).await?,
             behind: self.behind(default, &branch.commit).await?,
         })
+    }
+}
+
+impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> LiveSession<G, S> {
+    /// The working tree, every local branch, and the remote branches worth reviewing.
+    pub async fn changesets(&self) -> Result<ChangesetList> {
+        self.facts.changesets(self.published.read().source.clone()).await
+    }
+
+    /// The pull requests of `unlisted` whose refs may be dropped, as [`Facts::prunable`] has it,
+    /// the changeset on view being the session's.
+    pub async fn prunable(&self, unlisted: Vec<(RemoteKey, u64)>) -> Result<Vec<(RemoteKey, u64)>> {
+        let on_view = self.published.read().source.clone();
+        self.facts.prunable(unlisted, &on_view).await
     }
 }
