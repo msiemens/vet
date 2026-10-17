@@ -62,11 +62,7 @@ step "cargo nextest (ui/src-tauri)"
 tauri_step "tests (ui/src-tauri)" cargo nextest run --manifest-path ui/src-tauri/Cargo.toml
 step "tests that need tools"
 if $language_servers; then
-    tool_log=$(mktemp)
-    ci/tool-tests.sh 2>&1 | tee "$tool_log"
-    not_run=$(grep '^NOT RUN:' "$tool_log" || true)
-    rm -f "$tool_log"
-    [[ -z $not_run ]] || skip "tests that need tools: ${not_run#NOT RUN: }"
+    tool_tests
 else
     skip "language-server and tool tests: nothing since $1 touches what they exercise"
 fi

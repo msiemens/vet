@@ -80,11 +80,7 @@ if ((${#crates[@]})); then
         fi
     fi
     step "tests that need tools (${affected[*]+"${affected[*]}"})"
-    tool_log=$(mktemp)
-    ci/tool-tests.sh ${pkgs[@]+"${pkgs[@]}"} 2>&1 | tee "$tool_log"
-    not_run=$(grep '^NOT RUN:' "$tool_log" || true)
-    rm -f "$tool_log"
-    [[ -z $not_run ]] || skip "tests that need tools: ${not_run#NOT RUN: }"
+    tool_tests ${pkgs[@]+"${pkgs[@]}"}
     step "module cycles (${crates[*]+"${crates[*]}"})"
     ci/check-module-cycles.sh ${crates[@]+"${crates[@]}"}
 fi

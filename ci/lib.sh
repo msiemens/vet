@@ -11,6 +11,14 @@ skip() {
     printf 'SKIPPED: %s\n' "$1"
 }
 
+# `tool_tests [-p CRATE]...` runs ci/tool-tests.sh and skips what it could not run for want of a tool.
+tool_tests() {
+    local out
+    out=$(ci/tool-tests.sh "$@" 2>&1 | tee /dev/stderr)
+    out=$(grep '^NOT RUN:' <<<"$out" || true)
+    [[ -z $out ]] || skip "tests that need tools: ${out#NOT RUN: }"
+}
+
 # `tauri_step LABEL COMMAND...` runs COMMAND where the Tauri host builds (it needs the system's
 # webview libraries): here, in a nix shell, or not at all, in which case the step is a skipped one.
 tauri_step() {

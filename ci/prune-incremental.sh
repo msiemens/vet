@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# usage: ci/prune-incremental.sh <incremental dir> [--dry-run]
+# usage: ci/prune-incremental.sh <incremental dir>
 #
 # Deletes the incremental folders of earlier builds. rustc names each folder <crate>-<hash>, a hash
 # nothing else in the target directory carries, so cargo-sweep cannot tell which build a folder
@@ -7,7 +7,7 @@
 # touches all of their folders within minutes, so a folder last touched well before its crate's
 # newest one belongs to build settings that are no longer built: it is stale.
 set -euo pipefail
-inc=$1 dry_run=${2:-}
+inc=$1
 # How much older than its crate's newest folder a folder may be and still count as current.
 window=$((60 * 60))
 [[ -d $inc ]] || exit 0
@@ -20,7 +20,7 @@ while read -r name time path; do
         crate=$name newest=$time
     elif ((time < newest - window)); then
         n=$((n + 1))
-        if [[ $dry_run == --dry-run ]]; then echo "$path"; else rm -rf "$path"; fi
+        rm -rf "$path"
     fi
 done < <(
     for d in "$inc"/*/; do

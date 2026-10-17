@@ -73,13 +73,12 @@ filterset() {
     printf '%s' "$out"
 }
 
-# The lines of a `nextest list` (`PACKAGE::BINARY TEST`, on stdin) that the alternatives select.
+# The lines of a `nextest list` ($2, `PACKAGE::BINARY TEST` each) that the alternatives select.
 selected_by() {
-    local alt regex lines
-    lines=$(cat)
+    local alt regex
     for alt in $1; do
         regex=${alt#*:}
-        grep -E -- "^${alt%%:*}::it ${regex#^}" <<<"$lines" || true
+        grep -E -- "^${alt%%:*}::it ${regex#^}" <<<"$2" || true
     done
 }
 
@@ -91,7 +90,7 @@ fi
 all=$(cargo nextest list "${scope[@]}" --run-ignored ignored-only --message-format oneline)
 # Ignored tests that another test starts as a child process are never run on their own.
 claimed=$(
-    for f in "${filters[@]}" "$on_request"; do selected_by "$f" <<<"$all"; done
+    for f in "${filters[@]}" "$on_request"; do selected_by "$f" "$all"; done
     grep -F crash_child <<<"$all" || true
 )
 unclaimed=$(grep -vxF -f <(printf '%s\n' "$claimed") <<<"$all" || true)
@@ -108,7 +107,7 @@ for i in "${!names[@]}"; do
     if bash -c "${probes[$i]}" >/dev/null 2>&1; then
         selected+=(-E "$(filterset "${filters[$i]}")")
     else
-        left=$(selected_by "${filters[$i]}" <<<"$all")
+        left=$(selected_by "${filters[$i]}" "$all")
         if [[ -n $left ]]; then
             echo "SKIPPED: not installed (${names[$i]}); not run:"
             sed 's/^/    /' <<<"$left"
