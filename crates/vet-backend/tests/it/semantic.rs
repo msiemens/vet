@@ -1093,8 +1093,8 @@ async fn a_definition_of_a_file_the_worktree_moved_is_asked_again_at_the_newer_r
     let handler = Arc::new(Orchestrator::new(
         open_store(data.path()).await.unwrap(),
         Config {
-            // The worktree's moves settle well after the question has read them.
-            debounce: Duration::from_secs(20),
+            // The worktree's moves settle after the question, put to a warm server, has read them.
+            debounce: Duration::from_secs(5),
             quiet: Duration::from_secs(3600),
             ..config()
         },
