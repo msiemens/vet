@@ -55,7 +55,7 @@ The host passes the repository to open (command line, `VET_REPO`, or `#repo=` in
 
 1. Every event a request causes reaches every subscriber, the window that asked included: only the store that asked reads the answer, and every other store of that window learns of the change from the event alone.
 2. A store follows the events of what it shows, so it never relies on another store's request; a reload that the requester's own answer makes redundant is harmless. The queue follows the changeset on view for as long as a project is open. Events sent while the connection was down are lost, and the stores catch up on resync.
-3. The backend's own events (`credentialsNeeded`, `accountsChanged`, `recentProjectsChanged`, `settingsChanged`, `preferenceChanged`) reach every subscribed window; `onEvent` hands over the open project's. `vet-backend/src/contract.rs` says which request sends which event, and its test checks it.
+3. The backend's own events (`credentialsNeeded`, `accountsChanged`, `recentProjectsChanged`, `settingsChanged`, `preferenceChanged`) reach every subscribed window; `onEvent` hands over only the open project's (`state/projectEvents.ts`), so no listener checks the project itself. `vet-backend/src/contract.rs` says which request sends which event, and its test checks it.
 
 Each store follows the events of what it shows:
 
@@ -73,7 +73,7 @@ Each store follows the events of what it shows:
   - `reviewChanged`: versions and changes since only when its `reviewedAt` says the mark moved where the review last was (the first seen-mark of a version), and the commits when they show its progress.
 - `queue.svelte.ts` — `changesetOpened`, `reviewStarted`, `changesetsChanged`, `reviewFinished`: lists the local changesets again; `threadsChanged`: lists them without recounting; `pullRequestListChanged`: reads the pull requests again; `pullRequestsChanged`: patches the rows it names; `changesetLinesChanged`: the counts pushed so far; `snapshotMoved`, and `reviewChanged` with `reviewedAt`: follows the row on view; `filterChanged`: nothing, as a row counts lines between commits and the row on view shows its progress live.
 - `versions.svelte.ts` (a session's versions, while the review screen is shown), `reviewChanges.svelte.ts` (a session's changes since a version, for its whole life, as the queue panel shows them), `pullRequest.svelte.ts` (only a pull request's session has one) and `threads.svelte.ts` (the changeset's threads and, while the review screen shows a range, the range's) — read when the session's flush says so, and when the session starts or resyncs.
-- `pipelines.svelte.ts` (a session's chosen run, job and folds) — `accountsChanged`: forgets which accounts were refused; the steps drop when the review screen hides.
+- `pipelines.svelte.ts` (a session's chosen run, job and folds) — `accountsChanged`: forgets which accounts were refused; while the panel shows, a running chosen job's steps are read again for every new record of it the checks bring; the steps drop when the review screen hides.
 - `checks.svelte.ts` (a session's checks) — `checksChanged`: takes the checks.
 - `semantic.svelte.ts` — `fileDiagnostics`: a file's pushed diagnostics.
 - `symbols.svelte.ts` (a session's changed symbols and the symbol on show, while the review screen is shown) — `fileSymbols`: a file's pushed symbols and the progress; `serversChanged`: asks again about the symbol on show.
