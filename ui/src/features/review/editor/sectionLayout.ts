@@ -1,5 +1,5 @@
 // Height of a file section estimated from the manifest alone, so a column of sections
-// can be laid out before any text is loaded (SPEC §8.3). With `collapse`, unchanged regions
+// can be laid out before any text is loaded. With `collapse`, unchanged regions
 // between hunks become one bar each, mirroring `collapseUnchanged` of `@codemirror/merge`.
 // Change cards for non-text items sit between the section header and the first hunk.
 // A fixed gap closes every section.

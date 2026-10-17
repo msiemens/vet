@@ -1,6 +1,6 @@
 // A changed line that runs past the width of the code column is marked in the line number gutter,
 // whether the editor wraps it or scrolls it sideways, so the reviewer knows there is more of it
-// than is in view (SPEC §8.3).
+// than is in view.
 
 import { type EditorState, type Extension, type Range, RangeSet, StateEffect, StateField } from "@codemirror/state";
 import { GutterMarker, lineNumberMarkers } from "@codemirror/view";

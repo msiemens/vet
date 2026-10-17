@@ -1,5 +1,5 @@
 // The change card of a non-text item (mode, symlink target, submodule commit, binary, content
-// unavailable, rename; SPEC §5.2, §8.4): a hunk-style header bar with the same "mark seen"
+// unavailable, rename; SPEC §5.2): a hunk-style header bar with the same "mark seen"
 // action, the before and after, and for images a preview strip. Its height is fixed by
 // `cardHeight`, so a section can account for it before anything is measured.
 

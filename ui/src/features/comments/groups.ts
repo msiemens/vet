@@ -1,4 +1,4 @@
-// How the Comments tool window lists threads (SPEC §5.1, §8.7): the ones with an edit to settle,
+// How the Comments tool window lists threads (SPEC §5.1): the ones with an edit to settle,
 // the open ones and the resolved ones. A thread that is detached or moved says so in its row.
 
 import type { LineLocation } from "../../generated/LineLocation";

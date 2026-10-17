@@ -221,7 +221,7 @@
   background: transparent;
 }
 
-/* Review state (SPEC §8.4): a 3px strip, solid blue seen, diagonal amber stripes seen against an old base, none unseen. */
+/* Review state: a 3px strip, solid blue seen, diagonal amber stripes seen against an old base, none unseen. */
 .cm-editor .vet-strip {
   min-width: 3px;
   width: 3px;

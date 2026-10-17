@@ -1,5 +1,5 @@
 // One file's CodeMirror editor(s): unified (`unifiedMergeView`) or side by side
-// (`MergeView`), with the review decorations of `reviewState.ts` (SPEC §8.4).
+// (`MergeView`), with the review decorations of `reviewState.ts`.
 
 import { MergeView, unifiedMergeView } from "@codemirror/merge";
 import { Compartment, EditorState, type Extension, type StateEffect, type StateField } from "@codemirror/state";

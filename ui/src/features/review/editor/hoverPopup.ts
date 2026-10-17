@@ -1,4 +1,4 @@
-// When a hover popup appears, stays, is replaced and closes (SPEC §8.4), apart from the DOM it is
+// When a hover popup appears, stays, is replaced and closes, apart from the DOM it is
 // drawn in. A popup belongs to a hover range (the symbol under the pointer, named by a key): it is
 // neither rebuilt nor moved while the pointer stays on that range, and the pointer may cross over
 // into the popup within a grace period. Only a different symbol replaces it.

@@ -1,4 +1,4 @@
-//! Background work the backend reports (SPEC §8.11).
+//! Background work the backend reports (SPEC §8).
 
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;

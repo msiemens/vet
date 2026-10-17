@@ -1,6 +1,6 @@
 # UI architecture
 
-Svelte 5 + CodeMirror 6, organised by feature under `src/`. What the window does is in `SPEC.md` §8; this file is how it is built.
+Svelte 5 + CodeMirror 6, organised by feature under `src/`. What Vet does is in `SPEC.md`, which leaves out how the window looks; this file is how the window is built.
 
 ## What must always hold
 

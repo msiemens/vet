@@ -1,4 +1,4 @@
-// When a symbol is shown as a link to its definition (SPEC §8.4): while the modifier is held and the
+// When a symbol is shown as a link to its definition: while the modifier is held and the
 // pointer rests on a symbol that has a definition. Whether it has one is asked of the server once the
 // pointer has rested, and the question is dropped when the pointer moves on or the modifier is let go.
 
