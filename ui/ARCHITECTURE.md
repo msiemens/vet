@@ -76,7 +76,7 @@ Each store follows the events of what it shows:
 - `versions.svelte.ts` (a session's versions, while the review screen is shown), `reviewChanges.svelte.ts` (a session's changes since a version, for its whole life, as the queue panel shows them), `pullRequest.svelte.ts` (only a pull request's session has one) and `threads.svelte.ts` (the changeset's threads and, while the review screen shows a range, the range's) — read when the session's flush says so, and when the session starts or resyncs.
 - `pipelines.svelte.ts` (a session's chosen run, job and folds) — `accountsChanged`: forgets which accounts were refused; while the panel shows, a running chosen job's steps are read again for every new record of it the checks bring; the steps drop when the review screen hides.
 - `checks.svelte.ts` (a session's checks) — `checksChanged`: takes the checks.
-- `semantic.svelte.ts` — `fileDiagnostics`: a file's pushed diagnostics.
+- `semantic.svelte.ts` (starts over for each session) — `fileDiagnostics`: a file's pushed diagnostics; `serversChanged`: drops the answers and tells the views.
 - `symbols.svelte.ts` (a session's changed symbols and the symbol on show, while the review screen is shown) — `fileSymbols`: a file's pushed symbols and the progress; `serversChanged`: asks again about the symbol on show.
 - `structure.svelte.ts` (a session's outline and selection, while the review screen is shown; sort, changed-only and the popup are the window's) — `serversChanged`, the session resyncing: reads the outline again.
 - `pendingEdits.svelte.ts` — `editsPending`: whether edits wait to settle.
@@ -84,7 +84,7 @@ Each store follows the events of what it shows:
 - `progress.svelte.ts` — `task`: the running tasks, and the last failed sync and checks refresh until one of their kind succeeds or another changeset comes on view, and the last failed fetch of the remotes (`remoteFetch`) until one succeeds, across changesets.
 - `serverList.svelte.ts` — `serversChanged`: reads the servers again; `serverRuntimes`: what the servers do and offer, without reading the list; `serverInstallOutput`: an install's output.
 - `servedBy.svelte.ts` — `serversChanged`: which server serves each file.
-- `ReviewController.ts` — `serversChanged`: drops the semantic answers and re-asks; `reviewChanged`: hands the update to the scope that made it. The tabs' scopes read again when the session's flush calls them, after the manifest.
+- `ReviewController.ts` — `reviewChanged`: hands the update to the scope that made it. The tabs' scopes read again when the session's flush calls them, after the manifest.
 - `accounts.svelte.ts` — `credentialsNeeded`, `accountsChanged`: hands over the keychain's token, and reads the accounts again.
 - `recent.svelte.ts` — `recentProjectsChanged`: reloads the recent list.
 
@@ -96,7 +96,7 @@ There are no full rebuilds: a keyed or incremental `$derived`, so one change inv
 
 #### The review screen
 
-`App` shows the queue or the review under the header; the review stays mounted while the queue shows (laid out, hidden and `inert`), so editors keep their size and scroll. Nothing of its files loads while it is hidden: a manifest that moves while it is away is drawn when it comes up. Once it is shown, the Changes tab loads the files in view and the margin around them, and any file a command goes to; the rest loads a few at a time while the screen is idle, pausing while the viewer scrolls or acts. The base note appears only for a pull request into a non-default branch or a `HEAD` off its base, and the scope chip names the view on show.
+`App` shows the queue or the review under the header; the review is mounted only while it shows, and comes back from the per-changeset views it saved (open tabs, active tab, scroll positions, current file); its first frame comes from the changeset store. A queue action that needs the review leaves an intent it takes once it is up (`appState.whenReview`). Once it is shown, the Changes tab loads the files in view and the margin around them, and any file a command goes to; the rest loads a few at a time while the screen is idle, pausing while the viewer scrolls or acts. The base note appears only for a pull request into a non-default branch or a `HEAD` off its base, and the scope chip names the view on show.
 
 - `ReviewScreen`'s shell (sidebars, dock, tool panels) belongs to the window; its `ReviewController`, the tabs and the panes belong to one session and are made again when another changeset is opened. What a changeset had open and where comes back from `reviewMemory`, which outlives the controllers. The session tells the controller what changed (`onViewChange`): a newer revision keeps the Changes tab's place, another range, commit or filter starts it at the top.
 - A pane hands its scroll root to `ReviewController`, which builds a view for the tab; the view is not torn down when the state it reads changes, only remade by a new manifest.
