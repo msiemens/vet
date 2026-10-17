@@ -93,8 +93,8 @@ pub enum Request {
     /// drafts and votes, its filter, its trust and preferences, its place on the recent list, the
     /// content and answers no other project keeps alive, its kept trees and the refs Vet keeps in
     /// the repository. It works when the folder is gone: the root is not looked up. A project that
-    /// is open is closed for every connection, which hear `ProjectRemoved`, and opening the
-    /// repository again starts from nothing. Every connection subscribed to the events of the
+    /// is open is closed for every connection, and opening the repository again starts from
+    /// nothing. Every connection subscribed to the events of the
     /// backend gets `ProjectRemoved`, `RecentProjectsChanged` and `StorageChanged`. Answers with
     /// `Response::ProjectRemoved`.
     RemoveProject {

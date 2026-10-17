@@ -133,7 +133,6 @@ impl Orchestrator {
         self.projects
             .evict(
                 Path::new(&root),
-                Event::ProjectRemoved { root: root.clone() },
                 self.storage.remove(&root, &facts, unix_now(), &retention),
             )
             .await?;

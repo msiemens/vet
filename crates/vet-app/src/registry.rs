@@ -214,10 +214,10 @@ impl<S: Subscriber, T: Resident> Registry<S, T> {
         true
     }
 
-    /// Takes the project of `repo` out whatever connections are subscribed to it, shuts it and tells
-    /// them `farewell`, then runs `work` with the repository's gate held: opening the repository
-    /// again waits until `work` is done, and other repositories do not. Answers what `work` does.
-    pub async fn evict<W: Future>(&self, repo: &Path, farewell: S::Event, work: W) -> W::Output {
+    /// Takes the project of `repo` out whatever connections are subscribed to it and shuts it,
+    /// then runs `work` with the repository's gate held: opening the repository again waits until
+    /// `work` is done, and other repositories do not. Answers what `work` does.
+    pub async fn evict<W: Future>(&self, repo: &Path, work: W) -> W::Output {
         let gate = self.gate(repo);
         let _evicting = gate.lock().await;
         let removed = {
@@ -227,7 +227,6 @@ impl<S: Subscriber, T: Resident> Registry<S, T> {
         };
         if let Some(entry) = removed {
             entry.shut().await;
-            entry.subscribers.broadcast(farewell);
         }
         work.await
     }
@@ -489,7 +488,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn an_evicted_project_is_shut_and_tells_every_subscriber_whatever_they_do() {
+    async fn an_evicted_project_is_shut_for_every_subscriber() {
         let registry = TestRegistry::default();
         let (a, b) = (Connection::new("a"), Connection::new("b"));
         let adapters = Arc::new(Adapters::default());
@@ -497,12 +496,11 @@ mod tests {
         open(&registry, "/repo", &b, &adapters).await;
         let (other, _) = open(&registry, "/other", &a, &Arc::default()).await;
 
-        let worked = registry.evict(Path::new("/repo"), "gone".into(), async { 7 }).await;
+        let worked = registry.evict(Path::new("/repo"), async { 7 }).await;
 
         assert_eq!(worked, 7);
         assert!(adapters.shut.load(Ordering::SeqCst));
         assert!(registry.find(entry.id).await.is_err());
-        assert_eq!((a.received(), b.received()), (vec!["gone".into()], vec!["gone".into()]));
         assert!(registry.find(other.id).await.is_ok(), "another repository stays open");
         let (again, created) = open(&registry, "/repo", &a, &Arc::default()).await;
         assert!(created && again.id != entry.id);
@@ -514,7 +512,7 @@ mod tests {
         let a = Connection::new("a");
         open(&registry, "/repo", &a, &Arc::default()).await;
         let release = Notify::new();
-        let evicting = registry.evict(Path::new("/repo"), "gone".into(), release.notified());
+        let evicting = registry.evict(Path::new("/repo"), release.notified());
         let meanwhile = async {
             let reopened = tokio::time::timeout(WAITING, open(&registry, "/repo", &a, &Arc::default())).await;
             assert!(reopened.is_err(), "the repository opened while its removal ran");
