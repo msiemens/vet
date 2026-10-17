@@ -49,6 +49,21 @@ impl RemoteKey {
         }
     }
 
+    /// The HTTPS URL git fetches the repository from, whichever URL form the remote names.
+    pub fn https_url(&self) -> String {
+        let host = &self.host;
+        let segments: Vec<&str> = self.segments().collect();
+        match segments.as_slice() {
+            [org, project, repo] if host == "dev.azure.com" => {
+                format!("https://{host}/{org}/{project}/_git/{repo}")
+            }
+            [_, project, repo] if host.ends_with(".visualstudio.com") => {
+                format!("https://{host}/{project}/_git/{repo}")
+            }
+            _ => format!("https://{host}/{}.git", self.path),
+        }
+    }
+
     /// The segments of the path: owner and repository for GitHub, organization, project
     /// and repository for Azure DevOps.
     pub fn segments(&self) -> impl Iterator<Item = &str> {
@@ -224,6 +239,66 @@ mod tests {
         ] {
             assert_eq!(parse_remote(url), key("github.com", "rust-lang/rust"), "{url}");
         }
+    }
+
+    #[test]
+    fn every_url_form_of_a_platform_repository_has_one_https_url() {
+        let cases: [(&[&str], &str); 4] = [
+            (
+                &[
+                    "https://github.com/rust-lang/rust",
+                    "https://github.com/rust-lang/rust.git",
+                    "https://github.com/rust-lang/rust/",
+                    "https://user:token@github.com/rust-lang/rust.git",
+                    "HTTPS://GitHub.com/rust-lang/rust",
+                    "git@github.com:rust-lang/rust.git",
+                    "github.com:rust-lang/rust",
+                    "ssh://git@github.com/rust-lang/rust.git",
+                    "ssh://git@github.com:22/rust-lang/rust.git",
+                    "ssh://git@ssh.github.com:443/rust-lang/rust.git",
+                    "git://github.com/rust-lang/rust.git",
+                ],
+                "https://github.com/rust-lang/rust.git",
+            ),
+            (
+                &[
+                    "https://dev.azure.com/contoso/Shop/_git/api",
+                    "https://contoso@dev.azure.com/contoso/Shop/_git/api",
+                    "git@ssh.dev.azure.com:v3/contoso/Shop/api",
+                    "ssh://git@ssh.dev.azure.com/v3/contoso/Shop/api",
+                ],
+                "https://dev.azure.com/contoso/Shop/_git/api",
+            ),
+            (
+                &[
+                    "contoso@vs-ssh.visualstudio.com:v3/contoso/Shop/api",
+                    "https://contoso.visualstudio.com/DefaultCollection/Shop/_git/api",
+                ],
+                "https://contoso.visualstudio.com/Shop/_git/api",
+            ),
+            (
+                &["git@ssh.dev.azure.com:v3/vivavis/My%20Shop/Back%20End"],
+                "https://dev.azure.com/vivavis/My%20Shop/_git/Back%20End",
+            ),
+        ];
+        for (urls, https) in cases {
+            for url in urls {
+                assert_eq!(parse_remote(url).unwrap().https_url(), https, "{url}");
+            }
+        }
+    }
+
+    #[test]
+    fn an_enterprise_ssh_remote_names_the_web_host_without_the_ssh_port() {
+        let https = |url| parse_remote(url).unwrap().https_url();
+        assert_eq!(
+            https("ssh://git@ghe.corp.example:2222/team/service.git"),
+            "https://ghe.corp.example/team/service.git"
+        );
+        assert_eq!(
+            https("https://ghe.corp.example:8443/team/service"),
+            "https://ghe.corp.example:8443/team/service.git"
+        );
     }
 
     #[test]
