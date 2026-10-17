@@ -1282,12 +1282,11 @@ export const sessions: Record<string, (d: Driver) => Promise<void>> = {
   async tabStrip(d) {
     await d.manyFiles(30);
     await d.until(`document.querySelector("[role=tablist]") !== null`, "the tab strip");
-    const controller = `(await import("/src/app/appState.svelte.ts")).appState.controller`;
-    for (let i = 0; i < 30; i++) {
-      await d.page(
-        `(async () => { const c = ${controller}; await c.openLocation(c.tabs.active, "many/f${String(i).padStart(3, "0")}.dat", 1, "target"); return true; })()`,
+    const openFile = (n: number) =>
+      d.page(
+        `(async () => { const c = (await import("/src/app/appState.svelte.ts")).appState.controller; await c.openLocation(c.tabs.active, "many/f${String(n).padStart(3, "0")}.dat", 1, "target"); return true; })()`,
       );
-    }
+    for (let i = 0; i < 30; i++) await openFile(i);
     const strip = () =>
       d.page(`(() => {
         const s = document.querySelector("[role=tablist]");
@@ -1343,9 +1342,7 @@ export const sessions: Record<string, (d: Driver) => Promise<void>> = {
 
     // Opening a file whose tab is out of view, as Go to definition does.
     await d.page(`__t.commands.run("tab.next")`);
-    await d.page(
-      `(async () => { const c = ${controller}; await c.openLocation(c.tabs.active, "many/f017.dat", 1, "target"); return true; })()`,
-    );
+    await openFile(17);
     const shown = await strip();
     if (!shown.whole || shown.active !== "f017.dat")
       throw new Error(`the opened tab is not in view: ${JSON.stringify(shown)}`);
