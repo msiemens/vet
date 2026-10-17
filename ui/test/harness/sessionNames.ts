@@ -18,6 +18,7 @@ export const sessionNames = [
   "pipelines",
   "pullRequest",
   "owned",
+  "findRuns",
   "analysis",
   "leaving",
   "preferences",

@@ -16,7 +16,9 @@ import type { ChangesetSession } from "../../src/state/changesetSession.svelte.t
 import { STALE_NOTICE } from "../../src/lib/notice.ts";
 import type { SessionEvent } from "../../src/state/projectEvents.ts";
 import { newSession } from "../../src/state/changesetSession.svelte.ts";
-import type { UsagesSpec } from "../../src/state/findSets.svelte.ts";
+import type { SearchSpec, UsagesSpec } from "../../src/state/findSets.svelte.ts";
+import type { SearchResults } from "../../src/state/backend.ts";
+import { abortError } from "../../src/lib/abort.ts";
 import { opened } from "../../src/state/opened.svelte.ts";
 import { excludePath } from "../../src/state/projectRequests.ts";
 import { platform } from "../../src/state/platform.svelte.ts";
@@ -892,6 +894,100 @@ export const sessions: Record<SessionName, (h: Harness) => Promise<void>> = {
         throw new Error("a comment box came along");
       if (next.unsentComments() !== 0) throw new Error("the next changeset has unsent comments");
       if (progress.failed.length) throw new Error("a failure of the changeset left stays in the footer");
+    });
+  },
+
+  /** A Find set runs again as it was asked, takes only the answer of its latest run, and says so when its run was aborted from outside. */
+  async findRuns(h) {
+    const spec: SearchSpec = {
+      type: "search",
+      request: {
+        scope: { type: "view", view: CHANGESET },
+        pattern: { text: "line", matchCase: false, wholeWord: false, regex: false },
+        mask: "",
+        side: "both",
+        onlyChanges: false,
+        notSeen: false,
+        limit: 1000,
+      },
+      options: { text: "line", matchCase: false, wholeWord: false, regex: false, side: "both", onlyChanges: false },
+      scope: { label: "All changes" },
+    };
+    const usages: UsagesSpec = { type: "usages", symbol: "foo", side: "target", path: "a.txt", line: 0, col: 0 };
+    const sets = onView().findSets;
+    const results = (files: string[]): SearchResults => ({
+      type: "searchResults",
+      revision: 1,
+      files: files.map((path) => ({
+        path,
+        hunks: [],
+        states: [],
+        lines: [{ kind: "context", line: 1, text: "line", textStart: 0, hits: [{ from: 0, to: 4 }] }],
+        hits: 1,
+      })),
+      hits: files.length,
+      truncated: false,
+      searched: files.length,
+    });
+    const current = () => {
+      const set = sets.current;
+      if (!set) throw new Error("no find set");
+      return set;
+    };
+    await h.step(
+      "a kept search reruns with the request it was kept with",
+      async () => {
+        sets.keepSearch({ spec, results: results([]) });
+        sets.rerun(current());
+        await h.until(() => current().phase === "done", "the rerun to finish");
+        const body = h.sent.filter((r) => r.type === "search").at(-1);
+        const expected = { type: "search", project: session.connected().project, ...spec.request };
+        if (JSON.stringify(body) !== JSON.stringify(expected)) throw new Error("the rerun sent another request");
+        if (!current().places.length) throw new Error("the rerun found nothing");
+      },
+      { sent: { search: 1 } },
+    );
+    await h.step("a rerun's late answer is dropped", async () => {
+      const backend = session.connected();
+      const search = backend.search.bind(backend);
+      const signals: (AbortSignal | undefined)[] = [];
+      let release!: () => void;
+      const gate = new Promise<void>((resolve) => (release = resolve));
+      backend.search = async (_query, signal) => {
+        signals.push(signal);
+        if (signals.length === 1) {
+          await gate;
+          return results(["old.txt"]);
+        }
+        return results(["new.txt"]);
+      };
+      try {
+        const set = current();
+        sets.rerun(set);
+        await h.until(() => signals.length === 1, "the first run to be asked for");
+        sets.rerun(set);
+        await h.until(() => set.phase === "done", "the second run to finish");
+        release();
+        await sleep(100);
+        if (!signals[0]?.aborted) throw new Error("the first run was not cancelled");
+        const paths = set.places.map((p) => p.file.path).join();
+        if (paths !== "new.txt") throw new Error(`the set lists ${paths}, not new.txt`);
+      } finally {
+        backend.search = search;
+      }
+    });
+    await h.step("a usages run aborted from outside fails", async () => {
+      const backend = session.connected();
+      const run = backend.usages.bind(backend);
+      backend.usages = () => Promise.reject(abortError());
+      try {
+        sets.findUsages(usages);
+        const set = current();
+        await h.until(() => set.phase === "failed", "the usages run to fail");
+        if (!set.message?.includes("The changeset changed")) throw new Error(`the message was ${set.message}`);
+      } finally {
+        backend.usages = run;
+      }
     });
   },
 

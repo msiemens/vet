@@ -13,7 +13,9 @@ import type { ChangesetSession } from "./changesetSession.svelte";
 import { type ChangedFile, type Place, placesFromRows, placesFromSearch } from "./foundPlace";
 import { type Filters, NO_FILTERS } from "./findRows";
 import { diffRuns, isStale, linesToLocate, ranVersion, slotFor } from "./findRuns";
+import { LatestRun } from "./latestRun";
 import { atRevision } from "./revision";
+import { SearchRun } from "./searchRun";
 import { session } from "./session.svelte";
 
 /** Find usages of the symbol at a position of one side's text. */
@@ -85,7 +87,10 @@ export class FindSet {
   /** A search stopped at its limit. */
   truncated = $state(false);
   limit?: number;
-  abort?: AbortController;
+  /** The run of a search set. */
+  readonly search = new SearchRun();
+  /** The run of a usages set. */
+  readonly usages = new LatestRun<LocationRows>();
   hasRun = $state(false);
   /** Where the places of the files changed since the run are now, by place id. */
   moves = $state.raw<ReadonlyMap<string, MappedLine>>(new SvelteMap());
@@ -100,6 +105,12 @@ export class FindSet {
   ) {
     this.spec = spec;
     this.key = keyOf(spec);
+  }
+
+  /** Gives up the set's run; its answer, if one still comes, is dropped. */
+  cancel() {
+    this.search.cancel();
+    this.usages.cancel();
   }
 
   /** What the tab is called: the symbol or the text searched for. */
@@ -203,7 +214,7 @@ class SessionFindSets {
     let set = fresh;
     if (slot.kind === "rerun") set = this.sets[slot.index];
     else if (slot.kind === "replace") {
-      this.sets[slot.index].abort?.abort();
+      this.sets[slot.index].cancel();
       this.sets = this.sets.map((s, i) => (i === slot.index ? fresh : s));
     } else this.sets = [...this.sets, fresh];
     this.active = set.id;
@@ -219,7 +230,7 @@ class SessionFindSets {
 
   private settle(set: FindSet, take: () => void) {
     const before = set.hasRun ? set.places : undefined;
-    set.abort?.abort();
+    set.cancel();
     take();
     this.finish(set, before);
   }
@@ -245,30 +256,35 @@ class SessionFindSets {
     set.truncated = results.truncated;
   }
 
+  private fail(set: FindSet, error: unknown) {
+    set.phase = "failed";
+    set.message = isAbort(error) ? "The changeset changed while this ran. Rerun it." : errorText(error);
+  }
+
   /** Runs the set: the places of the run before stay until this one answers. */
   async start(set: FindSet) {
     const backend = session.backend;
     if (!backend) return;
-    set.abort?.abort();
-    const mine = new AbortController();
-    set.abort = mine;
+    set.cancel();
     set.phase = "running";
     const before = set.hasRun ? set.places : undefined;
     const { spec } = set;
-    try {
-      if (spec.type === "usages") {
-        const revision = this.revision;
-        if (revision === undefined) throw new Error("No changeset is on view");
-        const answer = await backend.usages(
-          revision,
-          spec.side,
-          spec.path,
-          spec.line,
-          spec.col,
-          mine.signal,
-          set.limit,
-        );
-        if (mine.signal.aborted) return;
+    if (spec.type === "usages") {
+      const revision = this.revision;
+      if (revision === undefined) {
+        this.fail(set, new Error("No changeset is on view"));
+        return;
+      }
+      const outcome = await set.usages.run((signal) =>
+        backend.usages(revision, spec.side, spec.path, spec.line, spec.col, signal, set.limit),
+      );
+      if (!outcome) return;
+      if (outcome.type === "failed") {
+        this.fail(set, outcome.error);
+        return;
+      }
+      try {
+        const answer = outcome.value;
         if (answer.unavailable) {
           set.places = [];
           set.total = 0;
@@ -279,16 +295,23 @@ class SessionFindSets {
         }
         set.places = placesFromRows(answer.rows, answer.side, this.changedFile);
         set.total = answer.total;
-      } else {
-        const results = await backend.search({ ...spec.request, limit: set.limit ?? spec.request.limit }, mine.signal);
-        if (mine.signal.aborted) return;
-        this.takeSearch(set, results);
+        this.finish(set, before);
+      } catch (error) {
+        this.fail(set, error);
       }
-      this.finish(set, before);
-    } catch (error) {
-      if (mine.signal.aborted) return;
-      set.phase = "failed";
-      set.message = isAbort(error) ? "The changeset changed while this ran. Rerun it." : errorText(error);
+    } else {
+      const outcome = await set.search.ask(backend, { ...spec.request, limit: set.limit ?? spec.request.limit });
+      if (!outcome) return;
+      if (outcome.type === "failed") {
+        this.fail(set, outcome.error);
+        return;
+      }
+      try {
+        this.takeSearch(set, outcome.value);
+        this.finish(set, before);
+      } catch (error) {
+        this.fail(set, error);
+      }
     }
   }
 
@@ -303,7 +326,7 @@ class SessionFindSets {
   }
 
   stop(set: FindSet) {
-    set.abort?.abort();
+    set.cancel();
     set.phase = set.hasRun ? "done" : "stopped";
     if (!set.hasRun) set.message = "Stopped";
   }
@@ -311,7 +334,7 @@ class SessionFindSets {
   close(id: string) {
     const at = this.sets.findIndex((s) => s.id === id);
     if (at < 0) return;
-    this.sets[at].abort?.abort();
+    this.sets[at].cancel();
     const rest = this.sets.filter((s) => s.id !== id);
     this.sets = rest;
     if (this.active === id) this.active = (rest.at(at) ?? rest.at(at - 1))?.id;
@@ -323,7 +346,7 @@ class SessionFindSets {
 
   /** Stops every run: the sets belong to a changeset that is no longer on view. */
   end() {
-    for (const s of this.sets) s.abort?.abort();
+    for (const s of this.sets) s.cancel();
   }
 }
 
