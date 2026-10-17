@@ -10,6 +10,8 @@ use vet_backend::Config;
 use vet_protocol::{ChangesetKey, Event, ProjectId, Request, Response, RowReview, Secret, ServerMessage, View};
 
 use crate::common::Client;
+#[cfg(debug_assertions)]
+use crate::common::background_live;
 use crate::prefetch::{
     add_ninth, answered, backend, backend_with, config, fixture, list, many_prs, refresh, remote, rows,
 };
@@ -205,55 +207,56 @@ async fn account_changes_during_a_listing_give_one_more_listing() {
     );
 }
 
-/// A wrapper for the fetch of the heads that hangs once a marker file exists, and says it did.
-#[cfg(debug_assertions)]
-fn hang_when_asked(scratch: &std::path::Path) -> (std::path::PathBuf, std::path::PathBuf) {
-    let wrapper = scratch.join("ssh-fake.sh");
-    let hang = scratch.join("hang");
-    let hanging = scratch.join("hanging");
-    std::fs::write(
-        &wrapper,
-        format!(
-            "#!/bin/sh\nif [ -e '{}' ]; then : > '{}'; exec sleep 5; fi\nexec git-upload-pack '{}'\n",
-            hang.display(),
-            hanging.display(),
-            crate::prefetch::served_repo(scratch).display()
-        ),
-    )
-    .unwrap();
-    (hang, hanging)
-}
-
+/// The viewer's fetch hangs in the `ssh` of a remote that is no platform's, holding the fetch lock;
+/// the head fetch of the feed waits for it, and closing the project ends both.
 #[cfg(debug_assertions)]
 #[tokio::test]
 async fn closing_the_project_ends_a_head_fetch_that_is_under_way() {
     let (mock, fake, repo, scratch) = fixture();
-    let (hang, hanging) = hang_when_asked(scratch.path());
-    let (_handler, client) = backend(repo.path(), &fake.base()).await;
+    let data = tempfile::tempdir().unwrap();
+    let config = Config {
+        shutdown_bound: Duration::from_millis(100),
+        ..config()
+    };
+    let (_handler, client) = backend_with(data.path(), &fake.base(), config).await;
+    crate::common::git(repo.path(), &["remote", "add", "other", "ssh://git@example.com/x.git"]);
+    let dir = scratch.path();
+    let hanging = dir.join("hanging");
+    std::fs::write(
+        dir.join("ssh-fake.sh"),
+        format!(
+            "#!/bin/sh\n: > '{}'\nwhile [ -d '{}' ]; do sleep 0.02; done\n",
+            hanging.display(),
+            dir.display()
+        ),
+    )
+    .unwrap();
     let project = client.open(repo.path()).await;
     list(&client, project).await;
     quiet(&client, project).await;
     add_ninth(&mock);
 
-    std::fs::write(&hang, "").unwrap();
-    change_account(&client).await;
-    for _ in 0..500 {
-        if hanging.exists() {
-            break;
-        }
-        tokio::time::sleep(Duration::from_millis(10)).await;
-    }
-    assert!(hanging.exists(), "the head fetch never reached the remote");
     let heads = "pull request heads";
-    assert_eq!(client.handler.background_counts(project, heads).1, 1);
+    let (_, closing) = tokio::join!(client.call(Request::Fetch { project }), async {
+        let waiting = async {
+            while !hanging.exists() {
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        };
+        tokio::time::timeout(Duration::from_secs(30), waiting)
+            .await
+            .expect("the viewer's fetch never reached the remote");
+        change_account(&client).await;
+        background_live(&client, project, heads, 1).await;
 
-    let closing = std::time::Instant::now();
-    client.call(Request::CloseProject { project }).await.unwrap();
+        let closing = std::time::Instant::now();
+        client.call(Request::CloseProject { project }).await.unwrap();
+        closing.elapsed()
+    });
 
     assert!(
-        closing.elapsed() < Duration::from_secs(3),
-        "closing waited for the head fetch: {:?}",
-        closing.elapsed()
+        closing < Duration::from_secs(3),
+        "closing waited for the fetch: {closing:?}"
     );
     assert_eq!(client.handler.background_counts(project, heads).1, 0);
 }

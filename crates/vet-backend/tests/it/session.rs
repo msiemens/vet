@@ -1829,7 +1829,7 @@ async fn a_fetch_that_moves_the_remote_branch_on_view_is_its_next_version() {
     git(&clone, &["push", "-q", "origin", "feature"]);
     git(p, &["fetch", "-q", "origin"]);
 
-    // The app fetches by itself on opening, and says so with `ChangesetsChanged`.
+    // The remote is a local path, which only the viewer's fetch reaches.
     loop {
         match client.event().await {
             Event::ChangesetsChanged { .. } => {}

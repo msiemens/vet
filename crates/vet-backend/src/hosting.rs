@@ -28,6 +28,10 @@ impl Credentials for Held<'_> {
     async fn credential(&self, host: &str) -> Option<Credential> {
         self.0.credential(host, unix_now()).await
     }
+
+    async fn has_account(&self, host: &str) -> bool {
+        self.0.has_account(host, unix_now()).await
+    }
 }
 
 /// An open project, which hears of the platforms' standing.

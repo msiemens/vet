@@ -521,8 +521,8 @@ pub(crate) mod tests {
 
     use super::*;
     use crate::platform::{
-        CheckLog, CommitChecks, Credential, PullRequest, PullRequestDetail, PullRequestListing, ReviewRequest, Viewer,
-        pr, viewer,
+        CheckLog, CommitChecks, Credential, CredentialSource, PullRequest, PullRequestDetail, PullRequestListing,
+        ReviewRequest, Token, Viewer, pr, viewer,
     };
     use crate::ports::{GitError, RefTip, Via};
     use crate::progress::Tasks;
@@ -797,11 +797,19 @@ pub(crate) mod tests {
         }
     }
 
-    pub(crate) struct Anonymous;
+    /// An account for every host, holding the token `token`.
+    pub(crate) struct SignedIn;
 
-    impl Credentials for Anonymous {
+    impl Credentials for SignedIn {
         async fn credential(&self, _: &str) -> Option<Credential> {
-            None
+            Some(Credential {
+                token: Token::new("token").unwrap(),
+                source: CredentialSource::Pat,
+            })
+        }
+
+        async fn has_account(&self, _: &str) -> bool {
+            true
         }
     }
 
@@ -896,9 +904,7 @@ pub(crate) mod tests {
         ]);
 
         let app = github("acme/app");
-        fetch_pull_request(&platform, &fetch, &Anonymous, &app, 7)
-            .await
-            .unwrap();
+        fetch_pull_request(&platform, &fetch, &SignedIn, &app, 7).await.unwrap();
 
         let refs = PullRequestRefs::of(&app, 7);
         let mut pull_request = pr(7);
@@ -928,9 +934,7 @@ pub(crate) mod tests {
             info("work", "git@ssh.dev.azure.com:v3/contoso/Shop/api"),
         ]);
 
-        fetch_pull_request(&platform, &fetch, &Anonymous, &api, 7)
-            .await
-            .unwrap();
+        fetch_pull_request(&platform, &fetch, &SignedIn, &api, 7).await.unwrap();
 
         let refs = PullRequestRefs::of(&api, 7);
         let fetched = fetched.lock().unwrap();
@@ -960,10 +964,8 @@ pub(crate) mod tests {
         };
         let (fetch, _) = fetching(vec![info("origin", "https://github.com/acme/app")]);
 
-        let ready = fetch_pull_request(&platform, &fetch, &Anonymous, &app, 7)
-            .await
-            .unwrap();
-        let draft = fetch_pull_request(&platform, &fetch, &Anonymous, &app, DRAFT)
+        let ready = fetch_pull_request(&platform, &fetch, &SignedIn, &app, 7).await.unwrap();
+        let draft = fetch_pull_request(&platform, &fetch, &SignedIn, &app, DRAFT)
             .await
             .unwrap();
 
@@ -1045,12 +1047,8 @@ pub(crate) mod tests {
         let (fetch, fetched, refs, _) =
             fetching_with(vec![info("origin", "https://github.com/acme/app")], vec![], &["c1"]);
 
-        let brought = fetch_pull_request(&platform, &fetch, &Anonymous, &app, 7)
-            .await
-            .unwrap();
-        fetch_pull_request(&platform, &fetch, &Anonymous, &app, 7)
-            .await
-            .unwrap();
+        let brought = fetch_pull_request(&platform, &fetch, &SignedIn, &app, 7).await.unwrap();
+        fetch_pull_request(&platform, &fetch, &SignedIn, &app, 7).await.unwrap();
 
         let of = PullRequestRefs::of(&app, 7);
         assert_eq!(
@@ -1122,7 +1120,7 @@ pub(crate) mod tests {
         };
         let (fetch, fetched) = fetching(vec![info("origin", "https://github.com/acme/app")]);
 
-        let error = fetch_pull_request(&platform, &fetch, &Anonymous, &app, 7)
+        let error = fetch_pull_request(&platform, &fetch, &SignedIn, &app, 7)
             .await
             .unwrap_err();
 
@@ -1142,7 +1140,7 @@ pub(crate) mod tests {
         };
         let (fetch, fetched) = fetching(vec![info("origin", "https://github.com/ada/app")]);
 
-        let error = fetch_pull_request(&platform, &fetch, &Anonymous, &github("acme/app"), 7)
+        let error = fetch_pull_request(&platform, &fetch, &SignedIn, &github("acme/app"), 7)
             .await
             .unwrap_err();
 
@@ -1311,15 +1309,11 @@ pub(crate) mod tests {
         let before = [of(5).head, of(5).target, of(6).head, of(6).target];
         let before: Vec<&str> = before.iter().map(String::as_str).collect();
         let (fetch, _, refs) = fetching_into(vec![info("origin", "https://github.com/acme/app")], &before);
-        fetch_pull_request(&platform, &fetch, &Anonymous, &app, 4)
-            .await
-            .unwrap();
+        fetch_pull_request(&platform, &fetch, &SignedIn, &app, 4).await.unwrap();
 
         let since = fetch.mark();
         // Opened while the list was being asked for.
-        fetch_pull_request(&platform, &fetch, &Anonymous, &app, 5)
-            .await
-            .unwrap();
+        fetch_pull_request(&platform, &fetch, &SignedIn, &app, 5).await.unwrap();
         let deleted = delete_pull_request_refs(&fetch, &[(app.clone(), 4), (app.clone(), 5), (app.clone(), 6)], since)
             .await
             .unwrap();
@@ -1375,7 +1369,7 @@ pub(crate) mod tests {
         let (fetch, fetched, refs, served) = fetching_with(vec![ado_remote()], fetched_refs(&list, 2), &[]);
         serve_heads(&served, &list);
 
-        assert!(fetch_listed_heads(&fetch, &Anonymous, &list).await.unwrap());
+        assert!(fetch_listed_heads(&fetch, &SignedIn, &list).await.unwrap());
 
         assert_eq!(
             destinations(&fetched),
@@ -1384,7 +1378,7 @@ pub(crate) mod tests {
         assert_eq!(fetched.lock().unwrap().len(), 1, "one fetch for the lot");
         assert!(names(&refs).contains(&of(3).head));
 
-        assert!(!fetch_listed_heads(&fetch, &Anonymous, &list).await.unwrap());
+        assert!(!fetch_listed_heads(&fetch, &SignedIn, &list).await.unwrap());
         assert_eq!(fetched.lock().unwrap().len(), 1, "nothing is fetched twice");
     }
 
@@ -1397,7 +1391,7 @@ pub(crate) mod tests {
         list.rows[1].row.head = "c2-pushed".to_owned();
         serve_heads(&served, &list);
 
-        assert!(fetch_listed_heads(&fetch, &Anonymous, &list).await.unwrap());
+        assert!(fetch_listed_heads(&fetch, &SignedIn, &list).await.unwrap());
 
         let of = PullRequestRefs::of(&remote, 2);
         assert_eq!(destinations(&fetched), [of.head.clone(), of.target]);
@@ -1409,7 +1403,7 @@ pub(crate) mod tests {
             .cloned()
             .unwrap();
         assert_eq!(head.commit, "c2-pushed");
-        assert!(!fetch_listed_heads(&fetch, &Anonymous, &list).await.unwrap());
+        assert!(!fetch_listed_heads(&fetch, &SignedIn, &list).await.unwrap());
         assert_eq!(fetched.lock().unwrap().len(), 1, "the head is current now");
     }
 
@@ -1431,7 +1425,7 @@ pub(crate) mod tests {
         let (fetch, fetched, _, served) = fetching_with_history(vec![ado_remote()], refs, &[], &[("c1-newer", "c1")]);
         serve_heads(&served, &list);
 
-        assert!(fetch_listed_heads(&fetch, &Anonymous, &list).await.unwrap());
+        assert!(fetch_listed_heads(&fetch, &SignedIn, &list).await.unwrap());
 
         let of = PullRequestRefs::of(&remote, 2);
         assert_eq!(destinations(&fetched), [of.head, of.target]);
@@ -1446,7 +1440,7 @@ pub(crate) mod tests {
         let (fetch, _, refs, served) = fetching_with(vec![ado_remote()], Vec::new(), &[]);
         serve_heads(&served, &list);
 
-        fetch_listed_heads(&fetch, &Anonymous, &list).await.unwrap();
+        fetch_listed_heads(&fetch, &SignedIn, &list).await.unwrap();
 
         let names = names(&refs);
         let has = |number| names.contains(&PullRequestRefs::of(&remote, number).head);
@@ -1461,8 +1455,8 @@ pub(crate) mod tests {
         serve_heads(&served, &list);
 
         let (first, second) = tokio::join!(
-            fetch_listed_heads(&fetch, &Anonymous, &list),
-            fetch_listed_heads(&fetch, &Anonymous, &list)
+            fetch_listed_heads(&fetch, &SignedIn, &list),
+            fetch_listed_heads(&fetch, &SignedIn, &list)
         );
 
         assert_eq!((first, second), (Ok(true), Ok(false)));
@@ -1476,7 +1470,7 @@ pub(crate) mod tests {
         let remote = list.sources[0].remote.clone();
         let (fetch, _, refs, _) = fetching_with(vec![ado_remote()], Vec::new(), &["refs/heads/deleted"]);
 
-        assert!(fetch_listed_heads(&fetch, &Anonymous, &list).await.unwrap());
+        assert!(fetch_listed_heads(&fetch, &SignedIn, &list).await.unwrap());
 
         let names = names(&refs);
         let has = |number| names.contains(&PullRequestRefs::of(&remote, number).head);

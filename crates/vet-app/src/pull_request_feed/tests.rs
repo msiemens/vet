@@ -15,7 +15,7 @@ use crate::platform::{
 };
 use crate::ports::{GitError, RefTip, RefUpdate, RemoteInfo, Via};
 use crate::progress::Tasks;
-use crate::pull_request::tests::{Anonymous, Remotes, fetching, fetching_into, github, info, names};
+use crate::pull_request::tests::{Remotes, SignedIn, fetching, fetching_into, github, info, names};
 use crate::pull_request::{ListedPullRequest, PullRequestRefs, RepositoryStatus};
 use crate::session::tests::MemStore;
 
@@ -76,7 +76,7 @@ where
     }
 
     fn credentials(&self) -> impl Credentials + Send + Sync + '_ {
-        Anonymous
+        SignedIn
     }
 }
 
@@ -418,7 +418,7 @@ async fn the_refs_of_a_pull_request_fetched_during_the_listing_are_not_pruned() 
     // #5 is brought in while the list is being asked for: its refs are written after the mark.
     side.fetch
         .refs(
-            &Anonymous,
+            &SignedIn,
             &info("origin", "https://github.com/acme/app"),
             vec![RefUpdate {
                 source: "refs/pull/5/head".to_owned(),

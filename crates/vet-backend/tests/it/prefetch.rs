@@ -1,9 +1,10 @@
 //! The details of pull requests are fetched ahead of the queue and kept, against a local server
 //! that answers as GitHub does.
 //!
-//! The project's remote is an ssh URL that names `github.com/acme/app`, but a wrapper set as
-//! `core.sshCommand` serves the fetch from a bare repository on disk: no network is touched, and
-//! the platform's HTTP API is the fake server the tests point the backend at
+//! The project's remote is an ssh URL that names `github.com/acme/app`, but the fetch goes over
+//! HTTPS to a bare repository on disk (`Orchestrator::with_served_platforms`): no network is
+//! touched, and `core.sshCommand` is a tripwire that fails the tests that run it. The platform's
+//! HTTP API is the fake server the tests point the backend at
 //! (`Orchestrator::with_platform_endpoints`).
 
 #![allow(clippy::disallowed_methods)]
@@ -466,9 +467,9 @@ fn azure(mock: Arc<Mutex<AzureMock>>) -> Fake {
     })
 }
 
-/// A bare repository the wrapper serves: `main` at the base commit and `refs/pull/7/head` at the
-/// head, at `at` below `dir`: where the platform's URL is served from. Answers the two commits and
-/// the wrapper's path.
+/// A bare repository with `main` at the base commit and `refs/pull/7/head` at the head, at `at`
+/// below `dir`: where the platform's URL is served from. Answers the two commits and the path of
+/// the `ssh` tripwire.
 fn served(dir: &Path, at: &str) -> (String, String, PathBuf) {
     let work = dir.join("work");
     std::fs::create_dir_all(&work).unwrap();
@@ -496,14 +497,35 @@ fn served(dir: &Path, at: &str) -> (String, String, PathBuf) {
             "feature:refs/pull/8/head",
         ],
     );
+    // A platform fetch must never run `ssh`: this one records that it ran and fails.
     let wrapper = dir.join("ssh-fake.sh");
     std::fs::write(
         &wrapper,
-        format!("#!/bin/sh\nexec git-upload-pack '{}'\n", bare.display()),
+        format!("#!/bin/sh\necho run >> '{}'\nexit 1\n", dir.join("ssh-runs").display()),
     )
     .unwrap();
     std::fs::set_permissions(&wrapper, std::fs::Permissions::from_mode(0o755)).unwrap();
     (base, head, wrapper)
+}
+
+/// How often the tripwire `ssh` ran in the fixture whose scratch directory is `scratch`.
+pub(crate) fn ssh_runs(scratch: &Path) -> usize {
+    std::fs::read_to_string(scratch.join("ssh-runs")).map_or(0, |text| text.lines().count())
+}
+
+/// A commit on the served `main`, as a push to the repository: its id.
+pub(crate) fn push_to_main(scratch: &Path) -> String {
+    let work = scratch.join("work");
+    git(
+        &work,
+        &[
+            "push",
+            "-q",
+            served_repo(scratch).to_str().unwrap(),
+            "feature:refs/heads/main",
+        ],
+    );
+    git(&work, &["rev-parse", "feature"])
 }
 
 /// The bare repository `fixture` serves as `github.com/acme/app`.

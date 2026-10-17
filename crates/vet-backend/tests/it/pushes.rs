@@ -7,9 +7,10 @@
 //! `lastMergeSourceCommit` lags its newest iteration) and on GitHub. One test needs `python3` for a
 //! fake language server: it is ignored and run by `ci/tool-tests.sh`.
 //!
-//! The project's remote is an ssh URL that names `dev.azure.com/contoso/Shop/api`, but a wrapper
-//! set as `core.sshCommand` serves the fetch from a bare repository on disk: no network is
-//! touched, and the platform's HTTP API is the fake server the tests point the backend at
+//! The project's remote is an ssh URL that names `dev.azure.com/contoso/Shop/api`, but the fetch
+//! goes over HTTPS to a bare repository on disk (`Orchestrator::with_served_platforms`): no network
+//! is touched, and `core.sshCommand` is a tripwire that fails the tests that run it. The platform's
+//! HTTP API is the fake server the tests point the backend at
 //! (`Orchestrator::with_platform_endpoints`).
 
 #![allow(clippy::disallowed_methods)]
@@ -206,13 +207,7 @@ fn served(dir: &Path) -> (Served, PathBuf) {
     git(&work, &["add", "-A"]);
     git(&work, &["commit", "-qm", "second push"]);
     let head2 = git(&work, &["rev-parse", "HEAD"]);
-    let wrapper = dir.join("ssh-fake.sh");
-    std::fs::write(
-        &wrapper,
-        format!("#!/bin/sh\nexec git-upload-pack '{}'\n", bare.display()),
-    )
-    .unwrap();
-    std::fs::set_permissions(&wrapper, std::fs::Permissions::from_mode(0o755)).unwrap();
+    let wrapper = tripwire(dir);
     (
         Served {
             base,
@@ -223,6 +218,18 @@ fn served(dir: &Path) -> (Served, PathBuf) {
         },
         wrapper,
     )
+}
+
+/// An `ssh` that records that it ran, in `dir/ssh-runs`, and fails: a platform fetch never runs it.
+fn tripwire(dir: &Path) -> PathBuf {
+    let wrapper = dir.join("ssh-fake.sh");
+    std::fs::write(
+        &wrapper,
+        format!("#!/bin/sh\necho run >> '{}'\nexit 1\n", dir.join("ssh-runs").display()),
+    )
+    .unwrap();
+    std::fs::set_permissions(&wrapper, std::fs::Permissions::from_mode(0o755)).unwrap();
+    wrapper
 }
 
 /// A project whose `origin` is `dev.azure.com/contoso/Shop/api`, fetched through `wrapper`.
@@ -878,13 +885,7 @@ fn served_rust(dir: &Path) -> (Served, PathBuf) {
     git(&work, &["add", "-A"]);
     git(&work, &["commit", "-qm", "second push"]);
     let head2 = git(&work, &["rev-parse", "HEAD"]);
-    let wrapper = dir.join("ssh-fake.sh");
-    std::fs::write(
-        &wrapper,
-        format!("#!/bin/sh\nexec git-upload-pack '{}'\n", bare.display()),
-    )
-    .unwrap();
-    std::fs::set_permissions(&wrapper, std::fs::Permissions::from_mode(0o755)).unwrap();
+    let wrapper = tripwire(dir);
     (
         Served {
             base,

@@ -167,11 +167,6 @@ fn fetched(event: &Event) -> Option<()> {
     matches!(event, Event::ChangesetsChanged { .. }).then_some(())
 }
 
-/// A fetch ended: the timer's fetch at open, or one the viewer asked for.
-fn fetch_finished(event: &Event) -> Option<()> {
-    matches!(event, Event::Task(t) if t.kind == TaskKind::Fetch && t.state == TaskState::Finished).then_some(())
-}
-
 fn fetch_task_states(seen: &[Event]) -> Vec<TaskState> {
     seen.iter()
         .filter_map(|e| match e {
@@ -258,7 +253,8 @@ async fn a_fetch_on_demand_brings_the_remote_commits_and_tells_the_subscribers()
     let mut client = Client::new(&handler);
     let project = client.open(&remote.project).await;
     let mut seen = Vec::new();
-    until(&mut client, &mut seen, fetch_finished).await;
+    // The timer has nothing to fetch: the remote is no platform's.
+    client.call(Request::WaitForQuiet { project }).await.unwrap();
     let (main, head) = (remote.rev("refs/heads/main"), remote.rev("HEAD"));
 
     remote.push_commit("one");
@@ -374,21 +370,36 @@ async fn a_fetch_that_moves_a_remote_branch_is_a_new_version_of_its_changeset() 
     );
 }
 
-#[tokio::test]
-async fn opening_a_project_fetches_its_remotes() {
-    let remote = Remote::new();
-    remote.push_commit("one");
-    let (handler, _data) = orchestrator(LONG).await;
-    let mut client = Client::new(&handler);
+/// The message a fetch task failed with.
+fn fetch_failure(event: &Event) -> Option<String> {
+    match event {
+        Event::Task(t) if t.kind == TaskKind::Fetch => match &t.state {
+            TaskState::Failed { message } => Some(message.clone()),
+            _ => None,
+        },
+        _ => None,
+    }
+}
 
-    client.open(&remote.project).await;
+#[cfg(debug_assertions)]
+#[tokio::test]
+async fn opening_a_project_fetches_its_platform_remote_over_https_and_never_runs_ssh() {
+    let (_mock, fake, repo, scratch) = crate::prefetch::fixture();
+    let main = crate::prefetch::push_to_main(scratch.path());
+    let data = tempfile::tempdir().unwrap();
+    let config = Config {
+        fetch_interval: LONG,
+        ..crate::prefetch::config()
+    };
+    let (_backend, mut client) = crate::prefetch::backend_with(data.path(), &fake.base(), config).await;
+
+    let project = client.open(repo.path()).await;
 
     let mut seen = Vec::new();
     until(&mut client, &mut seen, fetched).await;
-    assert_eq!(
-        remote.rev("refs/remotes/origin/main"),
-        git(&remote.work, &["rev-parse", "HEAD"])
-    );
+    client.call(Request::WaitForQuiet { project }).await.unwrap();
+    assert_eq!(git(repo.path(), &["rev-parse", "refs/remotes/origin/main"]), main);
+    assert_eq!(crate::prefetch::ssh_runs(scratch.path()), 0);
 }
 
 #[tokio::test]
@@ -401,21 +412,11 @@ async fn a_remote_that_fails_fails_its_task_and_the_review_goes_on() {
     let project = client.open(&remote.project).await;
     let mut seen = Vec::new();
 
-    let failed = until(&mut client, &mut seen, |e| match e {
-        Event::Task(t) if t.kind == TaskKind::Fetch => match &t.state {
-            TaskState::Failed { message } => Some(message.clone()),
-            _ => None,
-        },
-        _ => None,
-    })
-    .await;
     let again = client.call(Request::Fetch { project }).await;
+    let failed = until(&mut client, &mut seen, fetch_failure).await;
 
     assert!(failed.starts_with("origin: "), "names the remote: {failed}");
-    assert!(
-        matches!(again, Ok(Response::Done)),
-        "asking again is not an error: {again:?}"
-    );
+    assert!(matches!(again, Ok(Response::Done)), "asking is not an error: {again:?}");
     let m = manifest(&client, project).await;
     assert_eq!(m.files.iter().map(|f| f.path.as_str()).collect::<Vec<_>>(), ["a.txt"]);
     let marked = client
@@ -433,27 +434,42 @@ async fn a_remote_that_fails_fails_its_task_and_the_review_goes_on() {
     );
 }
 
+#[cfg(debug_assertions)]
+#[tokio::test]
+async fn a_platform_remote_that_cannot_be_reached_fails_the_fetch_at_open() {
+    let (_mock, fake, repo, scratch) = crate::prefetch::fixture();
+    std::fs::remove_dir_all(crate::prefetch::served_repo(scratch.path())).unwrap();
+    let data = tempfile::tempdir().unwrap();
+    let config = Config {
+        fetch_interval: LONG,
+        ..crate::prefetch::config()
+    };
+    let (_backend, mut client) = crate::prefetch::backend_with(data.path(), &fake.base(), config).await;
+
+    client.open(repo.path()).await;
+
+    let mut seen = Vec::new();
+    let failed = until(&mut client, &mut seen, fetch_failure).await;
+    assert!(failed.starts_with("origin: "), "names the remote: {failed}");
+}
+
+#[cfg(debug_assertions)]
 #[tokio::test]
 async fn the_periodic_fetch_fires_on_its_interval() {
-    let remote = Remote::new();
-    let (handler, _data) = orchestrator(Duration::from_millis(200)).await;
-    let mut client = Client::new(&handler);
-    client.open(&remote.project).await;
-    let mut seen = Vec::new();
-    until(&mut client, &mut seen, fetch_finished).await;
+    let (_mock, fake, repo, scratch) = crate::prefetch::fixture();
+    let data = tempfile::tempdir().unwrap();
+    let config = Config {
+        fetch_interval: Duration::from_millis(1500),
+        ..crate::prefetch::config()
+    };
+    let (_backend, mut client) = crate::prefetch::backend_with(data.path(), &fake.base(), config).await;
+    let project = client.open(repo.path()).await;
+    settle(&mut client, &fake, project, false).await;
 
-    remote.push_commit("one");
+    let main = crate::prefetch::push_to_main(scratch.path());
+    next_tick(&client, project).await;
 
-    until(&mut client, &mut seen, fetched).await;
-    assert_eq!(
-        remote.rev("refs/remotes/origin/main"),
-        git(&remote.work, &["rev-parse", "HEAD"])
-    );
-    let finished = fetch_task_states(&seen)
-        .iter()
-        .filter(|s| **s == TaskState::Finished)
-        .count();
-    assert!(finished >= 2, "fetched at open and again: {seen:#?}");
+    assert_eq!(git(repo.path(), &["rev-parse", "refs/remotes/origin/main"]), main);
 }
 
 /// Opens pull request 7 of the fake platform on view.
@@ -643,21 +659,22 @@ async fn a_periodic_fetch_that_moved_a_ref_announces_follows_and_syncs() {
 #[cfg(debug_assertions)]
 #[tokio::test]
 async fn a_closed_project_stops_fetching() {
-    let remote = Remote::new();
-    let (handler, _data) = orchestrator(Duration::from_millis(100)).await;
-    let mut client = Client::new(&handler);
-    let project = client.open(&remote.project).await;
+    let (_mock, fake, repo, scratch) = crate::prefetch::fixture();
+    let data = tempfile::tempdir().unwrap();
+    let config = Config {
+        fetch_interval: Duration::from_millis(500),
+        ..crate::prefetch::config()
+    };
+    let (_backend, mut client) = crate::prefetch::backend_with(data.path(), &fake.base(), config).await;
+    let project = client.open(repo.path()).await;
     let mut seen = Vec::new();
-    until(&mut client, &mut seen, fetch_finished).await;
+    until(&mut client, &mut seen, fetched).await;
     client.call(Request::CloseProject { project }).await.unwrap();
     // The periodic task ends with the project: it cannot fetch again.
     background_ended(&client, project, "fetch").await;
 
-    remote.push_commit("one");
-    assert_ne!(
-        remote.rev("refs/remotes/origin/main"),
-        git(&remote.work, &["rev-parse", "HEAD"])
-    );
+    let main = crate::prefetch::push_to_main(scratch.path());
+    assert_ne!(git(repo.path(), &["rev-parse", "refs/remotes/origin/main"]), main);
 }
 
 /// A project whose `origin` is reached through a wrapper that notes every fetch in a log and holds
@@ -719,22 +736,32 @@ impl Gated {
 
 #[cfg(debug_assertions)]
 #[tokio::test]
-async fn a_viewer_fetch_during_a_timer_fetch_joins_it() {
+async fn a_remote_on_another_host_is_fetched_only_when_the_viewer_asks() {
     let gated = Gated::new();
+    gated.open_gate();
+    gated.remote.push_commit("one");
     let (handler, _data) = orchestrator(LONG).await;
     let client = Client::new(&handler);
     let project = client.open(&gated.remote.project).await;
-    // The fetch at open is the timer's, and it waits at the gate.
-    gated.until_fetching(1).await;
+    background_ended(&client, project, "fetch").await;
 
-    let (viewer, ()) = tokio::join!(client.call(Request::Fetch { project }), async {
-        tokio::time::sleep(Duration::from_millis(300)).await;
-        gated.open_gate();
-    });
+    assert_eq!(
+        gated.fetches(),
+        0,
+        "the timer reached a remote no platform account covers"
+    );
+    assert_ne!(
+        gated.remote.rev("refs/remotes/origin/main"),
+        git(&gated.remote.work, &["rev-parse", "HEAD"])
+    );
 
-    assert!(matches!(viewer, Ok(Response::Done)));
-    assert_eq!(gated.fetches(), 1, "the viewer's fetch was a fetch of its own");
-    assert_eq!(background_started(&client, project, "fetch"), 1);
+    client.call(Request::Fetch { project }).await.unwrap();
+
+    assert_eq!(gated.fetches(), 1);
+    assert_eq!(
+        gated.remote.rev("refs/remotes/origin/main"),
+        git(&gated.remote.work, &["rev-parse", "HEAD"])
+    );
 }
 
 #[cfg(debug_assertions)]
@@ -778,16 +805,16 @@ async fn closing_the_project_ends_a_slow_fetch_within_the_bound() {
     let handler = Arc::new(Orchestrator::new(open_store(data.path()).await.unwrap(), config));
     let client = Client::new(&handler);
     let project = client.open(&gated.remote.project).await;
-    gated.until_fetching(1).await;
 
-    let closing = std::time::Instant::now();
-    client.call(Request::CloseProject { project }).await.unwrap();
-
-    assert!(
-        closing.elapsed() < Duration::from_secs(1),
-        "closing took {:?}",
+    // The viewer's fetch is the one that reaches the remote, and it waits at the gate.
+    let (_, closing) = tokio::join!(client.call(Request::Fetch { project }), async {
+        gated.until_fetching(1).await;
+        let closing = std::time::Instant::now();
+        client.call(Request::CloseProject { project }).await.unwrap();
         closing.elapsed()
-    );
+    });
+
+    assert!(closing < Duration::from_secs(1), "closing took {closing:?}");
     assert_eq!(
         handler.background_counts(project, "fetch").1,
         0,

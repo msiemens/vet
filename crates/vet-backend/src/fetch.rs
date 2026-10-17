@@ -5,6 +5,7 @@ use std::sync::{Arc, OnceLock, Weak};
 
 use futures::FutureExt;
 use vet_app::changeset::Source;
+use vet_app::fetch::Started;
 use vet_app::supervise::Supervisor;
 use vet_protocol::{Event, ProjectId, Response};
 
@@ -44,13 +45,18 @@ pub(crate) fn fetches(supervisor: &Supervisor, entry: Arc<OnceLock<Weak<Open>>>)
 }
 
 /// Fetches the remotes, then tells every subscriber that the branches may have moved, follows the
-/// pull request on view for a push, and syncs its threads. A remote that failed is named by the
-/// failed task; what the others brought counts. A timer fetch that
+/// pull request on view for a push, and syncs its threads. A timer fetch takes only the remotes on
+/// platform hosts with an account; the viewer's takes every remote. A remote that failed is named
+/// by the failed task; what the others brought counts. A timer fetch that
 /// moved no ref skips the announcement and the follow but still syncs the threads, which change
 /// without a push, and has the feed list again. Cooperates with the project closing: it ends
 /// before its next step instead.
 async fn fetch_and_report(open: &Arc<Open>, sealing: Sealing) {
-    let ran = open.fetch.run(&Held(&open.accounts)).await;
+    let started = match sealing.started() {
+        Asked::Timer => Started::Background,
+        Asked::Viewer => Started::Viewer,
+    };
+    let ran = open.fetch.run(&Held(&open.accounts), started).await;
     let asked = sealing.asked();
     if let Ok(ran) = ran {
         follow_fetch(open, asked, ran.fetched, ran.updated).await;

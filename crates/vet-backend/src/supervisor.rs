@@ -67,9 +67,9 @@ pub(crate) enum Asked {
 /// The fetches of one project, one at a time. A request that comes while a fetch is on its way
 /// joins it, and the fetch is the strongest asker's; the fetch is not a `Trigger` since a later
 /// request is answered by a run that began before it, the refs being what is wanted. Once the
-/// fetch has told who asked (`Sealing::asked`) a request waits for it and asks again, so no
-/// asker's follow-ups are missed. A fetch writes review state, so it is never aborted for a newer
-/// request and ends by itself when the project closes.
+/// fetch has told who asked (`Sealing::started` for a timer's, `Sealing::asked` for a viewer's) a
+/// request waits for it and asks again, so no asker's follow-ups are missed. A fetch writes review
+/// state, so it is never aborted for a newer request and ends by itself when the project closes.
 #[derive(Clone)]
 pub(crate) struct Fetches(Arc<Fetching>);
 
@@ -100,6 +100,17 @@ enum Began {
 pub(crate) struct Sealing(Arc<Fetching>);
 
 impl Sealing {
+    /// Who asked so far. A timer's run is sealed now: a viewer who comes later wants the remotes the
+    /// timer leaves out, so gets a run of its own. A viewer's run still takes askers until `asked`.
+    pub(crate) fn started(&self) -> Asked {
+        let mut slot = lock(&self.0.current);
+        let current = slot.as_mut().expect("a fetch that runs is current");
+        if current.asked == Asked::Timer {
+            current.sealed = true;
+        }
+        current.asked
+    }
+
     /// The strongest of those who asked. A request after this gets a fetch of its own.
     pub(crate) fn asked(&self) -> Asked {
         let mut slot = lock(&self.0.current);
@@ -690,6 +701,73 @@ mod tests {
         policy.screen_changed(false);
         assert_eq!(decide(false).await, Change::Stop);
         assert_eq!(decide(false).await, Change::Keep);
+    }
+
+    /// Fetches whose runs record who started them, say that they began, and wait for a permit
+    /// before asking who else did.
+    struct Runs {
+        fetches: Fetches,
+        started: Arc<Mutex<Vec<Asked>>>,
+        began: tokio::sync::mpsc::UnboundedReceiver<()>,
+        gate: Arc<tokio::sync::Semaphore>,
+    }
+
+    fn runs() -> Runs {
+        use futures::FutureExt;
+
+        let started = Arc::new(Mutex::new(Vec::new()));
+        let (began_tx, began) = tokio::sync::mpsc::unbounded_channel();
+        let gate = Arc::new(tokio::sync::Semaphore::new(0));
+        let fetches = {
+            let (started, gate) = (started.clone(), gate.clone());
+            Fetches::new(Supervisor::default(), "fetch", move |sealing| {
+                let (started, began, gate) = (started.clone(), began_tx.clone(), gate.clone());
+                async move {
+                    lock(&started).push(sealing.started());
+                    began.send(()).unwrap();
+                    gate.acquire().await.unwrap().forget();
+                    sealing.asked();
+                }
+                .boxed()
+            })
+        };
+        Runs {
+            fetches,
+            started,
+            began,
+            gate,
+        }
+    }
+
+    #[tokio::test]
+    async fn a_viewer_who_comes_while_a_timer_run_goes_gets_a_run_of_its_own() {
+        let mut runs = runs();
+        let fetches = runs.fetches.clone();
+        let timer = tokio::spawn(async move { fetches.fetch(Asked::Timer).await });
+        runs.began.recv().await.unwrap();
+
+        // The viewer asks before the gate opens: the first poll of the first future.
+        let (viewer, ()) = tokio::join!(runs.fetches.fetch(Asked::Viewer), async { runs.gate.add_permits(2) });
+
+        assert!(viewer);
+        assert!(timer.await.unwrap());
+        let started = lock(&runs.started).clone();
+        assert_eq!(started, [Asked::Timer, Asked::Viewer]);
+    }
+
+    #[tokio::test]
+    async fn a_timer_request_joins_a_viewer_run_under_way() {
+        let mut runs = runs();
+        let fetches = runs.fetches.clone();
+        let viewer = tokio::spawn(async move { fetches.fetch(Asked::Viewer).await });
+        runs.began.recv().await.unwrap();
+
+        let (timer, ()) = tokio::join!(runs.fetches.fetch(Asked::Timer), async { runs.gate.add_permits(1) });
+
+        assert!(timer);
+        assert!(viewer.await.unwrap());
+        let started = lock(&runs.started).clone();
+        assert_eq!(started, [Asked::Viewer]);
     }
 
     #[tokio::test]

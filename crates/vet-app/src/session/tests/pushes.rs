@@ -2,7 +2,7 @@
 
 use super::*;
 use crate::platform::Push;
-use crate::pull_request::tests::{Anonymous, Pushed, fetching_with, info};
+use crate::pull_request::tests::{Pushed, SignedIn, fetching_with, info};
 
 fn push(head: &str) -> Push {
     Push {
@@ -62,12 +62,12 @@ async fn bringing_in_a_pull_request_remembers_its_pushes_and_names_a_new_title_o
 
     let first = fx
         .session
-        .bring_in(&platform, &fetch, &Anonymous, &remote, number)
+        .bring_in(&platform, &fetch, &SignedIn, &remote, number)
         .await
         .unwrap();
     let second = fx
         .session
-        .bring_in(&platform, &fetch, &Anonymous, &remote, number)
+        .bring_in(&platform, &fetch, &SignedIn, &remote, number)
         .await
         .unwrap();
 
