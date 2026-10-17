@@ -29,7 +29,7 @@ import { structure } from "../../src/state/structure.svelte.ts";
 import { queue } from "../../src/state/queue.svelte.ts";
 import { reviewShown } from "../../src/state/reviewShown.svelte.ts";
 import { serverList } from "../../src/state/serverList.svelte.ts";
-import { defaultRange, rangeView } from "../../src/state/timelineRange.ts";
+import { chooseRow, defaultRange, rangeKey, rangeView } from "../../src/state/timelineRange.ts";
 import type { ViewChange } from "../../src/state/viewChange.ts";
 import { newScope } from "../../src/state/viewScope.svelte.ts";
 import type { Harness, RequestMap } from "./harness.ts";
@@ -178,6 +178,21 @@ export const sessions: Record<SessionName, (h: Harness) => Promise<void>> = {
       },
       { notice: "an interdiff compares an earlier version with a later one", rejected: 1 },
     );
+    // The first read's "not found" must not clear the range the second asked for.
+    await h.step(
+      "a gone range asked for just before another shows the other",
+      async () => {
+        const items = onView().versions.items;
+        // The default range is none by now: the latest version has been marked in.
+        const wanted = chooseRow(items, undefined, items.at(-1)?.n ?? 0);
+        if (!wanted) throw new Error("the review has no range to show");
+        void onView().setRange({ from: 98, to: 99 });
+        await onView().setRange(wanted);
+        if (rangeKey(onView().range) !== rangeKey(wanted)) throw new Error("the range asked for last was not shown");
+      },
+      { rejected: 1 },
+    );
+    await h.step("seen in the range asked for last", () => hunk(h, first(), 0), once("toggleHunk"));
   },
 
   /**
@@ -577,6 +592,11 @@ export const sessions: Record<SessionName, (h: Harness) => Promise<void>> = {
       },
       { notice: "Changes arrived — try again" },
     );
+    await h.step("two commits chosen at once show the second", async () => {
+      void onView().showCommit(0);
+      await onView().showCommit(2);
+      if (onView().shownCommit !== 2) throw new Error("the commit asked for last was not shown");
+    });
   },
 
   /** Another window marks and comments while this one shows the changeset, a range and a commit. */

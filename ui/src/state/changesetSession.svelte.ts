@@ -18,12 +18,11 @@ import type { CommitUnit } from "../generated/CommitUnit";
 import type { Lens } from "../generated/Lens";
 import { STALE_NOTICE } from "../lib/notice";
 import { pathsBelow } from "../lib/paths";
-import { isKind } from "../lib/requestError";
 import type { SessionEvent } from "./projectEvents";
 import { CommentDrafts, emptyChangesetComment, unsentComments } from "./commentDrafts";
 import { CommitList } from "./commitList";
 import { type SessionFindSets, newFindSets } from "./findSets.svelte";
-import { commitToShow, neighbour } from "./commitLens";
+import { neighbour } from "./commitLens";
 import { type SessionChecks, newChecks } from "./checks.svelte";
 import { Lifetime } from "./lifetime";
 import { notices } from "./notices.svelte";
@@ -53,8 +52,21 @@ import { type SessionStructure, newStructure } from "./structure.svelte";
 import { type SessionSymbols, newSymbols } from "./symbols.svelte";
 import { type SessionThreads, newThreads } from "./threads.svelte";
 import type { ViewSource } from "./viewScope.svelte";
-import { type Range, normalised, rangeView } from "./timelineRange";
-import { commitView } from "./view";
+import type { Range } from "./timelineRange";
+import {
+  type Ask,
+  FIRST_CHOICE,
+  type ViewChoice,
+  askOf,
+  commitSettled,
+  limit,
+  onLens,
+  settleView,
+  showChangeset,
+  showCommit,
+  showRange,
+  viewOf,
+} from "./viewChoice";
 import { type ViewChange, type ViewPoint, viewChange, viewPoint } from "./viewChange";
 import { refetchesWhole } from "./wholeFetch";
 import { type WholeView, newWhole } from "./wholeView.svelte";
@@ -134,20 +146,24 @@ class Session implements ViewSource {
     ended: () => !this.lifetime.alive,
   });
 
+  /** Which view is asked for; the only place navigation state is written. */
+  private choice = $state.raw<ViewChoice>(FIRST_CHOICE);
   /**
    * The versions the review view compares instead of showing the changeset; none for the changeset.
    * Set it with `setRange`.
    */
-  range = $state.raw<Range>();
+  get range(): Range | undefined {
+    return this.choice.range;
+  }
   /**
    * The commit the review view shows while the changeset is reviewed by commit: the index into
    * `commits`. A range takes its place, and the changeset's lens brings it back.
    */
-  commitIndex = $state<number>();
+  get commitIndex(): number | undefined {
+    return askOf(this.choice).commit;
+  }
   /** The commit the manifest is of; `commitIndex` moves first and this follows with the manifest. */
   shownCommit = $state<number>();
-  /** The commit that was on view last, which by commit shows again. */
-  private lastCommit = 0;
   /** The commits with their own progress, oldest first; loaded only while the review screen shows the changeset by commit. */
   commits = $state.raw<CommitUnit[]>([]);
   /** The commits by revision, held in one place: this store, a tab at a commit and Find in Files read from here. */
@@ -158,9 +174,12 @@ class Session implements ViewSource {
   private reviewShown = false;
   /** A manifest is being fetched. */
   private fetching = $state(false);
-  private manifestLoads = new Resource<{ manifest: Manifest; commit: number | undefined }>({
+  private manifestLoads = new Resource<{ manifest: Manifest; from: Ask; settled: Ask; refused: unknown[] }>({
     busy: (on) => (this.fetching = on),
-    apply: ({ manifest, commit }) => {
+    apply: ({ manifest, from, settled, refused }) => {
+      this.choice = commitSettled(this.choice, from, settled);
+      for (const error of refused) notices.report(error);
+      const commit = settled.commit;
       const parts = partsOf(manifest, commit);
       const heldFacts = this.facts;
       // A mark answered after the manifest was read is newer than the manifest, whenever the manifest arrives.
@@ -183,16 +202,15 @@ class Session implements ViewSource {
   });
   /** What requests about the files read: the interdiff of `range`, a commit, or the changeset. */
   get view(): View {
-    return this.range || this.commitIndex === undefined ? rangeView(this.range) : commitView(this.commitIndex);
+    return viewOf(askOf(this.choice));
   }
 
   /**
    * While the review view shows only the files that had hunks seen against an old base when it was
    * asked for: their paths. Re-confirming does not shrink it, so the view stays as it is.
    */
-  private limitedTo = $state.raw<ReadonlySet<string>>();
   get baseChanged(): ReadonlySet<string> | undefined {
-    return this.limitedTo;
+    return this.choice.limitedTo;
   }
 
   /** What the views last told about, which the next change is told against; the next session takes it over. */
@@ -438,10 +456,8 @@ class Session implements ViewSource {
   private clear() {
     this.manifestLoads.cancel();
     this.layout = this.facts = this.viewCompletion = undefined;
-    this.range = undefined;
-    this.limitedTo = undefined;
-    this.commitIndex = this.shownCommit = undefined;
-    this.lastCommit = 0;
+    this.choice = FIRST_CHOICE;
+    this.shownCommit = undefined;
     this.commits = [];
     this.commitReads.cancel();
     this.restoreFailures = [];
@@ -473,7 +489,7 @@ class Session implements ViewSource {
   private announce() {
     const { layout, facts } = this;
     if (!layout || !facts || !this.lifetime.alive) return;
-    const point = viewPoint(layout, this.shownCommit, this.limitedTo);
+    const point = viewPoint(layout, this.shownCommit, this.choice.limitedTo);
     const change = viewChange(this.viewed, point);
     this.viewed = point;
     if (change === "none") return;
@@ -481,7 +497,7 @@ class Session implements ViewSource {
   }
 
   private limit(files: ReadonlySet<string> | undefined) {
-    this.limitedTo = files;
+    this.choice = limit(this.choice, files);
     this.announce();
   }
 
@@ -536,49 +552,37 @@ class Session implements ViewSource {
   }
 
   /**
-   * The manifest of the view. A range that covers every push becomes the changeset, which only the
-   * manifest's latest version says, and the commit the lens asks for is shown instead of the changeset, as the
-   * manifest says too. A range or commit the backend does not find (its versions or commit are gone) gives
-   * way to the changeset.
+   * The manifest of the view on screen, settled by `settleView`. What it corrected is told to the choice
+   * and the viewer when the manifest is applied, which only the latest read gets to do.
    */
-  private async fetchManifest(): Promise<{ manifest: Manifest; commit: number | undefined }> {
+  private async fetchManifest() {
     const backend = session.connected();
-    for (let attempt = 0; ; attempt++) {
-      const range = this.range;
-      const commit = range ? undefined : this.commitIndex;
-      let manifest: Manifest;
-      try {
-        const seed = !range && commit === undefined ? this.takeSeed() : undefined;
-        manifest = seed ?? (await backend.manifest(this.view));
-        this.lifetime.check();
-      } catch (error) {
-        this.lifetime.check();
-        if ((!range && commit === undefined) || !isKind(error, "notFound")) throw error;
-        if (range) this.range = undefined;
-        else this.commitIndex = undefined;
-        notices.report(error);
-        continue;
-      }
-      const latest = manifest.review.state === "open" ? manifest.review.version : undefined;
-      if (range && normalised(range, latest) === undefined && attempt < 3) {
-        this.range = undefined;
-        continue;
-      }
+    const from = askOf(this.choice);
+    const { manifest, ask, refused } = await settleView<Manifest>(from, this.choice.last, {
+      read: async (view) => {
+        try {
+          const manifest = await backend.manifest(view);
+          this.lifetime.check();
+          return manifest;
+        } catch (error) {
+          this.lifetime.check();
+          throw error;
+        }
+      },
+      said: (m) => ({
+        latest: m.review.state === "open" ? m.review.version : undefined,
+        lens: m.lens,
+        commits: m.commits,
+      }),
+      seed: () => this.takeSeed(),
       // The changeset manifest is the changeset as a whole, whether the view settles on it or moves on
       // to the commit the lens asks for: it is held for Problems, the queue panel and a whole tab.
-      if (!range && commit === undefined) {
-        this.whole.adopt(partsOf(manifest, undefined));
+      onChangeset: (m) => {
+        this.whole.adopt(partsOf(m, undefined));
         this.fed = true;
-      }
-      if (!range) {
-        const wanted = commitToShow(manifest.lens, manifest.commits, this.lastCommit);
-        if (wanted !== commit && attempt < 3) {
-          this.commitIndex = wanted;
-          continue;
-        }
-      }
-      return { manifest, commit };
-    }
+      },
+    });
+    return { manifest, from, settled: ask, refused };
   }
 
   /** Reads the commits again, with their progress. Only the latest reading counts. */
@@ -596,16 +600,19 @@ class Session implements ViewSource {
     }
   }
 
-  /** Shows what the commit at `index` changed, and fetches its manifest. */
-  async showCommit(index: number) {
-    this.lastCommit = index;
-    this.range = undefined;
-    this.commitIndex = index;
+  /** Fetches the manifest of the view asked for, telling the viewer if that fails. */
+  private async readAsked() {
     try {
       await this.refresh();
     } catch (error) {
       notices.report(error);
     }
+  }
+
+  /** Shows what the commit at `index` changed, and fetches its manifest. */
+  async showCommit(index: number) {
+    this.choice = showCommit(this.choice, index);
+    await this.readAsked();
   }
 
   /**
@@ -634,10 +641,7 @@ class Session implements ViewSource {
 
   /** The changeset is reviewed in `lens` now, as this window or another chose: picks the view that goes with it, whose manifest is read next. */
   private applyLens(lens: Lens) {
-    // The commits replace a range; leaving them for a range keeps it, already on view.
-    if (lens === "perCommit") this.range = undefined;
-    else if (this.range) return;
-    this.commitIndex = lens === "perCommit" ? this.lastCommit : undefined;
+    this.choice = onLens(this.choice, lens);
   }
 
   /** Shows the changeset as a whole, out of a range and out of the commits (the backend remembers the "All changes" lens), and fetches its manifest. */
@@ -645,12 +649,8 @@ class Session implements ViewSource {
     if (this.range) await this.setRange(undefined);
     if (this.facts?.lens === "perCommit") await this.showLens("squash");
     if (!this.lifetime.alive) return;
-    this.commitIndex = undefined;
-    try {
-      await this.refresh();
-    } catch (error) {
-      notices.report(error);
-    }
+    this.choice = showChangeset(this.choice);
+    await this.readAsked();
   }
 
   /**
@@ -659,16 +659,13 @@ class Session implements ViewSource {
    */
   async setRange(range: Range | undefined) {
     const leavingCommits = this.facts?.lens === "perCommit";
-    if (range) this.limit(undefined);
-    this.range = range;
-    if (range) this.commitIndex = undefined;
+    const next = showRange(this.choice, range);
+    const unfiltered = next.limitedTo !== this.choice.limitedTo;
+    this.choice = next;
+    if (unfiltered) this.announce();
     // With the range set, the lens change it causes shows nothing new and loads nothing.
     if (leavingCommits) await this.showLens("squash");
-    try {
-      await this.refresh();
-    } catch (error) {
-      notices.report(error);
-    }
+    await this.readAsked();
   }
 
   /** What the layout on screen is of, which the views are built for; none before the first manifest. Reads nothing reactively. */
@@ -763,7 +760,7 @@ class Session implements ViewSource {
    */
   async finishReview() {
     try {
-      this.range = undefined;
+      this.choice = showRange(this.choice, undefined);
       const complete = await session.connected().finishReview();
       notices.show(complete ? "Review finished: everything was seen" : "Review finished with unseen changes left");
     } catch (error) {
