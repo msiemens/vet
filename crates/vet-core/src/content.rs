@@ -2,7 +2,11 @@
 
 use std::cmp::Ordering;
 use std::collections::{BTreeMap, BTreeSet};
+use std::sync::LazyLock;
 
+use icu_collator::options::CollatorOptions;
+use icu_collator::preferences::CollationNumericOrdering;
+use icu_collator::{Collator, CollatorBorrowed, CollatorPreferences};
 use unicode_normalization::UnicodeNormalization;
 
 /// A 32-byte content hash.
@@ -94,12 +98,16 @@ impl RepoPath {
 }
 
 /// How the entries of one folder are ordered, each a (is a folder, name): folders first, then names
-/// by Unicode lowercase, ties by bytes.
+/// by Unicode collation (root rules, digit runs by value), ties by bytes.
 pub fn entry_order((a_dir, a): (bool, &[u8]), (b_dir, b): (bool, &[u8])) -> Ordering {
-    let lower = |name: &[u8]| String::from_utf8_lossy(name).to_lowercase();
+    static COLLATOR: LazyLock<CollatorBorrowed<'static>> = LazyLock::new(|| {
+        let mut prefs = CollatorPreferences::default();
+        prefs.numeric_ordering = Some(CollationNumericOrdering::True);
+        Collator::try_new(prefs, CollatorOptions::default()).expect("compiled collation data")
+    });
     b_dir
         .cmp(&a_dir)
-        .then_with(|| lower(a).cmp(&lower(b)))
+        .then_with(|| COLLATOR.compare_utf8(a, b))
         .then_with(|| a.cmp(b))
 }
 
@@ -357,7 +365,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn tree_order_puts_folders_first_then_names_without_case_and_ties_by_bytes() {
+    fn tree_order_puts_folders_first_then_names_by_collation_and_ties_by_bytes() {
         let mut paths: Vec<RepoPath> = [
             "z.txt",
             "B.txt",
@@ -381,18 +389,37 @@ mod tests {
             sorted,
             [
                 "a/x",
-                "Src/q.rs",
-                "src/B/x.rs",
                 "src/b/y.rs",
+                "src/B/x.rs",
                 "src/a.rs",
+                "src/ä.rs",
                 "src/b.rs",
                 "src/z.rs",
-                "src/ä.rs",
+                "Src/q.rs",
                 "a",
                 "a.txt",
                 "B.txt",
                 "src",
                 "z.txt"
+            ]
+        );
+    }
+
+    #[test]
+    fn tree_order_collates_names_by_unicode_rules_with_numbers_by_value() {
+        let mut paths: Vec<RepoPath> = [
+            "zebra.md", "über.md", "Äpfel", "banana", "apfel", "ab", "a_b", "a-b", "é", "e", "E", "f", "file10",
+            "file2", "v1.10", "v1.9",
+        ]
+        .map(RepoPath::from)
+        .into();
+        paths.sort_by(RepoPath::tree_order);
+        let sorted: Vec<String> = paths.iter().map(RepoPath::to_string_lossy).collect();
+        assert_eq!(
+            sorted,
+            [
+                "a_b", "a-b", "ab", "apfel", "Äpfel", "banana", "e", "E", "é", "f", "file2", "file10", "über.md",
+                "v1.9", "v1.10", "zebra.md",
             ]
         );
     }

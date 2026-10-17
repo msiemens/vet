@@ -8,6 +8,7 @@ publish.workspace = true
 [dependencies]
 blake3 = { workspace = true, features = ["pure", "std"] }
 globset.workspace = true
+icu_collator.workspace = true
 # The line diff gitoxide uses, so hunks match what git shows.
 imara-diff.workspace = true
 serde.workspace = true

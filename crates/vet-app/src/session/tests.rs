@@ -1683,10 +1683,10 @@ async fn the_manifest_lists_folders_before_files_each_by_name_without_case() {
         paths,
         [
             "docs/z.md",
-            "Src/q.rs",
             "src/sub/y.rs",
             "src/A.rs",
             "src/b.rs",
+            "Src/q.rs",
             "a.txt",
             "B.txt",
             "z.txt"

@@ -60,6 +60,7 @@ blake3 = { version = "1.8.7", default-features = false }
 globset = { version = "0.4.20", default-features = false }
 imara-diff = { package = "gix-imara-diff", version = "0.3.0" }
 unicode-normalization = { version = "0.1", default-features = false }
+icu_collator = "2.3.1"
 percent-encoding = "2.3"
 pulldown-cmark = { version = "0.13.4", default-features = false }
 tree-sitter = "0.27.0"
