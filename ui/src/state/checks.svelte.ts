@@ -4,7 +4,7 @@
 
 import { SvelteMap } from "svelte/reactivity";
 import type { CommitChecks } from "../generated/CommitChecks";
-import type { SessionEvent } from "./backend";
+import type { SessionEvent } from "./projectEvents";
 import { notices } from "./notices.svelte";
 
 class Checks {

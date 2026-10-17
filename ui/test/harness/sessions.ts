@@ -14,7 +14,7 @@ import { findInFiles } from "../../src/features/search/FindInFiles.svelte.ts";
 import { keyId } from "../../src/state/changesetKey.ts";
 import type { ChangesetSession } from "../../src/state/changesetSession.svelte.ts";
 import { STALE_NOTICE } from "../../src/lib/notice.ts";
-import type { SessionEvent } from "../../src/state/backend.ts";
+import type { SessionEvent } from "../../src/state/projectEvents.ts";
 import { newSession } from "../../src/state/changesetSession.svelte.ts";
 import type { UsagesSpec } from "../../src/state/findSets.svelte.ts";
 import { opened } from "../../src/state/opened.svelte.ts";

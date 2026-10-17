@@ -1,7 +1,7 @@
 // Which reads a changeset's session needs after an event of its project. The table is pure; the session
 // collects what it says and runs the reads in one flush (see `readFlush`).
 
-import type { SessionEvent } from "./backend.ts";
+import type { SessionEvent } from "./projectEvents.ts";
 import type { EventRevision } from "./wholeFetch.ts";
 
 /** The reads an event asks for. */

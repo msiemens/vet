@@ -76,7 +76,6 @@ class QueueStore {
         follow: () => this.follow(),
       };
       backend.onEvent((event) => {
-        if (event.project !== backend.project) return;
         // The branches are the local list's alone: the pull requests are listed when the queue is
         // shown and on a refresh, not on each fetch. What the details of a listed pull request add
         // to its row is patched in place, not listed again.

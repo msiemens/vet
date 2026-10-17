@@ -51,7 +51,6 @@ class PlatformStore {
   private start(backend: Backend): () => void {
     this.backend = backend;
     const stop = backend.onEvent((event) => {
-      if (event.project !== backend.project) return;
       if (event.type === "platformStatus") this.status = event.status;
       else if (event.type === "notification") this.notify(event.notification);
     });

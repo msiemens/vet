@@ -38,7 +38,6 @@ class Opened {
     connection.unsentComments = () => this.session?.unsentComments() ?? 0;
     connection.onConnect((backend) =>
       backend.onEvent((event) => {
-        if (event.project !== backend.project) return;
         if (event.type === "changesetOpened") this.protocol.announced(event.changeset, event.revision);
         else this.session?.hear(event);
       }),

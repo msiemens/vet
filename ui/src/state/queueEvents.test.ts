@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import type { PullRequestRow } from "../generated/PullRequestRow";
 import type { PullRequestUpdate } from "../generated/PullRequestUpdate";
-import type { SessionEvent } from "./backend.ts";
+import type { SessionEvent } from "./projectEvents.ts";
 import { type QueueActions, queueEvent, withDetails } from "./queueEvents.ts";
 
 function row(number: number): PullRequestRow {

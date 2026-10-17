@@ -15,7 +15,6 @@ import type { CommitUnit } from "../generated/CommitUnit";
 import type { Diagnostic } from "../generated/Diagnostic";
 import type { DirEntry } from "../generated/DirEntry";
 import type { EditChoice } from "../generated/EditChoice";
-import type { Event as ServerEvent } from "../generated/Event";
 import type { FileOutline } from "../generated/FileOutline";
 import type { FileSymbols } from "../generated/FileSymbols";
 import type { LanguageSymbols } from "../generated/LanguageSymbols";
@@ -62,6 +61,7 @@ import type { View } from "../generated/View";
 import { type Address, Connection, type Dialer, type LinkState } from "./connection";
 import { reportUncaught } from "./errorLog";
 import { hashParams, inTauri, invoke } from "./host";
+import { type SessionEvent, projectEvents } from "./projectEvents";
 import type { ServerLine } from "./serverStatus";
 import { StaleRequests } from "./staleRequests";
 
@@ -94,25 +94,6 @@ export type SearchResults = Extract<Response, { type: "searchResults" }>;
 
 /** The servers of a project and what the ones of the changeset on view are doing. */
 export type ServersAnswer = Pick<Extract<Response, { type: "servers" }>, "servers" | "runtimes">;
-
-/** The events that belong to the backend, not to a session. */
-type ProcessEvent = Extract<
-  ServerEvent,
-  { type: "credentialsNeeded" | "accountsChanged" | "recentProjectsChanged" | "settingsChanged" | "preferenceChanged" }
->;
-
-/** The events of a session. */
-export type SessionEvent = Exclude<ServerEvent, ProcessEvent>;
-
-const PROCESS_EVENTS: ReadonlySet<string> = new Set<ProcessEvent["type"]>([
-  "credentialsNeeded",
-  "accountsChanged",
-  "recentProjectsChanged",
-  "settingsChanged",
-  "preferenceChanged",
-]);
-
-const isProcessEvent = (event: ServerEvent): event is ProcessEvent => PROCESS_EVENTS.has(event.type);
 
 /** A language server's Markdown, with the highlights of each of its fenced code blocks, in order. */
 export interface HoverText {
@@ -158,19 +139,23 @@ export class Backend {
     /** The repository the host (or the URL hash) named, if any. */
     readonly initialRepo: string | null,
   ) {
-    conn.onEvent((event) => {
-      // The backend drops semantic work for an older revision, which a change of the filter moves too.
-      switch (event.type) {
-        case "snapshotMoved":
-        case "filterChanged":
-        case "reviewFinished":
-        case "changesetOpened":
-          if (event.project === this.project) this.stale.moveTo(event.revision);
-          break;
-        default:
-          break;
-      }
-    });
+    projectEvents(
+      (l) => conn.onEvent(l),
+      () => this.project,
+      (event) => {
+        // The backend drops semantic work for an older revision, which a change of the filter moves too.
+        switch (event.type) {
+          case "snapshotMoved":
+          case "filterChanged":
+          case "reviewFinished":
+          case "changesetOpened":
+            this.stale.moveTo(event.revision);
+            break;
+          default:
+            break;
+        }
+      },
+    );
   }
 
   static async connect(): Promise<Backend> {
@@ -245,11 +230,13 @@ export class Backend {
     return this.project;
   }
 
-  /** The events of the open repository's session. */
+  /** The events of the open project: none of another project, and none while no project is open. */
   onEvent(listener: (event: SessionEvent) => void): () => void {
-    return this.conn.onEvent((event) => {
-      if (!isProcessEvent(event)) listener(event);
-    });
+    return projectEvents(
+      (l) => this.conn.onEvent(l),
+      () => this.project,
+      listener,
+    );
   }
 
   /**

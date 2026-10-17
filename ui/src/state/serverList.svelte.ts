@@ -36,7 +36,6 @@ class ServerList {
   constructor() {
     session.onConnect((backend) =>
       backend.onEvent((event) => {
-        if (event.project !== backend.project) return;
         if (event.type === "serverInstallOutput") {
           this.logs = { ...this.logs, [event.language]: appendLog(this.logs[event.language] ?? [], event.line) };
           return;

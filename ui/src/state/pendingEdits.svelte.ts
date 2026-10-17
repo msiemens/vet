@@ -9,7 +9,7 @@ class PendingEdits {
   constructor() {
     session.onConnect((backend) => {
       backend.onEvent((event) => {
-        if (event.project === backend.project && event.type === "editsPending") this.waiting = event.pending;
+        if (event.type === "editsPending") this.waiting = event.pending;
       });
       // What was missed while the link was down is not known; opening the project again tells whether edits wait.
       backend.onLinkState((state) => {

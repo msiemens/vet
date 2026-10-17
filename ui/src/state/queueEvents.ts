@@ -6,7 +6,7 @@ import type { ChangesetKey } from "../generated/ChangesetKey";
 import type { LineDelta } from "../generated/LineDelta";
 import type { PullRequestRow } from "../generated/PullRequestRow";
 import type { PullRequestUpdate } from "../generated/PullRequestUpdate";
-import type { SessionEvent } from "./backend.ts";
+import type { SessionEvent } from "./projectEvents.ts";
 import { keyId } from "./changesetKey.ts";
 
 /** What an event asks of the store, each as the store does it. */

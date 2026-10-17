@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import type { SessionEvent } from "./backend.ts";
+import type { SessionEvent } from "./projectEvents.ts";
 import { NO_READS, type ReadState, type Reads, merge, readsFor, threadCarry } from "./sessionReads.ts";
 
 const state = (over: Partial<ReadState> = {}): ReadState => ({

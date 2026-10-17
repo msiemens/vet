@@ -19,7 +19,7 @@ import type { Lens } from "../generated/Lens";
 import { STALE_NOTICE } from "../lib/notice";
 import { pathsBelow } from "../lib/paths";
 import { isKind } from "../lib/requestError";
-import type { SessionEvent } from "./backend";
+import type { SessionEvent } from "./projectEvents";
 import { CommentDrafts, emptyChangesetComment, unsentComments } from "./commentDrafts";
 import { CommitList } from "./commitList";
 import { type SessionFindSets, newFindSets } from "./findSets.svelte";

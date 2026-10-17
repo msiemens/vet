@@ -149,7 +149,6 @@ export class ReviewController {
       if (!this.destroyed) this.saveView();
     });
     this.unsubscribeEvents = backend.onEvent((event) => {
-      if (event.project !== backend.project) return;
       // A server installed or reconfigured elsewhere may answer differently now.
       if (event.type === "serversChanged") {
         semantic.invalidate();

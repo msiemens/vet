@@ -52,7 +52,6 @@ class SemanticStore {
   constructor() {
     session.onConnect((backend) =>
       backend.onEvent((event) => {
-        if (event.project !== backend.project) return;
         if (event.type !== "fileDiagnostics") return;
         this.apply(event.revision, event.path, event);
       }),

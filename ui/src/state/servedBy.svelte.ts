@@ -17,7 +17,7 @@ class ServedBy {
   constructor() {
     session.onConnect((backend) =>
       backend.onEvent((event) => {
-        if (event.project === backend.project && event.type === "serversChanged") this.refresh();
+        if (event.type === "serversChanged") this.refresh();
       }),
     );
     session.onResync(() => this.refresh());
