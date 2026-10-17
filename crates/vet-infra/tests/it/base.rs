@@ -176,6 +176,21 @@ async fn the_branches_are_sorted_by_name_with_the_checked_out_one_marked() {
 }
 
 #[tokio::test]
+async fn the_current_branch_is_heads_branch_else_none() {
+    let fx = fixture();
+    let repo = GixRepo::for_test(fx.dir.path());
+    assert_eq!(repo.current_branch().await.unwrap().as_deref(), Some("feature"));
+
+    git(fx.dir.path(), &["checkout", "-q", "--detach"]);
+    assert_eq!(repo.current_branch().await.unwrap(), None, "detached");
+
+    let empty = tempfile::tempdir().unwrap();
+    git(empty.path(), &["init", "-q", "-b", "main"]);
+    let unborn = GixRepo::for_test(empty.path());
+    assert_eq!(unborn.current_branch().await.unwrap(), None, "no commit yet");
+}
+
+#[tokio::test]
 async fn commits_behind_follows_the_history() {
     let fx = fixture();
     let repo = GixRepo::for_test(fx.dir.path());

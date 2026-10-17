@@ -17,7 +17,7 @@ use super::views::{
 use super::{LiveSession, Result, SessionError};
 use crate::changeset::{CommitId, Source};
 use crate::editor::line_count;
-use crate::ports::{BranchInfo, GitRepo, LiveStore, ReviewWrites};
+use crate::ports::{GitRepo, LiveStore, ReviewWrites};
 use crate::review::ReviewSummary;
 
 impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> LiveSession<G, S> {
@@ -34,8 +34,8 @@ impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> L
     /// The manifest of the changeset on view itself, whatever view some of its facts
     /// (`changeset_base` and friends) speak of beside it.
     async fn changeset_manifest(&self, st: &State) -> Result<ManifestView> {
-        let branches = self.acquisition.git.branches().await?;
-        let facts = self.lens_facts(st, &branches).await?;
+        let current = self.acquisition.git.current_branch().await?;
+        let facts = self.lens_facts(st, current.as_deref()).await?;
         let changes = st.changes();
         let cov = changes.remapped.coverage();
         let acked = acknowledged(st, &changes.diffed.diff.non_text);
@@ -68,7 +68,7 @@ impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> L
             name: self.name.clone(),
             lifecycle: lifecycle_of(st),
             base: facts.base.clone(),
-            target: target_view(&st.source, &st.head, &branches),
+            target: target_view(&st.source, &st.head, current.as_deref()),
             filter: st.project_filter().clone(),
             narrowing: st.narrowing(),
             completion: changes.remapped.completion,
@@ -125,9 +125,9 @@ impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> L
     }
 }
 
-/// What the changeset of `source`, built on the commit `tip`, is the target of; `branches` are the
-/// repository's.
-pub(super) fn target_view(source: &Source, tip: &CommitId, branches: &[BranchInfo]) -> TargetView {
+/// What the changeset of `source`, built on the commit `tip`, is the target of; `current` is the
+/// branch the working tree is on.
+pub(super) fn target_view(source: &Source, tip: &CommitId, current: Option<&str>) -> TargetView {
     match source {
         Source::Branch { name } => TargetView {
             source: source.clone(),
@@ -148,7 +148,7 @@ pub(super) fn target_view(source: &Source, tip: &CommitId, branches: &[BranchInf
         Source::WorkingTree => TargetView {
             source: source.clone(),
             name: "Working tree".into(),
-            branch: branches.iter().find(|b| b.current).map(|b| b.name.clone()),
+            branch: current.map(str::to_owned),
             head: None,
             title: None,
             draft: false,
@@ -431,28 +431,14 @@ mod tests {
     use super::*;
     use crate::changeset::RemoteKey;
 
-    fn branch(name: &str, remote: bool, commit: &str, current: bool) -> BranchInfo {
-        BranchInfo {
-            name: name.into(),
-            remote,
-            commit: CommitId(commit.into()),
-            current,
-            default: false,
-        }
-    }
-
     #[test]
     fn a_branch_or_pull_request_target_carries_its_tips_full_id_and_the_working_tree_none() {
-        let branches = [
-            branch("main", false, "aaaaaaaaaaaaaaaa", true),
-            branch("origin/feature", true, "bbbbbbbbbbbbbbbb", false),
-        ];
         let tip = CommitId("cccccccccccccccc".into());
         let remote = Source::Branch {
             name: "origin/feature".into(),
         };
         assert_eq!(
-            target_view(&remote, &tip, &branches).head.as_deref(),
+            target_view(&remote, &tip, None).head.as_deref(),
             Some("cccccccccccccccc")
         );
         let pull_request = Source::PullRequest {
@@ -463,10 +449,10 @@ mod tests {
             number: 7,
         };
         assert_eq!(
-            target_view(&pull_request, &tip, &branches).head.as_deref(),
+            target_view(&pull_request, &tip, None).head.as_deref(),
             Some("cccccccccccccccc")
         );
-        let tree = target_view(&Source::WorkingTree, &tip, &branches);
+        let tree = target_view(&Source::WorkingTree, &tip, Some("main"));
         assert_eq!(tree.head, None);
         assert_eq!(tree.branch.as_deref(), Some("main"));
     }

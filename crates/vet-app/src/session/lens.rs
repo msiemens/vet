@@ -16,7 +16,8 @@ use super::state::{Commits, Remapped, State, View, acknowledged, lifecycle_of};
 use super::views::{BaseView, ManifestView, ReviewUpdateView, ReviewView, ViewKind, empty_reason};
 use super::{LiveSession, Result, SessionError};
 use crate::changeset::{CommitId, Lens, Source};
-use crate::ports::{BranchInfo, CommitInfo, GitRepo, LiveStore, ReviewWrites};
+use crate::mutex::lock;
+use crate::ports::{CommitInfo, GitRepo, LiveStore, ReviewWrites};
 use crate::review::SpanOrigin;
 
 /// What a manifest says about the lenses, whatever view it is of.
@@ -113,16 +114,15 @@ impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> L
         Ok(())
     }
 
-    /// What every manifest says about the lenses and the changeset as a whole; `branches` are the
-    /// repository's.
-    pub(super) async fn lens_facts(&self, st: &State, branches: &[BranchInfo]) -> Result<LensFacts> {
-        let git = &self.acquisition.git;
-        let base = self.base_view(st, branches).await?;
+    /// What every manifest says about the lenses and the changeset as a whole; `current` is the
+    /// branch the working tree is on.
+    pub(super) async fn lens_facts(&self, st: &State, current: Option<&str>) -> Result<LensFacts> {
+        let base = self.base_view(st, current).await?;
         let (lens, commits) = match &st.source {
             Source::WorkingTree => (Lens::Squash, 0),
             source => (
                 (self.acquisition.store.lens(self.repo.clone(), source.clone()).await?).unwrap_or_default(),
-                git.first_parent_range(&st.base_commit, &st.head).await?.len() as u32,
+                self.commit_count(&st.base_commit, &st.head).await?,
             ),
         };
         let changes = st.changes();
@@ -144,6 +144,19 @@ impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> L
             completion: changes.remapped.completion,
             base,
         })
+    }
+
+    /// How many commits lie on the first-parent line from `base` to `tip`, walked once while the
+    /// session lives.
+    async fn commit_count(&self, base: &CommitId, tip: &CommitId) -> Result<u32> {
+        let key = (base.clone(), tip.clone());
+        let found = lock(&self.commit_counts).get(&key).copied();
+        if let Some(count) = found {
+            return Ok(count);
+        }
+        let count = self.acquisition.git.first_parent_range(base, tip).await?.len() as u32;
+        lock(&self.commit_counts).insert(key, count);
+        Ok(count)
     }
 
     /// What the commits of the changeset of `st` are the commits between; none for the working
@@ -199,8 +212,8 @@ impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> L
         let git = &self.acquisition.git;
         let own = &unit.detail.info.id;
         let parent = unit.detail.parents.first().unwrap_or(own);
-        let branches = git.branches().await?;
-        let facts = self.lens_facts(st, &branches).await?;
+        let current = git.current_branch().await?;
+        let facts = self.lens_facts(st, current.as_deref()).await?;
         let base = BaseView::of_commit(self.commit_info(parent).await?);
         let excluded = excluded_groups(&unit.diffed, st);
         let empty = empty_reason(!excluded.is_empty(), ViewKind::Commit, None, false, None);
@@ -210,7 +223,7 @@ impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> L
             name: self.name.clone(),
             lifecycle: lifecycle_of(st),
             base,
-            target: target_view(&st.source, &st.head, &branches),
+            target: target_view(&st.source, &st.head, current.as_deref()),
             filter: st.project_filter().clone(),
             narrowing: st.narrowing(),
             completion: remapped.completion,
@@ -253,6 +266,8 @@ pub(super) fn commit_update(st: &State, index: u32, path: &str) -> Result<Review
 
 #[cfg(test)]
 mod tests {
+    use std::sync::atomic::Ordering;
+
     use vet_core::completion::HunkState;
     use vet_core::review::Side;
 
@@ -303,6 +318,85 @@ mod tests {
     async fn complete(fx: &Fixture) -> Vec<bool> {
         let list = fx.session.commits().await.unwrap();
         list.commits.iter().map(|c| c.completion.is_complete()).collect()
+    }
+
+    /// `feature` has two commits on `a.txt`, opened.
+    async fn two_commits() -> Fixture {
+        let base = numbered(&[]);
+        let fx = Fixture::open(&[("a.txt", &base)], &[("a.txt", &base)]).await;
+        let (c1, c2) = (numbered(&[(3, "one")]), numbered(&[(3, "one"), (20, "two")]));
+        fx.git.feature_commits(
+            &[("a.txt", &base)],
+            &[("c1", &[("a.txt", &c1)]), ("c2", &[("a.txt", &c2)])],
+        );
+        fx.session.open_changeset(feature()).await.unwrap().unwrap();
+        fx
+    }
+
+    fn walks(fx: &Fixture) -> usize {
+        fx.git.first_parent_walks.load(Ordering::Relaxed)
+    }
+
+    #[tokio::test]
+    async fn two_manifests_of_a_branch_walk_its_commits_once() {
+        let fx = two_commits().await;
+        let before = walks(&fx);
+
+        let first = fx.session.manifest(View::Changeset).await.unwrap();
+        let second = fx.session.manifest(View::Changeset).await.unwrap();
+
+        assert_eq!((first.commits, second.commits), (2, 2));
+        assert_eq!(walks(&fx) - before, 1);
+    }
+
+    #[tokio::test]
+    async fn a_commit_manifest_after_the_changeset_manifest_does_not_walk_again() {
+        let fx = two_commits().await;
+        fx.session.manifest(View::Changeset).await.unwrap();
+        fx.session.commits().await.unwrap();
+        let before = walks(&fx);
+
+        let manifest = fx.session.manifest(View::Commit { index: 1 }).await.unwrap();
+
+        assert_eq!(manifest.commits, 2);
+        assert_eq!(walks(&fx), before);
+    }
+
+    #[tokio::test]
+    async fn a_moved_tip_walks_again() {
+        let fx = two_commits().await;
+        assert_eq!(fx.session.manifest(View::Changeset).await.unwrap().commits, 2);
+        let (c1, c2) = (numbered(&[(3, "one")]), numbered(&[(3, "one"), (20, "two")]));
+        let c3 = numbered(&[(3, "three"), (20, "two")]);
+        fx.git.feature_commits(
+            &[("a.txt", &numbered(&[]))],
+            &[
+                ("c1", &[("a.txt", &c1)]),
+                ("c2", &[("a.txt", &c2)]),
+                ("c3", &[("a.txt", &c3)]),
+            ],
+        );
+        fx.session.observe().await.unwrap().expect("the tip moved");
+        let before = walks(&fx);
+
+        let manifest = fx.session.manifest(View::Changeset).await.unwrap();
+
+        assert_eq!(manifest.commits, 3);
+        assert_eq!(walks(&fx) - before, 1);
+    }
+
+    #[tokio::test]
+    async fn a_manifest_lists_no_branches() {
+        let fx = two_commits().await;
+        let before = fx.git.branch_listings.load(Ordering::Relaxed);
+
+        fx.session.manifest(View::Changeset).await.unwrap();
+        fx.session.manifest(View::Commit { index: 0 }).await.unwrap();
+        fx.session.open_changeset(Source::WorkingTree).await.unwrap().unwrap();
+        let tree = fx.session.manifest(View::Changeset).await.unwrap();
+
+        assert_eq!(fx.git.branch_listings.load(Ordering::Relaxed), before);
+        assert_eq!(tree.target.branch.as_deref(), Some("main"));
     }
 
     #[tokio::test]

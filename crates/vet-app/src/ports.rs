@@ -331,6 +331,9 @@ pub trait History {
     /// The local branches by name, then the remote-tracking ones that no local branch
     /// follows at the same commit, by name.
     fn branches(&self) -> impl Future<Output = Result<Vec<BranchInfo>, GitError>> + Send;
+    /// The local branch `HEAD` is on, by its short name; `None` when `HEAD` is detached or its
+    /// branch has no commit yet.
+    fn current_branch(&self) -> impl Future<Output = Result<Option<String>, GitError>> + Send;
     fn commit_info(&self, commit: &CommitId) -> impl Future<Output = Result<CommitInfo, GitError>> + Send;
     fn commit_detail(&self, commit: &CommitId) -> impl Future<Output = Result<CommitDetail, GitError>> + Send;
     /// The automatic merge of the two parents of `merge`, as `git show --remerge-diff` computes

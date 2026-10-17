@@ -159,6 +159,10 @@ pub(crate) struct FakeGit {
     behind_walks: Arc<AtomicUsize>,
     /// How many times `commit_info` was asked.
     commit_info_reads: Arc<AtomicUsize>,
+    /// How many first-parent walks were asked for.
+    pub(crate) first_parent_walks: Arc<AtomicUsize>,
+    /// How many times all branches were listed.
+    pub(crate) branch_listings: Arc<AtomicUsize>,
 }
 
 /// Reads from the blobs of a [`FakeGit`], as a repository would on a blocking thread.
@@ -385,6 +389,7 @@ impl History for FakeGit {
         base: &CommitId,
         tip: &CommitId,
     ) -> std::result::Result<Vec<CommitId>, GitError> {
+        self.first_parent_walks.fetch_add(1, Ordering::Relaxed);
         let history = self.history.lock().unwrap();
         let chain = history.get(tip).map(Vec::as_slice).unwrap_or_default();
         let mut range: Vec<CommitId> = chain.iter().take_while(|c| *c != base).cloned().collect();
@@ -401,7 +406,12 @@ impl History for FakeGit {
         self.resolve_commit(&format!("refs/heads/{name}")).await
     }
     async fn branches(&self) -> std::result::Result<Vec<BranchInfo>, GitError> {
+        self.branch_listings.fetch_add(1, Ordering::Relaxed);
         Ok(self.branches.lock().unwrap().clone())
+    }
+    async fn current_branch(&self) -> std::result::Result<Option<String>, GitError> {
+        let branches = self.branches.lock().unwrap();
+        Ok(branches.iter().find(|b| b.current && !b.remote).map(|b| b.name.clone()))
     }
     async fn commit_info(&self, commit: &CommitId) -> std::result::Result<CommitInfo, GitError> {
         self.commit_info_reads.fetch_add(1, Ordering::Relaxed);

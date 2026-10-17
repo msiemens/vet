@@ -144,6 +144,17 @@ fn tracking_ref(repo: &gix::Repository, name: &gix::refs::FullNameRef) -> Option
         })
 }
 
+pub(super) fn current_branch(repo: &gix::Repository) -> Result<Option<String>, GitError> {
+    let Some(name) = repo.head_name().map_err(chained)? else {
+        return Ok(None);
+    };
+    let Some(short) = name.as_bstr().to_str().ok().and_then(|n| n.strip_prefix("refs/heads/")) else {
+        return Ok(None);
+    };
+    let born = repo.try_find_reference(name.as_ref()).map_err(chained)?.is_some();
+    Ok(born.then(|| short.to_owned()))
+}
+
 /// The local branches, then the remote-tracking branches (`origin/feature`, without the remote's
 /// `HEAD`) that no local branch follows at the same commit, each group by name.
 pub(super) fn branches(repo: &gix::Repository) -> Result<Vec<BranchInfo>, GitError> {

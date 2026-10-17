@@ -118,8 +118,7 @@ use crate::changeset::{BaseChoice, ChangesetId, CommitId, Snapshots, Source, Ver
 use crate::mutex::lock;
 use crate::platform::{PlatformError, PullRequestCache, Push};
 use crate::ports::{
-    BranchInfo, Clock, CommitInfo, Degraded, Dirty, GitError, GitRepo, LiveStore, ReviewWrites, Scan, StoreError,
-    Watcher,
+    Clock, CommitInfo, Degraded, Dirty, GitError, GitRepo, LiveStore, ReviewWrites, Scan, StoreError, Watcher,
 };
 use crate::progress::Tasks;
 use crate::review::{ReviewId, visible_threads};
@@ -231,6 +230,9 @@ pub struct LiveSession<G, S: LiveStore> {
     /// listing's cap. Git does not change it for the same two commits short of shallow deepening
     /// or `replace` refs.
     behind: std::sync::Mutex<Lru<(CommitId, CommitId), u32>>,
+    /// How many commits lie on the first-parent line between a base and a tip, by the base
+    /// commit and the tip, which git does not change.
+    commit_counts: std::sync::Mutex<Lru<(CommitId, CommitId), u32>>,
     /// The states of their source branch that the platforms list for pull requests, which are the
     /// versions the review of each has.
     pushes: std::sync::Mutex<HashMap<Source, Vec<Push>>>,
@@ -261,6 +263,9 @@ const KEPT_MERGES: usize = 16;
 
 /// How many ahead and behind counts the session keeps; the one used longest ago goes first.
 const KEPT_BEHIND: usize = 4096;
+
+/// How many commit counts the session keeps; the one used longest ago goes first.
+const KEPT_COMMIT_COUNTS: usize = 16;
 
 /// What settling a snapshot into a tree needs that takes a while, worked out for the tree as it
 /// was found, without the token.
@@ -407,6 +412,7 @@ impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> L
             commit_infos: std::sync::Mutex::new(Lru::new(KEPT_COMMIT_INFOS)),
             merges: std::sync::Mutex::new(Lru::new(KEPT_MERGES)),
             behind: std::sync::Mutex::new(Lru::new(KEPT_BEHIND)),
+            commit_counts: std::sync::Mutex::new(Lru::new(KEPT_COMMIT_COUNTS)),
             pushes: std::sync::Mutex::default(),
             known: Arc::default(),
             ahead: ahead::copies(&acquisition.tasks),
@@ -756,9 +762,9 @@ impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> L
         Ok(info)
     }
 
-    /// The base with its display facts; `branches` are the repository's.
-    async fn base_view(&self, st: &State, branches: &[BranchInfo]) -> Result<BaseView> {
-        let own = manifest::target_view(&st.source, &st.head, branches).branch;
+    /// The base with its display facts; `current` is the branch the working tree is on.
+    async fn base_view(&self, st: &State, current: Option<&str>) -> Result<BaseView> {
+        let own = manifest::target_view(&st.source, &st.head, current).branch;
         let contained = base::contained_in(&st.base_choice, &st.base_commit, &st.head, own.as_deref());
         Ok(BaseView {
             commit: self.commit_info(&st.base_commit).await?,

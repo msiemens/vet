@@ -381,6 +381,10 @@ impl History for GixRepo {
         self.blocking(|i| base::branches(&i.open()?)).await
     }
 
+    async fn current_branch(&self) -> Result<Option<String>, GitError> {
+        self.blocking(|i| base::current_branch(&i.open()?)).await
+    }
+
     async fn commit_info(&self, commit: &CommitId) -> Result<CommitInfo, GitError> {
         let commit = commit.clone();
         self.blocking(move |i| base::commit_info(&i.open()?, &commit)).await

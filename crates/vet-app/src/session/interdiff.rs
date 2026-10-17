@@ -145,10 +145,9 @@ impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> L
     pub(super) async fn interdiff_manifest(&self, st: &State, id: &Interdiffed) -> Result<ManifestView> {
         let lens = Lens::new(st, id);
         let files = file_views(&id.compared.diffed, &st.filter, |diff, items| lens.state(diff, items));
-        let git = &self.acquisition.git;
-        let branches = git.branches().await?;
+        let current = self.acquisition.git.current_branch().await?;
         let base = super::BaseView::of_commit(self.commit_info(&id.to.base_commit).await?);
-        let facts = self.lens_facts(st, &branches).await?;
+        let facts = self.lens_facts(st, current.as_deref()).await?;
         let excluded = excluded_groups(&id.compared.diffed, st);
         let empty = empty_reason(!excluded.is_empty(), ViewKind::Range, None, false, None);
         let conflicts = (id.compared.hunks.values().flatten()).any(|h| h.flags.conflict);
@@ -181,7 +180,7 @@ impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> L
             name: self.name.clone(),
             lifecycle: lifecycle_of(st),
             base,
-            target: target_view(&st.source, &st.head, &branches),
+            target: target_view(&st.source, &st.head, current.as_deref()),
             filter: st.project_filter().clone(),
             narrowing: st.narrowing(),
             completion: files.iter().map(|f| f.completion).sum(),
