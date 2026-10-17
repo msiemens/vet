@@ -1118,8 +1118,12 @@ export const sessions: Record<string, (d: Driver) => Promise<void>> = {
       throw new Error("going back brought the result sets back");
   },
 
-  /** Find usages from the Symbol panel shows the Find tool; Open in Find window shows it and leaves the focus alone. */
+  /**
+   * Find usages from the Symbol panel shows the Find tool with the focus in its list; Open in Find window
+   * shows it and leaves the focus alone. Opening Problems focuses its panel.
+   */
   async findShown(d) {
+    const activeElement = async () => String(await d.page(`document.activeElement?.outerHTML.slice(0, 160)`));
     const hideBottom = () =>
       d.page(
         `(async () => { (await import("/src/features/chrome/shell.svelte.ts")).shell.hideBottom(); return true; })()`,
@@ -1141,7 +1145,9 @@ export const sessions: Record<string, (d: Driver) => Promise<void>> = {
     })()`);
     await hideBottom();
     await d.click(`button[aria-label="Open all usages in the Find window"]`);
-    await d.until(`document.querySelector("section[aria-label=Find] [role=tab]") !== null`, "the Find tool");
+    await d.until(`document.querySelector("section[aria-label=Find] [data-list]") !== null`, "the Find list");
+    if (!(await d.page(inFind("section[aria-label=Find] [data-list]"))))
+      throw new Error(`Find usages left the focus outside the Find list: ${await activeElement()}`);
 
     // 2. The button of Find in Files.
     await hideBottom();
@@ -1163,6 +1169,12 @@ export const sessions: Record<string, (d: Driver) => Promise<void>> = {
     );
     if (await d.page(inFind("section[aria-label=Find] [data-list]")))
       throw new Error("Open in Find window moved the focus into the list");
+
+    // 3. Opening Problems, whose rail icon has no badge to tell it from the panel.
+    await d.page(`__t.commands.run("view.tool.problems")`);
+    await d.until(`document.querySelector("section[aria-label=Problems] [data-list]") !== null`, "the Problems list");
+    if (!(await d.page(inFind("section[aria-label=Problems]"))))
+      throw new Error(`the Problems tool left the focus outside its panel: ${await activeElement()}`);
   },
 
   /** Go to definition in a file no server serves tells the viewer why, in the backend's words. */

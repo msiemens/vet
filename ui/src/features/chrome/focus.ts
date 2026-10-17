@@ -6,12 +6,15 @@ import { headerFacts } from "./headerFacts.svelte";
 import { shell } from "./shell.svelte";
 import { TOOLS } from "./tools";
 
-/** Shows the bottom tool `id` and moves the focus into its list once it is up. */
+/**
+ * Shows the bottom tool `id` and moves the focus into its list once it is up. A bottom tool's panel
+ * is the `section` labelled with the tool's label; the rail's icon carries the same label.
+ */
 export async function focusBottom(id: string): Promise<void> {
   shell.showBottom(id);
   await tick();
   const tool = TOOLS.bottom.find((t) => t.id === id);
-  const panel = tool && document.querySelector<HTMLElement>(`[aria-label="${tool.label}"]`);
+  const panel = tool && document.querySelector<HTMLElement>(`section[aria-label="${tool.label}"]`);
   (panel?.querySelector<HTMLElement>("[data-list]") ?? panel)?.focus();
 }
 
