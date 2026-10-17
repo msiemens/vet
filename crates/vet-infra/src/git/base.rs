@@ -34,10 +34,38 @@ pub(super) fn branch_tip(repo: &gix::Repository, name: &str) -> Result<Option<Co
 pub(super) fn merge_base(repo: &gix::Repository, reference: &str, tip: &CommitId) -> Result<CommitId, GitError> {
     let other = commit_of(repo, reference)?
         .ok_or_else(|| GitError::UnknownRevision(format!("unknown branch or revision {reference}")))?;
-    let base = repo
-        .merge_base(other.id, object_id(tip)?)
-        .map_err(|_| GitError::Unrelated(format!("no common ancestor with {reference}")))?;
-    Ok(CommitId(base.to_string()))
+    let unrelated = || GitError::Unrelated(format!("no common ancestor with {reference}"));
+    let bases = repo
+        .merge_bases_many(other.id, &[object_id(tip)?])
+        .map_err(|_| unrelated())?;
+    // gix orders and prunes candidates by commit time, so with equal times it can keep a commit
+    // that is an ancestor of another candidate.
+    for base in &bases {
+        let mut redundant = false;
+        for better in bases.iter().filter(|b| b.detach() != base.detach()) {
+            redundant |= is_ancestor(repo, base.detach(), better.detach())?;
+        }
+        if !redundant {
+            return Ok(CommitId(base.to_string()));
+        }
+    }
+    Err(unrelated())
+}
+
+/// Whether `ancestor` is `descendant` or reachable from it. The walk visits the whole history
+/// instead of relying on commit times, which gix's merge-base search trusts.
+fn is_ancestor(repo: &gix::Repository, ancestor: gix::ObjectId, descendant: gix::ObjectId) -> Result<bool, GitError> {
+    let walk = repo
+        .rev_walk([descendant])
+        .sorting(gix::revision::walk::Sorting::BreadthFirst)
+        .all()
+        .map_err(chained)?;
+    for info in walk {
+        if info.map_err(chained)?.id == ancestor {
+            return Ok(true);
+        }
+    }
+    Ok(false)
 }
 
 /// `origin/HEAD` if the repository has it and it points at a branch that exists, else

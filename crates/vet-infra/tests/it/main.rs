@@ -11,6 +11,7 @@ mod git_edges;
 mod listing;
 mod lsp;
 mod materialize;
+mod merge_base_ties;
 mod project_files;
 mod remerge;
 mod restore;
