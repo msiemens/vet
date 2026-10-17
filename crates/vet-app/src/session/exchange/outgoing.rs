@@ -3,8 +3,8 @@
 
 use vet_core::review::{Message, Outgoing as State, PendingVote, Thread};
 
-use super::LiveSession;
 use crate::ports::{GitRepo, LiveStore};
+use crate::session::LiveSession;
 
 /// What the viewer's own comments and staged vote wait to send to the platform.
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]

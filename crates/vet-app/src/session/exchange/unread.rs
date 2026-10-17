@@ -3,10 +3,10 @@
 
 use vet_core::review::{CommentTarget, Thread};
 
-use super::{LiveSession, Result};
 use crate::changeset::Source;
 use crate::platform::{ConversationItem, ConversationKind, RemoteKey};
 use crate::ports::{GitRepo, LiveStore};
+use crate::session::{LiveSession, Result};
 
 /// The app preference the seen times are kept under, as one JSON object, so it outlasts a restart.
 const SEEN_KEY: &str = "commentsSeen";
