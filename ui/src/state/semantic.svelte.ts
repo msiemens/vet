@@ -45,21 +45,24 @@ class SemanticStore {
   /** The files the backend could not answer for, and why. */
   private missing = new SvelteMap<string, Unavailable>();
   /** The listeners told when a file's diagnostics were replaced. */
-  private listeners = new Set<(path: string) => void>();
+  private listeners = new Set<(path: string | undefined) => void>();
+  /** The session the answers are of, by identity. */
+  private owner: typeof opened.session;
   /** The changeset revision the answers are for; an answer for another is dropped. */
   private revision?: number;
 
   constructor() {
     session.onConnect((backend) =>
       backend.onEvent((event) => {
-        if (event.type !== "fileDiagnostics") return;
-        this.apply(event.revision, event.path, event);
+        if (event.type === "fileDiagnostics") this.apply(event.revision, event.path, event);
+        else if (event.type === "serversChanged") this.invalidate();
       }),
     );
     $effect.root(() => {
       $effect(() => {
-        const revision = opened.session?.layout?.shown.revision;
-        untrack(() => this.enter(revision));
+        const owner = opened.session;
+        const revision = owner?.layout?.shown.revision;
+        untrack(() => this.enter(owner, revision));
       });
     });
   }
@@ -68,24 +71,26 @@ class SemanticStore {
     return summarize(this.files, this.missing, path);
   }
 
-  /** The changeset's revision the answers are for; a new one moves what is held to `previous`. */
-  private enter(revision: number | undefined) {
-    if (revision === this.revision) return;
-    this.previous = revision !== undefined && this.revision !== undefined ? new Map(this.files) : new Map();
+  /**
+   * The session on view and its revision the answers are for: a newer revision of the same session
+   * moves what is held to `previous`, another session starts over.
+   */
+  private enter(owner: typeof opened.session, revision: number | undefined) {
+    if (owner === this.owner && revision === this.revision) return;
+    const newer = owner === this.owner && revision !== undefined && this.revision !== undefined;
+    this.previous = newer ? new Map(this.files) : new Map();
+    this.owner = owner;
     this.revision = revision;
     this.drop();
   }
 
-  /** A repository was opened: its revisions are numbered afresh. */
-  reset() {
-    this.revision = undefined;
-    this.previous = new Map();
+  /**
+   * What the servers answered may differ now (a server was installed or its path changed): every
+   * answer goes, and the listeners hear of every file.
+   */
+  private invalidate() {
     this.drop();
-  }
-
-  /** What the servers answered may differ now (a server was installed or its path changed). */
-  invalidate() {
-    this.drop();
+    for (const listener of this.listeners) listener(undefined);
   }
 
   private drop() {
@@ -201,8 +206,11 @@ class SemanticStore {
     return Promise.resolve(this.files.get(path)?.diagnostics ?? []);
   }
 
-  /** Calls `listener` with the path of a file whose diagnostics were replaced. */
-  onOrigins(listener: (path: string) => void): () => void {
+  /**
+   * Calls `listener` with the path of a file whose diagnostics were replaced, or with none when
+   * every file's were dropped.
+   */
+  onOrigins(listener: (path: string | undefined) => void): () => void {
     this.listeners.add(listener);
     return () => this.listeners.delete(listener);
   }

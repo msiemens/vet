@@ -1119,4 +1119,70 @@ export const sessions: Record<string, (d: Driver) => Promise<void>> = {
     if ((await d.page(`document.querySelectorAll("section[aria-label=Find] [role=tab]").length`)) !== 0)
       throw new Error("going back brought the result sets back");
   },
+
+  /**
+   * The diagnostics pushed for the changeset on view stay across a trip to the queue and are taken
+   * after it; a server change drops them, and another changeset starts with none.
+   */
+  async diagnosticsHeld(d) {
+    const quiet = async () => {
+      await d.page(`__t.session.backend.waitForQuiet()`);
+      await d.sleep(300);
+    };
+    const project = () => d.page(`__t.session.backend.project`) as Promise<number>;
+    const fire = (event: Record<string, unknown>) =>
+      d.page(
+        `(() => { const c = __t.session.backend.conn; for (const l of [...c.listeners]) l(${JSON.stringify(event)}); return true; })()`,
+      );
+    const push = async (path: string) =>
+      fire({
+        type: "fileDiagnostics",
+        project: await project(),
+        revision: await d.page(`__t.opened.session.layout.shown.revision`),
+        path,
+        diagnostics: [],
+        count: 0,
+        unavailable: null,
+        originUnavailable: null,
+        incomplete: null,
+        compared: true,
+      });
+    const held = () =>
+      d.page(
+        `(async () => { const { semantic } = await import("/src/state/semantic.svelte.ts"); return { files: [...semantic.files.keys()].sort(), previous: semantic.previous.size }; })()`,
+      ) as Promise<{ files: string[]; previous: number }>;
+    const files = async () => JSON.stringify((await held()).files);
+
+    await d.until(`!!__t.opened.session?.layout`, "the changeset");
+    await push("held/a.rs");
+    await quiet();
+    if ((await files()) !== JSON.stringify(["held/a.rs"])) throw new Error("a push was not taken");
+
+    await d.page(`__t.commands.run("view.queue")`);
+    await d.until(`document.querySelector(".review") === null`, "the review screen to go");
+    await d.page(`__t.commands.run("view.review")`);
+    await d.until(
+      `document.querySelector(".review") !== null && document.querySelectorAll(".cm-editor").length > 0`,
+      "the review screen's editors",
+    );
+    await quiet();
+    if ((await files()) !== JSON.stringify(["held/a.rs"]))
+      throw new Error("the diagnostics were dropped by a trip to the queue");
+
+    await push("held/b.rs");
+    await quiet();
+    if ((await files()) !== JSON.stringify(["held/a.rs", "held/b.rs"]))
+      throw new Error("a push after a trip to the queue was not taken");
+
+    await fire({ type: "serversChanged", project: await project() });
+    await quiet();
+    if ((await files()) !== "[]") throw new Error("a server change did not drop the diagnostics");
+
+    await push("held/a.rs");
+    await d.openBranch();
+    await d.until(`__t.opened.session?.key.type === "branch" && !!__t.opened.session.layout`, "the branch");
+    const other = await held();
+    if (other.files.length || other.previous)
+      throw new Error(`another changeset started with ${JSON.stringify(other)}`);
+  },
 };

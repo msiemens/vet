@@ -79,7 +79,6 @@ export class ReviewController {
     private changeset: ChangesetSession,
     private fileMenu: (path: string, x: number, y: number) => void,
   ) {
-    semantic.reset(); // the controller belongs to one repository's screen
     this.key = keyId(changeset.key);
     this.persistence = new ViewPersistence(memoryOf(session.repo));
     this.scopes = new ViewScopes(
@@ -149,13 +148,7 @@ export class ReviewController {
       if (!this.destroyed) this.saveView();
     });
     this.unsubscribeEvents = backend.onEvent((event) => {
-      // A server installed or reconfigured elsewhere may answer differently now.
-      if (event.type === "serversChanged") {
-        semantic.invalidate();
-        this.views.refreshDiagnostics();
-      } else if (event.type === "reviewChanged") {
-        this.scopes.heard(event.update, event.revision);
-      }
+      if (event.type === "reviewChanged") this.scopes.heard(event.update, event.revision);
     });
   }
 
