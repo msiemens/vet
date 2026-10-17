@@ -14,11 +14,8 @@ use vet_core::content::SnapshotId;
 
 use super::codec::pull_request_remote;
 use super::entity::*;
-use super::gc::{dir_children, snapshot_id};
+use super::gc::{CHUNK, dir_children, snapshot_id};
 use super::{Res, SqliteStore};
-
-/// SQLite allows 32766 bound variables per statement.
-const CHUNK: usize = 1000;
 
 /// A version as `project_facts` reads it: whether it has snapshots, base, target.
 type VersionRow = (bool, Vec<u8>, Vec<u8>);

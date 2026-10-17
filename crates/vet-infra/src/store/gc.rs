@@ -15,7 +15,7 @@ use super::entity::*;
 use super::{Res, SqliteStore};
 
 /// SQLite allows 32766 bound variables per statement.
-const CHUNK: usize = 1000;
+pub(super) const CHUNK: usize = 1000;
 
 pub(super) fn snapshot_id(bytes: &[u8]) -> Res<SnapshotId> {
     hash(bytes).map(SnapshotId)
