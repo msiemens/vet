@@ -30,7 +30,7 @@ use sea_orm::sqlx::{self, Row};
 use vet_app::ports::{StoreError, StoredBlob};
 use vet_core::content::{BlobId, Hash, keeps_bytes};
 
-use super::{BUSY_TIMEOUT, READERS};
+use super::{BUSY_TIMEOUT, read_pool};
 use crate::budget::Budget;
 
 pub(super) const FILE: &str = "content.sqlite";
@@ -75,19 +75,15 @@ impl Encoded {
                 data: None,
             };
         }
-        match zstd::bulk::compress(&bytes, ZSTD_LEVEL) {
-            Ok(packed) if packed.len() < size => Self {
-                id,
-                size,
-                codec: ZSTD,
-                data: Some(packed),
-            },
-            _ => Self {
-                id,
-                size,
-                codec: AS_IS,
-                data: Some(bytes),
-            },
+        let (codec, data) = match zstd::bulk::compress(&bytes, ZSTD_LEVEL) {
+            Ok(packed) if packed.len() < size => (ZSTD, packed),
+            _ => (AS_IS, bytes),
+        };
+        Self {
+            id,
+            size,
+            codec,
+            data: Some(data),
         }
     }
 }
@@ -160,6 +156,22 @@ fn placeholders(rows: usize, columns: usize) -> String {
     vec![row; rows].join(",")
 }
 
+/// `{head} id IN (…ids){tail}` with the ids bound.
+fn by_ids<'q>(
+    head: &str,
+    ids: impl ExactSizeIterator<Item = &'q [u8]>,
+    tail: &str,
+) -> sqlx::query::Query<'q, sqlx::Sqlite, sqlx::sqlite::SqliteArguments> {
+    let mut query = sqlx::query(sqlx::AssertSqlSafe(format!(
+        "{head} id IN {}{tail}",
+        placeholders(1, ids.len())
+    )));
+    for id in ids {
+        query = query.bind(id);
+    }
+    query
+}
+
 pub(super) struct ContentDb {
     /// One connection: the writers queue in the order they asked.
     pub(super) writer: SqlitePool,
@@ -217,18 +229,9 @@ impl ContentDb {
             .await?;
         sqlx::query("PRAGMA user_version = 1").execute(&mut *tx).await?;
         tx.commit().await?;
-        let readers = SqlitePoolOptions::new()
-            .max_connections(READERS)
-            .connect_with(
-                SqliteConnectOptions::new()
-                    .filename(&path)
-                    .read_only(true)
-                    .busy_timeout(BUSY_TIMEOUT),
-            )
-            .await?;
         Ok(Self {
             writer,
-            readers,
+            readers: read_pool(&path).await?,
             #[cfg(test)]
             commits: AtomicUsize::new(0),
             #[cfg(test)]
@@ -241,11 +244,11 @@ impl ContentDb {
     pub(super) async fn missing(&self, ids: &[BlobId]) -> Result<Vec<BlobId>, StoreError> {
         let mut held = HashSet::new();
         for chunk in ids.chunks(IDS_PER_STATEMENT) {
-            let sql = format!("SELECT id FROM blob WHERE id IN ({})", placeholders(chunk.len(), 1));
-            let mut query = sqlx::query(sqlx::AssertSqlSafe(sql));
-            for id in chunk {
-                query = query.bind(id.0.0.as_slice());
-            }
+            let query = by_ids(
+                "SELECT id FROM blob WHERE",
+                chunk.iter().map(|id| id.0.0.as_slice()),
+                "",
+            );
             for row in query.fetch_all(&self.readers).await? {
                 held.extend(blob_id(row.get(0)));
             }
@@ -326,14 +329,11 @@ impl ContentDb {
         let ids: Vec<BlobId> = ids.into_iter().collect::<BTreeSet<_>>().into_iter().collect();
         let mut rows = Vec::new();
         for chunk in ids.chunks(IDS_PER_STATEMENT) {
-            let sql = format!(
-                "SELECT id, size, codec, data FROM blob WHERE id IN ({})",
-                placeholders(chunk.len(), 1)
+            let query = by_ids(
+                "SELECT id, size, codec, data FROM blob WHERE",
+                chunk.iter().map(|id| id.0.0.as_slice()),
+                "",
             );
-            let mut query = sqlx::query(sqlx::AssertSqlSafe(sql));
-            for id in chunk {
-                query = query.bind(id.0.0.as_slice());
-            }
             for row in query.fetch_all(&self.readers).await? {
                 let Some(id) = blob_id(row.get(0)) else { continue };
                 rows.push(Stored {
@@ -402,15 +402,14 @@ impl ContentDb {
             .collect();
         let mut tx = self.writer.begin().await?;
         for chunk in doomed.chunks(IDS_PER_STATEMENT) {
-            let sql = format!(
-                "DELETE FROM blob WHERE stored <= ? AND id IN ({})",
-                placeholders(chunk.len(), 1)
-            );
-            let mut query = sqlx::query(sqlx::AssertSqlSafe(sql)).bind(cutoff);
-            for id in chunk {
-                query = query.bind(id.as_slice());
-            }
-            query.execute(&mut *tx).await?;
+            by_ids(
+                "DELETE FROM blob WHERE",
+                chunk.iter().map(Vec::as_slice),
+                " AND stored <= ?",
+            )
+            .bind(cutoff)
+            .execute(&mut *tx)
+            .await?;
         }
         tx.commit().await?;
         if !doomed.is_empty() {

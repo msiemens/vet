@@ -27,7 +27,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
 
-use sea_orm::sqlx::sqlite::{SqliteConnectOptions, SqliteJournalMode, SqlitePoolOptions};
+use sea_orm::sqlx::sqlite::{SqliteConnectOptions, SqliteJournalMode, SqlitePool, SqlitePoolOptions};
 use sea_orm::{
     ActiveModelBehavior, ActiveModelTrait, ColumnTrait, ConnectionTrait, DatabaseConnection, DatabaseTransaction,
     DbErr, EntityTrait, IntoActiveModel, QueryFilter, QueryOrder, QuerySelect, QueryTrait, Set, SqlxSqliteConnector,
@@ -73,8 +73,18 @@ const DATABASE: &str = "vet.sqlite";
 /// How long a connection waits for a lock SQLite holds before it gives up.
 const BUSY_TIMEOUT: Duration = Duration::from_secs(5);
 
-/// Read-only connections in the pool.
-const READERS: u32 = 4;
+/// A pool of read-only connections to the SQLite database `path`, which is in WAL mode already.
+async fn read_pool(path: &Path) -> Result<SqlitePool, sea_orm::sqlx::Error> {
+    SqlitePoolOptions::new()
+        .max_connections(4)
+        .connect_with(
+            SqliteConnectOptions::new()
+                .filename(path)
+                .read_only(true)
+                .busy_timeout(BUSY_TIMEOUT),
+        )
+        .await
+}
 
 /// The only connection that writes. One connection serializes the writers.
 #[derive(Clone)]
@@ -114,15 +124,7 @@ struct StoreReader {
 
 impl StoreReader {
     async fn connect(dir: &Path) -> Result<Self, DbErr> {
-        let options = SqliteConnectOptions::new()
-            .filename(dir.join(DATABASE))
-            .read_only(true)
-            .busy_timeout(BUSY_TIMEOUT);
-        let pool = SqlitePoolOptions::new()
-            .max_connections(READERS)
-            .connect_with(options)
-            .await
-            .map_err(db_err)?;
+        let pool = read_pool(&dir.join(DATABASE)).await.map_err(db_err)?;
         Ok(Self {
             db: SqlxSqliteConnector::from_sqlx_sqlite_pool(pool),
         })
