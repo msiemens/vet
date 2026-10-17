@@ -14,6 +14,7 @@ use std::pin::Pin;
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
+use tokio::sync::watch;
 use vet_core::content::{EntryKind, FileDiff, RepoPath, Snapshot};
 use vet_core::review::Side;
 use vet_semantic::derived::{
@@ -246,16 +247,31 @@ pub type RuntimeSink = dyn Fn(ServerRuntimes) + Send + Sync;
 pub type FailureSink = dyn Fn(Vec<RestoreFailure>) + Send + Sync;
 
 /// The revision on view, whose servers are reported, and whom to report them to.
-#[derive(Default)]
 struct Watched {
     sides: Option<(u32, Served, Served)>,
     sink: Option<Arc<RuntimeSink>>,
     failing: Option<Arc<FailureSink>>,
+    /// What the servers are doing, as of the last change, whether or not a sink is set.
+    published: watch::Sender<ServerRuntimes>,
     /// The latest change of the pool taken into account.
     pool_serial: u64,
     serial: u64,
     /// The restore failures last told.
     told: Vec<RestoreFailure>,
+}
+
+impl Default for Watched {
+    fn default() -> Self {
+        Self {
+            sides: None,
+            sink: None,
+            failing: None,
+            published: watch::channel(ServerRuntimes::default()).0,
+            pool_serial: 0,
+            serial: 0,
+            told: Vec::new(),
+        }
+    }
 }
 
 impl Watched {
@@ -313,13 +329,15 @@ impl Watched {
     }
 
     fn announce(&mut self, servers: &Servers) {
+        self.serial += 1;
+        let now = ServerRuntimes {
+            serial: self.serial,
+            runtimes: self.runtimes(servers),
+            features: servers.features.clone(),
+        };
+        self.published.send_replace(now.clone());
         if let Some(sink) = self.sink.clone() {
-            self.serial += 1;
-            sink(ServerRuntimes {
-                serial: self.serial,
-                runtimes: self.runtimes(servers),
-                features: servers.features.clone(),
-            });
+            sink(now);
         }
         let failures = self.failures(servers);
         if failures != self.told {
@@ -528,10 +546,14 @@ where
         links: Links,
     ) -> Self {
         let Links { revisions, retainer } = links;
-        let pool = Pool::new(materializer, launcher, live_root.clone(), POOL_CAPACITY);
+        let watched: Arc<Mutex<Watched>> = Arc::default();
+        let pool = Pool::new(materializer, launcher, live_root.clone(), POOL_CAPACITY).observed(Arc::new({
+            let watched = watched.clone();
+            move |servers| lock(&watched).pooled(&servers)
+        }));
         Self {
             semantic: Arc::new(Semantic::new(pool, backends)),
-            watched: Arc::default(),
+            watched,
             texts: None,
             revisions,
             retainer,
@@ -586,12 +608,12 @@ where
             watched.sink = Some(runtimes);
             watched.failing = Some(failing);
         }
-        let watched = self.watched.clone();
-        self.configured(|semantic| {
-            semantic.observed(Arc::new(move |servers| {
-                lock(&watched).pooled(&servers);
-            }))
-        })
+        self
+    }
+
+    /// What the servers of the revision on view are doing, now and after every change.
+    pub fn watch_runtimes(&self) -> watch::Receiver<ServerRuntimes> {
+        lock(&self.watched).published.subscribe()
     }
 
     /// What the servers of the revision on view are doing now.
@@ -1441,6 +1463,8 @@ mod tests {
         stopped: Mutex<Vec<String>>,
         /// The restore of a snapshot's tree fails.
         restore_fails: std::sync::atomic::AtomicBool,
+        /// A start waits until this says go.
+        held: Mutex<Option<tokio::sync::watch::Receiver<bool>>>,
     }
 
     fn restore_failure() -> RestoreFailure {
@@ -1482,6 +1506,10 @@ mod tests {
             let language = &backend.config().backend.0;
             if c.missing.lock().unwrap().as_ref() == Some(language) {
                 return Err(LaunchError::NotInstalled(format!("no server for {language} was found")));
+            }
+            let held = c.held.lock().unwrap().clone();
+            if let Some(mut go) = held {
+                let _ = go.wait_for(|go| *go).await;
             }
             if backend.config().executes_project_code_during_analysis {
                 c.executing_started.fetch_add(1, Ordering::SeqCst);
@@ -2033,6 +2061,79 @@ mod tests {
             }
         }
         assert_eq!(semantics.runtimes(), *last);
+    }
+
+    #[tokio::test]
+    async fn the_runtimes_of_the_revision_on_view_are_published_on_a_watch_without_any_sink() {
+        let fx = Fixture::open(&[("a.rs", "one\n")], &[("a.rs", "two\n")]).await;
+        let counters = Arc::new(Counters::default());
+        let (go, held) = tokio::sync::watch::channel(false);
+        *counters.held.lock().unwrap() = Some(held);
+        let semantics = Semantics::new(
+            FakeMaterializer(counters.clone()),
+            FakeLauncher(counters.clone()),
+            "/live".into(),
+            vec![backend("rust", "rs")],
+            Links {
+                revisions: fx.session.revisions(),
+                retainer: None,
+            },
+        );
+        let mut runtimes = semantics.watch_runtimes();
+        let phase_of_target = |seen: &ServerRuntimes| {
+            seen.runtimes
+                .iter()
+                .find(|r| r.language.0 == "rust" && r.side == Side::Target)
+                .map(|r| r.phase.clone())
+        };
+
+        let start = semantics.start_servers(&fx.view, 0);
+        let watching = async {
+            let starting = runtimes
+                .wait_for(|seen| phase_of_target(seen) == Some(Phase::Starting))
+                .await
+                .unwrap()
+                .clone();
+            assert_eq!(starting, semantics.runtimes());
+            go.send(true).unwrap();
+            runtimes
+                .wait_for(|seen| phase_of_target(seen) == Some(Phase::Ready))
+                .await
+                .unwrap();
+        };
+        let (started, ()) = tokio::join!(start, watching);
+        started.unwrap();
+        assert_eq!(*runtimes.borrow(), semantics.runtimes());
+    }
+
+    #[tokio::test]
+    async fn the_sink_and_the_watch_are_told_the_same_runtimes() {
+        let fx = Fixture::open(&[("a.l0", "one\n")], &[("a.l0", "two\n")]).await;
+        let counters = Arc::new(Counters::default());
+        let told = Arc::new(Mutex::new(Vec::<ServerRuntimes>::new()));
+        let semantics = Semantics::new(
+            FakeMaterializer(counters.clone()),
+            FakeLauncher(counters.clone()),
+            "/live".into(),
+            vec![backend("l0", "l0")],
+            Links {
+                revisions: fx.session.revisions(),
+                retainer: None,
+            },
+        )
+        .observing(
+            {
+                let told = told.clone();
+                Arc::new(move |runtimes| told.lock().unwrap().push(runtimes))
+            },
+            Arc::new(|_| {}),
+        );
+        let runtimes = semantics.watch_runtimes();
+
+        semantics.start_servers(&fx.view, 0).await.unwrap();
+        let told = told.lock().unwrap();
+        assert_eq!(told.last(), Some(&*runtimes.borrow()));
+        assert!(!told.last().unwrap().runtimes.is_empty());
     }
 
     #[tokio::test]
