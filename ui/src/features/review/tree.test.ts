@@ -17,13 +17,27 @@ void test("a chain of single-directory folders is one row", () => {
 });
 
 void test("a folder with two children is not merged with them", () => {
-  assert.deepEqual(labels(["crates/vet-core/src/a.rs", "crates/vet-app/src/b.rs", "README.md"]), [
+  assert.deepEqual(labels(["crates/vet-app/src/b.rs", "crates/vet-core/src/a.rs", "README.md"]), [
     "0:crates/",
     "1:vet-app/src/",
     "2:b.rs",
     "1:vet-core/src/",
     "2:a.rs",
     "0:README.md",
+  ]);
+});
+
+void test("the tree keeps the order it is given", () => {
+  assert.deepEqual(labels(["z/b.rs", "z/a.rs", "m.txt", "a.txt", "y/x.rs", "a/x.rs"]), [
+    "0:z/",
+    "1:b.rs",
+    "1:a.rs",
+    "0:y/",
+    "1:x.rs",
+    "0:a/",
+    "1:x.rs",
+    "0:m.txt",
+    "0:a.txt",
   ]);
 });
 

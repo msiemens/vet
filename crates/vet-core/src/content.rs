@@ -1,5 +1,6 @@
 //! Snapshots and changesets (SPEC §3). Pure content, no provenance.
 
+use std::cmp::Ordering;
 use std::collections::{BTreeMap, BTreeSet};
 
 use unicode_normalization::UnicodeNormalization;
@@ -73,6 +74,31 @@ impl RepoPath {
     pub fn to_string_lossy(&self) -> String {
         String::from_utf8_lossy(&self.0).into_owned()
     }
+
+    /// The order the file tree and the file lists show paths in: segment by segment, at the first
+    /// differing one a folder before a file, then by [`name_order`]. Total, so it never ties for
+    /// different paths.
+    pub fn tree_order(&self, other: &Self) -> Ordering {
+        let mut a = self.0.split(|&b| b == b'/').peekable();
+        let mut b = other.0.split(|&b| b == b'/').peekable();
+        loop {
+            let (Some(x), Some(y)) = (a.next(), b.next()) else {
+                // A file replaced by a folder of its name: the folder, with more segments, first.
+                return other.0.len().cmp(&self.0.len());
+            };
+            if x == y {
+                continue;
+            }
+            let (x_dir, y_dir) = (a.peek().is_some(), b.peek().is_some());
+            return y_dir.cmp(&x_dir).then_with(|| name_order(x, y));
+        }
+    }
+}
+
+/// How names within one folder are ordered: by Unicode lowercase, ties by bytes.
+pub fn name_order(a: &[u8], b: &[u8]) -> Ordering {
+    let lower = |name: &[u8]| String::from_utf8_lossy(name).to_lowercase();
+    lower(a).cmp(&lower(b)).then_with(|| a.cmp(b))
 }
 
 impl From<&str> for RepoPath {
@@ -327,6 +353,47 @@ impl SnapshotDiff {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn tree_order_puts_folders_first_then_names_without_case_and_ties_by_bytes() {
+        let mut paths: Vec<RepoPath> = [
+            "z.txt",
+            "B.txt",
+            "a.txt",
+            "src/b/y.rs",
+            "src/b.rs",
+            "src/a.rs",
+            "src/B/x.rs",
+            "Src/q.rs",
+            "src",
+            "src/ä.rs",
+            "src/z.rs",
+            "a",
+            "a/x",
+        ]
+        .map(RepoPath::from)
+        .into();
+        paths.sort_by(RepoPath::tree_order);
+        let sorted: Vec<String> = paths.iter().map(RepoPath::to_string_lossy).collect();
+        assert_eq!(
+            sorted,
+            [
+                "a/x",
+                "Src/q.rs",
+                "src/B/x.rs",
+                "src/b/y.rs",
+                "src/a.rs",
+                "src/b.rs",
+                "src/z.rs",
+                "src/ä.rs",
+                "a",
+                "a.txt",
+                "B.txt",
+                "src",
+                "z.txt"
+            ]
+        );
+    }
 
     fn hunk(old: (u32, u32), new: (u32, u32)) -> Hunk {
         Hunk {

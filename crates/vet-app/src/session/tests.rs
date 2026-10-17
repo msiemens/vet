@@ -1661,6 +1661,39 @@ async fn the_working_tree_keeps_the_head_it_was_opened_at_as_its_base() {
     assert!(!m.base.head_off_base);
 }
 
+#[tokio::test]
+async fn the_manifest_lists_folders_before_files_each_by_name_without_case() {
+    let files = [
+        ("z.txt", "x\n"),
+        ("B.txt", "x\n"),
+        ("a.txt", "x\n"),
+        ("src/b.rs", "x\n"),
+        ("src/A.rs", "x\n"),
+        ("src/sub/y.rs", "x\n"),
+        ("Src/q.rs", "x\n"),
+        ("docs/z.md", "x\n"),
+    ];
+    let changed: Vec<(&str, &str)> = files.iter().map(|&(p, _)| (p, "y\n")).collect();
+    let fx = Fixture::open(&files, &changed).await;
+
+    let m = fx.session.manifest(View::Changeset).await.unwrap();
+
+    let paths: Vec<String> = m.files.iter().map(|f| f.path.to_string_lossy()).collect();
+    assert_eq!(
+        paths,
+        [
+            "docs/z.md",
+            "Src/q.rs",
+            "src/sub/y.rs",
+            "src/A.rs",
+            "src/b.rs",
+            "a.txt",
+            "B.txt",
+            "z.txt"
+        ]
+    );
+}
+
 /// The working tree's `HEAD` moves to `commit`, which builds on the commit `ancestry` ends in.
 fn move_head(git: &FakeGit, commit: &str, ancestry: &[&str]) {
     git.add_branch("feature", true, commit, ancestry);
@@ -2917,7 +2950,7 @@ fn listing(l: &DirListing) -> Vec<(&str, DirEntryKind, bool, bool)> {
 }
 
 #[tokio::test]
-async fn directories_list_first_in_byte_order_with_changed_below() {
+async fn directories_list_first_by_name_without_case_with_changed_below() {
     use DirEntryKind::{Dir, File};
     let base = [
         ("src/a/deep/x.rs", "x\n"),
@@ -2935,8 +2968,8 @@ async fn directories_list_first_in_byte_order_with_changed_below() {
         listing(&root),
         [
             ("src", Dir, true, false),
-            ("Z.md", File, false, false),
-            ("a.md", File, false, false)
+            ("a.md", File, false, false),
+            ("Z.md", File, false, false)
         ]
     );
     let src = fx.session.list_directory("src").await.unwrap();
@@ -3088,16 +3121,15 @@ async fn excluding_a_path_hides_exactly_that_file_or_everything_below_that_folde
         shown().await,
         [
             "gen/z.rs",
-            "src/a1.rs",
             "src/gen/sub/y.rs",
             "src/gen/x.rs",
+            "src/a1.rs",
             "src/genx.rs"
         ]
     );
     // The folder at that path only, not a sibling that starts with its name, nor one deeper down.
     assert_eq!(fx.session.exclude_path("src/gen", true).await.unwrap(), 2);
     assert_eq!(shown().await, ["gen/z.rs", "src/a1.rs", "src/genx.rs"]);
-
     // Excluding it again changes nothing; the filter is stored.
     assert_eq!(fx.session.exclude_path("src/gen", true).await.unwrap(), 2);
     let stored = fx.store.0.lock().unwrap().filters.get(REPO).cloned().unwrap();

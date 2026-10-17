@@ -2,7 +2,7 @@
 
 use std::collections::BTreeMap;
 
-use vet_core::content::{EntryKind, LineDelta, RepoPath};
+use vet_core::content::{EntryKind, LineDelta, RepoPath, name_order};
 use vet_core::filter::{PatternMatcher, ReviewFilter, is_under};
 
 use super::{LiveSession, Result, SessionError, View};
@@ -26,7 +26,7 @@ pub struct DirItem {
     pub excluded: bool,
 }
 
-/// Directories first, then the others, each by name in byte order.
+/// Directories first, then the others, each in the order of [`name_order`].
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub struct DirListing {
     pub revision: u32,
@@ -181,8 +181,9 @@ impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> L
             return Err(SessionError::NotFound(format!("directory {path}")));
         }
         entries.sort_by(|a, b| {
-            let key = |i: &DirItem| (i.kind != DirEntryKind::Dir, i.name.clone().into_bytes());
-            key(a).cmp(&key(b))
+            (b.kind == DirEntryKind::Dir)
+                .cmp(&(a.kind == DirEntryKind::Dir))
+                .then_with(|| name_order(a.name.as_bytes(), b.name.as_bytes()))
         });
         Ok(DirListing {
             revision: st.revision,

@@ -967,8 +967,8 @@ async fn the_whole_snapshot_can_be_browsed_and_read() {
         [
             ("src", Dir, true),
             (".gitignore", File, false),
-            ("README.md", File, false),
-            ("blob.bin", File, false)
+            ("blob.bin", File, false),
+            ("README.md", File, false)
         ]
     );
     let (_, src) = client.list(project, "src").await.unwrap();
