@@ -1,8 +1,15 @@
 //! Trust (§6.5) through the protocol: a project is trusted until it is marked untrusted again,
 //! which the manifest says and every change announces.
 
+use std::collections::HashSet;
+use std::sync::Arc;
+
 use crate::common::{Client, handler, repo_with};
+use vet_core::content::{Hash, SnapshotId};
+use vet_infra::materialize::kept::{DEFAULT_MAX_IDLE, Referenced};
+use vet_infra::materialize::projects::ProjectTrees;
 use vet_protocol::{AnalysisTrust, Event, Manifest, ProjectId, Request, Response, ServerMessage, View};
+use vet_semantic::policy::RestoreKind;
 
 async fn manifest(client: &Client, project: ProjectId) -> Manifest {
     match client
@@ -57,6 +64,45 @@ async fn marking_a_project_trusted_is_kept_and_announced_and_marking_it_untruste
         .await
         .unwrap();
     assert!(!manifest(&again, project).await.trust.project);
+}
+
+#[tokio::test]
+async fn withdrawing_trust_removes_the_executing_trees_that_are_not_in_use() {
+    let repo = repo_with(&[("a.txt", "one\n")], &[("a.txt", "two\n")]);
+    let (handler, data) = handler().await;
+    let client = Client::new(&handler);
+    let Response::Project { project, root } = client
+        .call(Request::OpenProject {
+            repo: repo.path().to_str().unwrap().into(),
+        })
+        .await
+        .unwrap()
+    else {
+        panic!("not a project");
+    };
+
+    let none: Arc<dyn Referenced> = Arc::new(HashSet::<SnapshotId>::new);
+    let trees = ProjectTrees::for_test(data.path().to_owned(), DEFAULT_MAX_IDLE, none)
+        .of(&root)
+        .await;
+    let snapshot = |n: u8| SnapshotId(Hash([n; 32]));
+    let build = |dest: std::path::PathBuf| std::future::ready(std::fs::write(dest.join("file"), "x"));
+    let leased = trees.acquire(snapshot(1), RestoreKind::Exec, build).await.unwrap();
+    drop(trees.acquire(snapshot(2), RestoreKind::Exec, build).await.unwrap());
+    drop(trees.acquire(snapshot(3), RestoreKind::Fetch, build).await.unwrap());
+
+    client
+        .call(Request::SetProjectTrusted {
+            project,
+            trusted: false,
+        })
+        .await
+        .unwrap();
+
+    assert_eq!(trees.kept(snapshot(2), RestoreKind::Exec).await, None);
+    assert!(trees.kept(snapshot(1), RestoreKind::Exec).await.is_some(), "leased");
+    assert!(trees.kept(snapshot(3), RestoreKind::Fetch).await.is_some());
+    drop(leased);
 }
 
 #[tokio::test]

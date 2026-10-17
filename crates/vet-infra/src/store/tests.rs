@@ -6,7 +6,7 @@ use sea_orm::sqlx;
 use std::collections::HashSet;
 use tempfile::TempDir;
 use vet_app::changeset::{BaseChoice, ChangedFile, CommitId, Lens, RemoteKey, Snapshots, VersionChange, VersionOrigin};
-use vet_app::gc::{Retention, collect, open_bases};
+use vet_app::gc::{Retention, collect, open_snapshots};
 use vet_app::platform::{Discussion, PullRequestState, ReviewDecision};
 use vet_app::ports::{GcReport, ReviewWrites, Store};
 use vet_app::review::{NonTextAck, SpanOrigin};
@@ -928,7 +928,7 @@ async fn a_thread_outside_a_platform_has_none_and_a_review_started_later_finds_t
 }
 
 #[tokio::test]
-async fn the_open_bases_are_the_latest_versions_of_the_changesets_with_an_open_review() {
+async fn the_open_snapshots_are_the_base_and_target_of_the_latest_versions_of_the_changesets_with_an_open_review() {
     let dir = tempfile::tempdir().unwrap();
     let store = open(&dir).await;
     let (open_one, _) = review(&store, SnapshotId(h(1)), SnapshotId(h(2))).await;
@@ -950,9 +950,9 @@ async fn the_open_bases_are_the_latest_versions_of_the_changesets_with_an_open_r
         .unwrap();
     store.writes().close_review(closed, T0, true).await.unwrap();
 
-    let bases = open_bases(&store).await.unwrap();
+    let open = open_snapshots(&store).await.unwrap();
 
-    assert_eq!(bases, HashSet::from([SnapshotId(h(3))]));
+    assert_eq!(open, HashSet::from([SnapshotId(h(3)), SnapshotId(h(2))]));
 }
 
 #[tokio::test]

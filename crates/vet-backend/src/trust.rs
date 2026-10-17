@@ -1,6 +1,7 @@
 //! Requests about trust (§6.5): what analysis of a project's changesets may execute.
 
 use vet_protocol::{Event, ProjectId, Response};
+use vet_semantic::policy::RestoreKind;
 
 use crate::Orchestrator;
 use crate::error::Result;
@@ -10,6 +11,10 @@ impl Orchestrator {
     pub(crate) async fn set_project_trusted(&self, project: ProjectId, trusted: bool) -> Result<Response> {
         let open = self.ready(project).await?;
         open.session.set_project_trusted(trusted).await?;
+        if !trusted {
+            // What executing restores installed is not to outlive the trust that allowed them.
+            open.open.trees.clear_kind(RestoreKind::Exec).await;
+        }
         trust_changed(open);
         Ok(Response::Done)
     }

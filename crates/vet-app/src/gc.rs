@@ -59,16 +59,16 @@ pub fn plan(facts: &GcFacts, now: i64, retention: &Retention) -> GcPlan {
     }
 }
 
-/// The bases materialized trees are kept for: those of the latest versions of the
-/// changesets a review of which is open.
-pub async fn open_bases<S: ChangesetStore>(store: &S) -> Result<HashSet<SnapshotId>, StoreError> {
-    let mut bases = HashSet::new();
+/// The snapshots materialized trees are kept for: the base and the target of the latest
+/// versions of the changesets a review of which is open.
+pub async fn open_snapshots<S: ChangesetStore>(store: &S) -> Result<HashSet<SnapshotId>, StoreError> {
+    let mut open = HashSet::new();
     for changeset in store.open_changesets().await? {
         if let Some(snapshots) = store.versions(changeset).await?.last().and_then(|v| v.snapshots) {
-            bases.insert(snapshots.base);
+            open.extend([snapshots.base, snapshots.target]);
         }
     }
-    Ok(bases)
+    Ok(open)
 }
 
 /// Deletes expired changesets, then the snapshots, tree nodes and content nothing

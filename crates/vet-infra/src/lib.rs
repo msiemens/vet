@@ -18,6 +18,8 @@ pub mod clock;
 
 pub mod store;
 
+pub mod storage;
+
 /// `vet_app::platform::CredentialValidator` over HTTP.
 pub mod credentials;
 

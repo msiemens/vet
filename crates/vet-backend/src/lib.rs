@@ -58,7 +58,8 @@ use vet_infra::credentials::HttpValidator;
 use vet_infra::git::GixRepo;
 use vet_infra::lsp::{LspLauncher, config as lsp_config};
 use vet_infra::materialize::Materialize;
-use vet_infra::materialize::kept::{Collected, KeptTrees, Limits};
+use vet_infra::materialize::kept::{Collected, DEFAULT_MAX_IDLE};
+use vet_infra::materialize::projects::ProjectTrees;
 use vet_infra::platform::azure_devops::AzureDevOpsClient;
 use vet_infra::platform::github::GitHubClient;
 use vet_infra::restore::ToolRestorer;
@@ -155,8 +156,8 @@ pub struct Orchestrator {
     sources: highlight::Sources,
     /// What blocking work and probe processes draw on, shared by every project.
     budgets: Budgets,
-    /// The materialized snapshots kept between launches (§9).
-    trees: Arc<KeptTrees>,
+    /// The source trees kept between launches, a set per project (§9).
+    trees: Arc<ProjectTrees>,
     /// The answers of the language servers kept between launches (§9).
     answers: Arc<PersistentAnswers>,
     /// Held while the backend's own settings change, so that what a change applies is the
@@ -206,9 +207,9 @@ impl Orchestrator {
         let languages = backends.iter().map(|b| b.config().backend.clone()).collect();
         let resolver = ToolResolver::new(store.dir().to_owned(), &budgets);
         let referenced = Arc::new(StoreReferences(store.clone()));
-        let trees = KeptTrees::new(
-            store.dir().join("materialized"),
-            Limits::default(),
+        let trees = ProjectTrees::new(
+            store.dir().to_owned(),
+            DEFAULT_MAX_IDLE,
             referenced,
             budgets.semantic_io.clone(),
         );
@@ -306,9 +307,15 @@ impl Orchestrator {
         Ok(open)
     }
 
-    /// At startup: removes what a launch that died left, then the kept trees
-    /// that are unused for too long or over the disk budget.
+    /// At startup: removes the layout of older versions, what a launch that died left, then
+    /// the kept trees nothing needs.
     pub async fn collect_trees(&self) {
+        let legacy = self.store.dir().join("materialized");
+        let _ = self
+            .budgets
+            .semantic_io
+            .blocking(move || std::fs::remove_dir_all(legacy))
+            .await;
         let swept = self.trees.sweep().await;
         let collected = self.trees.collect(SystemTime::now()).await;
         if swept + collected.removed > 0 {

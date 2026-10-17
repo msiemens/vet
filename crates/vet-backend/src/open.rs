@@ -125,7 +125,8 @@ pub(crate) struct Wired {
     /// The changed files the viewer has open, which the background analysis reads first.
     open_files: Arc<Mutex<Vec<String>>>,
     closed: AtomicBool,
-    trees: Arc<KeptTrees>,
+    /// The project's kept source trees.
+    pub(crate) trees: Arc<KeptTrees>,
     /// The answers of the language servers kept between launches.
     answers: Arc<PersistentAnswers>,
     /// For tests: what the symbols analysis of a file fails with before it runs for real, in order.
@@ -512,6 +513,7 @@ impl Orchestrator {
         let feed = self.pull_request_feed(fetch.clone(), entry.clone(), supervisor.clone());
         let sync = crate::sync::trigger(&supervisor, entry.clone());
         let fetches = crate::fetch::fetches(&supervisor, entry.clone());
+        let trees = self.trees.of(&root).await;
         Ok(Wired {
             fetch,
             feed,
@@ -540,7 +542,7 @@ impl Orchestrator {
             checks_settle: self.config.checks_settle,
             open_files: Arc::default(),
             closed: AtomicBool::new(false),
-            trees: self.trees.clone(),
+            trees,
             answers: self.answers.clone(),
             #[cfg(debug_assertions)]
             analysis_failures: self.analysis_failures.clone(),

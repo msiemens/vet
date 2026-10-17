@@ -5,19 +5,19 @@ use std::collections::HashSet;
 use std::future::Future;
 use std::pin::Pin;
 
-use vet_app::gc::open_bases;
+use vet_app::gc::open_snapshots;
 use vet_core::content::SnapshotId;
 use vet_infra::materialize::kept::Referenced;
 use vet_infra::store::SqliteStore;
 
-/// The bases of the latest versions of the open changesets. When the store cannot
+/// The base and target of the latest versions of the open changesets. When the store cannot
 /// be read nothing is held back: a tree that goes is built again.
 pub(crate) struct StoreReferences(pub SqliteStore);
 
 impl Referenced for StoreReferences {
     fn snapshots(&self) -> Pin<Box<dyn Future<Output = HashSet<SnapshotId>> + Send + '_>> {
         Box::pin(async move {
-            open_bases(&self.0).await.unwrap_or_else(|e| {
+            open_snapshots(&self.0).await.unwrap_or_else(|e| {
                 tracing::warn!(error = %e.0, "cannot read which kept trees are referenced");
                 HashSet::new()
             })
@@ -32,12 +32,12 @@ mod tests {
     use vet_app::changeset::{BaseChoice, CommitId, Snapshots, Source, Version, VersionChange, VersionOrigin};
     use vet_app::ports::{LiveStore, ReviewWrites};
     use vet_core::content::Hash;
-    use vet_infra::materialize::kept::{KeptTrees, Limits};
-    use vet_semantic::policy::AnalysisPolicy;
+    use vet_infra::materialize::kept::{DEFAULT_MAX_IDLE, KeptTrees};
+    use vet_semantic::policy::RestoreKind;
 
     use super::*;
 
-    const POLICY: AnalysisPolicy = AnalysisPolicy::LIMITED;
+    const KIND: RestoreKind = RestoreKind::Fetch;
 
     fn snapshot(n: u8) -> SnapshotId {
         SnapshotId(Hash([n; 32]))
@@ -45,7 +45,7 @@ mod tests {
 
     async fn keep(trees: &KeptTrees, snapshot: SnapshotId) -> std::path::PathBuf {
         let built = trees
-            .acquire(snapshot, POLICY, |dir| async move {
+            .acquire(snapshot, KIND, |dir| async move {
                 std::fs::create_dir_all(&dir)?;
                 std::fs::write(dir.join("file"), "x")
             })
@@ -55,7 +55,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn the_tree_of_an_open_changesets_base_survives_a_collection_that_takes_the_idle_others() {
+    async fn the_trees_of_an_open_changesets_base_and_target_survive_a_collection_that_takes_the_others() {
         let data = tempfile::tempdir().unwrap();
         let store = SqliteStore::for_test(data.path()).await.unwrap();
         let commit = CommitId("abc123".into());
@@ -82,23 +82,21 @@ mod tests {
             )
             .await
             .unwrap();
-        let limits = Limits {
-            max_idle: Duration::ZERO,
-            ..Limits::default()
-        };
         let trees = KeptTrees::for_test(
-            data.path().join("materialized"),
-            limits,
+            data.path().join("sources"),
+            DEFAULT_MAX_IDLE,
             std::sync::Arc::new(StoreReferences(store)),
         );
-        let referenced = keep(&trees, snapshot(1)).await;
-        let idle = keep(&trees, snapshot(9)).await;
+        let base = keep(&trees, snapshot(1)).await;
+        let target = keep(&trees, snapshot(2)).await;
+        let other = keep(&trees, snapshot(9)).await;
 
         let later = SystemTime::now() + Duration::from_secs(3600);
         let collected = trees.collect(later).await;
 
         assert_eq!(collected.removed, 1);
-        assert!(referenced.is_dir());
-        assert!(!idle.exists());
+        assert!(base.is_dir());
+        assert!(target.is_dir());
+        assert!(!other.exists());
     }
 }

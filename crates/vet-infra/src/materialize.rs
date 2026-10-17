@@ -3,6 +3,7 @@
 //! (§6.2). The directory is kept between launches: see `kept`.
 
 pub mod kept;
+pub mod projects;
 
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -16,7 +17,7 @@ use vet_semantic::ports::{Materialized, Materializer, NotMaterializable};
 
 use kept::{Error, KeptTrees, Lease};
 
-/// Serves the snapshots an acquisition has recorded.
+/// Serves the snapshots an acquisition has recorded, from the trees of one project.
 pub struct Materialize<G, S> {
     acquisition: Arc<Acquisition<G, S>>,
     trees: Arc<KeptTrees>,
@@ -66,7 +67,7 @@ impl<G: History + Checkout + Send + Sync + 'static, S: Store + Send + Sync + 'st
         let started = Instant::now();
         let acquired = self
             .trees
-            .acquire(id, policy, |dest| self.build(id, dest))
+            .acquire(id, policy.restore_kind(), |dest| self.build(id, dest))
             .await
             .map_err(|e| match e {
                 Error::Build(why) => why,
@@ -90,6 +91,6 @@ impl<G: History + Checkout + Send + Sync + 'static, S: Store + Send + Sync + 'st
     }
 
     async fn kept(&self, id: SnapshotId, policy: AnalysisPolicy) -> Option<PathBuf> {
-        self.trees.kept(id, policy).await
+        self.trees.kept(id, policy.restore_kind()).await
     }
 }

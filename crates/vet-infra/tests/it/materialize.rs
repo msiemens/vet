@@ -17,7 +17,9 @@ use vet_core::content::{BlobId, EntryKind, FileEntry, RepoPath, Snapshot, Snapsh
 use vet_core::merkle;
 use vet_infra::git::GixRepo;
 use vet_infra::materialize::Materialize;
-use vet_infra::materialize::kept::{KeptTrees, Limits, Referenced};
+use vet_infra::materialize::kept::{DEFAULT_MAX_IDLE, KeptTrees, Referenced};
+use vet_infra::materialize::projects::ProjectTrees;
+use vet_infra::storage::layout::{ROOT as ROOT_FILE, SOURCES, project_dir};
 use vet_semantic::policy::AnalysisPolicy;
 use vet_semantic::ports::{Materializer, NotMaterializable};
 
@@ -73,9 +75,16 @@ fn read(root: &Path, name: &str) -> Vec<u8> {
 
 const POLICY: AnalysisPolicy = AnalysisPolicy::LIMITED;
 
-fn trees(data: &Path) -> Arc<KeptTrees> {
-    let none: Arc<dyn Referenced> = Arc::new(HashSet::<SnapshotId>::new);
-    Arc::new(KeptTrees::for_test(data.join("materialized"), Limits::default(), none))
+const ROOT: &str = "/work/repo";
+
+fn project_trees(data: &Path, referenced: &[SnapshotId]) -> ProjectTrees {
+    let referenced: HashSet<_> = referenced.iter().copied().collect();
+    let referenced: Arc<dyn Referenced> = Arc::new(move || referenced.clone());
+    ProjectTrees::for_test(data.to_owned(), DEFAULT_MAX_IDLE, referenced)
+}
+
+async fn trees(data: &Path) -> Arc<KeptTrees> {
+    project_trees(data, &[]).of(ROOT).await
 }
 
 #[tokio::test]
@@ -84,7 +93,7 @@ async fn base_and_dirty_snapshots_materialize_from_git_plus_store() {
     let data = tempfile::tempdir().unwrap();
     let acq = Arc::new(Acquisition::new(GixRepo::for_test(dir.path()), MemStore::default()));
     let opened = common::start_at_head(&acq).await;
-    let materializer = Materialize::new(acq.clone(), trees(data.path()));
+    let materializer = Materialize::new(acq.clone(), trees(data.path()).await);
     acq.store.put_snapshot(opened.target.clone(), opened.status.clone());
 
     // The worktree moves on; the materialized dirty snapshot does not.
@@ -126,7 +135,7 @@ async fn a_binary_held_by_hash_is_materialized_while_the_worktree_still_has_it()
     );
 
     let data = tempfile::tempdir().unwrap();
-    let kept = Materialize::new(acq.clone(), trees(data.path()))
+    let kept = Materialize::new(acq.clone(), trees(data.path()).await)
         .materialize(opened.target.id, POLICY)
         .await
         .unwrap();
@@ -135,7 +144,7 @@ async fn a_binary_held_by_hash_is_materialized_while_the_worktree_still_has_it()
     // The file changed since: git never had it and the worktree no longer does.
     write(dir.path(), "data.bin", b"\0changed!");
     let data = tempfile::tempdir().unwrap();
-    let refused = Materialize::new(acq, trees(data.path()))
+    let refused = Materialize::new(acq, trees(data.path()).await)
         .materialize(opened.target.id, POLICY)
         .await;
     match refused {
@@ -151,7 +160,7 @@ async fn a_tree_outlives_its_guard_and_a_new_launch_finds_it_without_the_snapsho
     let acq = Arc::new(Acquisition::new(GixRepo::for_test(dir.path()), MemStore::default()));
     let opened = common::start_at_head(&acq).await;
 
-    let first = Materialize::new(acq, trees(data.path()))
+    let first = Materialize::new(acq, trees(data.path()).await)
         .materialize(opened.base.id, POLICY)
         .await
         .unwrap();
@@ -161,7 +170,7 @@ async fn a_tree_outlives_its_guard_and_a_new_launch_finds_it_without_the_snapsho
 
     // A new launch: its acquisition knows nothing of the snapshot, and git is not asked.
     let restarted = Arc::new(Acquisition::new(GixRepo::for_test(dir.path()), MemStore::default()));
-    let again = Materialize::new(restarted, trees(data.path()))
+    let again = Materialize::new(restarted, trees(data.path()).await)
         .materialize(opened.base.id, POLICY)
         .await
         .unwrap();
@@ -170,7 +179,7 @@ async fn a_tree_outlives_its_guard_and_a_new_launch_finds_it_without_the_snapsho
     // The policy is part of the key.
     let executing = Materialize::new(
         Arc::new(Acquisition::new(GixRepo::for_test(dir.path()), MemStore::default())),
-        trees(data.path()),
+        trees(data.path()).await,
     )
     .materialize(opened.base.id, AnalysisPolicy::EXECUTING)
     .await;
@@ -178,11 +187,53 @@ async fn a_tree_outlives_its_guard_and_a_new_launch_finds_it_without_the_snapsho
 }
 
 #[tokio::test]
+async fn policies_that_restore_alike_share_a_tree_and_an_executing_restore_has_its_own() {
+    let dir = fixture();
+    let data = tempfile::tempdir().unwrap();
+    let acq = Arc::new(Acquisition::new(GixRepo::for_test(dir.path()), MemStore::default()));
+    let opened = common::start_at_head(&acq).await;
+    let materializer = Materialize::new(acq, trees(data.path()).await);
+    let root = async |policy| materializer.materialize(opened.base.id, policy).await.unwrap().root;
+
+    let limited = root(AnalysisPolicy::LIMITED).await;
+    assert_eq!(root(AnalysisPolicy::SERVERS).await, limited);
+    assert_ne!(root(AnalysisPolicy::EXECUTING).await, limited);
+}
+
+#[tokio::test]
+async fn trees_live_in_their_projects_directory_and_each_project_has_its_own() {
+    let dir = fixture();
+    let data = tempfile::tempdir().unwrap();
+    let acq = Arc::new(Acquisition::new(GixRepo::for_test(dir.path()), MemStore::default()));
+    let opened = common::start_at_head(&acq).await;
+    let projects = project_trees(data.path(), &[]);
+    let materialize = async |root| {
+        Materialize::new(acq.clone(), projects.of(root).await)
+            .materialize(opened.base.id, POLICY)
+            .await
+            .unwrap()
+            .root
+    };
+
+    let first = materialize(ROOT).await;
+    let second = materialize("/work/other").await;
+
+    let sources = project_dir(data.path(), ROOT).join(SOURCES);
+    assert!(first.starts_with(&sources), "{first:?}");
+    assert!(second.starts_with(project_dir(data.path(), "/work/other").join(SOURCES)));
+    assert_ne!(first, second, "the same snapshot is a tree in each project");
+    assert_eq!(
+        std::fs::read_to_string(project_dir(data.path(), ROOT).join(ROOT_FILE)).unwrap(),
+        ROOT
+    );
+}
+
+#[tokio::test]
 async fn unknown_snapshot_is_refused() {
     let dir = fixture();
     let data = tempfile::tempdir().unwrap();
     let acq = Acquisition::new(GixRepo::for_test(dir.path()), MemStore::default());
-    let result = Materialize::new(Arc::new(acq), trees(data.path()))
+    let result = Materialize::new(Arc::new(acq), trees(data.path()).await)
         .materialize(SnapshotId(vet_core::content::Hash([9; 32])), POLICY)
         .await;
     assert!(matches!(result, Err(NotMaterializable::Other(_))));
@@ -199,7 +250,7 @@ async fn snapshot_with_unavailable_blobs_is_refused_naming_them() {
     // Dirty content is gone from the worktree too, so nothing can reconstruct it.
     let gone = [BlobId::of(b"dirty\n"), BlobId::of(b"new\n")];
     let data = tempfile::tempdir().unwrap();
-    match Materialize::new(acq, trees(data.path()))
+    match Materialize::new(acq, trees(data.path()).await)
         .materialize(scan.snapshot.id, POLICY)
         .await
     {

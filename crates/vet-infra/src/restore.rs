@@ -684,12 +684,12 @@ impl ToolRestorer {
         versions
     }
 
-    /// Everything that decides what a restore does before it runs: the policy,
+    /// Everything that decides what a restore does before it runs: the restore kind,
     /// the environment, the tools and their versions, the steps and what the
     /// plan could not restore. A record made under other inputs is not reused.
     fn inputs(&self, plan: &Plan, steps: &[&Step], tools: &[(String, String)], policy: AnalysisPolicy) -> Hash {
         let mut digest = Digest::default();
-        digest.field(policy.tag());
+        digest.field(policy.restore_kind().tag());
         digest.field("environment");
         for (key, value) in &self.env {
             digest.field(key).field(value);
@@ -1285,26 +1285,17 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn a_kept_tree_restored_under_one_policy_is_not_the_record_of_another() {
+    async fn a_restore_record_serves_the_policies_that_restore_alike_and_no_other() {
         let (_dir, root) = kept(&[("package.json", "{}")]);
         let tools = Arc::new(FakeTools::default());
         let typescript = backend("typescript");
         for policy in [NO_EXEC, AnalysisPolicy::SERVERS, AnalysisPolicy::EXECUTING] {
-            let before = tools.runs().len();
             restorer(&tools).restore(&root, &typescript, policy).await;
-            assert_eq!(
-                tools.runs().len(),
-                before + 1,
-                "{policy:?} reused another policy's record"
-            );
         }
         assert_eq!(
             tools.runs(),
-            [
-                "npm install --ignore-scripts",
-                "npm install --ignore-scripts",
-                "npm install"
-            ]
+            ["npm install --ignore-scripts", "npm install"],
+            "servers reuse the record of noexec; exec restores again"
         );
     }
 

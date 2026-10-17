@@ -38,8 +38,8 @@ impl AnalysisPolicy {
         self.allow_executing_restores
     }
 
-    /// Names the policy in the keys of what depends on it (kept trees, restore records,
-    /// cached answers): two policies share a name only if they permit the same.
+    /// Names the policy in the keys of what depends on all of it (cached answers): two
+    /// policies share a name only if they permit the same.
     pub fn tag(self) -> &'static str {
         match (self.allow_executing, self.allow_executing_restores) {
             (false, false) => "noexec",
@@ -47,5 +47,37 @@ impl AnalysisPolicy {
             (true, true) => "exec",
             (false, true) => "restores",
         }
+    }
+
+    /// What a restore under this policy may do, which is all that decides what a kept tree
+    /// holds: policies that restore alike share a tree and its restore records.
+    pub fn restore_kind(self) -> RestoreKind {
+        if self.allow_executing_restores {
+            RestoreKind::Exec
+        } else {
+            RestoreKind::Fetch
+        }
+    }
+}
+
+/// Whether a restore may execute project code.
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
+pub enum RestoreKind {
+    /// Fetch-only: no install scripts or build steps.
+    Fetch,
+    /// Install scripts and build steps run.
+    Exec,
+}
+
+impl RestoreKind {
+    pub fn tag(self) -> &'static str {
+        match self {
+            Self::Fetch => "fetch",
+            Self::Exec => "exec",
+        }
+    }
+
+    pub fn from_tag(tag: &str) -> Option<Self> {
+        [Self::Fetch, Self::Exec].into_iter().find(|kind| kind.tag() == tag)
     }
 }

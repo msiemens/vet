@@ -25,4 +25,5 @@ mod semantic;
 mod session;
 mod symbols;
 mod sync;
+mod trees;
 mod trust;
