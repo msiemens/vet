@@ -101,7 +101,7 @@ where
         };
         let diffed = match kept {
             Some(kept) => kept,
-            None => self.diff_of(&base, &target).await?,
+            None => self.facts.diff_of(&base, &target).await?,
         };
         self.retained(&self.copying, (&base, &target, &status), diffed).await
     }

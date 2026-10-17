@@ -8,7 +8,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
-use vet_core::content::{BlobId, FileEntry, NonTextKind, RepoPath, Snapshot, SnapshotDiff, SnapshotId};
+use vet_core::content::{BlobId, FileEntry, LineDelta, NonTextKind, RepoPath, Snapshot, SnapshotDiff, SnapshotId};
 use vet_core::generated::has_generated_header;
 use vet_core::interdiff::InterdiffHunk;
 use vet_core::merkle::empty_snapshot;
@@ -17,7 +17,7 @@ use vet_engine::{Computed, Engine, Kind, Limits, Progress, Retention};
 
 use super::blobs::image_media_type;
 use super::views::{ItemView, ModeChange};
-use super::{LiveSession, Result, SessionError};
+use super::{Result, SessionError};
 use crate::acquisition::Acquisition;
 use crate::changeset::CommitId;
 use crate::ports::{CommitDetail, GitError, GitRepo, LiveStore, TextDiff};
@@ -334,48 +334,65 @@ impl Derived {
         };
         Ok(self.diffs.get(key, compute).await?.value)
     }
-}
 
-impl<G, S> LiveSession<G, S>
-where
-    G: GitRepo + Send + Sync + 'static,
-    S: LiveStore + Send + Sync + 'static,
-{
-    /// The diff of `old` and `new` as the session reads it.
-    pub(super) async fn diff_of(&self, old: &Arc<Snapshot>, new: &Arc<Snapshot>) -> Result<Arc<Diffed>> {
-        self.derived.diff(&self.acquisition, old, new).await
-    }
-
-    /// The tree of `commit` as the session reads it: a snapshot already read is not walked again,
-    /// and a walk under way is joined.
-    pub(super) async fn snapshot_of(&self, commit: &CommitId) -> Result<Arc<Snapshot>> {
-        Ok(self.derived.snapshot(&self.acquisition, commit).await?)
-    }
-
-    /// The interdiff of `key`, as [`LiveSession::diff_of`].
-    pub(super) async fn interdiff_of(&self, key: Interdiff) -> Result<Arc<Compared>> {
+    /// The interdiff of `key`, read through `acquisition` as [`Derived::diff`] is.
+    pub(super) async fn interdiff<G, S>(
+        &self,
+        acquisition: &Arc<Acquisition<G, S>>,
+        key: Interdiff,
+    ) -> Result<Arc<Compared>>
+    where
+        G: GitRepo + Send + Sync + 'static,
+        S: LiveStore + Send + Sync + 'static,
+    {
         let compute = |progress| {
-            let acquisition = Arc::clone(&self.acquisition);
+            let acquisition = Arc::clone(acquisition);
             let key = key.clone();
             async move {
                 let compared = compared(&acquisition, &key, &progress).await?;
                 Ok(Computed::new(Arc::new(compared), true))
             }
         };
-        Ok(self.derived.interdiffs.get(key.clone(), compute).await?.value)
+        Ok(self.interdiffs.get(key.clone(), compute).await?.value)
     }
 
-    /// The commits of `key`, as [`LiveSession::diff_of`].
-    pub(super) async fn commits_of(&self, key: CommitsBetween) -> Result<Arc<Vec<CommitUnit>>> {
+    /// The commits of `key`, read through `acquisition` as [`Derived::diff`] is.
+    pub(super) async fn commits<G, S>(
+        &self,
+        acquisition: &Arc<Acquisition<G, S>>,
+        key: CommitsBetween,
+    ) -> Result<Arc<Vec<CommitUnit>>>
+    where
+        G: GitRepo + Send + Sync + 'static,
+        S: LiveStore + Send + Sync + 'static,
+    {
         let compute = |progress| {
-            let acquisition = Arc::clone(&self.acquisition);
+            let acquisition = Arc::clone(acquisition);
             let key = key.clone();
             async move {
                 let units = units(&acquisition, &key, &progress).await?;
                 Ok(Computed::new(Arc::new(units), true))
             }
         };
-        Ok(self.derived.commits.get(key.clone(), compute).await?.value)
+        Ok(self.commits.get(key.clone(), compute).await?.value)
+    }
+}
+
+/// The lines between two commits. The key names both, and what git has of a commit never changes,
+/// so the value is kept for as long as the engine has room.
+#[derive(Clone, PartialEq, Eq, Hash)]
+pub(super) struct LinesBetween {
+    pub(super) base: CommitId,
+    pub(super) tip: CommitId,
+}
+
+impl Kind for LinesBetween {
+    type Value = LineDelta;
+    /// Fit to show.
+    type Error = GitError;
+
+    fn retention(&self) -> Retention {
+        Retention::Kept
     }
 }
 

@@ -56,7 +56,7 @@ impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> L
     pub fn view(&self) -> RevisionView<G, S> {
         RevisionView {
             published: Arc::clone(&self.published),
-            derived: Arc::clone(&self.derived),
+            derived: Arc::clone(&self.facts.derived),
             acquisition: Arc::clone(&self.acquisition),
             repo: self.repo.clone(),
         }

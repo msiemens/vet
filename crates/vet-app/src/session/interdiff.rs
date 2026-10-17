@@ -120,7 +120,7 @@ impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> L
             });
         }
         let asked = self.interdiffing(st, from, to).await?;
-        let compared = self.interdiff_of(asked.key.clone()).await?;
+        let compared = self.facts.interdiff_of(asked.key.clone()).await?;
         Ok(ChangesSince {
             from,
             to,
@@ -146,7 +146,7 @@ impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> L
         let lens = Lens::new(st, id);
         let files = file_views(&id.compared.diffed, &st.filter, |diff, items| lens.state(diff, items));
         let current = self.acquisition.git.current_branch().await?;
-        let base = super::BaseView::of_commit(self.commit_info(&id.to.base_commit).await?);
+        let base = super::BaseView::of_commit(self.facts.commit_info(&id.to.base_commit).await?);
         let facts = self.lens_facts(st, current.as_deref()).await?;
         let excluded = excluded_groups(&id.compared.diffed, st);
         let empty = empty_reason(!excluded.is_empty(), ViewKind::Range, None, false, None);

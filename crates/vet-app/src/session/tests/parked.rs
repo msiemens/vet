@@ -83,7 +83,7 @@ async fn coming_back_rebuilds_the_diff_once_and_shows_the_same_review() {
     fx.git.feature(&[("a.txt", &base)], &[("a.txt", &numbered(10, &[1]))]);
     view_feature(&fx).await;
     // Parking dropped the state's diff; the engine's copy goes too, as eviction would leave it.
-    fx.session.derived.diffs.clear();
+    fx.session.facts.derived.diffs.clear();
     let diffs = fx.git.diffs.load(Ordering::Relaxed);
     assert!(fx.session.open_changeset(Source::WorkingTree).await.unwrap().is_some());
 

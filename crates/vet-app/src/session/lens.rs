@@ -16,7 +16,6 @@ use super::state::{Commits, Remapped, State, View, acknowledged, lifecycle_of};
 use super::views::{BaseView, ManifestView, ReviewUpdateView, ReviewView, ViewKind, empty_reason};
 use super::{LiveSession, Result, SessionError};
 use crate::changeset::{CommitId, Lens, Source};
-use crate::mutex::lock;
 use crate::ports::{CommitInfo, GitRepo, LiveStore, ReviewWrites};
 use crate::review::SpanOrigin;
 
@@ -122,7 +121,7 @@ impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> L
             Source::WorkingTree => (Lens::Squash, 0),
             source => (
                 (self.acquisition.store.lens(self.repo.clone(), source.clone()).await?).unwrap_or_default(),
-                self.commit_count(&st.base_commit, &st.head).await?,
+                self.facts.commit_count(&st.base_commit, &st.head).await?,
             ),
         };
         let changes = st.changes();
@@ -144,19 +143,6 @@ impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> L
             completion: changes.remapped.completion,
             base,
         })
-    }
-
-    /// How many commits lie on the first-parent line from `base` to `tip`, walked once while the
-    /// session lives.
-    async fn commit_count(&self, base: &CommitId, tip: &CommitId) -> Result<u32> {
-        let key = (base.clone(), tip.clone());
-        let found = lock(&self.commit_counts).get(&key).copied();
-        if let Some(count) = found {
-            return Ok(count);
-        }
-        let count = self.acquisition.git.first_parent_range(base, tip).await?.len() as u32;
-        lock(&self.commit_counts).insert(key, count);
-        Ok(count)
     }
 
     /// What the commits of the changeset of `st` are the commits between; none for the working
@@ -214,7 +200,7 @@ impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> L
         let parent = unit.detail.parents.first().unwrap_or(own);
         let current = git.current_branch().await?;
         let facts = self.lens_facts(st, current.as_deref()).await?;
-        let base = BaseView::of_commit(self.commit_info(parent).await?);
+        let base = BaseView::of_commit(self.facts.commit_info(parent).await?);
         let excluded = excluded_groups(&unit.diffed, st);
         let empty = empty_reason(!excluded.is_empty(), ViewKind::Commit, None, false, None);
         Ok(ManifestView {

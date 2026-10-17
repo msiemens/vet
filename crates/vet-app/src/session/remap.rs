@@ -240,7 +240,7 @@ where
             View::Commit { index } => Err(SessionError::NotFound(format!("commit {index}"))),
             View::Interdiff { from, to } => {
                 let asked = self.interdiffing(st, from, to).await?;
-                Ok(match self.derived.interdiffs.peek(&asked.key) {
+                Ok(match self.facts.derived.interdiffs.peek(&asked.key) {
                     Some(compared) => Ok(Shown::Interdiff(Box::new(asked.with(compared)))),
                     None => Err(Missing::Interdiff(Box::new(asked))),
                 })
@@ -250,11 +250,11 @@ where
 
     async fn derive(&self, missing: Missing) -> Result<Derivation> {
         Ok(match missing {
-            Missing::Diff { base, target } => Derivation::Diff(self.diff_of(&base, &target).await?),
-            Missing::Commits(Some(key)) => Derivation::Commits(self.commits_of(key).await?),
+            Missing::Diff { base, target } => Derivation::Diff(self.facts.diff_of(&base, &target).await?),
+            Missing::Commits(Some(key)) => Derivation::Commits(self.facts.commits_of(key).await?),
             Missing::Commits(None) => Derivation::Commits(Arc::default()),
             Missing::Interdiff(asked) => {
-                let compared = self.interdiff_of(asked.key.clone()).await?;
+                let compared = self.facts.interdiff_of(asked.key.clone()).await?;
                 Derivation::Interdiff(Box::new(asked.with(compared)))
             }
         })

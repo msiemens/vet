@@ -107,7 +107,7 @@ impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> L
                 Ok((base_commit, base, target)) => {
                     let change = match &previous {
                         Some((old_base, old_target)) => self.change_of((old_base, old_target), &base, &target).await?,
-                        None => first_change(&*self.diff_of(&base, &target).await?),
+                        None => first_change(&*self.facts.diff_of(&base, &target).await?),
                     };
                     self.acquisition.record_commit(base.id, base_commit.clone());
                     self.acquisition.record_commit(target.id, tip.clone());

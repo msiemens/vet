@@ -224,11 +224,11 @@ impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> L
         if tip == st.head && base_commit == st.base_commit {
             return Ok(None);
         }
-        let target = self.snapshot_of(&tip).await?;
+        let target = self.facts.snapshot_of(&tip).await?;
         let base = if base_commit == st.base_commit {
             st.base.clone()
         } else {
-            self.snapshot_of(&base_commit).await?
+            self.facts.snapshot_of(&base_commit).await?
         };
         let now = (self.clock)();
         if let (Some(review), Some(changeset)) = (&st.review, st.changeset) {
@@ -321,8 +321,8 @@ impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> L
             Stored::Browsing { changeset, threads } => (changeset, threads),
         };
         let (base_choice, base_commit) = self.base_for(source, &tip).await?;
-        let base = self.snapshot_of(&base_commit).await?;
-        let target = self.snapshot_of(&tip).await?;
+        let base = self.facts.snapshot_of(&base_commit).await?;
+        let target = self.facts.snapshot_of(&tip).await?;
         acquisition.record_commit(base.id, base_commit.clone());
         acquisition.record_commit(target.id, tip.clone());
         Ok(State {

@@ -4,32 +4,15 @@
 use std::sync::Arc;
 
 use vet_core::content::{LineDelta, Snapshot};
-use vet_engine::{Computed, Kind, Retention};
+use vet_engine::Computed;
 
 use super::LiveSession;
+use super::derived::LinesBetween;
 use super::source::tip_of;
 use crate::acquisition::Acquisition;
 use crate::base;
 use crate::changeset::{CommitId, Source};
 use crate::ports::{GitError, GitRepo, LiveStore};
-
-/// The lines between two commits. The key names both, and what git has of a commit never changes,
-/// so the value is kept for as long as the engine has room.
-#[derive(Clone, PartialEq, Eq, Hash)]
-pub(super) struct LinesBetween {
-    base: CommitId,
-    tip: CommitId,
-}
-
-impl Kind for LinesBetween {
-    type Value = LineDelta;
-    /// Fit to show.
-    type Error = GitError;
-
-    fn retention(&self) -> Retention {
-        Retention::Kept
-    }
-}
 
 impl<G, S> LiveSession<G, S>
 where
@@ -52,12 +35,13 @@ where
             return Ok(None);
         };
         let acquisition = Arc::clone(&self.acquisition);
-        let derived = Arc::clone(&self.derived);
+        let derived = Arc::clone(&self.facts.derived);
         let key = LinesBetween {
             base: base.clone(),
             tip: tip.clone(),
         };
         let counted = self
+            .facts
             .lines
             .get(key, move |_| async move {
                 let old = derived.snapshot(&acquisition, &base).await?;

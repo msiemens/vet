@@ -54,6 +54,7 @@ mod browse;
 mod content;
 mod derived;
 mod exchange;
+mod facts;
 mod hold;
 mod interdiff;
 mod lens;
@@ -81,22 +82,21 @@ use tokio::sync::Mutex;
 use vet_core::content::{EntryKind, RepoPath, Snapshot, SnapshotId, SnapshotStatus};
 use vet_core::filter::ReviewFilter;
 use vet_core::review::{Anchor, CommentTarget, Thread, ThreadStatus};
-use vet_engine::{Engine, Limits};
+use vet_engine::Engine;
 
 use self::ahead::Retained;
 pub use self::base_diff::{BaseDiffKind, BaseDiffRow, BaseDiffView};
 pub use self::blobs::NoText;
 pub use self::browse::{DirEntryKind, DirItem, DirListing, FileListing, PatternMatch, PatternMatches};
 pub use self::content::{FileText, ItemBlob, MAX_ITEM_BLOB, TargetText};
-use self::derived::{Derived, Diffed};
+use self::derived::Diffed;
 pub use self::exchange::{
     Blocker, DiscussionView, Keep, Outgoing, SubmitReport, SyncNotice, SyncReport, Unread, VoteSent, is_unread,
 };
+use self::facts::Facts;
 use self::hold::{Held, Published, Writer};
 pub use self::lens::{CommitKind, CommitUnitView, CommitsView};
-use self::lines::LinesBetween;
 pub use self::listing::{ChangesetList, ChangesetRow, Divergence, RowReview};
-use self::lru::Lru;
 pub use self::revision::{ChangedFiles, RevisionView};
 pub use self::search::{MAX_HITS, SearchFile, SearchQuery, SearchResult, SearchScope};
 use self::source::Stored;
@@ -115,9 +115,7 @@ use crate::base;
 use crate::changeset::{BaseChoice, ChangesetId, CommitId, Snapshots, Source, Version, VersionChange, VersionOrigin};
 use crate::mutex::lock;
 use crate::platform::{PlatformError, PullRequestCache, Push};
-use crate::ports::{
-    Clock, CommitInfo, Degraded, Dirty, GitError, GitRepo, LiveStore, ReviewWrites, Scan, StoreError, Watcher,
-};
+use crate::ports::{Clock, Degraded, Dirty, GitError, GitRepo, LiveStore, ReviewWrites, Scan, StoreError, Watcher};
 use crate::progress::Tasks;
 use crate::review::{ReviewId, visible_threads};
 use crate::revisions::Revisions;
@@ -216,21 +214,8 @@ pub struct LiveSession<G, S: LiveStore> {
     /// Held while threads are exchanged with a platform, so two exchanges never overlap. Locked
     /// before the token, which is not held across the platform's answers.
     exchange: Mutex<()>,
-    /// The line deltas between commits that the list of changesets shows.
-    lines: Engine<LinesBetween>,
-    /// The diffs, interdiffs and commits the review state is remapped onto.
-    derived: Arc<Derived>,
-    /// What git said of the commits the manifests name, which it does not change.
-    commit_infos: std::sync::Mutex<Lru<CommitId, CommitInfo>>,
-    /// How a branch came to hold a tip, by the tip and the branch's commit, which git does not change.
-    merges: std::sync::Mutex<Lru<(CommitId, CommitId), Option<MergedAs>>>,
-    /// The commits reachable from the first commit and not from the second, counted up to the
-    /// listing's cap. Git does not change it for the same two commits short of shallow deepening
-    /// or `replace` refs.
-    behind: std::sync::Mutex<Lru<(CommitId, CommitId), u32>>,
-    /// How many commits lie on the first-parent line between a base and a tip, by the base
-    /// commit and the tip, which git does not change.
-    commit_counts: std::sync::Mutex<Lru<(CommitId, CommitId), u32>>,
+    /// What the repository says that no review state shapes, and the caches of it.
+    facts: Facts<G, S>,
     /// The states of their source branch that the platforms list for pull requests, which are the
     /// versions the review of each has.
     pushes: std::sync::Mutex<HashMap<Source, Vec<Push>>>,
@@ -245,25 +230,6 @@ pub struct LiveSession<G, S: LiveStore> {
     /// view and has no open review, edits only mark it changed and are not scanned.
     settle_wanted: Arc<Wanted>,
 }
-
-/// The commit that merged a tip into a branch, how many commits the merge brought in and how many
-/// the branch has since.
-type MergedAs = (CommitInfo, Option<u32>, Option<u32>);
-
-/// How many line deltas the list of changesets keeps.
-const KEPT_LINE_DELTAS: usize = 4096;
-
-/// How many commit facts the session keeps; the one used longest ago goes first.
-const KEPT_COMMIT_INFOS: usize = 1024;
-
-/// How many merge facts the session keeps; the one used longest ago goes first.
-const KEPT_MERGES: usize = 16;
-
-/// How many ahead and behind counts the session keeps; the one used longest ago goes first.
-const KEPT_BEHIND: usize = 4096;
-
-/// How many commit counts the session keeps; the one used longest ago goes first.
-const KEPT_COMMIT_COUNTS: usize = 16;
 
 /// What settling a snapshot into a tree needs that takes a while, worked out for the tree as it
 /// was found, without the token.
@@ -406,11 +372,7 @@ impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> L
         let wanted = state.source == Source::WorkingTree;
         Self {
             author: author_of(&acquisition.git).await,
-            derived: Arc::new(Derived::new(&acquisition.tasks)),
-            commit_infos: std::sync::Mutex::new(Lru::new(KEPT_COMMIT_INFOS)),
-            merges: std::sync::Mutex::new(Lru::new(KEPT_MERGES)),
-            behind: std::sync::Mutex::new(Lru::new(KEPT_BEHIND)),
-            commit_counts: std::sync::Mutex::new(Lru::new(KEPT_COMMIT_COUNTS)),
+            facts: Facts::new(&acquisition),
             pushes: std::sync::Mutex::default(),
             known: Arc::default(),
             ahead: ahead::copies(&acquisition.tasks),
@@ -424,7 +386,6 @@ impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> L
             degraded: std::sync::Mutex::new(None),
             revisions: Arc::default(),
             exchange: Mutex::new(()),
-            lines: Engine::new(Limits::entries(KEPT_LINE_DELTAS)),
             settle_wanted: Arc::new(Wanted::new(wanted)),
         }
     }
@@ -749,23 +710,12 @@ impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> L
         Ok(complete)
     }
 
-    /// What git says of `commit`, asked once while the session lives.
-    async fn commit_info(&self, commit: &CommitId) -> Result<CommitInfo> {
-        let found = lock(&self.commit_infos).get(commit).cloned();
-        if let Some(info) = found {
-            return Ok(info);
-        }
-        let info = self.acquisition.git.commit_info(commit).await?;
-        lock(&self.commit_infos).insert(commit.clone(), info.clone());
-        Ok(info)
-    }
-
     /// The base with its display facts; `current` is the branch the working tree is on.
     async fn base_view(&self, st: &State, current: Option<&str>) -> Result<BaseView> {
         let own = manifest::target_view(&st.source, &st.head, current).branch;
         let contained = base::contained_in(&st.base_choice, &st.base_commit, &st.head, own.as_deref());
         Ok(BaseView {
-            commit: self.commit_info(&st.base_commit).await?,
+            commit: self.facts.commit_info(&st.base_commit).await?,
             contained_in: match contained {
                 Some(reference) => Some(self.contained(st, &reference).await),
                 None => None,
@@ -803,7 +753,7 @@ impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> L
             .flatten();
         let same_tip = reference_tip.as_ref() == Some(&st.head);
         let merged = match &reference_tip {
-            Some(tip) if !same_tip => self.merged_into_branch(&st.head, tip).await,
+            Some(tip) if !same_tip => self.facts.merged_into_branch(&st.head, tip).await,
             _ => None,
         };
         let (merged_by, commits, since) = match merged {
@@ -817,39 +767,6 @@ impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> L
             commits,
             since,
         }
-    }
-
-    /// How the branch at `into` came to hold `tip`: the commit that merged it, how many commits
-    /// the merge brought in and how many the branch has since. Asked once for the same two commits.
-    async fn merged_into_branch(&self, tip: &CommitId, into: &CommitId) -> Option<MergedAs> {
-        const COUNTED: usize = 10_000;
-        let key = (tip.clone(), into.clone());
-        let kept = lock(&self.merges).get(&key).cloned();
-        if let Some(merged) = kept {
-            return merged;
-        }
-        let git = &self.acquisition.git;
-        let merged = match base::merging_commit(git, tip, into).await {
-            Ok(None) => None,
-            Ok(Some(merging)) => {
-                let counted = |n: std::result::Result<usize, GitError>| n.ok().map(|n| n as u32);
-                let commits = match &merging.before {
-                    Some(before) => counted(git.commits_behind(tip, before, COUNTED).await),
-                    None => None,
-                };
-                let since = counted(git.commits_behind(into, &merging.commit, COUNTED).await);
-                self.commit_info(&merging.commit)
-                    .await
-                    .ok()
-                    .map(|info| (info, commits, since))
-            }
-            Err(e) => {
-                tracing::warn!(error = %e, "the commit that merged the changeset is not found");
-                return None;
-            }
-        };
-        lock(&self.merges).insert(key, merged.clone());
-        merged
     }
 
     /// The branch a pull request is merged into, when that is not the repository's default branch.
@@ -1087,7 +1004,7 @@ impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> L
             let sides = (&tree.base, &tree.target);
             settlement.change = Some(self.change_of(sides, &tree.base, snapshot).await?);
         }
-        settlement.diffed = self.diff_of(&tree.base, snapshot).await.ok();
+        settlement.diffed = self.facts.diff_of(&tree.base, snapshot).await.ok();
         Ok(settlement)
     }
 

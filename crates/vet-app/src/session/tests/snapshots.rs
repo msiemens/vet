@@ -43,7 +43,7 @@ async fn concurrent_reads_of_one_commit_walk_its_tree_once() {
 
     let paused = fx.git.paused.lock().await;
     let mut calls: Vec<Call<'_, Arc<Snapshot>>> = (0..3)
-        .map(|_| -> Call<'_, Arc<Snapshot>> { Box::pin(fx.session.snapshot_of(&commit)) })
+        .map(|_| -> Call<'_, Arc<Snapshot>> { Box::pin(fx.session.facts.snapshot_of(&commit)) })
         .collect();
     let mut cx = Context::from_waker(Waker::noop());
     for call in &mut calls {
@@ -75,17 +75,17 @@ async fn the_snapshot_flight_evicts_what_it_cannot_keep() {
             .add_commit(&format!("c{i}"), &format!("c{i}"), &[("a.txt", &text)]);
     }
     for i in 0..MORE_THAN_KEPT {
-        fx.session.snapshot_of(&commit(i)).await.unwrap();
+        fx.session.facts.snapshot_of(&commit(i)).await.unwrap();
     }
     let reads = fx.git.snapshot_reads.load(Ordering::Relaxed);
 
-    fx.session.snapshot_of(&commit(0)).await.unwrap();
+    fx.session.facts.snapshot_of(&commit(0)).await.unwrap();
     assert_eq!(
         fx.git.snapshot_reads.load(Ordering::Relaxed),
         reads + 1,
         "the oldest read is beyond the limit and was evicted"
     );
-    fx.session.snapshot_of(&commit(MORE_THAN_KEPT - 1)).await.unwrap();
+    fx.session.facts.snapshot_of(&commit(MORE_THAN_KEPT - 1)).await.unwrap();
     assert_eq!(
         fx.git.snapshot_reads.load(Ordering::Relaxed),
         reads + 1,
@@ -107,18 +107,18 @@ async fn a_snapshot_over_the_byte_cap_is_evicted_before_the_entry_limit() {
     }
     let commit = |i: usize| CommitId(format!("big{i}"));
     for i in 0..3 {
-        fx.session.snapshot_of(&commit(i)).await.unwrap();
+        fx.session.facts.snapshot_of(&commit(i)).await.unwrap();
     }
     let reads = fx.git.snapshot_reads.load(Ordering::Relaxed);
 
     // Three trees outweigh the cap, so the first was evicted although only three are kept.
-    fx.session.snapshot_of(&commit(0)).await.unwrap();
+    fx.session.facts.snapshot_of(&commit(0)).await.unwrap();
     assert_eq!(
         fx.git.snapshot_reads.load(Ordering::Relaxed),
         reads + 1,
         "the first was evicted by its weight, not by the entry count"
     );
-    fx.session.snapshot_of(&commit(2)).await.unwrap();
+    fx.session.facts.snapshot_of(&commit(2)).await.unwrap();
     assert_eq!(
         fx.git.snapshot_reads.load(Ordering::Relaxed),
         reads + 1,
