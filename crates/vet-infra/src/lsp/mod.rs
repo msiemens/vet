@@ -67,31 +67,10 @@ pub struct LspLauncher<L, R> {
     pub identities: Identities,
     /// Where the files of a start are looked at.
     pub semantic_io: Budget,
-    /// Which missing servers were warned about.
-    pub missing: Missing,
-}
-
-/// Why each missing server was last warned about. Every start attempt of a server that is not
-/// installed fails the same way, and the pool tries again by back-off: one warning per
-/// reason is enough.
-#[derive(Default)]
-pub struct Missing(Mutex<HashMap<BackendId, String>>);
-
-impl Missing {
-    /// Whether `reason` is news for `backend`; it is not again until the reason changes, the
-    /// server is found or the backend is restarted.
-    fn is_news(&self, backend: &BackendId, reason: &str) -> bool {
-        let mut warned = lock(&self.0);
-        if warned.get(backend).is_some_and(|last| last == reason) {
-            return false;
-        }
-        warned.insert(backend.clone(), reason.to_owned());
-        true
-    }
-
-    fn forget(&self, backend: &BackendId) {
-        lock(&self.0).remove(backend);
-    }
+    /// Why each missing server was last warned about. Every start attempt of a server that is
+    /// not installed fails the same way, and the pool tries again by back-off: one warning per
+    /// reason is enough.
+    pub missing: Mutex<HashMap<BackendId, String>>,
 }
 
 impl<L, R> LspLauncher<L, R> {
@@ -104,7 +83,7 @@ impl<L, R> LspLauncher<L, R> {
             tasks: Tasks::default(),
             identities: Identities::new(UserEnv::current(), budgets),
             semantic_io: budgets.semantic_io.clone(),
-            missing: Missing::default(),
+            missing: Mutex::default(),
         }
     }
 
@@ -365,11 +344,13 @@ impl<L: ServerLocator + Send + Sync + 'static, R: Restorer + Send + Sync + 'stat
         let launched = self.launch(root, tree, backend, policy).await;
         match &launched {
             Err(why @ LaunchError::NotInstalled(reason)) => {
-                let news = self.missing.is_news(&config.backend, reason);
-                log_not_started(name, tree, why, news);
+                let last = lock(&self.missing).insert(config.backend.clone(), reason.clone());
+                log_not_started(name, tree, why, last.as_ref() != Some(reason));
             }
             Err(why) => log_not_started(name, tree, why, true),
-            Ok(_) => self.missing.forget(&config.backend),
+            Ok(_) => {
+                lock(&self.missing).remove(&config.backend);
+            }
         }
         starting.conclude(&launched);
         let Launched {
@@ -462,7 +443,7 @@ impl<L: ServerLocator + Send + Sync + 'static, R: Restorer + Send + Sync + 'stat
 
     fn restarted(&self, backend: &BackendId) {
         self.identities.renewed(backend);
-        self.missing.forget(backend);
+        lock(&self.missing).remove(backend);
     }
 }
 
