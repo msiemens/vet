@@ -13,7 +13,28 @@ export const startOnQueue = new Set<string>([
   "fromQueue",
   "findInFiles",
   "sinceLast",
+  "storagePage",
+  "switcherRemove",
 ]);
+
+/** The confirmation of removing a project, as it is on screen; none while no dialog is open. */
+const removeDialog = (d: Driver) =>
+  d.page(`(() => {
+    const sheet = [...document.querySelectorAll("dialog[open]")].at(-1);
+    return sheet && {
+      title: sheet.getAttribute("aria-label"),
+      text: sheet.querySelector("p")?.textContent,
+      lost: [...sheet.querySelectorAll("li")].map((li) => li.textContent),
+      buttons: [...sheet.querySelectorAll("footer button")].map((b) => b.textContent.trim()),
+      focused: document.activeElement?.textContent?.trim(),
+    };
+  })()`) as Promise<{
+    title: string;
+    text: string;
+    lost: string[];
+    buttons: string[];
+    focused: string;
+  } | null>;
 
 /** A step that sends one review request. */
 const ONE = { marks: 1 };
@@ -1368,5 +1389,93 @@ export const sessions: Record<string, (d: Driver) => Promise<void>> = {
     const shown = await strip();
     if (!shown.whole || shown.active !== "f017.dat")
       throw new Error(`the opened tab is not in view: ${JSON.stringify(shown)}`);
+  },
+
+  /** Another project is removed from Settings > Storage: the question has no list, and the row goes with the removal. */
+  async storagePage(d) {
+    const other = await d.another();
+    await d.page(
+      `(async () => { (await import("/src/app/appState.svelte.ts")).appState.showDialog("settings", "storage"); return true; })()`,
+    );
+    const row = `[aria-label="Projects"] .row:has-text("repo2")`;
+    const listed = `[...document.querySelectorAll('[aria-label="Projects"] .row')].some((r) => r.textContent.includes("repo2"))`;
+    await d.until(listed, `the row of ${other}`);
+    await d.screenshot("storage-app");
+    await d.click(`${row} button:has-text("Remove…")`);
+    await d.until(`document.querySelector("dialog[open] footer button.destructive") !== null`, "the question");
+    const asked = await removeDialog(d);
+    if (asked?.title !== "Remove project") throw new Error(`the dialog is titled ${asked?.title}`);
+    if (asked.text !== "Do you want to remove project repo2?")
+      throw new Error(`the dialog says ${JSON.stringify(asked.text)}`);
+    if (asked.lost.length) throw new Error(`the dialog lists ${asked.lost.join(", ")}`);
+    if (asked.buttons.join("|") !== "Cancel|Remove") throw new Error(`the buttons are ${asked.buttons.join(", ")}`);
+    if (asked.focused !== "Cancel") throw new Error(`${asked.focused} has the focus, not Cancel`);
+    await d.screenshot("confirm");
+    await d.click("dialog[open] footer button.destructive");
+    await d.until(`!(${listed})`, "the row to go");
+    if ((await d.page(`window.__wire.removeProject`)) !== 1) throw new Error("removeProject was not sent once");
+    const errors = await d.errors();
+    if (errors.length) throw new Error(`the page logged ${errors.join("; ")}`);
+  },
+
+  /**
+   * Removing from the project switcher's context menu: Cancel keeps everything, Remove takes the row away,
+   * and removing the open project shows the welcome screen without it.
+   */
+  async switcherRemove(d) {
+    const open = await d.page(`__t.session.repo`);
+    const other = await d.another();
+    const switcher = `button.tool:text-is("repo")`;
+    const rowOf = (name: string) => `ul[aria-label="Recent projects"] li button:has-text(${JSON.stringify(name)})`;
+    const inSwitcher = (path: string) =>
+      `document.querySelector('ul[aria-label="Recent projects"]')?.textContent.includes(${JSON.stringify(path)})`;
+    /** The switcher is open, whether the dialog before closed it or not. */
+    const showSwitcher = async () => {
+      if (!(await d.page(`document.querySelector('ul[aria-label="Recent projects"]') !== null`)))
+        await d.click(switcher);
+      await d.until(`document.querySelector('ul[aria-label="Recent projects"]') !== null`, "the switcher");
+    };
+    const choose = async (name: string) => {
+      await showSwitcher();
+      await d.rightClick(rowOf(name));
+      await d.click(`[role=menuitem]:has-text("Remove project…")`);
+      await d.until(`document.querySelector("dialog[open] footer button.destructive") !== null`, "the question");
+    };
+
+    await showSwitcher();
+    await d.until(inSwitcher(other), "the other project");
+    await d.rightClick(rowOf("repo2"));
+    await d.until(`document.querySelector("[role=menu]") !== null`, "the menu");
+    await d.screenshot("switcher-menu");
+    const labels = (await d.page(
+      `[...document.querySelectorAll("[role=menu] [role=menuitem]")].map((i) => i.textContent.trim())`,
+    )) as string[];
+    if (labels.join("|") !== "Open|Remove from Recent Projects|Remove project…")
+      throw new Error(`the menu offers ${labels.join(", ")}`);
+    await d.click(`[role=menuitem]:has-text("Remove project…")`);
+    await d.until(`document.querySelector("dialog[open] footer button.destructive") !== null`, "the question");
+    if ((await removeDialog(d))?.focused !== "Cancel") throw new Error("Cancel does not have the focus");
+    await d.click("dialog[open] footer button:first-child");
+    await d.until(`document.querySelector("dialog[open] footer button.destructive") === null`, "the dialog to close");
+    if ((await d.page(`window.__wire.removeProject ?? 0`)) !== 0) throw new Error("Cancel removed the project");
+    await showSwitcher();
+    if (!(await d.page(inSwitcher(other)))) throw new Error("Cancel took the row away");
+
+    await choose("repo2");
+    await d.click("dialog[open] footer button.destructive");
+    await showSwitcher();
+    await d.until(`!${inSwitcher(other)}`, "the row to go");
+    if ((await d.page(`window.__wire.removeProject`)) !== 1) throw new Error("removeProject was not sent once");
+
+    // What is left is the open project's row.
+    await choose("repo");
+    await d.click("dialog[open] footer button.destructive");
+    await d.until(`__t.session.repo === undefined`, "the welcome screen");
+    await d.until(
+      `!document.body.innerText.includes(${JSON.stringify(open)})`,
+      "the project to leave the welcome list",
+    );
+    const errors = await d.errors();
+    if (errors.length) throw new Error(`the page logged ${errors.join("; ")}`);
   },
 };

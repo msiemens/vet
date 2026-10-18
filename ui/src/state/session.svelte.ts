@@ -49,6 +49,9 @@ class SessionStore {
       await preferenceSync.start(backend);
       backend.onLinkState((state) => (this.link = state));
       backend.onReconnect(() => void this.resync(backend));
+      backend.onProjectRemoved((root) => {
+        if (root === this.repo) void this.removed(backend);
+      });
       for (const listener of this.connectListeners) listener(backend);
       this.backend = backend;
       await recent.start(backend);
@@ -166,6 +169,12 @@ class SessionStore {
   private async leave() {
     await this.release();
     await setWindowMode("welcome");
+  }
+
+  /** The open repository was removed, by this window or another: the backend shut it already, so there is nothing to ask or close. */
+  private async removed(backend: Backend) {
+    backend.dropProject();
+    await this.leave();
   }
 
   /**

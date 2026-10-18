@@ -9,6 +9,7 @@ export { toggleBottom, toggleTool } from "./toggleTool";
 export { default as Header } from "./Header.svelte";
 export { headerFacts } from "./headerFacts.svelte";
 export { default as MainMenuButton } from "./MainMenuButton.svelte";
+export { default as RemoveProjectDialog } from "./RemoveProjectDialog.svelte";
 export { default as RestoreFailureList } from "./RestoreFailureList.svelte";
 export { baseNote, scopeChip } from "./scopeText";
 export { default as TitleBar } from "./TitleBar.svelte";

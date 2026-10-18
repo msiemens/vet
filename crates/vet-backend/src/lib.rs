@@ -47,7 +47,7 @@ use std::time::{Duration, SystemTime};
 
 use vet_app::gc::Retention;
 use vet_app::platform::Accounts;
-use vet_app::ports::{AnswerStore, PreferenceStore, RecentProject, Settings, SettingsStore, StoreError};
+use vet_app::ports::{PreferenceStore, RecentProject, Settings, SettingsStore, StoreError};
 use vet_app::recent::RecentProjects;
 use vet_app::registry::{Entry, Registry, Subscribers};
 use vet_app::semantics::Semantics;
@@ -364,12 +364,6 @@ impl Orchestrator {
         Ok(answer)
     }
 
-    async fn semantic_cache_usage(&self) -> Response {
-        Response::SemanticCacheUsage {
-            bytes: self.answers.file_size().await,
-        }
-    }
-
     /// The settings.
     async fn settings(&self) -> Result<Response> {
         let settings = self.store.backend_settings().await?;
@@ -403,6 +397,7 @@ impl Orchestrator {
                 .map_err(|e| Error::Internal(format!("the settings cannot be kept: {}", e.0)))?;
             if old.semantic_cache_mb != settings.semantic_cache_mb {
                 self.answers.set_budget(settings.semantic_cache_bytes()).await;
+                self.measure_again().await;
             }
         }
         self.process_subscribers.broadcast(Event::SettingsChanged);
@@ -480,9 +475,10 @@ impl Orchestrator {
             Request::RemoveCredentials { host } => reply(async move { self.remove_credentials(&host).await }),
             Request::ClearSemanticCaches => reply(async move {
                 self.clear_semantic_caches().await;
-                Ok(self.semantic_cache_usage().await)
+                self.measure_again().await;
+                self.process_subscribers.broadcast(Event::StorageChanged);
+                Ok(Response::Done)
             }),
-            Request::SemanticCacheUsage => reply(async move { Ok(self.semantic_cache_usage().await) }),
             Request::ProjectsStorage => reply(self.projects_storage()),
             Request::ProjectStorage { root } => reply(self.project_storage(root)),
             Request::ClearProjectCaches { root } => reply(self.clear_project_caches(root)),

@@ -7,6 +7,7 @@
     FinishDialog,
     Header,
     MainMenuButton,
+    RemoveProjectDialog,
     StatusFooter,
     TOOLS,
     TaskProgress,
@@ -54,6 +55,7 @@
   import { setFilter, setProjectTrusted, trustPullRequest } from "../state/projectRequests";
   import { queue } from "../state/queue.svelte";
   import { recent } from "../state/recent.svelte";
+  import { removePrompt } from "../state/removalPrompt.svelte";
   import { semantic } from "../state/semantic.svelte";
   import { servedBy } from "../state/servedBy.svelte";
   import { serverList } from "../state/serverList.svelte";
@@ -406,6 +408,7 @@
     onsoftwrap={setSoftWrap}
     onclose={() => appState.closeDialog()}
     project={session.repo ? repoName(session.repo) : undefined}
+    root={session.repo}
     filter={session.repo ? opened.session?.facts?.filter : undefined}
     excluded={{ lines: opened.session?.layout?.excludedLines ?? 0, items: opened.session?.layout?.excludedItems ?? 0 }}
     onfilter={(f) => setFilter(f)}
@@ -443,6 +446,15 @@
     count={discardPrompt.count}
     onkeep={() => discardPrompt.answer(false)}
     ondiscard={() => discardPrompt.answer(true)}
+  />
+{/if}
+
+{#if removePrompt.asking}
+  <RemoveProjectDialog
+    name={removePrompt.asking.name}
+    lost={removePrompt.asking.lost}
+    oncancel={() => removePrompt.answer(false)}
+    onremove={() => removePrompt.answer(true)}
   />
 {/if}
 

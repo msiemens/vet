@@ -19,6 +19,7 @@ import { opened } from "../state/opened.svelte";
 import { platform } from "../state/platform.svelte";
 import { problems } from "../state/problems.svelte";
 import { queue } from "../state/queue.svelte";
+import { removeProject } from "../state/removalPrompt.svelte";
 import { session } from "../state/session.svelte";
 import { softWrapPreference, themePreference } from "./appPreferences.svelte";
 import { appState } from "./appState.svelte";
@@ -95,6 +96,7 @@ export function registerCommands(): () => void {
         if (path !== session.repo) commands.run(`file.openRecent:${path}`);
       },
       forget: (path) => void session.forget(path),
+      remove: (path) => void removeProject(path),
     }),
     ...onReviewScreen(searchCommands(() => appState.controller?.find.options.text)),
     ...viewCommands(reviewActions),

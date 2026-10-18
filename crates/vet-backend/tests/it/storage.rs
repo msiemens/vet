@@ -177,3 +177,32 @@ async fn what_removing_a_project_would_lose_counts_only_what_only_vet_has() {
         (1, 2, 1, true)
     );
 }
+
+#[tokio::test]
+async fn what_would_be_lost_is_read_anew_while_the_sizes_are_kept_for_a_while() {
+    let (handler, store, _data) = handler_over_store().await;
+    let client = Client::new(&handler);
+    let root = "/work/fresh";
+    let snapshot = hold(&store, &[("a.txt", b"x")], 0).await;
+    let (changeset, open) = review(&store, root, Source::WorkingTree, snapshot.id).await;
+    assert_eq!(project(&client, root).await.unposted_comments, 0);
+
+    store
+        .writes()
+        .add_thread(
+            changeset,
+            Some(open),
+            CommentTarget::Changeset,
+            Message::written("me".into(), "late".into(), 0),
+            None,
+            ThreadStatus::Open,
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(project(&client, root).await.unposted_comments, 1);
+    let Ok(Response::ProjectsStorage { projects, .. }) = client.call(Request::ProjectsStorage).await else {
+        panic!("no storage");
+    };
+    assert_eq!(projects.iter().find(|p| p.root == root).unwrap().unposted_comments, 1);
+}

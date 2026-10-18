@@ -136,7 +136,6 @@ pub fn effect(request: &Request) -> Effect {
         | Request::Subscribe
         | Request::RecentProjects
         | Request::Accounts
-        | Request::SemanticCacheUsage
         | Request::ProjectsStorage
         | Request::ProjectStorage { .. }
         | Request::Settings
@@ -197,10 +196,8 @@ pub fn effect(request: &Request) -> Effect {
         Request::ChangePipeline { .. } => Effect::Unannounced(
             "changes a run on the platform, which Vet keeps nothing of; the window that asked reads the checks again",
         ),
-        Request::ClearSemanticCaches => Effect::Unannounced(
-            "only speed is lost; the disk use it answers with is read by the Settings page when it opens",
-        ),
-        Request::ClearProjectCaches { .. } => tested(&[StorageChanged]),
+        Request::ClearSemanticCaches
+        | Request::ClearProjectCaches { .. } => tested(&[StorageChanged]),
         Request::RemoveProject { .. } => tested(&[ProjectRemoved, RecentProjectsChanged, StorageChanged]),
         Request::SetSettings { .. } => tested(&[SettingsChanged]),
         Request::SetPreference { .. } => tested(&[PreferenceChanged]),
@@ -369,7 +366,6 @@ mod tests {
                 host: "github.com".into(),
             },
             Request::ClearSemanticCaches,
-            Request::SemanticCacheUsage,
             Request::ProjectsStorage,
             Request::ProjectStorage { root: path() },
             Request::ClearProjectCaches { root: path() },
@@ -994,6 +990,7 @@ mod tests {
                 value: Some("[]".into()),
             })
             .await;
+        world.drive(Request::ClearSemanticCaches).await;
         world
             .drive(Request::ClearProjectCaches {
                 root: canonical.clone(),

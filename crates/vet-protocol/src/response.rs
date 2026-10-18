@@ -30,11 +30,6 @@ pub enum Response {
     LogDirectory {
         path: String,
     },
-    /// The bytes the semantic cache's file takes on disk.
-    SemanticCacheUsage {
-        #[ts(type = "number")]
-        bytes: u64,
-    },
     /// The projects' disk use, in root order, and what is kept for none.
     ProjectsStorage {
         projects: Vec<ProjectStorage>,

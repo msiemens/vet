@@ -1,20 +1,16 @@
 <script lang="ts">
   import { onMount } from "svelte";
-  import { formatBytes } from "../../lib/formatBytes";
   import { match } from "../../lib/speedSearch";
   import Facts from "../../lib/ui/Facts.svelte";
   import Icon from "../../lib/ui/Icon.svelte";
   import Marked from "../../lib/ui/Marked.svelte";
   import PathText from "../../lib/ui/PathText.svelte";
   import ScrollArea from "../../lib/ui/ScrollArea.svelte";
-  import SettingsSection from "../../lib/ui/SettingsSection.svelte";
   import { SpeedSearch } from "../../lib/ui/speedSearch.svelte";
   import SpeedSearchField from "../../lib/ui/SpeedSearchField.svelte";
   import StatusDot from "../../lib/ui/StatusDot.svelte";
   import type { Column } from "../../lib/ui/columns";
   import { type Sort, sortRows } from "../../lib/ui/sorting";
-  import { backendSettings } from "../../state/backendSettings.svelte";
-  import { commands } from "../../state/commands";
   import { serverList } from "../../state/serverList.svelte";
   import { featuresOf } from "../../state/serverStatus";
   import ServerPathSheet from "./ServerPathSheet.svelte";
@@ -55,10 +51,7 @@
   const selected = $derived(rows.find((r) => r.language === selectedLanguage) ?? rows.at(0));
   const log = $derived(selected ? (serverList.logs[selected.language] ?? []) : []);
 
-  onMount(() => {
-    void backendSettings.load();
-    serverList.reload();
-  });
+  onMount(() => serverList.reload());
 
   async function automatic(language: string) {
     const message = await serverList.setPath(language, null);
@@ -81,21 +74,6 @@
     if (choice === "install") void serverList.install(row.language);
     else if (choice === "custom") editing = row;
     else if (choice === "automatic") void automatic(row.language);
-  }
-
-  let cacheError = $state<string>();
-
-  /** A whole number of MiB, at least one; anything else puts the kept budget back in the field. */
-  async function setBudget(input: HTMLInputElement) {
-    const mb = Number(input.value);
-    const kept = backendSettings.settings?.semanticCacheMb;
-    if (!Number.isInteger(mb) || mb < 1) {
-      input.value = String(kept ?? "");
-      cacheError = "The budget is a whole number of MiB, at least 1.";
-      return;
-    }
-    if (mb === kept) return;
-    cacheError = await backendSettings.change({ semanticCacheMb: mb });
   }
 </script>
 
@@ -263,47 +241,6 @@
       </Facts>
     {/if}
   {/if}
-
-  <SettingsSection title="Semantic caches">
-    <Facts>
-      {#if backendSettings.usage !== undefined}
-        <dt>On disk</dt>
-        <dd>{formatBytes(backendSettings.usage)}</dd>
-      {/if}
-      <dt><label for="cache-budget">Keep up to</label></dt>
-      <dd class="budget">
-        <input
-          id="cache-budget"
-          class="field"
-          type="number"
-          min="1"
-          step="1"
-          disabled={!backendSettings.settings}
-          value={backendSettings.settings?.semanticCacheMb ?? ""}
-          onchange={(e) => void setBudget(e.currentTarget)}
-        />
-        <span>MiB</span>
-      </dd>
-      {#if backendSettings.loadError}
-        <dt></dt>
-        <dd class="settings-problem">{backendSettings.loadError}</dd>
-      {/if}
-      {#if cacheError}
-        <dt></dt>
-        <dd class="settings-problem">{cacheError}</dd>
-      {/if}
-      <dt></dt>
-      <dd>
-        <button
-          class="ctl"
-          type="button"
-          title={commands.hint("semantic.clearCaches")}
-          disabled={backendSettings.clearing || !commands.isEnabled("semantic.clearCaches")}
-          onclick={() => commands.run("semantic.clearCaches")}>{commands.label("semantic.clearCaches")}</button
-        >
-      </dd>
-    </Facts>
-  </SettingsSection>
 </div>
 
 {#if editing}
@@ -322,10 +259,6 @@
     flex-direction: column;
     gap: 16px;
     font-size: var(--fs-ctl);
-  }
-  /* The page's gap is part of the space above a section. */
-  .page > :global(section) {
-    margin-top: 4px;
   }
   p {
     margin: 0;
@@ -409,13 +342,5 @@
   }
   .check.yes :global(svg) {
     color: var(--ok);
-  }
-  .budget {
-    display: flex;
-    align-items: center;
-    gap: 6px;
-  }
-  .budget input {
-    width: 80px;
   }
 </style>

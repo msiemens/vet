@@ -29,6 +29,8 @@ import { progress } from "../../src/state/progress.svelte.ts";
 import { session } from "../../src/state/session.svelte.ts";
 import { structure } from "../../src/state/structure.svelte.ts";
 import { queue } from "../../src/state/queue.svelte.ts";
+import { recent } from "../../src/state/recent.svelte.ts";
+import { removePrompt, removeProject } from "../../src/state/removalPrompt.svelte.ts";
 import { reviewShown } from "../../src/state/reviewShown.svelte.ts";
 import { serverList } from "../../src/state/serverList.svelte.ts";
 import { chooseRow, defaultRange, rangeKey, rangeView } from "../../src/state/timelineRange.ts";
@@ -1232,5 +1234,52 @@ export const sessions: Record<SessionName, (h: Harness) => Promise<void>> = {
     if (appState.dialog !== undefined)
       throw new Error(`the ${appState.dialog} dialog is still open in the next project`);
     if (appState.switcherOpen) throw new Error("the changeset switcher is still open in the next project");
+  },
+
+  /** Removing a project asks first; one removed from another window sends this window to the welcome screen without a close. */
+  async removal(h) {
+    /** Starts the removal of `root`, answers its question and resolves with the lines it listed. */
+    const remove = async (root: string, yes: boolean) => {
+      const removing = removeProject(root);
+      await h.until(() => removePrompt.asking !== undefined, "the question");
+      const lost = removePrompt.asking?.lost;
+      removePrompt.answer(yes);
+      await removing;
+      return lost;
+    };
+    const listed = async (root: string) => (await h.other.projectsStorage()).projects.some((p) => p.root === root);
+    await h.step(
+      "another project is removed",
+      async () => {
+        const [recorded] = await h.other.recordRecentProject(h.fixture.anotherRepo());
+        const other = recorded.path;
+        if (!(await listed(other))) throw new Error("the project is not listed before it is removed");
+        const lost = await remove(other, true);
+        if (lost?.length !== 0) throw new Error(`the question listed ${JSON.stringify(lost)}`);
+        await h.until(() => !recent.list.some((p) => p.path === other), "the recent list to lose the project");
+        if (await listed(other)) throw new Error("the project is still listed");
+      },
+      { sent: { projectStorage: 1, removeProject: 1 } },
+    );
+    await h.step(
+      "cancelling keeps the open project",
+      async () => {
+        // The comment starts the review: both are lost with the project.
+        await h.asElement(() => onView().threads.create(h.shown(), { type: "changeset" }, "a note"));
+        const repo = session.repo;
+        const lost = await remove(repo ?? "", false);
+        if (JSON.stringify(lost) !== JSON.stringify(["1 open review", "1 unposted comment"]))
+          throw new Error(`the question listed ${JSON.stringify(lost)}`);
+        if (session.repo !== repo) throw new Error("the project was left");
+      },
+      { sent: { createThread: 1, projectStorage: 1, removeProject: 0 } },
+    );
+    // No step follows: a step waits for an open project.
+    const root = session.repo ?? "";
+    const before = h.sent.length;
+    await h.other.removeProject(root);
+    await h.until(() => session.repo === undefined && !opened.session, "the welcome screen");
+    if (h.sent.slice(before).some((r) => r.type === "closeProject"))
+      throw new Error("the window closed a project the backend had shut");
   },
 };

@@ -11,8 +11,10 @@
   import GeneralPage from "./GeneralPage.svelte";
   import KeymapPage from "./KeymapPage.svelte";
   import { APPLICATION, PROJECT, type Page } from "./pages";
+  import ProjectStoragePage from "./ProjectStoragePage.svelte";
   import ReviewFilterPage from "./ReviewFilterPage.svelte";
   import ServersPage from "./ServersPage.svelte";
+  import StoragePage from "./StoragePage.svelte";
   import TrustPage from "./TrustPage.svelte";
 
   let {
@@ -21,6 +23,7 @@
     onsoftwrap,
     onclose,
     project,
+    root,
     filter,
     excluded,
     onfilter,
@@ -36,6 +39,8 @@
     onclose: () => void;
     /** The open project's name; none without an open repository. */
     project?: string;
+    /** The open project's repository root; none without an open repository. */
+    root?: string;
     /** The open repository's review filter; none until the manifest brought it. */
     filter?: ReviewFilter;
     /** The changed lines and non-text items the filter hides. */
@@ -88,6 +93,10 @@
           {#if filter}<ReviewFilterPage {filter} {excluded} onsave={onfilter} />{/if}
         {:else if shown === "servers"}
           <ServersPage />
+        {:else if shown === "storage"}
+          <StoragePage />
+        {:else if shown === "projectStorage"}
+          {#if root}{#key root}<ProjectStoragePage {root} />{/key}{/if}
         {:else if page === "accounts"}
           <AccountsPage />
         {:else}

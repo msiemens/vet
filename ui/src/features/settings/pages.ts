@@ -6,12 +6,14 @@ export const APPLICATION = [
   { id: "appearance", label: "Appearance" },
   { id: "keymap", label: "Keymap" },
   { id: "servers", label: "Language servers" },
+  { id: "storage", label: "Storage" },
   { id: "accounts", label: "Accounts" },
 ] as const;
 
 export const PROJECT = [
   { id: "trust", label: "Trust" },
   { id: "filter", label: "Review filter" },
+  { id: "projectStorage", label: "Storage" },
 ] as const;
 
 /** The page of the settings dialog. */

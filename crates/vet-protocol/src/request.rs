@@ -66,12 +66,9 @@ pub enum Request {
     /// "Clear semantic caches": removes the answers of the language servers that the
     /// backend keeps (in memory and between launches) and the kept copies of snapshots
     /// that no running Vet uses. Only speed is lost; review state and results stay as
-    /// they are. They belong to the backend, not to a project. Answers with
-    /// `Response::SemanticCacheUsage` as after clearing.
+    /// they are. They belong to the backend, not to a project. Every connection subscribed to the
+    /// events of the backend gets `StorageChanged`. Answers with `Response::Done`.
     ClearSemanticCaches,
-    /// How much disk the answers of the language servers kept between launches take. They
-    /// belong to the backend, not to a project. Answers with `Response::SemanticCacheUsage`.
-    SemanticCacheUsage,
     /// What every project the backend holds anything for takes on disk, and what is kept for none:
     /// the projects of the recent list, of the store (changesets, trust, filter, preferences) and
     /// of the project directories, whether the folder is still there or not. The figures are

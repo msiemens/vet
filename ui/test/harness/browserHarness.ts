@@ -21,6 +21,10 @@ export interface Driver {
   click(selector: string): Promise<void>;
   /** Middle-clicks the element `selector` names. */
   middleClick(selector: string): Promise<void>;
+  /** Right-clicks the element `selector` names. */
+  rightClick(selector: string): Promise<void>;
+  /** Puts a second repository on the recent list, as another window opening it would; resolves with its root. */
+  another(): Promise<string>;
   /** Waits `ms`; for steps built around a deliberate pause rather than a condition. */
   sleep(ms: number): Promise<void>;
   /** Another window of the same project marks or flags a hunk of the changeset. */
@@ -212,6 +216,13 @@ export async function runBrowserSession(
     },
     async middleClick(selector) {
       await page.locator(selector).first().click({ button: "middle" });
+    },
+    async rightClick(selector) {
+      await page.locator(selector).first().click({ button: "right" });
+    },
+    async another() {
+      const [recorded] = await other.recordRecentProject(fixture.anotherRepo());
+      return recorded.path;
     },
     sleep: (ms) => page.waitForTimeout(ms),
     async otherMark(path, hunk) {

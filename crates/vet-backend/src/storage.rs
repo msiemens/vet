@@ -44,8 +44,21 @@ fn project_storage(project: &ProjectUsage, open: bool, computed_at: i64) -> Proj
 }
 
 impl Orchestrator {
-    /// What every known project takes, as last measured when that is recent and covers `also`.
+    /// What every known project takes, as last measured when that is recent and covers `also`. What
+    /// removing a project loses is read anew every time: the figures in bytes may be a while old,
+    /// the confirmation about to be shown must not be.
     async fn usage(&self, also: &[String]) -> Result<(Usage, i64)> {
+        let (mut usage, unix) = self.measured_usage(also).await?;
+        for project in &mut usage.projects {
+            let facts = self.storage.facts(&project.root).await?;
+            project.open_reviews = facts.open_reviews;
+            project.unposted_comments = facts.unposted_comments;
+            project.pending_votes = facts.pending_votes;
+        }
+        Ok((usage, unix))
+    }
+
+    async fn measured_usage(&self, also: &[String]) -> Result<(Usage, i64)> {
         let mut cached = self.measured.lock().await;
         if let Some(computed) = cached.as_ref().filter(|c| c.at.elapsed() < FRESH) {
             let covered = also
@@ -66,7 +79,7 @@ impl Orchestrator {
     }
 
     /// Forgets the measured figures: the disk changed.
-    async fn measure_again(&self) {
+    pub(crate) async fn measure_again(&self) {
         *self.measured.lock().await = None;
     }
 

@@ -2,6 +2,7 @@
 // knows the wire protocol, so a protocol change lands here.
 
 import type { Account } from "../generated/Account";
+import type { AppStorage } from "../generated/AppStorage";
 import type { BackendSettings } from "../generated/BackendSettings";
 import type { BaseDiff } from "../generated/BaseDiff";
 import type { BlobContent } from "../generated/BlobContent";
@@ -29,6 +30,7 @@ import type { PipelineAction } from "../generated/PipelineAction";
 import type { PipelineOutcome } from "../generated/PipelineOutcome";
 import type { PipelineStep } from "../generated/PipelineStep";
 import type { Preference } from "../generated/Preference";
+import type { ProjectStorage } from "../generated/ProjectStorage";
 import type { PullRequestInfo } from "../generated/PullRequestInfo";
 import type { PullRequestRow } from "../generated/PullRequestRow";
 import type { PullRequestSource } from "../generated/PullRequestSource";
@@ -178,7 +180,7 @@ export class Backend {
 
   /**
    * Hears the events of the backend itself from here on (`credentialsNeeded`, `accountsChanged`,
-   * `recentProjectsChanged`, `settingsChanged`, `preferenceChanged`), which belong to the
+   * `recentProjectsChanged`, `projectRemoved`, `storageChanged`, `settingsChanged`, `preferenceChanged`), which belong to the
    * connection and not to a project. The subscription ends when the connection closes.
    */
   async subscribe(): Promise<void> {
@@ -276,15 +278,53 @@ export class Backend {
 
   /**
    * Removes the answers of the language servers that the backend keeps, and the kept copies of snapshots
-   * nothing uses. Only speed is lost. Resolves with the bytes the semantic cache takes on disk afterwards.
+   * nothing uses. Only speed is lost.
    */
-  async clearSemanticCaches(): Promise<number> {
-    return (await this.call({ type: "clearSemanticCaches" })).bytes;
+  async clearSemanticCaches(): Promise<void> {
+    await this.call({ type: "clearSemanticCaches" });
   }
 
-  /** The bytes the answers of the language servers kept between launches take on disk. */
-  async semanticCacheUsage(): Promise<number> {
-    return (await this.call({ type: "semanticCacheUsage" })).bytes;
+  /** What every project the backend holds anything for takes on disk, and what is kept for none. */
+  async projectsStorage(): Promise<{ projects: ProjectStorage[]; app: AppStorage }> {
+    const { projects, app } = await this.call({ type: "projectsStorage" });
+    return { projects, app };
+  }
+
+  /** What the project at `root` takes on disk; `root` need not be known or exist. */
+  async projectStorage(root: string): Promise<ProjectStorage> {
+    return (await this.call({ type: "projectStorage", root })).project;
+  }
+
+  /** Removes what the project keeps only for speed; resolves with its figures after. */
+  async clearProjectCaches(root: string): Promise<ProjectStorage> {
+    return (await this.call({ type: "clearProjectCaches", root })).project;
+  }
+
+  /**
+   * Deletes everything held for the project at `root`, which need not exist any more, and shuts it if it is
+   * open (`projectRemoved`). Resolves with the bytes it took.
+   */
+  async removeProject(root: string): Promise<number> {
+    return (await this.call({ type: "removeProject", root })).freed;
+  }
+
+  /** Calls `listener` with the root of a removed project, by this window or another. */
+  onProjectRemoved(listener: (root: string) => void): () => void {
+    return this.conn.onEvent((event) => {
+      if (event.type === "projectRemoved") listener(event.root);
+    });
+  }
+
+  /** Calls `listener` when what the projects take on disk changed, by this window or another. */
+  onStorageChanged(listener: () => void): () => void {
+    return this.conn.onEvent((event) => {
+      if (event.type === "storageChanged") listener();
+    });
+  }
+
+  /** Forgets the open project without closing it: the backend shut it already. */
+  dropProject(): void {
+    this.project = undefined;
   }
 
   /** The backend's own settings, app-wide. Asking also subscribes this connection to the backend's events. */

@@ -9,6 +9,8 @@ export interface RecentActions {
   open(path: string): void;
   /** Drops the project at `path` from the list. */
   forget(path: string): void;
+  /** Removes the project at `path` with everything kept for it, after the viewer confirmed. */
+  remove(path: string): void;
 }
 
 export function recentCommands(a: RecentActions): Command<CommandContext>[] {
@@ -33,8 +35,23 @@ export function recentCommands(a: RecentActions): Command<CommandContext>[] {
         a.forget(c.recentProject.path);
       },
     },
+    {
+      id: "recent.remove",
+      label: "Remove project…",
+      subject: true,
+      enabled: (c) => c.recentProject !== undefined,
+      run: (c) => {
+        if (!c.recentProject) return false;
+        a.remove(c.recentProject.path);
+      },
+    },
   ];
 }
 
 /** The context menu of a recent project's row. */
-export const recentMenu: MenuSpec = [{ command: "recent.open" }, "-", { command: "recent.forget" }];
+export const recentMenu: MenuSpec = [
+  { command: "recent.open" },
+  "-",
+  { command: "recent.forget" },
+  { command: "recent.remove" },
+];
