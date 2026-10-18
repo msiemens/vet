@@ -39,12 +39,6 @@ pub enum Response {
     ProjectStorage {
         project: ProjectStorage,
     },
-    /// After `RemoveProject`: the bytes the project took, which are freed apart from content that
-    /// is still young enough to be kept for a while.
-    ProjectRemoved {
-        #[ts(type = "number")]
-        freed: u64,
-    },
     /// The backend's own settings.
     Settings {
         settings: BackendSettings,

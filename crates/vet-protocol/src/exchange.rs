@@ -20,7 +20,7 @@ pub const EXCHANGES: &[(&str, &str)] = &[
     ("projectsStorage", "projectsStorage"),
     ("projectStorage", "projectStorage"),
     ("clearProjectCaches", "projectStorage"),
-    ("removeProject", "projectRemoved"),
+    ("removeProject", "done"),
     ("settings", "settings"),
     ("setSettings", "settings"),
     ("preferences", "preferences"),

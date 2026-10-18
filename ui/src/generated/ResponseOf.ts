@@ -17,7 +17,7 @@ export const RESPONSE_TAG = {
   projectsStorage: "projectsStorage",
   projectStorage: "projectStorage",
   clearProjectCaches: "projectStorage",
-  removeProject: "projectRemoved",
+  removeProject: "done",
   settings: "settings",
   setSettings: "settings",
   preferences: "preferences",

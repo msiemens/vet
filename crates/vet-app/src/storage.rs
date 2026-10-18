@@ -151,6 +151,13 @@ where
         Ok(())
     }
 
+    /// Deletes the answers for every snapshot of `root`, which stays otherwise as it is.
+    pub async fn clear_answers(&self, root: &str) -> Result<(), StoreError> {
+        let facts = self.store.project_facts(root.to_owned()).await?;
+        self.answers.forget(facts.snapshots).await;
+        Ok(())
+    }
+
     /// Deletes the answers for the snapshots no remaining changeset names.
     async fn forget_answers(&self, snapshots: &[SnapshotId]) {
         match self.store.named_snapshots(snapshots.to_vec()).await {

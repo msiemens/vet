@@ -120,9 +120,11 @@ impl Orchestrator {
         })
     }
 
-    /// Removes the kept source trees of the project that nothing uses.
+    /// Removes the kept source trees of the project that nothing uses and the answers cached for
+    /// its snapshots.
     pub(crate) async fn clear_project_caches(&self, root: String) -> Result<Response> {
         self.trees.at(&root).clear().await;
+        self.storage.clear_answers(&root).await?;
         self.measure_again().await;
         self.process_subscribers.broadcast(Event::StorageChanged);
         self.project_storage(root).await
@@ -132,12 +134,6 @@ impl Orchestrator {
     /// connections are told and the project shut first, and opening the repository again waits
     /// until the files and rows are gone.
     pub(crate) async fn remove_project(&self, root: String) -> Result<Response> {
-        let (usage, _) = self.usage(std::slice::from_ref(&root)).await?;
-        let freed = usage
-            .projects
-            .iter()
-            .find(|p| p.root == root)
-            .map_or(0, ProjectUsage::total);
         let facts = self.storage.facts(&root).await?;
         let retention = Retention {
             closed_changesets: self.store.backend_settings().await?.finished_review_retention(),
@@ -153,6 +149,6 @@ impl Orchestrator {
         self.process_subscribers.broadcast(Event::ProjectRemoved { root });
         self.process_subscribers.broadcast(Event::RecentProjectsChanged);
         self.process_subscribers.broadcast(Event::StorageChanged);
-        Ok(Response::ProjectRemoved { freed })
+        Ok(Response::Done)
     }
 }

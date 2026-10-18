@@ -95,10 +95,7 @@ async fn a_project_whose_folder_is_gone_is_removed_with_what_is_held_for_it_and_
 
     let removed = client.call(Request::RemoveProject { root: GONE.into() }).await;
 
-    let Ok(Response::ProjectRemoved { freed }) = removed else {
-        panic!("{removed:?}");
-    };
-    assert!(freed > 0, "what the project took is reported");
+    assert!(matches!(removed, Ok(Response::Done)), "{removed:?}");
     assert_eq!(store.changeset(GONE.into(), Source::WorkingTree).await.unwrap(), None);
     assert!(!store.project_trusted(GONE.into()).await.unwrap());
     assert!(

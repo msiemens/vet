@@ -81,7 +81,8 @@ pub enum Request {
         root: String,
     },
     /// Removes the kept source trees of the project at `root` that no language server uses and
-    /// no open review needs. Only speed is lost. Every connection subscribed to the events of the
+    /// no open review needs, and the cached language-server answers for its snapshots (running
+    /// servers keep their own state; the answers are asked again). Only speed is lost. Every connection subscribed to the events of the
     /// backend gets `StorageChanged`. Answers with `Response::ProjectStorage`, after clearing.
     ClearProjectCaches {
         root: String,
@@ -93,7 +94,7 @@ pub enum Request {
     /// is open is closed for every connection, and opening the repository again starts from
     /// nothing. Every connection subscribed to the events of the
     /// backend gets `ProjectRemoved`, `RecentProjectsChanged` and `StorageChanged`. Answers with
-    /// `Response::ProjectRemoved`.
+    /// `Response::Done`.
     RemoveProject {
         root: String,
     },

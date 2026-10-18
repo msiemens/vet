@@ -122,6 +122,35 @@ async fn a_project_counts_only_the_content_trees_and_answers_that_are_its_own() 
 }
 
 #[tokio::test]
+async fn clearing_a_projects_caches_drops_its_cached_answers_and_no_other_projects() {
+    let (handler, store, data) = handler_over_store().await;
+    let client = Client::new(&handler);
+    let a = hold(&store, &[("a.txt", b"one")], 0).await;
+    let b = hold(&store, &[("b.txt", b"two")], 0).await;
+    review(&store, "/work/a", Source::WorkingTree, a.id).await;
+    review(&store, "/work/b", Source::WorkingTree, b.id).await;
+    let cache = SqliteSemanticCache::open(data.path(), 256 << 20).await.unwrap();
+    for snapshot in [a.id, b.id] {
+        cache.put(&answer_for(snapshot), &Value::Hover(Some("an answer".into())));
+    }
+    cache.flush().await;
+    let before = project(&client, "/work/b").await.semantic_cache;
+    assert!(before > 0 && project(&client, "/work/a").await.semantic_cache > 0);
+
+    let cleared = client
+        .call(Request::ClearProjectCaches { root: "/work/a".into() })
+        .await;
+
+    let Ok(Response::ProjectStorage { project: cleared }) = cleared else {
+        panic!("{cleared:?}");
+    };
+    assert_eq!(cleared.semantic_cache, 0);
+    assert!(cache.get(&answer_for(a.id)).await.is_none());
+    assert!(cache.get(&answer_for(b.id)).await.is_some());
+    assert_eq!(project(&client, "/work/b").await.semantic_cache, before);
+}
+
+#[tokio::test]
 async fn what_removing_a_project_would_lose_counts_only_what_only_vet_has() {
     let (handler, store, _data) = handler_over_store().await;
     let client = Client::new(&handler);
