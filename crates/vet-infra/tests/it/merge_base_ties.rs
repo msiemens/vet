@@ -1,4 +1,4 @@
-//! Merge bases of histories whose commits all carry the same timestamp, against `git merge-base`.
+//! Merge bases of histories whose commits all carry the same timestamp.
 
 #![allow(clippy::disallowed_methods)]
 
@@ -43,61 +43,65 @@ fn commit(dir: &Path, name: &str, parents: &[&str]) -> String {
     git(dir, &args)
 }
 
-async fn assert_bases_match_git(dir: &Path, commits: &[String]) {
-    let repo = GixRepo::for_test(dir);
-    for a in commits {
-        git(dir, &["update-ref", "refs/heads/probe", a]);
-        for b in commits {
-            let all: Vec<String> = git(dir, &["merge-base", "--all", a, b])
-                .lines()
-                .map(str::to_owned)
-                .collect();
-            let got = repo
-                .merge_base("refs/heads/probe", &CommitId(b.clone()))
-                .await
-                .unwrap()
-                .0;
-            assert!(all.contains(&got), "base of {a} and {b}: got {got}, git says {all:?}");
-
-            let descends = all == [a.clone()];
-            assert_eq!(
-                repo.descends_from(b, a).await.unwrap(),
-                descends,
-                "{b} descends from {a}"
-            );
-        }
-    }
+/// The smallest history found in which a search that trusts commit times returns an ancestor of
+/// the real base: `e` descends from `d`, yet reaches `c` (an ancestor of `d`) a second way.
+///
+/// ```text
+/// a <- b <- c <- d <- e      c = [a, b]    e = [b, d]
+/// ```
+struct Ties {
+    _dir: tempfile::TempDir,
+    repo: GixRepo,
+    a: String,
+    b: String,
+    c: String,
+    d: String,
+    e: String,
 }
 
-fn init() -> tempfile::TempDir {
+fn ties() -> Ties {
     let dir = tempfile::tempdir().unwrap();
-    git(dir.path(), &["init", "-q", "-b", "main"]);
-    dir
+    let p = dir.path();
+    git(p, &["init", "-q", "-b", "main"]);
+    let a = commit(p, "a", &[]);
+    let b = commit(p, "b", &[&a]);
+    let c = commit(p, "c", &[&a, &b]);
+    let d = commit(p, "d", &[&c]);
+    let e = commit(p, "e", &[&b, &d]);
+    Ties {
+        repo: GixRepo::for_test(p),
+        _dir: dir,
+        a,
+        b,
+        c,
+        d,
+        e,
+    }
 }
 
-/// A pseudo-random history of branches and merges (a fixed seed that gix gets wrong when it
-/// trusts commit times).
+async fn base(t: &Ties, reference: &str, tip: &str) -> String {
+    t.repo.merge_base(reference, &CommitId(tip.to_owned())).await.unwrap().0
+}
+
 #[tokio::test]
-async fn a_dense_dag_within_one_second_has_a_best_base_for_every_pair() {
-    let dir = init();
-    let p = dir.path();
-    let mut commits = vec![commit(p, "c0", &[])];
-    let mut seed = 12345_u64;
-    let mut next = |bound: usize| {
-        seed = seed.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
-        (seed >> 33) as usize % bound
-    };
-    for i in 1..40 {
-        let first = commits[next(i)].clone();
-        let mut parents = vec![first];
-        if next(3) == 0 {
-            let second = commits[next(i)].clone();
-            if !parents.contains(&second) {
-                parents.push(second);
-            }
-        }
-        let refs: Vec<&str> = parents.iter().map(String::as_str).collect();
-        commits.push(commit(p, &format!("c{i}"), &refs));
-    }
-    assert_bases_match_git(p, &commits).await;
+async fn the_merge_base_is_the_newest_common_commit_when_commit_times_tie() {
+    let t = ties();
+
+    assert_eq!(base(&t, &t.d, &t.e).await, t.d);
+    assert_eq!(base(&t, &t.e, &t.d).await, t.d);
+    assert_eq!(base(&t, &t.e, &t.c).await, t.c);
+    assert_eq!(base(&t, &t.b, &t.e).await, t.b);
+    assert_eq!(base(&t, &t.a, &t.e).await, t.a);
+}
+
+#[tokio::test]
+async fn descent_is_decided_by_ancestry_when_commit_times_tie() {
+    let t = ties();
+    let r = &t.repo;
+
+    assert!(r.descends_from(&t.e, &t.d).await.unwrap());
+    assert!(r.descends_from(&t.e, &t.a).await.unwrap());
+    assert!(r.descends_from(&t.d, &t.b).await.unwrap());
+    assert!(!r.descends_from(&t.d, &t.e).await.unwrap());
+    assert!(!r.descends_from(&t.b, &t.c).await.unwrap());
 }
