@@ -28,13 +28,6 @@ pub struct ProjectUsage {
     pub pending_votes: u32,
 }
 
-impl ProjectUsage {
-    /// Everything of the project that is removed with it.
-    pub fn total(&self) -> u64 {
-        self.review_data + self.source_trees + self.semantic_cache
-    }
-}
-
 /// What is kept for no project in particular.
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
 pub struct SharedUsage {
