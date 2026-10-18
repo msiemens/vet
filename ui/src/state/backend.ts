@@ -302,10 +302,10 @@ export class Backend {
 
   /**
    * Deletes everything held for the project at `root`, which need not exist any more, and shuts it if it is
-   * open (`projectRemoved`). Resolves with the bytes it took.
+   * open (`projectRemoved`).
    */
-  async removeProject(root: string): Promise<number> {
-    return (await this.call({ type: "removeProject", root })).freed;
+  async removeProject(root: string): Promise<void> {
+    await this.call({ type: "removeProject", root });
   }
 
   /** Calls `listener` with the root of a removed project, by this window or another. */

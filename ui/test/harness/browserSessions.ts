@@ -36,6 +36,9 @@ const removeDialog = (d: Driver) =>
     focused: string;
   } | null>;
 
+const questionAsked = (d: Driver) =>
+  d.until(`document.querySelector("dialog[open] footer button.destructive") !== null`, "the question");
+
 /** A step that sends one review request. */
 const ONE = { marks: 1 };
 
@@ -1402,7 +1405,7 @@ export const sessions: Record<string, (d: Driver) => Promise<void>> = {
     await d.until(listed, `the row of ${other}`);
     await d.screenshot("storage-app");
     await d.click(`${row} button:has-text("Remove…")`);
-    await d.until(`document.querySelector("dialog[open] footer button.destructive") !== null`, "the question");
+    await questionAsked(d);
     const asked = await removeDialog(d);
     if (asked?.title !== "Remove project") throw new Error(`the dialog is titled ${asked?.title}`);
     if (asked.text !== "Do you want to remove project repo2?")
@@ -1439,7 +1442,7 @@ export const sessions: Record<string, (d: Driver) => Promise<void>> = {
       await showSwitcher();
       await d.rightClick(rowOf(name));
       await d.click(`[role=menuitem]:has-text("Remove project…")`);
-      await d.until(`document.querySelector("dialog[open] footer button.destructive") !== null`, "the question");
+      await questionAsked(d);
     };
 
     await showSwitcher();
@@ -1453,7 +1456,7 @@ export const sessions: Record<string, (d: Driver) => Promise<void>> = {
     if (labels.join("|") !== "Open|Remove from Recent Projects|Remove project…")
       throw new Error(`the menu offers ${labels.join(", ")}`);
     await d.click(`[role=menuitem]:has-text("Remove project…")`);
-    await d.until(`document.querySelector("dialog[open] footer button.destructive") !== null`, "the question");
+    await questionAsked(d);
     if ((await removeDialog(d))?.focused !== "Cancel") throw new Error("Cancel does not have the focus");
     await d.click("dialog[open] footer button:first-child");
     await d.until(`document.querySelector("dialog[open] footer button.destructive") === null`, "the dialog to close");
