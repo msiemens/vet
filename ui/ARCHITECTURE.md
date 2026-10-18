@@ -87,6 +87,8 @@ Each store follows the events of what it shows:
 - `ReviewController.ts` — `reviewChanged`: hands the update to the scope that made it. The tabs' scopes read again when the session's flush calls them, after the manifest.
 - `accounts.svelte.ts` — `credentialsNeeded`, `accountsChanged`: hands over the keychain's token, and reads the accounts again.
 - `recent.svelte.ts` — `recentProjectsChanged`: reloads the recent list.
+- `storage.svelte.ts` (while a Storage settings page shows) — `storageChanged`, `settingsChanged`: measures what it shows again.
+- `session.svelte.ts` — `projectRemoved` for the open project: back to the welcome screen without closing it, as the backend shut it.
 
 #### Reactivity
 
@@ -134,7 +136,7 @@ One protocol over one loopback WebSocket; the messages are `vet-protocol`'s requ
 
 ### Storage and preferences
 
-The window keeps its own state in the browser storage. App-wide: theme, soft wrap, key bindings, panel and dialog sizes, table columns and sort, folded sections, the queue's and the switcher's tab, Search Everywhere's options, the structure tool's sort and filter, and when each pull request's Comments tool was last open. Per project: its open tabs per changeset and the results chosen last in Search Everywhere. The backend's own settings (semantic cache budget, finished-review retention) are read through `backendSettings.svelte.ts` without an open repository. Secrets are the host's keychain.
+The window keeps its own state in the browser storage. App-wide: theme, soft wrap, key bindings, panel and dialog sizes, table columns and sort, folded sections, the queue's and the switcher's tab, Search Everywhere's options, the structure tool's sort and filter, and when each pull request's Comments tool was last open. Per project: its open tabs per changeset and the results chosen last in Search Everywhere. The backend's own settings (semantic cache budget, finished-review retention) are read through `backendSettings.svelte.ts` without an open repository. Removing a project goes through `removeProject` (`removalPrompt.svelte.ts`) from every entry point: it reads what would be lost, asks once, then lets the events update the views. Secrets are the host's keychain.
 
 ### Errors and notices
 
