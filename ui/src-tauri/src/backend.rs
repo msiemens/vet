@@ -1,8 +1,28 @@
 //! The command that starts the backend, natively or in WSL.
 
 use std::process::Command;
+use std::sync::OnceLock;
 
 use vet_host::backend::{Spawn, Step, spawn_command, wsl_distro};
+use vet_host::login_path;
+
+/// The user's login-shell PATH, which the backend (and so every program it runs) gets in place of
+/// the minimal one of an app started from the Finder.
+static LOGIN_PATH: OnceLock<String> = OnceLock::new();
+
+/// Asks the login shell for its PATH, before the backend starts. Keeps the current PATH when the
+/// shell cannot tell. Nothing to do on Windows.
+pub fn resolve_login_path() {
+    if cfg!(windows) {
+        return;
+    }
+    match login_path::from_login_shell(&login_path::default_shell(), login_path::TIMEOUT) {
+        Ok(path) => {
+            let _ = LOGIN_PATH.set(path);
+        }
+        Err(message) => tracing::warn!(%message, "keeping the PATH this process started with"),
+    }
+}
 
 /// Makes the backend exit when this process dies (it holds the child's stdin open).
 const EXIT_FLAG: &str = "--exit-on-stdin-close";
@@ -41,6 +61,9 @@ fn backend_command() -> Result<(Command, String), String> {
             }
             let mut command = Command::new(&binary);
             command.arg(EXIT_FLAG);
+            if let Some(path) = LOGIN_PATH.get() {
+                command.env("PATH", path);
+            }
             (command, binary)
         }
     };

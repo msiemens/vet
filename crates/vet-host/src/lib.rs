@@ -7,5 +7,6 @@
 pub mod backend;
 pub mod credential_hosts;
 pub mod files;
+pub mod login_path;
 pub mod paths;
 pub mod web;
