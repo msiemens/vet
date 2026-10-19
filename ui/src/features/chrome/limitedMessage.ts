@@ -5,6 +5,11 @@ export function onlyStoodIn(failures: RestoreFailure[]): boolean {
   return failures.every((f) => f.kind === "stoodIn");
 }
 
+/** The languages whose servers to restart so that the failed restores run again; a stand-in installed, so it is not retried. */
+export function retryLanguages(failures: RestoreFailure[]): string[] {
+  return [...new Set(failures.filter((f) => f.kind === "failed").map((f) => f.language))];
+}
+
 /** What the viewer is told about the restores: that one failed, so what needs those packages cannot be resolved, or only that a stand-in did the install. */
 export function limitedMessage(failures: RestoreFailure[]): string {
   if (onlyStoodIn(failures)) return "Dependencies installed with npm install: the lock file is out of sync.";

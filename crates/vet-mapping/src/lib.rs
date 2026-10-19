@@ -31,7 +31,6 @@ use vet_core::review::{
     ThreadStatus, Verdict,
 };
 use vet_protocol as p;
-use vet_semantic::ports::RestoreFailure;
 
 fn completion(c: &Completion) -> p::Completion {
     p::Completion {
@@ -715,7 +714,7 @@ fn excluded_group(g: &ExcludedGroup) -> p::ExcludedGroup {
 pub fn manifest(
     project: p::ProjectId,
     m: &ManifestView,
-    restore_failures: &[RestoreFailure],
+    restore_failures: &[vet_app::semantics::LimitingRestore],
     trust: p::AnalysisTrust,
 ) -> p::Manifest {
     p::Manifest {

@@ -8,7 +8,7 @@
   import type { WatchDegraded } from "../../generated/WatchDegraded";
   import Banner from "../../lib/ui/Banner.svelte";
   import { degradedMessage } from "./degradedMessage";
-  import { limitedMessage } from "./limitedMessage";
+  import { limitedMessage, retryLanguages } from "./limitedMessage";
   import RestoreFailureList from "./RestoreFailureList.svelte";
   import { offBaseMessage } from "./scopeText";
 
@@ -19,6 +19,7 @@
     pullRequest,
     ontrust,
     ontrustproject,
+    onretry,
   }: {
     degraded?: WatchDegraded;
     failures: RestoreFailure[];
@@ -30,7 +31,19 @@
     ontrust: () => void;
     /** Opens the project's trust setting. */
     ontrustproject: () => void;
+    /** Restarts the servers of `languages`, which restores their trees again; resolves once they run. */
+    onretry: (languages: string[]) => Promise<unknown>;
   } = $props();
+
+  let retrying = $state(false);
+  async function retry() {
+    retrying = true;
+    try {
+      await onretry(retryLanguages(failures));
+    } finally {
+      retrying = false;
+    }
+  }
 
   let dismissedDegraded = $state<WatchDegraded>();
   // Dismissed until the pull request is trusted; a push that voids the trust is news again.
@@ -67,7 +80,13 @@
 {/if}
 
 {#if failures.length > dismissedFailures}
-  <Banner message={limitedMessage(failures)} ondismiss={() => (dismissedFailures = failures.length)}>
+  <Banner
+    message={limitedMessage(failures)}
+    ondismiss={() => (dismissedFailures = failures.length)}
+    actions={retryLanguages(failures).length
+      ? [{ label: retrying ? "Retrying…" : "Retry", onclick: () => void retry(), disabled: retrying }]
+      : []}
+  >
     {#snippet details()}
       <RestoreFailureList {failures} />
     {/snippet}

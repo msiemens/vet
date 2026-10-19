@@ -71,6 +71,7 @@
     openCheckLog,
     openPlace,
     openThread,
+    restartLanguageServer,
     showFindTool,
     showInBrowser,
   } from "./actions";
@@ -280,6 +281,7 @@
     pullRequest={opened.session?.facts?.trust.pullRequest}
     ontrust={() => void trustPullRequest()}
     ontrustproject={() => appState.showDialog("settings", "trust")}
+    onretry={(languages) => Promise.all(languages.map(restartLanguageServer))}
   />
 
   <div class="body">

@@ -2,7 +2,7 @@
 
 use p::UnavailableKind as Kind;
 use vet_app::ports::{FoundServer, ServerOrigin, ServerState, Tsserver};
-use vet_app::semantics::{Row, Rows, ServerRuntimes, Standing, WorkspaceSymbols};
+use vet_app::semantics::{LimitingRestore, Row, Rows, ServerRuntimes, Standing, WorkspaceSymbols};
 use vet_app::servers::ServerStatus;
 use vet_core::content::RepoPath;
 use vet_core::num::sat_u32;
@@ -13,8 +13,8 @@ use vet_semantic::derived::{
 };
 use vet_semantic::pool::{Outcome, Phase, PoolError};
 use vet_semantic::ports::{
-    At, Diagnostic, Feature, Features, LaunchError, Location, Pos, RestoreFailure, RestoreFailureKind, Severity, Span,
-    Sym, SymbolInfo, SymbolKind,
+    At, Diagnostic, Feature, Features, LaunchError, Location, Pos, RestoreFailureKind, Severity, Span, Sym, SymbolInfo,
+    SymbolKind,
 };
 use vet_semantic::query::SemanticError;
 
@@ -472,13 +472,14 @@ fn server_state(state: &ServerState) -> p::ServerState {
     }
 }
 
-pub fn restore_failures(all: &[RestoreFailure]) -> Vec<p::RestoreFailure> {
+pub fn restore_failures(all: &[LimitingRestore]) -> Vec<p::RestoreFailure> {
     all.iter()
-        .map(|f| p::RestoreFailure {
+        .map(|LimitingRestore { language, failure: f }| p::RestoreFailure {
             kind: match f.kind {
                 RestoreFailureKind::Failed => p::RestoreFailureKind::Failed,
                 RestoreFailureKind::StoodIn => p::RestoreFailureKind::StoodIn,
             },
+            language: language.0.clone(),
             project: f.project.clone(),
             tool: f.tool.clone(),
             message: f.message.clone(),

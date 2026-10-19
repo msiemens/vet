@@ -1,15 +1,22 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import type { RestoreFailure } from "../../generated/RestoreFailure.ts";
-import { limitedMessage } from "./limitedMessage.ts";
+import { limitedMessage, retryLanguages } from "./limitedMessage.ts";
 
-const failure = (project: string, tool = "pnpm"): RestoreFailure => ({
+const failure = (project: string, tool = "pnpm", language = "typescript"): RestoreFailure => ({
   kind: "failed",
+  language,
   project,
   tool,
   message: "failed",
 });
-const standIn = (project: string): RestoreFailure => ({ kind: "stoodIn", project, tool: "npm", message: "note" });
+const standIn = (project: string): RestoreFailure => ({
+  kind: "stoodIn",
+  language: "typescript",
+  project,
+  tool: "npm",
+  message: "note",
+});
 
 void test("names the project when one failed, counts them when several did", () => {
   assert.match(limitedMessage([failure("web")]), /project web /);
@@ -27,4 +34,10 @@ void test("only stand-ins get the milder headline", () => {
 void test("a failure among stand-ins keeps the failure headline, counting only the failed projects", () => {
   const message = limitedMessage([standIn("web"), failure("api")]);
   assert.match(message, /^Analysis limited: .*project api /);
+});
+
+void test("a retry restarts each language with a failed restore once, and none for a stand-in", () => {
+  const failures = [failure("web"), failure("api"), failure("svc", "uv", "python"), standIn("docs")];
+  assert.deepEqual(retryLanguages(failures), ["typescript", "python"]);
+  assert.deepEqual(retryLanguages([standIn("docs")]), []);
 });

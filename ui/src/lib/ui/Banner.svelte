@@ -25,7 +25,7 @@
     ondismiss?: () => void;
     details?: Snippet;
     /** Buttons next to the message. */
-    actions?: { label: string; onclick: () => void }[];
+    actions?: { label: string; onclick: () => void; disabled?: boolean }[];
     /** Under the message. */
     extra?: Snippet;
   } = $props();
@@ -48,7 +48,7 @@
       {@render extra?.()}
     </div>
     {#each actions as action (action.label)}
-      <button class="flat" type="button" onclick={action.onclick}>{action.label}</button>
+      <button class="flat" type="button" disabled={action.disabled} onclick={action.onclick}>{action.label}</button>
     {/each}
     {#if details}
       <button class="flat" type="button" aria-expanded={expanded} onclick={() => (expanded = !expanded)}>

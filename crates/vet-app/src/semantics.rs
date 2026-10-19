@@ -244,7 +244,15 @@ pub struct ServerRuntimes {
 pub type RuntimeSink = dyn Fn(ServerRuntimes) + Send + Sync;
 
 /// Told the restore steps that currently limit the analysis of the revision on view, when they change.
-pub type FailureSink = dyn Fn(Vec<RestoreFailure>) + Send + Sync;
+pub type FailureSink = dyn Fn(Vec<LimitingRestore>) + Send + Sync;
+
+/// A restore step that limits the analysis of the revision on view, with the language of the
+/// server whose tree it restored: restarting that language's servers restores the tree again.
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub struct LimitingRestore {
+    pub language: BackendId,
+    pub failure: RestoreFailure,
+}
 
 /// The revision on view, whose servers are reported, and whom to report them to.
 struct Watched {
@@ -257,7 +265,7 @@ struct Watched {
     pool_serial: u64,
     serial: u64,
     /// The restore failures last told.
-    told: Vec<RestoreFailure>,
+    told: Vec<LimitingRestore>,
 }
 
 impl Default for Watched {
@@ -303,19 +311,29 @@ impl Watched {
 
     /// The restore steps that failed for the trees of the servers of the revision on view. A
     /// failure of the base's tree stands whatever the target's restores do.
-    fn failures(&self, servers: &Servers) -> Vec<RestoreFailure> {
-        let mut failures: Vec<RestoreFailure> = Vec::new();
+    fn failures(&self, servers: &Servers) -> Vec<LimitingRestore> {
+        let mut failures: Vec<LimitingRestore> = Vec::new();
         for (key, failed) in &servers.restore_failures {
             if self.sides_of(key).is_empty() {
                 continue;
             }
             for failure in failed {
-                if !failures.contains(failure) {
-                    failures.push(failure.clone());
+                let limiting = LimitingRestore {
+                    language: key.backend.clone(),
+                    failure: failure.clone(),
+                };
+                if !failures.contains(&limiting) {
+                    failures.push(limiting);
                 }
             }
         }
-        failures.sort_by(|a, b| (&a.project, &a.tool).cmp(&(&b.project, &b.tool)));
+        failures.sort_by(|a, b| {
+            (&a.failure.project, &a.failure.tool, &a.language.0).cmp(&(
+                &b.failure.project,
+                &b.failure.tool,
+                &b.language.0,
+            ))
+        });
         failures
     }
 
@@ -635,7 +653,7 @@ where
     /// The restore steps that failed for the trees of the running servers of the revision on view:
     /// as long as a server runs on a tree whose restore failed, its analysis is limited, whatever
     /// the other side's restore did.
-    pub fn restore_failures(&self) -> Vec<RestoreFailure> {
+    pub fn restore_failures(&self) -> Vec<LimitingRestore> {
         let watched = lock(&self.watched);
         watched.failures(&self.semantic.pool().servers())
     }
@@ -1476,6 +1494,13 @@ mod tests {
         }
     }
 
+    fn limiting(language: &str) -> LimitingRestore {
+        LimitingRestore {
+            language: BackendId(language.into()),
+            failure: restore_failure(),
+        }
+    }
+
     /// Counts a hover as given up on when its request is dropped.
     struct HoverAsked(Arc<Counters>);
 
@@ -2141,7 +2166,7 @@ mod tests {
         let fx = Fixture::open(&[("a.l0", "one\n")], &[("a.l0", "two\n")]).await;
         let counters = Arc::new(Counters::default());
         counters.restore_fails.store(true, Ordering::SeqCst);
-        let told = Arc::new(Mutex::new(Vec::<Vec<RestoreFailure>>::new()));
+        let told = Arc::new(Mutex::new(Vec::<Vec<LimitingRestore>>::new()));
         let semantics = Semantics::new(
             FakeMaterializer(counters.clone()),
             FakeLauncher(counters.clone()),
@@ -2160,8 +2185,8 @@ mod tests {
 
         // The base is a snapshot, restored and failed; the live target is not restored at all.
         semantics.start_servers(&fx.view, 0).await.unwrap();
-        assert_eq!(semantics.restore_failures(), [restore_failure()]);
-        assert_eq!(*told.lock().unwrap(), [vec![restore_failure()]]);
+        assert_eq!(semantics.restore_failures(), [limiting("l0")]);
+        assert_eq!(*told.lock().unwrap(), [vec![limiting("l0")]]);
     }
 
     #[tokio::test]

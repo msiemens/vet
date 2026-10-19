@@ -6,6 +6,11 @@ import type { RestoreFailureKind } from "./RestoreFailureKind";
  */
 export type RestoreFailure = { kind: RestoreFailureKind, 
 /**
+ * The language's id, as in `ServerInfo`, of the server whose tree was restored:
+ * `Request::RestartServer` with it restores the tree again.
+ */
+language: string, 
+/**
  * The project directory, relative to the repository with `/`; `.` is the root.
  */
 project: string, 

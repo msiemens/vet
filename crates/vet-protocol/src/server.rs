@@ -177,6 +177,9 @@ pub enum RestoreFailureKind {
 #[ts(export)]
 pub struct RestoreFailure {
     pub kind: RestoreFailureKind,
+    /// The language's id, as in `ServerInfo`, of the server whose tree was restored:
+    /// `Request::RestartServer` with it restores the tree again.
+    pub language: String,
     /// The project directory, relative to the repository with `/`; `.` is the root.
     pub project: String,
     /// The tool that failed, e.g. `pnpm`.
