@@ -49,9 +49,12 @@ export function installWindow(): () => void {
   session.onConnect(reveal);
   void session.connect().then(reveal);
   // The Pipelines tool belongs to a pull request: a changeset of another kind closes it.
-  const stopPipelines = opened.onSession((next) => {
+  // The tool is also kept across restarts, so it can come back after the changeset is on view.
+  const closeUnfitPipelines = (next: typeof opened.session) => {
     if (next && !belongsTo(next.key.type) && shell.bottom === "pipelines") shell.hideBottom();
-  });
+  };
+  const stopPipelines = opened.onSession(closeUnfitPipelines);
+  const stopBottomWatch = shell.watchBottom(() => closeUnfitPipelines(opened.session));
   const stopMenu = mainMenu.listen();
   const stopDoubleShift = watchDoubleShift(
     () => !!session.repo && !commands.isCapturing(),
@@ -59,6 +62,7 @@ export function installWindow(): () => void {
   );
   return () => {
     stopPipelines();
+    stopBottomWatch();
     stopMenu();
     stopDoubleShift();
     window.removeEventListener("keydown", onkeydown, true);

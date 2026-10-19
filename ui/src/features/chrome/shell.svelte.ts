@@ -1,20 +1,61 @@
 // The shell's own state: the screen shown and the tool windows of the rails and the dock. What `App`
 // passes to the chrome and the review screen, and what the tool commands act on.
 
+import { Preference } from "../../lib/preferences.svelte";
 import { opened } from "../../state/opened.svelte";
 import { reviewShown } from "../../state/reviewShown.svelte";
 import { COMMITS, FALLBACK, lensOnSelect, toolFor } from "./commitsTool";
 import { type Screen, TOOLS } from "./tools";
-import { type ToolWindow, toggleBottom, toggleTool } from "./toggleTool";
+import { type ToolWindow, parseToolWindow, toggleBottom, toggleTool } from "./toggleTool";
+
+const toolIds = (tools: readonly { id: string }[]) => tools.map((t) => t.id);
+
+// The tool windows come back as the viewer left them; one that is gone falls back to the default.
+const leftPreference = new Preference<ToolWindow>(
+  "app",
+  "shell.left",
+  (json) =>
+    parseToolWindow(
+      json,
+      toolIds(TOOLS.left).filter((id) => id !== COMMITS),
+    ),
+  { tool: FALLBACK, open: true },
+);
+const rightPreference = new Preference<ToolWindow>(
+  "app",
+  "shell.right",
+  (json) => parseToolWindow(json, toolIds(TOOLS.right)),
+  { tool: "symbol", open: true },
+);
+const bottomPreference = new Preference<string | undefined>(
+  "app",
+  "shell.bottom",
+  (json) => toolIds(TOOLS.bottom).find((id) => id === json),
+  undefined,
+);
 
 class Shell {
   /** The queue is the project's home; the review screen is mounted only while it shows. */
   screen = $state<Screen>("queue");
+
   /** The left rail's chosen tool apart from the Commits one, and whether its sidebar is shown. */
-  private leftChosen = $state<ToolWindow>({ tool: "changes", open: true });
-  right = $state<ToolWindow>({ tool: "symbol", open: true });
+  private get leftChosen(): ToolWindow {
+    return leftPreference.value;
+  }
+
+  get right(): ToolWindow {
+    return rightPreference.value;
+  }
+
   /** The bottom tool whose panel is shown; they exclude each other. */
-  bottom = $state<string>();
+  get bottom(): string | undefined {
+    return bottomPreference.value;
+  }
+
+  /** Calls `listener` whenever the bottom tool shown changes, also when the kept choice is loaded. */
+  watchBottom(listener: () => void): () => void {
+    return bottomPreference.watch(listener);
+  }
 
   /** The left rail as it shows: the Commits tool while the changeset is reviewed by commit. */
   get left(): ToolWindow {
@@ -35,11 +76,11 @@ class Shell {
   /** Shows or hides the tool `id`; answers the bottom tool whose panel is shown now, if `id` is one. */
   toggle(id: string): string | undefined {
     if (TOOLS.bottom.some((t) => t.id === id)) {
-      this.bottom = toggleBottom(this.bottom, id);
+      bottomPreference.value = toggleBottom(this.bottom, id);
       return this.bottom;
     }
     if (TOOLS.left.some((t) => t.id === id)) this.toggleLeft(id);
-    else Object.assign(this.right, toggleTool(this.right, id));
+    else rightPreference.value = toggleTool(this.right, id);
     return undefined;
   }
 
@@ -50,31 +91,31 @@ class Shell {
 
   /** Shows the bottom tool `tool`; the other bottom tools give way. */
   showBottom(tool: string) {
-    this.bottom = tool;
+    bottomPreference.value = tool;
   }
 
   /** Hides the left sidebar; its tool stays selected, as when the rail hides it. */
   hideLeft() {
-    this.leftChosen.open = false;
+    leftPreference.value = { ...this.leftChosen, open: false };
   }
 
   /** Hides the right sidebar; its tool stays selected, as when the rail hides it. */
   hideRight() {
-    this.right.open = false;
+    rightPreference.value = { ...this.right, open: false };
   }
 
   /** Hides the bottom panel. */
   hideBottom() {
-    this.bottom = undefined;
+    bottomPreference.value = undefined;
   }
 
   /** Shows or hides the left tool `id`: the Commits tool toggles its sidebar, any other selects it. */
   private toggleLeft(id: string) {
     if (id === COMMITS) {
-      if (this.byCommit) this.leftChosen.open = !this.leftChosen.open;
+      if (this.byCommit) leftPreference.value = { ...this.leftChosen, open: !this.leftChosen.open };
       else this.selectLeft(id);
     } else if (this.byCommit) this.selectLeft(id);
-    else Object.assign(this.leftChosen, toggleTool(this.leftChosen, id));
+    else leftPreference.value = toggleTool(this.leftChosen, id);
   }
 
   /**
@@ -84,13 +125,11 @@ class Shell {
    */
   private selectLeft(tool: string) {
     if (tool === COMMITS && (opened.session?.commitCount ?? 0) <= 1) {
-      this.leftChosen.tool = FALLBACK;
-      this.leftChosen.open = true;
+      leftPreference.value = { tool: FALLBACK, open: true };
       return;
     }
     const lens = lensOnSelect(this.left.tool, tool);
-    if (tool !== COMMITS) this.leftChosen.tool = tool;
-    this.leftChosen.open = true;
+    leftPreference.value = { tool: tool === COMMITS ? this.leftChosen.tool : tool, open: true };
     if (lens !== undefined) void opened.session?.showLens(lens);
   }
 
