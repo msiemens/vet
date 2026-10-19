@@ -27,6 +27,8 @@ use vet_app::ports::{GitError, RefTip, RefUpdate, RemoteInfo, Via};
 use super::{chained, redact};
 use crate::http::install_tls_provider;
 
+mod no_done;
+
 /// A user name the platforms accept in front of a token.
 fn token_user(kind: PlatformKind) -> &'static str {
     match kind {
@@ -278,9 +280,7 @@ fn run(repo: gix::Repository, name: &str, via: Via, served: bool, specs: Specs) 
     remote.replace_refspecs(specs, Direction::Fetch).map_err(chained)?;
 
     let url = remote.url(Direction::Fetch).cloned();
-    let connection = remote
-        .connect(Direction::Fetch)
-        .map_err(|e| fetch_err(name, url.as_ref(), &e))?;
+    let connection = no_done::connect(&remote).map_err(|e| fetch_err(name, url.as_ref(), &e))?;
     let mut configured = connection.configured_credentials_for_current_url();
     let mut offered = false;
     let connection = connection.with_credentials(move |action| {

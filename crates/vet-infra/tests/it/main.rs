@@ -5,6 +5,7 @@ mod base;
 mod common;
 mod exec;
 mod fetch;
+mod fetch_http;
 mod gh_accounts;
 mod git;
 mod git_edges;
