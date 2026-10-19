@@ -18,7 +18,14 @@ pub fn default_shell() -> String {
     std::env::var("SHELL")
         .ok()
         .filter(|shell| !shell.is_empty())
-        .unwrap_or_else(|| if cfg!(target_os = "macos") { "/bin/zsh" } else { "/bin/sh" }.into())
+        .unwrap_or_else(|| {
+            if cfg!(target_os = "macos") {
+                "/bin/zsh"
+            } else {
+                "/bin/sh"
+            }
+            .into()
+        })
 }
 
 /// Runs `shell` as an interactive login shell and returns the PATH it prints. Profile files may print
@@ -42,19 +49,17 @@ pub fn from_login_shell(shell: &str, timeout: Duration) -> Result<String, String
         let read = stdout.read_to_end(&mut output).map(|_| output);
         let _ = sender.send(read);
     });
-    let output = match receiver.recv_timeout(timeout) {
-        Ok(Ok(output)) => output,
-        Ok(Err(error)) => {
-            let _ = child.kill();
-            return Err(format!("cannot read the output of {shell}: {error}"));
-        }
-        Err(_) => {
-            let _ = child.kill();
-            let _ = child.wait();
-            return Err(format!("{shell} did not print its PATH within {timeout:?}"));
-        }
+    let read = match receiver.recv_timeout(timeout) {
+        Ok(read) => read.map_err(|error| format!("cannot read the output of {shell}: {error}")),
+        Err(_) => Err(format!("{shell} did not print its PATH within {timeout:?}")),
     };
-    let status = child.wait().map_err(|error| format!("cannot wait for {shell}: {error}"))?;
+    let output = read.inspect_err(|_| {
+        let _ = child.kill();
+        let _ = child.wait();
+    })?;
+    let status = child
+        .wait()
+        .map_err(|error| format!("cannot wait for {shell}: {error}"))?;
     if !status.success() {
         return Err(format!("{shell} exited with {status}"));
     }
