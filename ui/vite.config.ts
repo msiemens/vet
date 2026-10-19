@@ -7,5 +7,10 @@ export default defineConfig({
   clearScreen: false,
   server: { port: 1420, strictPort: true },
   // The app and the splash window the shell opens while the backend starts.
-  build: { target: "es2022", rollupOptions: { input: { main: "index.html", splash: "splash.html" } } },
+  // Assets stay files: the CSP allows 'self' but not data: URLs for images and fonts.
+  build: {
+    target: "es2022",
+    assetsInlineLimit: 0,
+    rollupOptions: { input: { main: "index.html", splash: "splash.html" } },
+  },
 });
