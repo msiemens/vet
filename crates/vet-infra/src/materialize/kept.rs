@@ -7,7 +7,7 @@
 //!   .staging/<launch>-<n>/        a tree being built: tree/ and meta/
 //!   .locks/<key>                  shared by every user of the tree, exclusive for the GC
 //!   .locks/<key>.restore          exclusive while a language restores the tree
-//!   .trash/<n>-<key>/             removed from service, being deleted
+//!   .trash/<n>-<name>/            removed from service, deleted when the trash is emptied
 //!   <key>/                        <snapshot prefix>-<restore kind>
 //!     tree/                       the root servers are started on
 //!     meta/complete               written last, before the rename
@@ -275,14 +275,15 @@ impl KeptTrees {
         .await
     }
 
-    /// Removes what a dead launch left and trees that are not complete. Returns how many were removed.
+    /// Moves what a dead launch left and trees that are not complete into the trash, which
+    /// [`Self::empty_trash`] deletes. Returns how many were moved.
     pub async fn sweep(&self) -> usize {
         let base = self.base.clone();
         blocking(&self.io, move || sweep_in(&base)).await
     }
 
-    /// Removes the trees that are not in use, unless they are referenced and have been
-    /// used within the idle limit.
+    /// Moves the trees that are not in use into the trash, which [`Self::empty_trash`] deletes,
+    /// unless they are referenced and have been used within the idle limit.
     pub async fn collect(&self, now: SystemTime) -> Collected {
         let referenced = self.referenced.snapshots().await;
         let base = self.base.clone();
@@ -302,13 +303,20 @@ impl KeptTrees {
     /// Removes every tree that is not in use, referenced or not.
     pub async fn clear(&self) -> Collected {
         let base = self.base.clone();
-        blocking(&self.io, move || collect_in(&base, &Plan::Everything)).await
+        blocking(&self.io, move || clear_in(&base, &Plan::Everything)).await
     }
 
     /// Removes every tree for restores of `kind` that is not in use.
     pub async fn clear_kind(&self, kind: RestoreKind) -> Collected {
         let base = self.base.clone();
-        blocking(&self.io, move || collect_in(&base, &Plan::Kind(kind))).await
+        blocking(&self.io, move || clear_in(&base, &Plan::Kind(kind))).await
+    }
+
+    /// Deletes what is in the trash. Deleting a tree means deleting every file of it, which
+    /// takes long on Windows for a `node_modules`. Returns how many were deleted.
+    pub async fn empty_trash(&self) -> usize {
+        let base = self.base.clone();
+        blocking(&self.io, move || empty_trash_in(&base)).await
     }
 }
 
@@ -348,7 +356,7 @@ fn is_complete(dir: &Path, key: &Key) -> bool {
     std::fs::read_to_string(dir.join(META).join(COMPLETE)).is_ok_and(|mark| mark == key.mark())
 }
 
-/// Moves `dir` out of service and deletes it. Gives up on a tree in use.
+/// Moves the tree `name` out of service, into the trash. Gives up on a tree in use.
 fn retire(base: &Path, name: &str) -> io::Result<Retired> {
     let lock = open_lock(&base.join(LOCKS).join(name))?;
     match lock.try_lock() {
@@ -356,13 +364,32 @@ fn retire(base: &Path, name: &str) -> io::Result<Retired> {
         Err(TryLockError::WouldBlock) => return Ok(Retired::InUse),
         Err(TryLockError::Error(e)) => return Err(e),
     }
-    let nanos = SystemTime::now().duration_since(UNIX_EPOCH).map_or(0, |d| d.as_nanos());
-    let trash = base.join(TRASH).join(format!("{nanos}-{name}"));
-    std::fs::rename(base.join(name), &trash)?;
+    discard(base, &base.join(name))?;
     drop(lock);
-    // Whatever is left is removed by the next sweep.
-    let _ = std::fs::remove_dir_all(trash);
     Ok(Retired::Removed)
+}
+
+/// Moves `dir`, below `base`, into the trash: one rename, however large it is.
+fn discard(base: &Path, dir: &Path) -> io::Result<()> {
+    let name = dir.file_name().map_or_else(Default::default, |n| n.to_string_lossy());
+    let nanos = SystemTime::now().duration_since(UNIX_EPOCH).map_or(0, |d| d.as_nanos());
+    let trash = base.join(TRASH);
+    std::fs::create_dir_all(&trash)?;
+    std::fs::rename(dir, trash.join(format!("{nanos}-{name}")))
+}
+
+/// The entries of `dir` below `base`.
+fn entries(base: &Path, dir: &str) -> Vec<PathBuf> {
+    std::fs::read_dir(base.join(dir))
+        .map(|entries| entries.flatten().map(|e| e.path()).collect())
+        .unwrap_or_default()
+}
+
+/// Deletes what is in the trash; what cannot be deleted now is tried again by the next call.
+fn empty_trash_in(base: &Path) -> usize {
+    (entries(base, TRASH).into_iter())
+        .filter(|trash| std::fs::remove_dir_all(trash).is_ok())
+        .count()
 }
 
 enum Retired {
@@ -534,17 +561,17 @@ fn collect_in(base: &Path, plan: &Plan) -> Collected {
     done
 }
 
-/// What a launch that is gone left behind.
+/// [`collect_in`], and the trees deleted right away.
+fn clear_in(base: &Path, plan: &Plan) -> Collected {
+    let done = collect_in(base, plan);
+    empty_trash_in(base);
+    done
+}
+
+/// Moves what a launch that is gone left behind into the trash.
 fn sweep_in(base: &Path) -> usize {
     let mut removed = 0;
-    let list = |dir: &str| -> Vec<PathBuf> {
-        std::fs::read_dir(base.join(dir))
-            .map(|entries| entries.flatten().map(|e| e.path()).collect())
-            .unwrap_or_default()
-    };
-    for trash in list(TRASH) {
-        removed += usize::from(std::fs::remove_dir_all(trash).is_ok());
-    }
+    let list = |dir: &str| entries(base, dir);
 
     let staging = list(STAGING);
     let mut live = HashSet::new();
@@ -574,7 +601,7 @@ fn sweep_in(base: &Path) -> usize {
         let name = path.file_name().and_then(|n| n.to_str()).unwrap_or_default();
         let launch = name.rsplit_once('-').map_or("", |(launch, _)| launch);
         if path.is_dir() && !live.contains(launch) {
-            removed += usize::from(std::fs::remove_dir_all(path).is_ok());
+            removed += usize::from(discard(base, path).is_ok());
         }
     }
     for (_, lock) in dead {
@@ -971,6 +998,22 @@ mod tests {
         trees.collect(now + Duration::from_secs(60)).await;
         assert!(exists(data.path(), 1));
         assert!(!exists(data.path(), 2));
+    }
+
+    #[tokio::test]
+    async fn a_collection_only_moves_trees_to_the_trash_and_emptying_it_deletes_them() {
+        let data = tempfile::tempdir().unwrap();
+        let trees = trees(data.path());
+        drop(acquire(&trees, 1, 10).await);
+        let trash = || entries(data.path(), TRASH);
+
+        assert_eq!(trees.collect(SystemTime::now()).await.removed, 1);
+        assert!(!exists(data.path(), 1));
+        assert_eq!(trash().len(), 1, "moved, not deleted");
+        assert!(trash()[0].join(TREE).join("file").is_file());
+
+        assert_eq!(trees.empty_trash().await, 1);
+        assert!(trash().is_empty());
     }
 
     #[tokio::test]

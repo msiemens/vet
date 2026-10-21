@@ -387,8 +387,16 @@ impl Resident for Wired {
             booted.semantics.shutdown().await;
         }
         // The servers are gone, so their trees can be collected.
-        self.trees.collect(SystemTime::now()).await;
+        collect_trees(&self.trees).await;
     }
+}
+
+/// Moves the trees nothing needs any more into the trash, and deletes the trash in the background:
+/// deleting a tree takes long on Windows (every file of a `node_modules`), and nobody waits for it.
+pub(crate) async fn collect_trees(trees: &Arc<KeptTrees>) {
+    trees.collect(SystemTime::now()).await;
+    let trees = trees.clone();
+    tokio::spawn(async move { trees.empty_trash().await });
 }
 
 /// A project whose first scan is done: what the requests about its review run on.

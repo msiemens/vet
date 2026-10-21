@@ -3,7 +3,6 @@
 //! tells every subscriber what changed.
 
 use std::sync::Arc;
-use std::time::SystemTime;
 
 use vet_app::search::SearchFilters;
 use vet_app::session::{Outcome, ReviewUpdateView, SearchQuery, SessionError, View};
@@ -24,7 +23,7 @@ impl Orchestrator {
         let revision = open.session.revision().await;
         review_finished(&open.open, revision);
         // The trees only the finished review needed.
-        open.open.trees.collect(SystemTime::now()).await;
+        crate::open::collect_trees(&open.open.trees).await;
         Ok(Response::ReviewFinished { complete })
     }
 

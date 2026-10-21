@@ -323,15 +323,10 @@ impl Orchestrator {
         Ok(open)
     }
 
-    /// At startup: removes the layout of older versions, what a launch that died left, then
-    /// the kept trees nothing needs.
+    /// At startup: moves what a launch that died left and the kept trees nothing needs into the
+    /// trash, then deletes the trash and the layout of older versions in the background. Deleting
+    /// a tree takes long on Windows (every file of a `node_modules`); the start does not wait for it.
     pub async fn collect_trees(&self) {
-        let legacy = self.store.dir().join("materialized");
-        let _ = self
-            .budgets
-            .semantic_io
-            .blocking(move || std::fs::remove_dir_all(legacy))
-            .await;
         self.storage.sweep().await;
         let swept = self.trees.sweep().await;
         let collected = self.trees.collect(SystemTime::now()).await;
@@ -340,9 +335,23 @@ impl Orchestrator {
                 swept,
                 removed = collected.removed,
                 freed_mb = collected.freed >> 20,
-                "removed leftovers and kept trees"
+                "moved leftovers and kept trees to the trash"
             );
         }
+        let legacy = self.store.dir().join("materialized");
+        let (io, trees) = (self.budgets.semantic_io.clone(), self.trees.clone());
+        tokio::spawn(async move {
+            let started = std::time::Instant::now();
+            let _ = io.blocking(move || std::fs::remove_dir_all(legacy)).await;
+            let deleted = trees.empty_trash().await;
+            if deleted > 0 {
+                tracing::info!(
+                    deleted,
+                    took_ms = started.elapsed().as_millis(),
+                    "emptied the trash of kept trees"
+                );
+            }
+        });
     }
 
     /// "Clear semantic caches": drops the answers of the language servers, in memory and

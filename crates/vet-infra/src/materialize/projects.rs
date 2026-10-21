@@ -71,7 +71,7 @@ impl ProjectTrees {
         found.into_iter().map(|sources| self.set(sources)).collect()
     }
 
-    /// Removes what launches that died left in every project; see [`KeptTrees::sweep`].
+    /// Moves what launches that died left in every project into its trash; see [`KeptTrees::sweep`].
     pub async fn sweep(&self) -> usize {
         let mut removed = 0;
         for set in self.all().await {
@@ -87,6 +87,15 @@ impl ProjectTrees {
             done += set.collect(now).await;
         }
         done
+    }
+
+    /// [`KeptTrees::empty_trash`] in every project.
+    pub async fn empty_trash(&self) -> usize {
+        let mut deleted = 0;
+        for set in self.all().await {
+            deleted += set.empty_trash().await;
+        }
+        deleted
     }
 
     /// [`KeptTrees::clear`] in every project.
